@@ -49,7 +49,7 @@ Invariants of the end state:
 
 | # | Stage | Issue | Gate before the next stage |
 | --- | --- | --- | --- |
-| 1 | Speculative I/O and footer loads on virtual threads | #1560 | merged; `run-s3` without regression |
+| 1 | Speculative I/O and footer loads on virtual threads | #1560 | done |
 | 2 | Parsing and scans on the pool | #1589 | done |
 | 3 | The pool's queue: fairness across reads, priority within a read | #1564, #1590 | see below |
 | 4 | Single-threaded mode as a configuration of the two carriers | #1022 | after #1264 |
@@ -61,22 +61,15 @@ fetch paths #1264 replaces.
 
 ### Stage 1: off the common pool
 
-#1560 as filed: a virtual thread per speculative task and per footer load, a footer the
-caller is about to wait for loaded on the caller's thread, non-`IOException` failures of a
-speculative task logged, and an `Error` propagated. The last changes the invariant
-"Speculative work never reports a failure" in `READ_PIPELINE.md`, which the PR updates.
-
-`PrefetchTasks` keeps its own wait on close. A virtual-thread `ExecutorService.close()`
-interrupts its tasks when the closing thread is interrupted, and an interrupt inside a
-`FileChannel` read closes the channel for every reader sharing it.
-
-The one-ahead shape of prefetch stays as it is: #1395 replaces it with deeper read-ahead on
-#1264's scheduler.
-
-On JDK 21 a virtual thread inside `synchronized` pins its carrier for the length of the
-monitor. `SharedRegion.fetchData` reads under one; the fetchers already do so on the demand
-path. If `run-s3` shows carriers starving, those monitors become `ReentrantLock`s in this
-stage.
+Done (#1560, PR #1592). Prefetches and later files' footer loads run on a virtual thread each
+(`HardwoodContextImpl.ioExecutor`); a footer the caller is about to wait for loads on the
+caller's thread. A speculative failure no caller waits for is reported (`PrefetchTasks.report`),
+an `Error` thrown by the close that waits for the work, and a task not started at close skips
+its work. On JDK 21 a virtual thread blocked in or on a monitor holds its carrier, so every lock
+the read path holds across a fetch or a wait for another thread became a `ReentrantLock`, and
+the per-row-group caches an `OnceCache`, which holds no lock while it computes; the N300's
+pinned stacks under `-Djdk.tracePinnedThreads` went from 143 to none in Hardwood. `run-s3`
+showed no change. The one-ahead shape of prefetch stays: #1395 replaces it.
 
 ### Stage 2: parsing and scans on the pool
 

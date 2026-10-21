@@ -253,6 +253,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Pages decoded straight into batch arrays, each value written once, and submitted to the decode pool in row order across a read's columns by one scheduler per read (#1287; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#scheduled-columns))
 - [x] Every decode of a read, dictionary pages included, on the context's pool, leaving no buffer on the application's threads (#1568, #1570; see [`_designs/VALUE_DECODE.md`](_designs/VALUE_DECODE.md#decode-buffers))
 - [x] Prefetches and footer loads on virtual threads of the context's I/O executor rather than the JVM's common pool, with no monitor held across a fetch or a wait (#1560; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
+- [x] Footers of later files, page indexes and dictionary checks parsed and scanned on the context's pool, so its size bounds a read's CPU (#1589; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
 - [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md))
 - [x] Footers supplied across readers through a `MetadataSource` on the context, checked against each file before use (#837; see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md#supplied-footers))
 
