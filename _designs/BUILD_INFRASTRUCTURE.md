@@ -126,6 +126,7 @@ The closure is not offline: a cache miss or a changed POM resolves third-party a
 - `cli-early-access.yml` runs a full `clean install` in one job, uploads `~/.m2/repository/dev/hardwood` as a workflow artifact, and the per-OS native packaging jobs download it. This is the one workflow whose jobs pass Hardwood artifacts between each other.
 - `release-cli.yml` builds each native package from the release tag with `-pl :hardwood-error-prone-checks,:hardwood-cli -am`.
 - `release.yml` runs `release.sh` (see [RELEASING.md](../RELEASING.md)).
+- Every job that builds the native binary runs `tools/block-certificates.sh` after setting up GraalVM, and `release-cli.yml` and `cli-early-access.yml` run `NativeBinarySmokeIT.embedsEveryBlockedCertificate` against each platform's binary before uploading it (see [NATIVE_BUILD.md](../NATIVE_BUILD.md#blocked-certificates)). `release-cli.yml` builds with `install`, so that this second Maven invocation resolves the Hardwood modules from the local repository.
 
 All actions are referenced by commit SHA.
 

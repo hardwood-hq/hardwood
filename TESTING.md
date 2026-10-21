@@ -44,7 +44,7 @@ The JVM `*CommandTest` and `*S3CommandIT` classes in `cli` carry the behavioural
 
 | Test | What it runs |
 |------|--------------|
-| `NativeBinarySmokeIT` | The binary against a local Parquet file, including `dive --smoke-render`; pins the reported build version against the JVM it was compiled from. |
+| `NativeBinarySmokeIT` | The binary against a local Parquet file, including `dive --smoke-render`; pins the reported build version against the JVM it was compiled from; checks the binary carries every entry of `cli/src/main/trust/blocked.certs`. |
 | `NativeBinaryS3SmokeIT` | The binary against a file served by s3proxy. |
 | `NativeCompressionCodecIT` | One fixture per supported compression codec, with `LZ4` and `LZ4_RAW` separately because they use different decompressors. |
 

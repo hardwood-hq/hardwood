@@ -473,6 +473,19 @@ The CLI additionally reads these environment variables:
 | `AWS_ENDPOINT_URL` | Custom endpoint for S3-compatible services (MinIO, LocalStack, R2, etc.) |
 | `AWS_PATH_STYLE` | Set to `true` to use path-style access (required by some S3-compatible services) |
 
+### TLS certificates
+
+The native binary verifies HTTPS connections against the root certificates of the JDK it was built with. It does not read the operating system's certificate store. It rejects any certificate chain that contains a certificate listed in [`blocked.certs`](https://github.com/hardwood-hq/hardwood/blob/main/cli/src/main/trust/blocked.certs), whichever trust store is in use.
+
+To verify against a different set of root certificates, for example one that contains a company CA, pass a trust store file and its password before the command name:
+
+```shell
+hardwood -Djavax.net.ssl.trustStore=/path/to/cacerts -Djavax.net.ssl.trustStorePassword=changeit \
+    info -f s3://my-bucket/data.parquet
+```
+
+The file replaces the built-in root certificates entirely; the certificates in `blocked.certs` stay rejected. It can be a PKCS12 or JKS keystore, such as a JDK's `lib/security/cacerts` or, on Fedora and RHEL, `/etc/pki/ca-trust/extracted/java/cacerts`. A path that does not exist makes every HTTPS connection fail with an error. With the [Docker image](../getting-started.md#docker), mount the file into the container and pass its path inside the container.
+
 ## Compression libraries
 
 The native binary contains the native libraries for the Snappy, ZSTD, LZ4 and Brotli codecs. On startup it writes them to the first usable one of these directories and loads them from there:

@@ -9,12 +9,15 @@ package dev.hardwood.cli.command;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.cli.internal.CheckBlockedCertificates;
 import dev.hardwood.cli.internal.Version;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -77,6 +80,18 @@ class NativeBinarySmokeIT {
         assertThat(result.stderr()).isEqualTo("WARNING: Ignoring 6 annotation(s) on repeated groups outside"
                 + " a LIST or MAP group; those groups are read as though unannotated: foo_mkv (MAP_KEY_VALUE);"
                 + " foo_list (LIST); foo_list_lt (LIST); foo_map (MAP); foo_map_ct (MAP); s.bar (LIST)");
+    }
+
+    /// native-image bakes the build JDK's `blocked.certs` into the binary, where each entry
+    /// appears as its fingerprint string. A binary built with a JDK that lacked an entry of
+    /// `src/main/trust/blocked.certs` trusts that certificate, which the binary itself shows here.
+    @Test
+    void embedsEveryBlockedCertificate() throws IOException {
+        String binary = new String(Files.readAllBytes(Path.of(nativeBinary)), StandardCharsets.ISO_8859_1);
+
+        assertThat(CheckBlockedCertificates.fingerprints(Path.of("src/main/trust/blocked.certs")))
+                .allSatisfy(fingerprint -> assertThat(binary).withFailMessage("The binary does not block %s", fingerprint)
+                        .contains(fingerprint));
     }
 
     @Test
