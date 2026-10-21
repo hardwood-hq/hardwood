@@ -54,6 +54,18 @@ class PqMapLookupTest {
     }
 
     @Test
+    void aKeyThatIsAPrefixOrExtensionOfAStoredKeyIsAbsent() throws Exception {
+        try (ParquetFileReader f = ParquetFileReader.open(InputFile.of(SIMPLE));
+             RowReader r = f.rowReader()) {
+            r.next();
+            PqMap m = r.getMap("attributes");
+            assertThat(m.getValue("ag")).isNull();
+            assertThat(m.getValue("ages")).isNull();
+            assertThat(m.getValue("")).isNull();
+        }
+    }
+
+    @Test
     void containsKeyReflectsPresence() throws Exception {
         try (ParquetFileReader f = ParquetFileReader.open(InputFile.of(SIMPLE));
              RowReader r = f.rowReader()) {

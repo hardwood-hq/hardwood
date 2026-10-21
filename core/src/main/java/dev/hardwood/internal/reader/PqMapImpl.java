@@ -14,7 +14,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.AbstractList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -218,7 +217,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }
-            if (Arrays.equals(keys.byteArrayAt(i), needle)) {
+            if (keys.equalsAt(i, needle)) {
                 return i;
             }
         }
@@ -261,7 +260,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }
-            if (Arrays.equals(keys.byteArrayAt(i), key)) {
+            if (keys.equalsAt(i, key)) {
                 return i;
             }
         }

@@ -403,6 +403,13 @@ public final class BinaryBatchValues {
         return Arrays.copyOfRange(buffers[bufferIds[idx]], starts[idx], ends[idx]);
     }
 
+    /// Whether value `idx` holds exactly the bytes of `other`, compared where they sit rather than
+    /// through a copy.
+    public boolean equalsAt(int idx, byte[] other) {
+        ensureViews();
+        return Arrays.equals(buffers[bufferIds[idx]], starts[idx], ends[idx], other, 0, other.length);
+    }
+
     /// Decode value `idx` as the single-precision value its `FLOAT16` payload stands for,
     /// reading the two bytes where they sit rather than materialising a `byte[]` for them.
     ///
