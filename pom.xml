@@ -13,7 +13,7 @@
 
   <groupId>dev.hardwood</groupId>
   <artifactId>hardwood-parent</artifactId>
-  <version>1.0.1.Final</version>
+  <version>1.0.2-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>Hardwood Parent</name>
@@ -45,7 +45,7 @@
     <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
     <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
     <url>https://github.com/hardwood-hq/hardwood/</url>
-    <tag>v1.0.1.Final</tag>
+    <tag>HEAD</tag>
   </scm>
 
   <modules>
@@ -74,7 +74,7 @@
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <project.build.outputTimestamp>2026-10-21T22:33:25Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-10-21T22:33:52Z</project.build.outputTimestamp>
   </properties>
 
   <build>
