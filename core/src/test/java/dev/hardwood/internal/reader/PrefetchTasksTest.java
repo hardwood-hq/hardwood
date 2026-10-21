@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
@@ -28,6 +29,7 @@ import org.apache.logging.log4j.core.appender.AbstractAppender;
 import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.apache.logging.log4j.core.config.Property;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -51,6 +53,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// [PrefetchTasks#awaitAll()], which the iterator's close calls, or, for a footer prefetch no
 /// read asked for, by the close of the [FileMetadataCache].
 class PrefetchTasksTest {
+
+    private final List<HardwoodContextImpl> contexts = new ArrayList<>();
+
+    @AfterEach
+    void closeContexts() {
+        contexts.forEach(HardwoodContextImpl::close);
+    }
+
+    /// A cache of `file` whose prefetches run on `ioExecutor`.
+    private FileMetadataCache cache(InputFile file, Executor ioExecutor) {
+        HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(1, ioExecutor);
+        contexts.add(context);
+        return new FileMetadataCache(List.of(file), context);
+    }
 
     /// Four row groups of 50 rows, with a page index.
     private static final Path FOUR_ROW_GROUPS = Path.of("src/test/resources/differential/diff_order_multi.parquet");
@@ -208,7 +224,7 @@ class PrefetchTasksTest {
     @Test
     void failedFooterPrefetchNoCallerAskedForIsLoggedByTheClose() {
         FailingFooterFile file = new FailingFooterFile(new IOException("connection reset"));
-        FileMetadataCache cache = new FileMetadataCache(List.of(file), ParquetMetadataReader.FROM_FILE, Runnable::run);
+        FileMetadataCache cache = cache(file, Runnable::run);
         cache.prefetch(0);
 
         List<LogEvent> events = captureLog(cache::close);
@@ -222,7 +238,7 @@ class PrefetchTasksTest {
     @Test
     void failedFooterPrefetchACallerReceivedIsNotReportedAgain() {
         FailingFooterFile file = new FailingFooterFile(new IOException("connection reset"));
-        FileMetadataCache cache = new FileMetadataCache(List.of(file), ParquetMetadataReader.FROM_FILE, Runnable::run);
+        FileMetadataCache cache = cache(file, Runnable::run);
         cache.prefetch(0);
         assertThatThrownBy(() -> cache.getFile(0))
                 .isInstanceOf(IOException.class)
@@ -239,7 +255,7 @@ class PrefetchTasksTest {
     void errorOfAFooterPrefetchACallerReceivedIsNotThrownAgain() {
         SpeculativeError error = new SpeculativeError("footer read failed");
         FailingFooterFile file = new FailingFooterFile(error);
-        FileMetadataCache cache = new FileMetadataCache(List.of(file), ParquetMetadataReader.FROM_FILE, Runnable::run);
+        FileMetadataCache cache = cache(file, Runnable::run);
         cache.prefetch(0);
         assertThatThrownBy(() -> cache.getFile(0))
                 .isSameAs(error)

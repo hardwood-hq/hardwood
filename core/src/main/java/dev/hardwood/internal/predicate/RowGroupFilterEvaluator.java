@@ -10,6 +10,7 @@ package dev.hardwood.internal.predicate;
 import java.io.IOException;
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
@@ -216,65 +217,65 @@ public class RowGroupFilterEvaluator {
             // bits of a literal do not depend on how the column orders them.
             case ResolvedPredicate.IntPredicate p -> p.op() == FilterPredicate.Operator.EQ
                     && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value())
-                            || DictionaryFilterSupport.valueAbsent(dictionary(dictionaries, p.columnIndex()), p.value()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsent(d, p.value())));
             case ResolvedPredicate.UnsignedIntPredicate p -> p.op() == FilterPredicate.Operator.EQ
                     && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value())
-                            || DictionaryFilterSupport.valueAbsent(dictionary(dictionaries, p.columnIndex()), p.value()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsent(d, p.value())));
             case ResolvedPredicate.LongPredicate p -> p.op() == FilterPredicate.Operator.EQ
                     && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value())
-                            || DictionaryFilterSupport.valueAbsent(dictionary(dictionaries, p.columnIndex()), p.value()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsent(d, p.value())));
             case ResolvedPredicate.UnsignedLongPredicate p -> p.op() == FilterPredicate.Operator.EQ
                     && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value())
-                            || DictionaryFilterSupport.valueAbsent(dictionary(dictionaries, p.columnIndex()), p.value()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsent(d, p.value())));
             // The NaN case is repeated from BloomFilterSupport so the filter is not read for a
             // value it could not decide either way. The dictionary holds the chunk's exact values,
             // so it decides a NaN probe and stays in play.
             case ResolvedPredicate.FloatPredicate p -> p.op() == FilterPredicate.Operator.EQ
                     && ((!Float.isNaN(p.value())
                             && BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value()))
-                            || DictionaryFilterSupport.valueAbsent(dictionary(dictionaries, p.columnIndex()), p.value()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsent(d, p.value())));
             case ResolvedPredicate.DoublePredicate p -> p.op() == FilterPredicate.Operator.EQ
                     && ((!Double.isNaN(p.value())
                             && BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value()))
-                            || DictionaryFilterSupport.valueAbsent(dictionary(dictionaries, p.columnIndex()), p.value()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsent(d, p.value())));
             // No bloom check: a bloom filter hashes the 2-byte stored form, so probing it would
             // mean narrowing the predicate to binary16 first — lossy, and a probe rounded to a
             // neighbouring value would prove the wrong one absent. The dictionary holds the stored
             // values, so its entries can be widened instead and compared exactly.
             case ResolvedPredicate.Float16Predicate p -> p.op() == FilterPredicate.Operator.EQ
-                    && DictionaryFilterSupport.valueAbsentFloat16(dictionary(dictionaries, p.columnIndex()), p.value());
+                    && dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsentFloat16(d, p.value()));
             case ResolvedPredicate.BinaryPredicate p -> p.op() == FilterPredicate.Operator.EQ
                     && p.byteExact()
                     && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value())
-                            || DictionaryFilterSupport.valueAbsent(dictionary(dictionaries, p.columnIndex()), p.value()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.valueAbsent(d, p.value())));
             // A membership test drops the row group only where every probe is absent.
             case ResolvedPredicate.IntInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values());
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             case ResolvedPredicate.UnsignedIntInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values());
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             case ResolvedPredicate.LongInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values());
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             case ResolvedPredicate.UnsignedLongInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values());
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             case ResolvedPredicate.BinaryInPredicate p -> p.byteExact()
                     && (BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values())));
             case ResolvedPredicate.FloatInPredicate p ->
                     (!BloomFilterSupport.anyNaN(p.values())
                             && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
-                            || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values());
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             case ResolvedPredicate.DoubleInPredicate p ->
                     (!BloomFilterSupport.anyNaN(p.values())
                             && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
-                            || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values());
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             // As for Float16Predicate: the dictionary holds the chunk's exact halves and decides
             // membership.
             case ResolvedPredicate.Float16InPredicate p ->
-                    DictionaryFilterSupport.absentAllFloat16(dictionary(dictionaries, p.columnIndex()), p.values());
+                    dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAllFloat16(d, p.values()));
             // A BOOLEAN column holds two values, which its min/max already decide between.
             case ResolvedPredicate.BooleanPredicate ignored -> false;
             // These name no literal to look for: a null predicate asks about absence itself, and
@@ -330,9 +331,9 @@ public class RowGroupFilterEvaluator {
 
     /// Resolves the column's dictionary, or `null` when no source is supplied or the chunk has
     /// none. See [#bloom] for why the read is here.
-    private static Dictionary dictionary(RowGroupDictionaryFilterSource dictionaries, int columnIndex)
-            throws IOException {
-        return dictionaries == null ? null : dictionaries.forColumn(columnIndex);
+    private static boolean dictionaryAbsent(RowGroupDictionaryFilterSource dictionaries, int columnIndex,
+            Predicate<Dictionary> check) throws IOException {
+        return dictionaries != null && dictionaries.absent(columnIndex, check);
     }
 
 }

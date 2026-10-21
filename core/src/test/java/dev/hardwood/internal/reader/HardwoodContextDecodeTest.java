@@ -57,6 +57,46 @@ class HardwoodContextDecodeTest {
         }
     }
 
+    /// A computation a thread off the pool hands over runs on a pool thread; one a pool thread asks
+    /// for runs in place, as the pool would otherwise need a thread its caller holds.
+    @Test
+    void computesOnAPoolThreadAndInPlaceOnOne() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
+            Thread caller = Thread.currentThread();
+
+            Thread runner = context.compute("test", Thread::currentThread);
+
+            assertThat(runner.getName()).startsWith("hardwood-");
+            assertThat(runner).isNotSameAs(caller);
+            AtomicReference<Thread[]> threads = new AtomicReference<>();
+            CountDownLatch done = new CountDownLatch(1);
+            context.execute(buffers -> {
+                threads.set(new Thread[] {Thread.currentThread(), context.compute("nested", Thread::currentThread)});
+                done.countDown();
+            });
+            assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(threads.get()[1]).isSameAs(threads.get()[0]);
+        }
+    }
+
+    /// A computation's failure reaches the waiting thread as it was thrown, and a computation
+    /// asked for once the context is closed fails as a read on a closed context does.
+    @Test
+    void computeThrowsTheFailureAndFailsOnAClosedContext() {
+        IllegalArgumentException failure = new IllegalArgumentException("malformed index");
+        HardwoodContextImpl context = HardwoodContextImpl.create(1);
+
+        assertThatThrownBy(() -> context.compute("test", () -> {
+            throw failure;
+        })).isSameAs(failure).hasMessage("malformed index");
+
+        context.close();
+        assertThatThrownBy(() -> context.compute("test", () -> "late"))
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessage("The HardwoodContext was closed while a reader using it was reading")
+                .hasCauseInstanceOf(RejectedExecutionException.class);
+    }
+
     /// A decode a thread waits for runs ahead of the tasks queued before it, which keep their
     /// order: they are read-ahead, and the waiting read can go on only once its decode is done.
     @Test

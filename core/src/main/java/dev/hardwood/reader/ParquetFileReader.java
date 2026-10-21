@@ -128,8 +128,7 @@ public class ParquetFileReader implements Closeable {
                               boolean metadataFilteringEnabled, boolean ownsContext, boolean ownsInputFiles) {
         this.inputFiles = inputFiles;
         this.firstFileMetaData = firstFileFooter.metaData();
-        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, context.metadataSource(),
-                context.ioExecutor());
+        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, context);
         this.schema = firstFileFooter.schema();
         this.context = context;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;

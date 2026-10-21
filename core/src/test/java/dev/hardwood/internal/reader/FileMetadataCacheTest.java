@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -35,6 +37,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FileMetadataCacheTest {
 
+    private final List<HardwoodContextImpl> contexts = new ArrayList<>();
+
+    @AfterEach
+    void closeContexts() {
+        contexts.forEach(HardwoodContextImpl::close);
+    }
+
+    /// A cache of `file` whose prefetches run on `ioExecutor`.
+    private FileMetadataCache cache(InputFile file, Executor ioExecutor) {
+        HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(1, ioExecutor);
+        contexts.add(context);
+        return new FileMetadataCache(List.of(file), context);
+    }
+
     private static final long WAIT_SECONDS = 5;
     private static final String FIRST_FILE = "src/test/resources/multi_file_part0.parquet";
     private static final String LATER_FILE = "src/test/resources/multi_file_part1.parquet";
@@ -43,7 +59,7 @@ class FileMetadataCacheTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void concurrentCheckedAndDataLookupsJoinOneInProgressLoad() throws Exception {
         LatchInputFile inputFile = LatchInputFile.blocked(LATER_FILE);
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE, Runnable::run);
+        FileMetadataCache cache = cache(inputFile, Runnable::run);
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<FileMetaData> firstChecked = executor.submit(() -> cache.getFileMetaData(0));
@@ -84,8 +100,7 @@ class FileMetadataCacheTest {
     @Test
     void footerWithoutAPrefetchIsLoadedOnTheCallingThread() throws Exception {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE,
-                task -> {
+        FileMetadataCache cache = cache(inputFile, task -> {
                     throw new AssertionError("a footer the caller waits for runs on the caller's thread");
                 });
 
@@ -103,8 +118,7 @@ class FileMetadataCacheTest {
     void prefetchLoadsOnTheExecutorAndALaterLookupJoinsIt() throws Exception {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
         List<Runnable> queued = new ArrayList<>();
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE,
-                queued::add);
+        FileMetadataCache cache = cache(inputFile, queued::add);
 
         try {
             cache.prefetch(0);
@@ -126,7 +140,7 @@ class FileMetadataCacheTest {
     @Test
     void closePreventsLaterLoadsWithoutClosingInputs() throws Exception {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE, Runnable::run);
+        FileMetadataCache cache = cache(inputFile, Runnable::run);
 
         cache.close();
         cache.prefetch(0);

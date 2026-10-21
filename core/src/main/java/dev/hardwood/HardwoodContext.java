@@ -76,8 +76,9 @@ public interface HardwoodContext extends AutoCloseable {
     @Experimental
     interface Builder {
 
-        /// Sets the number of platform threads the context uses to decompress and decode pages, and
-        /// to encode and compress the column chunks of a writer's row groups.
+        /// Sets the number of platform threads the context uses to decompress and decode pages, to
+        /// parse the footers and page indexes a read reads as it goes and scan dictionaries for a
+        /// filter's values, and to encode and compress the column chunks of a writer's row groups.
         /// Defaults to [Runtime#availableProcessors()].
         ///
         /// @throws IllegalArgumentException if `threads` is less than 1

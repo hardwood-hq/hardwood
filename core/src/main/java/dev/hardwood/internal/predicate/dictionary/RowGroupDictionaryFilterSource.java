@@ -9,6 +9,7 @@ package dev.hardwood.internal.predicate.dictionary;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.function.Predicate;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -61,6 +62,15 @@ public final class RowGroupDictionaryFilterSource {
             read[columnIndex] = true;
         }
         return dictionaries[columnIndex];
+    }
+
+    /// Whether `check` proves a literal absent from the column's dictionary, reading the
+    /// dictionary first, on the calling thread; `false` where the column has none it can use. The
+    /// check scans every entry, up to milliseconds for a large dictionary, so it runs on the
+    /// context's pool, which bounds a read's CPU.
+    public boolean absent(int columnIndex, Predicate<Dictionary> check) throws IOException {
+        Dictionary dictionary = forColumn(columnIndex);
+        return dictionary != null && context.compute("dictionary check", () -> check.test(dictionary));
     }
 
     /// The column's dictionary if [#forColumn] has read it, or `null` without reading anything.

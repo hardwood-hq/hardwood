@@ -67,7 +67,8 @@ public final class ParquetMetadataReader {
     /// @throws ParquetReadException if what it holds is not a Parquet file
     public static FileMetaData readMetadata(InputFile inputFile) throws IOException {
         long fileSize = inputFile.length();
-        return parse(inputFile, readTrailer(inputFile, fileSize), fileSize).metaData();
+        int footerLength = readTrailer(inputFile, fileSize);
+        return parseBody(inputFile, readBody(inputFile, footerLength, fileSize)).metaData();
     }
 
     /// Reads the footer of an [InputFile] and derives the reader's schema from it.
@@ -80,11 +81,37 @@ public final class ParquetMetadataReader {
     /// @throws IOException if the file cannot be read
     /// @throws ParquetReadException if what it holds is not a Parquet file
     public static FileFooter read(InputFile inputFile) throws IOException {
+        FooterBytes bytes = fetch(inputFile);
+        return parse(inputFile, bytes);
+    }
+
+    /// As [#read(InputFile)], with the footer read on the calling thread and parsed on
+    /// `context`'s pool, which bounds the CPU a read takes: a footer costs about a microsecond to
+    /// parse per column chunk, tens of milliseconds for a wide file of many row groups.
+    static FileFooter read(InputFile inputFile, HardwoodContextImpl context) throws IOException {
+        FooterBytes bytes = fetch(inputFile);
+        return context.compute("footer", () -> parse(inputFile, bytes));
+    }
+
+    /// A footer's bytes as read from the file, before they are parsed.
+    private record FooterBytes(ByteBuffer body, int footerLength, long fileSize) {
+    }
+
+    private static FooterBytes fetch(InputFile inputFile) throws IOException {
         try {
             long fileSize = inputFile.length();
             int footerLength = readTrailer(inputFile, fileSize);
-            ReadFooter footer = parse(inputFile, footerLength, fileSize);
-            return new FileFooter(footer, schemaOf(footer.metaData()), footerLength, fileSize);
+            return new FooterBytes(readBody(inputFile, footerLength, fileSize), footerLength, fileSize);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(inputFile.name(), ExceptionContext.asReadFailure(e));
+        }
+    }
+
+    private static FileFooter parse(InputFile inputFile, FooterBytes bytes) {
+        try {
+            ReadFooter footer = parseBody(inputFile, bytes.body());
+            return new FileFooter(footer, schemaOf(footer.metaData()), bytes.footerLength(), bytes.fileSize());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(inputFile.name(), ExceptionContext.asReadFailure(e));
@@ -116,8 +143,16 @@ public final class ParquetMetadataReader {
     /// @param source the context's source, [#FROM_FILE] when none is installed
     /// @throws StaleMetadataException if the supplied footer does not describe the file
     public static FileFooter load(InputFile inputFile, MetadataSource source) throws IOException {
+        return load(inputFile, source, null);
+    }
+
+    /// As [#load(InputFile, MetadataSource)], with a footer read from the file parsed on
+    /// `context`'s pool ([#read(InputFile, HardwoodContextImpl)]), or on the calling thread when
+    /// `context` is `null`.
+    static FileFooter load(InputFile inputFile, MetadataSource source, HardwoodContextImpl context)
+            throws IOException {
         if (source == FROM_FILE) {
-            return read(inputFile);
+            return context == null ? read(inputFile) : read(inputFile, context);
         }
         ParsedFooter supplied;
         try {
@@ -216,12 +251,14 @@ public final class ParquetMetadataReader {
         return footerLength;
     }
 
-    private static ReadFooter parse(InputFile inputFile, int footerLength, long fileSize) throws IOException {
+    private static ByteBuffer readBody(InputFile inputFile, int footerLength, long fileSize) throws IOException {
         long footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
-        ByteBuffer footerBuffer;
         try (FetchReason.Scope ignored = FetchReason.set("footer-body")) {
-            footerBuffer = inputFile.readRange(footerStart, footerLength);
+            return inputFile.readRange(footerStart, footerLength);
         }
+    }
+
+    private static ReadFooter parseBody(InputFile inputFile, ByteBuffer footerBuffer) {
         ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
         try {
             return FileMetaDataReader.readFooter(reader);

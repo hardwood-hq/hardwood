@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.MetadataSource;
@@ -49,6 +50,18 @@ public class HardwoodContextImpl implements HardwoodContext {
 
         /// @param caller the thread that asked for the decode, which waits for it
         void decoding(Thread caller);
+    }
+
+    /// Told of every computation [#compute] hands to the pool, on the thread running it; for tests
+    /// of where metadata parsing runs. `null` for none.
+    static volatile ComputeObserver computeObserver;
+
+    /// Sees each computation [#compute] hands to the pool.
+    interface ComputeObserver {
+
+        /// @param what the work, as [#compute] names it
+        /// @param caller the thread that asked for it, which waits for it
+        void computing(String what, Thread caller);
     }
 
     private final ExecutorService executor;
@@ -174,6 +187,33 @@ public class HardwoodContextImpl implements HardwoodContext {
                     observer.decoding(caller);
                 }
                 return work.apply(buffers);
+            });
+        }
+        catch (RejectedExecutionException e) {
+            throw ScheduledColumn.contextClosed(e);
+        }
+    }
+
+    /// Runs `work`, CPU work a thread off the pool needs, such as parsing a footer or a page
+    /// index, on the context's pool and waits for its result, so that it runs on the threads the
+    /// context bounds rather than on the caller's. On a thread of the pool it runs in place. Like
+    /// [#decode], it runs ahead of the tasks already queued. A failure of `work` is thrown as it
+    /// was thrown.
+    ///
+    /// @param what names the work, for [#computeObserver]
+    /// @throws IllegalStateException if the context is closed
+    public <T> T compute(String what, Supplier<T> work) {
+        Thread caller = Thread.currentThread();
+        if (poolThreads.contains(caller)) {
+            return work.get();
+        }
+        try {
+            return decodeExecutor.decode(buffers -> {
+                ComputeObserver observer = computeObserver;
+                if (observer != null) {
+                    observer.computing(what, caller);
+                }
+                return work.get();
             });
         }
         catch (RejectedExecutionException e) {

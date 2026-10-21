@@ -290,7 +290,7 @@ public class RowGroupIterator implements Closeable {
     ///        semantics.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip, long physicalSkip) {
-        this(new FileMetadataCache(inputFiles, context.metadataSource(), context.ioExecutor()), true, NO_CLOSE_LISTENER, context,
+        this(new FileMetadataCache(inputFiles, context), true, NO_CLOSE_LISTENER, context,
                 maxRows, tailSkip, physicalSkip);
     }
 
@@ -518,10 +518,12 @@ public class RowGroupIterator implements Closeable {
 
                 RowRanges matchingRows = RowRanges.ALL;
                 if (pageFiltering) {
-                    matchingRows = PageFilterEvaluator.computeMatchingRows(
+                    // Parsing the filter columns' column indexes and evaluating each page is CPU
+                    // work, so it runs on the pool, which bounds a read's CPU.
+                    matchingRows = context.compute("page filter", () -> PageFilterEvaluator.computeMatchingRows(
                             workItem.columnOrdinals().filter(), workItem.rowGroup(), indexBuffers,
                             new LogContext(workItem.inputFile().name(), workItem.rowGroupIndex()),
-                            workItem.columnOrdinals().boundsReadability());
+                            workItem.columnOrdinals().boundsReadability()));
                 }
 
                 // Probed only when a plan would apply a page mask: an unfiltered scan
@@ -997,7 +999,6 @@ public class RowGroupIterator implements Closeable {
         }
         RowGroup rowGroup = workItem.rowGroup();
         RowRanges matchingRows = shared.matchingRows();
-        InputFile inputFile = workItem.inputFile();
 
         // Apply the tail-read fast path's synthesized matching range here
         // (rather than in `getSharedMetadata`) so the cached metadata stays
@@ -1038,6 +1039,24 @@ public class RowGroupIterator implements Closeable {
         // perRgMaxRows returns 0 and the matched-row cap is enforced at the reader.
         long perRgMaxRows = perRgMaxRows(workItem);
 
+        // Parsing the page index and building the plans is CPU work that grows with the projected
+        // columns and their pages, so it runs on the pool, which bounds a read's CPU.
+        RowRanges planned = matchingRows;
+        FetchPlan[] plans = context.compute("fetch plans", () -> columnPlans(
+                workItem, shared, planned, pageFilterApplied, perRgMaxRows));
+
+        // Last, once nothing above can fail: a speculative plan that fails is planned again on
+        // demand, and the batch plan takes each row group once.
+        return new RowGroupPlans(plans, planBatches(workItem, matchingRows.rowCount(rowGroup.numRows())));
+    }
+
+    /// Builds the fetch plan of every decoded column of `workItem`'s row group from its offset
+    /// indexes, then coalesces them across columns. Reads nothing: the plans fetch lazily.
+    private FetchPlan[] columnPlans(WorkItem workItem, SharedRowGroupMetadata shared, RowRanges matchingRows,
+                                    boolean pageFilterApplied, long perRgMaxRows) {
+        int projectedCount = projection.decoded().getProjectedColumnCount();
+        RowGroup rowGroup = workItem.rowGroup();
+        InputFile inputFile = workItem.inputFile();
         FetchPlan[] plans = new FetchPlan[projectedCount];
 
         for (int projCol = 0; projCol < projectedCount; projCol++) {
@@ -1156,10 +1175,7 @@ public class RowGroupIterator implements Closeable {
         }
 
         coalesceAcrossColumns(plans, inputFile, workItem);
-
-        // Last, once nothing above can fail: a speculative plan that fails is planned again on
-        // demand, and the batch plan takes each row group once.
-        return new RowGroupPlans(plans, planBatches(workItem, matchingRows.rowCount(rowGroup.numRows())));
+        return plans;
     }
 
     /// Plans `workItem`'s batches from the rows its page masks keep, or returns `null` when the

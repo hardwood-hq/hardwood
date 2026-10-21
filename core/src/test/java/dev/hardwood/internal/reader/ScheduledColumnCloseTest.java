@@ -178,15 +178,15 @@ class ScheduledColumnCloseTest {
     void stopReachesAFetcherTakingTheColumnLock() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
-            CountDownLatch releaseWorker = holdTheDecodeThread(context);
             AtomicReference<Thread> fetcherThread = new AtomicReference<>();
-            try (HeldRead read = HeldRead.start(context, reader, iterator -> new PageSource(iterator, 0) {
+            try (HeldRead read = HeldRead.startHoldingTheDecodeThread(context, reader, iterator -> new PageSource(iterator, 0) {
                 @Override
                 public PageInfo next() throws IOException {
                     fetcherThread.set(Thread.currentThread());
                     return super.next();
                 }
             })) {
+                CountDownLatch releaseWorker = read.releaseWorker();
                 ScheduledFlatColumn scheduled = read.column();
                 try {
                     awaitTrue(() -> scheduled.queued() == ScheduledColumn.FETCH_AHEAD && fetcherThread.get() != null
@@ -231,8 +231,8 @@ class ScheduledColumnCloseTest {
     void concurrentClosesBothReturnOnceThePageTaskFinishes() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
-            CountDownLatch releaseWorker = holdTheDecodeThread(context);
-            try (HeldRead read = HeldRead.start(context, reader, iterator -> new PageSource(iterator, 0))) {
+            try (HeldRead read = HeldRead.startHoldingTheDecodeThread(context, reader, iterator -> new PageSource(iterator, 0))) {
+                CountDownLatch releaseWorker = read.releaseWorker();
                 ScheduledFlatColumn scheduled = read.column();
                 Thread first;
                 Thread second;
@@ -264,8 +264,8 @@ class ScheduledColumnCloseTest {
     void interruptedCloseWaitsWithoutSpinning() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
-            CountDownLatch releaseWorker = holdTheDecodeThread(context);
-            try (HeldRead read = HeldRead.start(context, reader, iterator -> new PageSource(iterator, 0))) {
+            try (HeldRead read = HeldRead.startHoldingTheDecodeThread(context, reader, iterator -> new PageSource(iterator, 0))) {
+                CountDownLatch releaseWorker = read.releaseWorker();
                 ScheduledFlatColumn scheduled = read.column();
                 AtomicBoolean interruptedOnReturn = new AtomicBoolean();
                 Thread closer;
@@ -302,13 +302,28 @@ class ScheduledColumnCloseTest {
 
     /// One column of the first file's first leaf, its pipeline started on `context`, reading its
     /// pages through the [PageSource] `source` builds.
-    private record HeldRead(ScheduledFlatColumn column, RowGroupIterator iterator, InputFile inputFile)
-            implements AutoCloseable {
+    private record HeldRead(ScheduledFlatColumn column, RowGroupIterator iterator, InputFile inputFile,
+                            CountDownLatch releaseWorker) implements AutoCloseable {
 
         private static final int BATCH_CAPACITY = 64;
 
         static HeldRead start(HardwoodContextImpl context, ParquetFileReader reader,
-                              Function<RowGroupIterator, PageSource> source) throws IOException {
+                              Function<RowGroupIterator, PageSource> source) throws IOException, InterruptedException {
+            return start(context, reader, source, false);
+        }
+
+        /// As [#start], with the context's single decode thread held until [#releaseWorker()] is
+        /// counted down, so that the column's page tasks stay in flight. The first row group is
+        /// planned before, as planning parses its offset indexes on the pool.
+        static HeldRead startHoldingTheDecodeThread(HardwoodContextImpl context, ParquetFileReader reader,
+                                                    Function<RowGroupIterator, PageSource> source)
+                throws IOException, InterruptedException {
+            return start(context, reader, source, true);
+        }
+
+        private static HeldRead start(HardwoodContextImpl context, ParquetFileReader reader,
+                                      Function<RowGroupIterator, PageSource> source, boolean holdDecodeThread)
+                throws IOException, InterruptedException {
             FileSchema schema = reader.getFileSchema();
             ColumnSchema column = schema.getColumn(0);
             InputFile inputFile = InputFile.of(FILE);
@@ -317,12 +332,17 @@ class ScheduledColumnCloseTest {
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
             iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
             iterator.planBatches(BATCH_CAPACITY, 0);
+            CountDownLatch releaseWorker = null;
+            if (holdDecodeThread) {
+                iterator.getColumnPlan(iterator.workItemAt(0), 0);
+                releaseWorker = holdTheDecodeThread(context);
+            }
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), BATCH_CAPACITY);
             ReadScheduler scheduler = new ReadScheduler(context, BATCH_CAPACITY, BATCH_CAPACITY);
             ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, source.apply(iterator), exchange,
                     column, BATCH_CAPACITY, context.decompressorFactory(), null);
             scheduler.start();
-            return new HeldRead(scheduled, iterator, inputFile);
+            return new HeldRead(scheduled, iterator, inputFile, releaseWorker);
         }
 
         @Override

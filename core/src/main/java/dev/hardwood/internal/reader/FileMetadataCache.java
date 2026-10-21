@@ -17,7 +17,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.Executor;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.MetadataSource;
@@ -41,7 +40,7 @@ public final class FileMetadataCache {
 
     private final List<InputFile> inputFiles;
     private final MetadataSource metadataSource;
-    private final Executor prefetchExecutor;
+    private final HardwoodContextImpl context;
     private final Object lifecycleLock = new Object();
     private final Map<Integer, CompletableFuture<PreparedFile>> fileFutures = new HashMap<>();
     /// Prefetched loads no caller has asked for, whose failure [#close()] reports. Guarded by
@@ -50,24 +49,23 @@ public final class FileMetadataCache {
     private final CompletableFuture<Void> closeCompletion = new CompletableFuture<>();
     private boolean closeStarted;
 
-    /// @param metadataSource the context's source of footers, [ParquetMetadataReader#FROM_FILE]
-    ///        to read each footer from its file
-    /// @param prefetchExecutor where the loads [#prefetch] starts run
-    FileMetadataCache(List<InputFile> inputFiles, MetadataSource metadataSource, Executor prefetchExecutor) {
+    /// @param context the read's context: its source of footers, the I/O executor the loads
+    ///        [#prefetch] starts run on, and the pool each footer is parsed on
+    FileMetadataCache(List<InputFile> inputFiles, HardwoodContextImpl context) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
         this.inputFiles = List.copyOf(inputFiles);
-        this.metadataSource = metadataSource;
-        this.prefetchExecutor = prefetchExecutor;
+        this.metadataSource = context.metadataSource();
+        this.context = context;
     }
 
     /// Seeds the first file's footer, already loaded by the owning
     /// [dev.hardwood.reader.ParquetFileReader], so that opening the reader and
     /// inspecting index `0` never load it twice.
     public FileMetadataCache(List<InputFile> inputFiles, FileFooter firstFileFooter,
-                             MetadataSource metadataSource, Executor prefetchExecutor) {
-        this(inputFiles, metadataSource, prefetchExecutor);
+                             HardwoodContextImpl context) {
+        this(inputFiles, context);
         fileFutures.put(0, CompletableFuture.completedFuture(
                 PreparedFile.of(this.inputFiles.getFirst(), firstFileFooter)));
     }
@@ -128,7 +126,7 @@ public final class FileMetadataCache {
         }
         CompletableFuture<PreparedFile> future = registration.future();
         try {
-            prefetchExecutor.execute(() -> load(fileIndex, future));
+            context.ioExecutor().execute(() -> load(fileIndex, future));
         }
         catch (RuntimeException | Error e) {
             // A load that never starts must not leave its waiters, and close, waiting forever.
@@ -260,7 +258,7 @@ public final class FileMetadataCache {
 
         FileFooter footer;
         try {
-            footer = ParquetMetadataReader.load(inputFile, metadataSource);
+            footer = ParquetMetadataReader.load(inputFile, metadataSource, context);
         }
         catch (StaleMetadataException e) {
             // Carried as the cause alone, so that getFile unwraps it to the exception itself.
