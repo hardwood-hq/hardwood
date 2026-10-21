@@ -116,7 +116,7 @@ The readers from `getColumnReader(...)` show the group's current batch. `ColumnR
 
 ### Retaining and Handing Off Batch Arrays
 
-The arrays and `Validity` objects returned by the accessors belong to the current batch and are freshly allocated on each `nextBatch()`, except `Validity.NO_NULLS`, which is a shared immutable instance, and the `BinaryDictionary` from `getBinaryDictionary()` (see [Dictionary-Encoded Columns](#dictionary-encoded-columns)), whose entries never change. A later `nextBatch()` never reuses or overwrites an array returned for an earlier batch, so you can keep a returned array and process it after advancing, including by handing it to another thread:
+Each `nextBatch()` allocates new arrays and `Validity` objects for the batch, and never reuses or overwrites those returned for an earlier batch. You can keep a returned array after advancing and process it later, including on another thread:
 
 ```java
 while (columns.nextBatch()) {
@@ -129,6 +129,12 @@ while (columns.nextBatch()) {
 ```
 
 The reader stays a single-threaded cursor: only the loop thread calls `nextBatch()`. The *returned arrays* are detached and safe to read on other threads, as is the `BinaryValues` from `getBinaryValues()`.
+
+Three returned objects are shared across batches instead of allocated per batch:
+
+- `Validity.NO_NULLS` is one immutable instance.
+- The `BinaryDictionary` from `getBinaryDictionary()` is the column chunk's dictionary, whose entries never change (see [Dictionary-Encoded Columns](#dictionary-encoded-columns)).
+- For a dictionary-encoded value, `getBinaryValues().buffer(i)` returns the array holding the dictionary's entries, which every batch using that dictionary shares. Do not write to it.
 
 ### Dictionary-Encoded Columns
 

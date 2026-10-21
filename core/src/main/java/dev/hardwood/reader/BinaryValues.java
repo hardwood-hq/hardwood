@@ -29,9 +29,11 @@ import dev.hardwood.Experimental;
 /// }
 /// ```
 ///
-/// `buffer(i)` is an array value `i` can be read from, valid as long as the batch is. Do not
-/// write to it. Values may or may not share an array, and nothing is promised about which array
-/// a value is read from or about bytes outside its range.
+/// `buffer(i)` is an array value `i` can be read from. Do not write to it: the array of a
+/// dictionary-encoded value holds the dictionary's entries, which every batch drawing on that
+/// dictionary reads, so a write changes values of earlier and later batches as well. Values may
+/// or may not share an array, within a batch or across batches, and nothing is promised about
+/// which array a value is read from or about bytes outside its range.
 ///
 /// **This API is [Experimental]:** it may change in future releases without prior
 /// deprecation.
