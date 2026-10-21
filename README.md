@@ -21,7 +21,7 @@ It is built to be:
 Besides the core library, Hardwood provides a ready-to-use CLI for inspecting and analysing Parquet files,
 including an interactive TUI for exploring a file's schema, row groups, pages, and data.
 
-Latest version: 1.1.0.Beta2, 2026-10-11
+Latest version: 1.1.0.Beta3, 2026-10-21
 
 ## Documentation
 
@@ -33,7 +33,7 @@ Full documentation is available at **[hardwood.dev](https://hardwood.dev/)**.
 <dependency>
     <groupId>dev.hardwood</groupId>
     <artifactId>hardwood-core</artifactId>
-    <version>1.1.0.Beta2</version>
+    <version>1.1.0.Beta3</version>
 </dependency>
 ```
 
