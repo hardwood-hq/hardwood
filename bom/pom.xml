@@ -73,6 +73,11 @@
       </dependency>
       <dependency>
         <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-arrow</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
         <artifactId>hardwood-parquet-java-compat</artifactId>
         <version>${project.version}</version>
       </dependency>
@@ -97,6 +102,40 @@
         <groupId>com.aayushatharva.brotli4j</groupId>
         <artifactId>brotli4j</artifactId>
         <version>1.23.0</version>
+      </dependency>
+
+      <!-- Arrow Java, used by hardwood-arrow. The memory backend (unsafe or netty) is the
+           application's choice; arrow-c-data and arrow-dataset are managed here so that the
+           module's tests take the same version without naming it. -->
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-vector</artifactId>
+        <version>19.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-memory-core</artifactId>
+        <version>19.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-memory-unsafe</artifactId>
+        <version>19.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-memory-netty</artifactId>
+        <version>19.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-c-data</artifactId>
+        <version>19.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-dataset</artifactId>
+        <version>19.0.0</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
