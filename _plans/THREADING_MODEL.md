@@ -35,6 +35,8 @@ Invariants of the end state:
   request: a step whose bytes are not present issues the request and yields.
 - A virtual thread does I/O and nothing else; work that needs the bytes it fetched runs on the
   pool, where the read needs it.
+- Every read of an `InputFile` goes through the context's I/O scheduler, the reads a caller
+  waits for on its own thread included; a check fails the build on a read issued past it.
 - The reads sharing a context share its pool fairly: no read's read-ahead queues ahead of
   another read's head-of-line page.
 - Within a read, control steps and work a reader waits for run before read-ahead, and
@@ -67,7 +69,7 @@ read keeps its prefetches.
 | 3 | Fetchers as steps on the pool | #1597 | done |
 | 4 | Steps never wait on I/O | #1598 | see below |
 | 5 | Single-threaded mode: `threads(0)` | #1022 | see below |
-| 6 | One I/O scheduler per context | #1264 | #1397's plan |
+| 6 | One I/O scheduler per context | #1264 | see below |
 | 7 | The pool's queue: fairness across reads, priority within a read | #1564, #1590 | see below |
 
 | # | What it changes | What it buys |
@@ -128,7 +130,9 @@ by I/O, and no decode waits for the thread. The stage is structural: it is what 
 a request back for its budget, it frees the pool for the other reads of a shared context, and it
 leaves a thread of the pool doing CPU work only.
 
-**Gate.** A test that every `InputFile` access of a read happens on a virtual thread; `run-s3`
+**Gate.** A test that every `InputFile` access of a read happens on a virtual thread, apart from
+the reads the caller makes on its own thread before the read starts (the first footer, the
+initial planning probes), which stage 6 takes over; `run-s3`
 at both latencies against stage 3; a shared-context read (a local scan beside a remote one) on
 the container and the N300.
 
@@ -153,9 +157,16 @@ zero-thread context; user docs (`concepts/concurrency-model.md`, `reference/`).
 **Changes.** #1264, designed in #1397's plan. The requests come from the steps' yields and the speculative
 tasks' reads, the places stages 3 and 4 leave, so the scheduler replaces `ioExecutor()` and the
 one-ahead rules of `ChunkHandle`, `SharedRegion`, the next row group and the next file with its
-read-ahead depth.
+read-ahead depth. The reads a caller makes on its own thread (the first footer, the initial
+planning probes) become requests to the scheduler too, whose completion the caller waits for, so
+they count against the context's budgets. Once every read goes through the scheduler, it is the
+only code that calls `InputFile.readRange`; a check enforces that at build time, such as an
+Error Prone check like `NoThreadLocal`, since a test sees only the reads its fixtures reach.
 
 **Buys.** Remote throughput within a memory budget, and one place where requests are merged, split and skipped by #1397's cost model.
+
+**Gate.** The build-time check that only the scheduler calls `InputFile.readRange`; the
+benchmarks of #1397's plan.
 
 ### Stage 7: the pool's queue
 
