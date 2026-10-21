@@ -13,6 +13,12 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
+## 1.1.0.Beta3
+
+**Bug fixes:**
+
+- The native CLI rejects TLS certificates issued under intermediate CAs whose private keys have been compromised, including with a trust store passed via `-Djavax.net.ssl.trustStore` ([#1604](https://github.com/hardwood-hq/hardwood/issues/1604))
+
 ## 1.1.0.CR1 (unreleased)
 
 **Deprecations:**

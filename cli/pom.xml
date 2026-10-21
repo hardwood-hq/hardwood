@@ -493,6 +493,21 @@
             <groupId>org.codehaus.mojo</groupId>
             <artifactId>exec-maven-plugin</artifactId>
             <executions>
+              <!-- native-image bakes the build JDK's blocked.certs into the binary; fail the
+                   build before it runs if that list lacks an entry of src/main/trust/blocked.certs. -->
+              <execution>
+                <id>check-blocked-certificates</id>
+                <phase>process-classes</phase>
+                <goals>
+                  <goal>java</goal>
+                </goals>
+                <configuration>
+                  <mainClass>dev.hardwood.cli.internal.CheckBlockedCertificates</mainClass>
+                  <arguments>
+                    <argument>${project.basedir}/src/main/trust/blocked.certs</argument>
+                  </arguments>
+                </configuration>
+              </execution>
               <execution>
                 <id>generate-completion</id>
                 <phase>prepare-package</phase>

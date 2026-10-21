@@ -10,6 +10,12 @@ A local GraalVM (Java 25+) is required to build a native binary for your own pla
 sdk install java 25.0.2-graalce
 ```
 
+The native build fails until the GraalVM's `lib/security/blocked.certs` lists every certificate in [cli/src/main/trust/blocked.certs](cli/src/main/trust/blocked.certs) (see [Blocked certificates](#blocked-certificates)). Add them once per GraalVM installation:
+
+```bash
+tools/block-certificates.sh
+```
+
 ### Local build
 
 Build the native binary for the `cli` module and its dependencies:
@@ -70,6 +76,12 @@ The solution differs by codec:
 | `-march=compatibility` | Produces a binary targeting a generic x86\_64/arm64 baseline rather than the build machine's specific CPU generation. Without this, the binary may crash with `SIGILL` on older hardware. |
 | `--gc=serial` | Replaces the default G1 garbage collector with the serial GC, removing GC infrastructure code from the binary. Appropriate for a short-lived CLI process and meaningfully reduces binary size. |
 | `-J--enable-native-access=ALL-UNNAMED` | Passed to the JVM _running the Mandrel build process_ (not the native image itself). Required because GraalVM's image builder uses native access internally on JDK 21+. |
+
+### Blocked certificates
+
+native-image reads the build JDK's `lib/security/blocked.certs` at build time and bakes the list into the binary. The binary rejects any chain containing a listed certificate, including chains a trust store passed with `-Djavax.net.ssl.trustStore` at run time would otherwise accept. `cli/src/main/trust/blocked.certs` lists compromised intermediates, not their roots, so the roots and the legitimate chains they anchor stay trusted.
+
+`tools/block-certificates.sh` adds the missing entries to a JDK's list; every CI job that builds the binary runs it after setting up GraalVM. In the `native` profile, `CheckBlockedCertificates` runs before native-image and fails the build if the list lacks an entry. Both locate the JDK the way native-maven-plugin locates `native-image`: `GRAALVM_HOME`, else `JAVA_HOME`; the check falls back to the `native-image` on the `PATH`. An entry stays in `cli/src/main/trust/blocked.certs` after the JDK lists it itself; the script then adds nothing. The built binary carries each entry as its fingerprint string, which `NativeBinarySmokeIT.embedsEveryBlockedCertificate` checks; the release and early-access jobs run that test against each platform's binary before uploading it.
 
 ### Logging dependencies
 

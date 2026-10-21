@@ -297,6 +297,10 @@ jobs:
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 'Block distrusted certificates in Graal'
+        shell: bash
+        run: tools/block-certificates.sh "$JAVA_HOME"
+
       - name: 'Restore Maven dependencies'
         uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:

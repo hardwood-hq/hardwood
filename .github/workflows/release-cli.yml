@@ -62,8 +62,16 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
 
+      - name: 'Block distrusted certificates in Graal'
+        shell: bash
+        run: tools/block-certificates.sh "$JAVA_HOME"
+
       - name: 'Build Native Image'
-        run: ./mvnw -ntp -B -Dnative package -pl :hardwood-error-prone-checks,:hardwood-cli -am -DskipTests "-Ddist.qualifier=${{ inputs.release-version }}"
+        run: ./mvnw -ntp -B -Dnative install -pl :hardwood-error-prone-checks,:hardwood-cli -am -DskipTests "-Ddist.qualifier=${{ inputs.release-version }}"
+
+      - name: 'Check the binary blocks every certificate in cli/src/main/trust/blocked.certs'
+        shell: bash
+        run: ./mvnw -ntp -B failsafe:integration-test failsafe:verify -pl :hardwood-cli -Dfailsafe.excludedGroups= -Dgroups=native '-Dit.test=NativeBinarySmokeIT#embedsEveryBlockedCertificate'
 
       - name: 'Upload build artifact (tar.gz)'
         if: ${{ runner.os != 'Windows' }}
