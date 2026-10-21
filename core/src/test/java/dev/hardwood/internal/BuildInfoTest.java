@@ -28,12 +28,13 @@ class BuildInfoTest {
     }
 
     /// The revision comes from `git rev-parse --short=7`, so where it resolves at all it is
-    /// seven lowercase hex digits. [BuildInfo#UNKNOWN] is admitted because a build outside a
-    /// checkout legitimately reports it — but nothing else is, which is what catches a
+    /// at least seven lowercase hex digits, more where seven are ambiguous among the clone's
+    /// objects, and short of a full SHA's forty. [BuildInfo#UNKNOWN] is admitted because a build
+    /// outside a checkout legitimately reports it — but nothing else is, which is what catches a
     /// revision that came through as a full SHA, an error message, or a stray placeholder.
     @Test
     void resolvesTheRevisionToAShortCommitHashOrThePlaceholder() {
-        assertThat(BuildInfo.revision()).matches("[0-9a-f]{7}|" + BuildInfo.UNKNOWN);
+        assertThat(BuildInfo.revision()).matches("[0-9a-f]{7,39}|" + BuildInfo.UNKNOWN);
     }
 
     @Test
