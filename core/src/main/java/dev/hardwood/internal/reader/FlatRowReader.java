@@ -820,8 +820,12 @@ public final class FlatRowReader implements FileAwareRowReader {
             // Dictionary-encoded UTF8/ENUM/JSON: return the interned String (one per chunk).
             case STRING -> ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
             case INT96_TIMESTAMP -> LeafDecoder.int96TimestampAt(flatValueArrays[columnIndex], rowIndex);
-            case RAW, CONVERT -> LeafDecoder.decode(rawValueUnchecked(columnIndex),
-                    kinds[columnIndex], physicalTypes[columnIndex], columnSchemas[columnIndex].logicalType());
+            case RAW -> rawValueUnchecked(columnIndex);
+            case CONVERT -> flatValueArrays[columnIndex] instanceof BinaryBatchValues binary
+                    ? LeafDecoder.convertAt(binary, rowIndex, physicalTypes[columnIndex],
+                            columnSchemas[columnIndex].logicalType())
+                    : LeafDecoder.decode(rawValueUnchecked(columnIndex), LeafKind.CONVERT,
+                            physicalTypes[columnIndex], columnSchemas[columnIndex].logicalType());
             // A flat column is a leaf by construction: kinds[] is filled from the
             // physical-type overload, which never answers GROUP.
             case GROUP -> throw new IllegalStateException(prefix()

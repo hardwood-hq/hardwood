@@ -166,7 +166,11 @@ final class NestedBatchIndex {
         return switch (LeafKind.of(schema)) {
             case STRING -> getString(projectedCol, valueIndex);
             case INT96_TIMESTAMP -> LeafDecoder.int96TimestampAt(valueArrays[projectedCol], valueIndex);
-            case GROUP, RAW, CONVERT -> LeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
+            case CONVERT -> valueArrays[projectedCol] instanceof BinaryBatchValues binary
+                    && schema instanceof SchemaNode.PrimitiveNode leaf
+                    ? LeafDecoder.convertAt(binary, valueIndex, leaf.type(), leaf.logicalType())
+                    : LeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
+            case GROUP, RAW -> LeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
         };
     }
 

@@ -80,6 +80,23 @@ final class LeafDecoder {
         };
     }
 
+    /// Decode present value `idx` of a binary `CONVERT` leaf for a caller that takes whatever the
+    /// column holds, as [#decode] does. The annotations a typed accessor reads in place decode
+    /// from the bytes where they lie; any other takes a copy of the value, which it decodes or
+    /// returns.
+    static Object convertAt(BinaryBatchValues values, int idx, PhysicalType type, LogicalType logicalType) {
+        return switch (logicalType) {
+            case LogicalType.DecimalType dt -> values.decimalAt(idx, dt.scale());
+            case LogicalType.UuidType t -> values.uuidAt(idx);
+            case LogicalType.IntervalType t -> values.intervalAt(idx);
+            case LogicalType.Float16Type t -> values.float16At(idx);
+            case LogicalType.TimestampType tt -> tt.isAdjustedToUTC()
+                    ? values.flba12InstantAt(idx, tt.unit())
+                    : values.flba12LocalDateTimeAt(idx, tt.unit());
+            case null, default -> LogicalTypeConverter.convert(values.byteArrayAt(idx), type, logicalType);
+        };
+    }
+
     // ==================== Typed reads on the nested path ====================
 
     static LocalDate readDate(NestedBatchIndex batch, int projCol, int idx, SchemaNode.PrimitiveNode leaf) {
