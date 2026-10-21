@@ -37,6 +37,19 @@ RUN microdnf install -y --nodocs \
       python3-pip \
     && microdnf clean all
 
+# Distrust the two roots that chain to eMudhra's compromised intermediates
+# (https://emudhra.we-have-a-problem.com/). Fedora drops them in
+# ca-certificates 2026.2.92; this blocklist covers images built before that
+# version reaches the stable repository.
+RUN d=/etc/pki/ca-trust/source/blocklist \
+    && trust extract --overwrite --format=pem-bundle \
+         --filter='pkcs11:object=Comodo%20AAA%20Services%20root;type=cert' \
+         "$d/Comodo_AAA_Services_root.pem" \
+    && trust extract --overwrite --format=pem-bundle \
+         --filter='pkcs11:object=emSign%20ECC%20Root%20CA%20-%20G3;type=cert' \
+         "$d/emSign_ECC_Root_CA_-_G3.pem" \
+    && update-ca-trust
+
 # `gh stack`, the official extension, registers existing pull requests as a GitHub stack
 # (`gh stack link <pr>...`), which `gh` itself cannot do. It installs under /root/.local/share
 # rather than the mounted config volume, so it has to be baked in. Pinned because the extension is
@@ -49,6 +62,10 @@ RUN gh extension install github/gh-stack --pin "$GH_STACK_VERSION"
 ENV SDKMAN_DIR="/root/.sdkman"
 RUN curl -s "https://get.sdkman.io" | bash \
     && bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && sdk install java 25.0.4-tem"
+# Temurin ships its own cacerts; point it at the system trust store so the JDK
+# follows the same distrust decisions as curl, git and Python.
+RUN ln -sf /etc/pki/ca-trust/extracted/java/cacerts \
+      "$(readlink -f "$SDKMAN_DIR/candidates/java/current")/lib/security/cacerts"
 ENV PATH="$SDKMAN_DIR/candidates/java/current/bin:$PATH"
 ENV JAVA_HOME="$SDKMAN_DIR/candidates/java/current"
 
