@@ -28,9 +28,13 @@ import java.util.function.Function;
 /// A task that finds none free, which more tasks than threads running at once would need, gets a
 /// new set, dropped when it is given back.
 ///
-/// A decode a thread waits for ([#decode]) runs ahead of the tasks already queued on a pool built
-/// on [#newWorkQueue()]: the waiting thread is a read that cannot go on without it, while the
-/// queued tasks are read-ahead. Every other task runs in the order it arrived.
+/// A decode a thread waits for ([#decode]) and a column's fetch step ([#executeFirst]) run ahead
+/// of the tasks already queued on a pool built on [#newWorkQueue()]: the waiting thread is a read
+/// that cannot go on without the decode, and the read waits for the pages a fetch step fetches,
+/// while the queued tasks are read-ahead. Every other task runs in the order it arrived.
+///
+/// A task of the pool decodes in place ([#decodeInPlace]): it holds a thread of the pool already,
+/// and the pool may have no other thread to run the decode on.
 public final class DecodeExecutor {
 
     private final ExecutorService executor;
@@ -58,6 +62,43 @@ public final class DecodeExecutor {
         });
     }
 
+    /// Runs `task` on the pool without a set of buffers, at the head of the queue: a column's
+    /// fetch step, which the read waits for.
+    ///
+    /// @throws RejectedExecutionException if the pool is shut down
+    public void executeFirst(Runnable task) {
+        executor.execute(new First(task));
+    }
+
+    /// Runs `task` on the pool without a set of buffers, at the tail of the queue: speculative
+    /// work no thread waits for.
+    ///
+    /// @throws RejectedExecutionException if the pool is shut down
+    public void executeLast(Runnable task) {
+        executor.execute(task);
+    }
+
+    /// Runs `work` on the calling thread, a thread of the pool, with a set of buffers.
+    public <T> T decodeInPlace(Function<DecodeBuffers, T> work) {
+        DecodeBuffers buffers = take();
+        try {
+            return work.apply(buffers);
+        }
+        finally {
+            idle.offer(buffers);
+        }
+    }
+
+    /// Runs `task` on the pool, at the head of the queue, and waits for its result: work a thread
+    /// off the pool waits for, which another thread may also run, as a [FutureTask] runs once. A
+    /// failure is thrown as [#decode] throws it.
+    ///
+    /// @throws RejectedExecutionException if the pool is shut down
+    public <T> T awaitFirst(FutureTask<T> task) {
+        executor.execute(new First(task));
+        return await(task);
+    }
+
     /// Runs `work` on the pool with a set of buffers and waits for its result. A failure of `work`
     /// is thrown as it was thrown, with the waiting thread's stack attached as a suppressed
     /// exception, so that its trace shows who asked for the decode. A task of the pool must not
@@ -78,8 +119,8 @@ public final class DecodeExecutor {
         return await(result);
     }
 
-    /// The work queue for a context's pool: a decode a thread waits for goes to its head, every
-    /// other task to its tail.
+    /// The work queue for a context's pool: a decode a thread waits for and a fetch step go to its
+    /// head, every other task to its tail.
     public static BlockingQueue<Runnable> newWorkQueue() {
         return new AwaitedFirstQueue();
     }
@@ -92,11 +133,20 @@ public final class DecodeExecutor {
         }
     }
 
+    /// A task without buffers that goes to the head of the queue.
+    private record First(Runnable task) implements Runnable {
+
+        @Override
+        public void run() {
+            task.run();
+        }
+    }
+
     private static final class AwaitedFirstQueue extends LinkedBlockingDeque<Runnable> {
 
         @Override
         public boolean offer(Runnable task) {
-            return task instanceof Awaited<?> ? offerFirst(task) : offerLast(task);
+            return task instanceof Awaited<?> || task instanceof First ? offerFirst(task) : offerLast(task);
         }
     }
 

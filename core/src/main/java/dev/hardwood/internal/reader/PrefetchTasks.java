@@ -13,14 +13,16 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.reader.ParquetReadException;
 
-/// The speculative tasks one [RowGroupIterator]'s read starts on the context's I/O executor
-/// ([HardwoodContextImpl#ioExecutor()]): the next row group's planning and first-chunk
-/// prefetch, and the one-ahead chunk and region prefetches.
+/// The speculative tasks one [RowGroupIterator]'s read starts on one executor: on the context's
+/// I/O executor ([HardwoodContextImpl#ioExecutor()]), the reads of the next row group's index
+/// window and first chunk and the one-ahead chunk and region prefetches; at the tail of the
+/// context's pool, the next row group's planning.
 ///
 /// Nothing waits for such a task to deliver, but each reads the input file, so whoever
 /// closes the file must first wait for the ones already running. [#awaitAll()] stops
@@ -46,7 +48,8 @@ public final class PrefetchTasks {
     }
 
     /// Runs `task` on the executor, carrying the caller's [FetchReason], unless
-    /// [#awaitAll()] has been called, in which case the task is dropped.
+    /// [#awaitAll()] has been called or the executor refuses it, in which case the task is
+    /// dropped.
     public void submit(Runnable task) {
         Runnable bound = FetchReason.bind(task);
         CompletableFuture<Void> future;
@@ -54,7 +57,13 @@ public final class PrefetchTasks {
             if (closed) {
                 return;
             }
-            future = CompletableFuture.runAsync(() -> run(bound), executor);
+            try {
+                future = CompletableFuture.runAsync(() -> run(bound), executor);
+            }
+            catch (RejectedExecutionException e) {
+                // The context was closed; the demand path fails the read
+                return;
+            }
             running.add(future);
         }
         future.whenComplete((ignored, unused) -> running.remove(future));

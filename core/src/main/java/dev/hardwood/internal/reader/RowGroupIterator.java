@@ -88,8 +88,12 @@ public class RowGroupIterator implements Closeable {
     /// Closing twice releases nothing twice. Volatile because the prefetch tasks,
     /// which [#close()] waits for after setting it, read it.
     private volatile boolean closed;
-    /// The speculative tasks this iterator's read has started; [#close()] waits for them.
+    /// The speculative reads this iterator's read has started, on the I/O executor; [#close()]
+    /// waits for them.
     private final PrefetchTasks prefetchTasks;
+    /// The speculative planning this iterator's read has started, at the tail of the pool;
+    /// [#close()] waits for it.
+    private final PrefetchTasks planningTasks;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -137,10 +141,10 @@ public class RowGroupIterator implements Closeable {
     /// Feeds [SequentialFetchPlan]'s inline-stats page-drop check.
     private Map<Integer, List<ResolvedPredicate>> dropLeavesByColumn = Map.of();
 
-    /// Guards planning and the work list. A lock rather than a monitor: a column's fetcher, a
-    /// virtual thread, plans while holding it and waits for a footer load on another virtual
-    /// thread, and on JDK 21 a virtual thread blocked on a monitor, or holding one while it
-    /// waits, holds its carrier, so the waiting fetchers could take every carrier the load needs.
+    /// Guards planning and the work list. A lock rather than a monitor: a thread plans while
+    /// holding it and waits for a footer's I/O, and the calling thread, which plans the first row
+    /// groups, may be virtual; on JDK 21 a virtual thread blocked on a monitor, or holding one
+    /// while it waits, holds its carrier.
     private final ReentrantLock planLock = new ReentrantLock();
 
     // Work list: all (file, rowGroup) pairs to process, built during initialize(). Guarded by planLock.
@@ -151,7 +155,7 @@ public class RowGroupIterator implements Closeable {
 
     /// What each row group's bloom filters and dictionaries decided once the read reached it,
     /// keyed by work item index, so the decision [#hasLiveWorkItem] takes on the calling thread
-    /// is the one [#getSharedMetadata] finds on a fetcher.
+    /// is the one [#getSharedMetadata] finds on a fetch step.
     private final OnceCache<Arrival> arrivalCache = new OnceCache<>();
 
     // Per-row-group fetch plans cache (keyed by work item index).
@@ -176,7 +180,7 @@ public class RowGroupIterator implements Closeable {
     // where ChunkHandle.data is heap-allocated rather than an mmap slice).
     /// One counter per work item, added as the item is planned. Keyed rather
     /// than indexed because the work list grows, and read from every column's
-    /// fetcher without the planning lock.
+    /// fetch steps without the planning lock.
     private final Map<Integer, AtomicInteger> workItemRefCounts = new ConcurrentHashMap<>();
 
     /// Work items whose first demand access has started the next row group's prefetch, held
@@ -328,6 +332,7 @@ public class RowGroupIterator implements Closeable {
         this.inputFiles = fileMetadataCache.inputFiles();
         this.context = context;
         this.prefetchTasks = new PrefetchTasks(context.ioExecutor());
+        this.planningTasks = new PrefetchTasks(context::executeSpeculative);
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
         this.physicalSkip = physicalSkip;
@@ -909,18 +914,25 @@ public class RowGroupIterator implements Closeable {
         return counter != null && counter.get() == 0;
     }
 
-    /// Triggers async pre-computation and pre-fetch for the next row group, as a task
-    /// [#close()] waits for. The plan computation reads the row group's page index,
-    /// and under a filter its dictionaries; the pre-fetch then reads the first chunk.
+    /// Triggers async pre-computation and pre-fetch for the next row group, as tasks
+    /// [#close()] waits for. The I/O planning needs first, the row group's index window and
+    /// Bloom filters, is read on a virtual thread; the planning, which under a filter also reads
+    /// the row group's dictionaries, then runs as a task at the tail of the pool; the first
+    /// chunk is read on a virtual thread again.
+    ///
+    /// The caller is a column's fetch step, on the pool, which must not wait for work queued on
+    /// the pool. A step that reaches the row group while it is being planned waits for the
+    /// planning task, which is running ([OnceCache]); one that reaches it before the task runs
+    /// plans it itself, and the task finds it planned.
     ///
     /// The next row group is asked for through [#workItemAt], so the last row group of a
     /// file prefetches into the next one rather than stopping at the boundary — which
     /// is the one step of a read this prefetch exists to cover.
     ///
     /// That call stays on the caller, so that planning the next file is done by the time the
-    /// read reaches it. The caller is a column's fetcher, and what it blocks on is the next file's
-    /// footer, whose read [#triggerPrefetch] has already started — except under a filter,
-    /// where planning also probes that file's bloom filters, which nothing has started.
+    /// read reaches it. What the caller waits for there is the next file's footer, whose read
+    /// [#triggerPrefetch] has already started — except under a filter, where planning also
+    /// probes that file's bloom filters, which nothing has started.
     ///
     /// A planning failure is not raised here. The iterator keeps it, and every column's own
     /// request for the next work item rethrows it, so each column fails when its read reaches
@@ -946,42 +958,65 @@ public class RowGroupIterator implements Closeable {
         prefetchTasks.submit(() -> {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "prefetch rg=" + nextWorkItem.rowGroupIndex())) {
-                RowGroupPlans nextPlans = fetchPlanCache.computeIfAbsent(
-                        nextWorkItem.workItemIndex(),
-                        idx -> {
-                            // Every column may already have read past the row group and
-                            // released it, or the iterator have been closed, evicting its plans.
-                            // Planning it again would repeat its dictionary and index reads, and
-                            // report a row group its dictionaries drop a second time.
-                            if (closed || isReleased(nextWorkItem)) {
-                                return null;
-                            }
-                            try {
-                                return computeFetchPlans(nextWorkItem);
-                            }
-                            catch (IOException e) {
-                                // Speculative: nothing is waiting on this. Returning
-                                // null leaves the entry uncached, so the demand path
-                                // plans the row group again and reports the failure
-                                // to a caller that is waiting for it.
-                                LOG.get().log(System.Logger.Level.DEBUG,
-                                        "Prefetch failed for row group {0}",
-                                        nextWorkItem.rowGroupIndex(), e);
-                                return null;
-                            }
-                        });
-                if (nextPlans == null) {
-                    return;
-                }
-                // Pre-fetch the first chunk of the first plan that reads one
-                for (FetchPlan plan : nextPlans.columns()) {
-                    if (!plan.isEmpty() && !(plan instanceof SkippedColumnFetchPlan)) {
-                        plan.prefetch();
-                        break;
+                IndexWindow window = nextWorkItem.indexWindow();
+                if (window != null && !closed && !isReleased(nextWorkItem)) {
+                    try {
+                        window.buffersFor(nextWorkItem.workItemIndex());
+                        window.bloomFiltersFor(nextWorkItem.workItemIndex());
+                    }
+                    catch (IOException e) {
+                        // Speculative: the demand path reads the window again and reports it
+                        LOG.get().log(System.Logger.Level.DEBUG,
+                                "Prefetch failed for row group {0}", nextWorkItem.rowGroupIndex(), e);
+                        return;
+                    }
+                    catch (IllegalStateException e) {
+                        // Every column released the row group since the check above
+                        return;
                     }
                 }
+                planningTasks.submit(() -> planAhead(nextWorkItem));
             }
         });
+    }
+
+    /// Plans `nextWorkItem` ahead of its read, on the pool, and prefetches its first chunk on
+    /// the I/O executor.
+    private void planAhead(WorkItem nextWorkItem) {
+        RowGroupPlans nextPlans = fetchPlanCache.computeIfAbsent(
+                nextWorkItem.workItemIndex(),
+                idx -> {
+                    // Every column may already have read past the row group and
+                    // released it, or the iterator have been closed, evicting its plans.
+                    // Planning it again would repeat its dictionary and index reads, and
+                    // report a row group its dictionaries drop a second time.
+                    if (closed || isReleased(nextWorkItem)) {
+                        return null;
+                    }
+                    try {
+                        return computeFetchPlans(nextWorkItem);
+                    }
+                    catch (IOException e) {
+                        // Speculative: nothing is waiting on this. Returning
+                        // null leaves the entry uncached, so the demand path
+                        // plans the row group again and reports the failure
+                        // to a caller that is waiting for it.
+                        LOG.get().log(System.Logger.Level.DEBUG,
+                                "Prefetch failed for row group {0}",
+                                nextWorkItem.rowGroupIndex(), e);
+                        return null;
+                    }
+                });
+        if (nextPlans == null) {
+            return;
+        }
+        // Pre-fetch the first chunk of the first plan that reads one
+        for (FetchPlan plan : nextPlans.columns()) {
+            if (!plan.isEmpty() && !(plan instanceof SkippedColumnFetchPlan)) {
+                prefetchTasks.submit(plan::prefetch);
+                break;
+            }
+        }
     }
 
     /// Computes the fetch plans of every decoded column for `workItem`'s row group, and then
@@ -1553,8 +1588,8 @@ public class RowGroupIterator implements Closeable {
     /// iterator, so a closed child reader's work list does not stay reachable for the
     /// parent's whole lifetime.
     ///
-    /// The caller closes the columns first, which joins their fetchers, so no fetcher starts a
-    /// prefetch task while this waits.
+    /// The caller closes the columns first, which waits for their fetch steps, so no step starts
+    /// a prefetch task while this waits.
     ///
     /// An `Error` speculative work raised is thrown once the iterator is closed, with a failure
     /// to close the files suppressed beneath it.
@@ -1568,7 +1603,10 @@ public class RowGroupIterator implements Closeable {
         try {
             // Before the caches are cleared: a planning task fills its cache entry once it has
             // planned, and the files are closed only after this returns.
+            // The reads first: a read submits its planning task, which may submit a read again
+            // and finds the reads closed
             prefetchTasks.awaitAll();
+            planningTasks.awaitAll();
         }
         catch (Error e) {
             failure = e;

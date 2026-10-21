@@ -31,10 +31,11 @@ import dev.hardwood.schema.FileSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A [ScheduledNestedColumn] fills its cells on the decode pool only, never on its fetcher: also
-/// the cell the fetcher seals at the end of the stream, and the open cell it seals at its failure
-/// between two work items, once the page tasks have placed every page. It queues a
-/// [SealedFillTask] only for cells its fetcher seals, none for the cells its page tasks seal.
+/// A [ScheduledNestedColumn] fills its cells in tasks of the decode pool only, never in its fetch
+/// steps, which run on the pool too: also the cell a fetch step seals at the end of the stream, and
+/// the open cell it seals at its failure between two work items, once the page tasks have placed
+/// every page. It queues a [SealedFillTask] only for cells its fetch steps seal, none for the cells
+/// its page tasks seal.
 class NestedFillThreadTest {
 
     private static final Path FILE = Path.of("src/test/resources/nested_v1_no_index.parquet");
@@ -43,7 +44,7 @@ class NestedFillThreadTest {
     private static final int COLUMN = 1;
     private static final int RECORDS = 2000;
 
-    /// Threads that filled a cell and are not a thread of the decode pool.
+    /// Threads that filled a cell off the decode pool or inside a fetch step.
     private final ConcurrentLinkedQueue<String> offPool = new ConcurrentLinkedQueue<>();
     private final AtomicInteger fills = new AtomicInteger();
     private final AtomicInteger sealedFillTasks = new AtomicInteger();
@@ -53,7 +54,7 @@ class NestedFillThreadTest {
         ScheduledNestedColumn.fillObserver = (column, cell) -> {
             fills.incrementAndGet();
             Thread thread = Thread.currentThread();
-            if (thread.isVirtual() || !thread.getName().startsWith("hardwood-")) {
+            if (thread.isVirtual() || !thread.getName().startsWith("hardwood-") || inFetchStep()) {
                 offPool.add(thread.toString());
             }
         };
@@ -77,11 +78,11 @@ class NestedFillThreadTest {
         assertThat(read(batchSize, End.STREAM)).isEqualTo(RECORDS);
         assertThat(fills).hasPositiveValue();
         assertThat(offPool).isEmpty();
-        // The file has one row group, so the fetcher seals cells only at the end of the stream
+        // The file has one row group, so the fetch steps seal cells only at the end of the stream
         assertThat(sealedFillTasks).as("sealed fill tasks").hasValueLessThanOrEqualTo(1);
     }
 
-    /// The fetcher reaches the end of the stream only once every page is placed, so its
+    /// The fetch step reaches the end of the stream only once every page is placed, so its
     /// placement seals the open cell and no page task is left to fill it.
     @ParameterizedTest(name = "batch {0}")
     @ValueSource(ints = { 7, 1 << 20 })
@@ -93,7 +94,7 @@ class NestedFillThreadTest {
         assertThat(sealedFillTasks).as("sealed fill tasks").hasValue(1);
     }
 
-    /// The fetcher fails between two work items only once every page is placed, so its
+    /// The fetch step fails between two work items only once every page is placed, so its
     /// placement seals the open cell, which is published before the failure is raised.
     @ParameterizedTest(name = "batch {0}")
     @ValueSource(ints = { 7, 1 << 20 })
@@ -112,15 +113,16 @@ class NestedFillThreadTest {
         STREAM,
         /// The stream ends once every page is placed.
         STREAM_AFTER_TASKS,
-        /// The fetcher fails, between two work items, once every page is placed.
+        /// The fetch step fails, between two work items, once every page is placed.
         FAILURE_AFTER_TASKS
     }
 
-    /// Reads the column through a scheduled column on a one-thread context.
+    /// Reads the column through a scheduled column on a two-thread context: the fetch step that
+    /// waits for the page tasks to place every page holds one thread, and they run on the other.
     ///
     /// @return the records published before the end of the stream
     private static int read(int batchSize, End end) throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(2);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
             FileSchema schema = reader.getFileSchema();
             ColumnSchema column = schema.getColumn(COLUMN);
@@ -172,7 +174,13 @@ class NestedFillThreadTest {
         }
     }
 
-    /// Waits until the column's page tasks have placed every page the fetcher queued, or the
+    /// Whether the calling thread is running a column's fetch step.
+    private static boolean inFetchStep() {
+        return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                frame -> frame.getMethodName().equals("runFetchStep")));
+    }
+
+    /// Waits until the column's page tasks have placed every page the fetch steps queued, or the
     /// column is done, so that a failed page task fails the read instead of hanging it.
     private static void awaitPlaced(ScheduledNestedColumn column) {
         while (true) {

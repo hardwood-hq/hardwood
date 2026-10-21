@@ -8,7 +8,6 @@
 package dev.hardwood;
 
 import java.nio.ByteBuffer;
-import java.nio.file.Path;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -31,17 +30,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// for a task that never runs.
 class ContextClosedMidReadTest {
 
-    /// 1.3 million rows of one column: many batches past the first.
-    private static final Path FILE = Path.of("src/test/resources/dictionary_tail_match.parquet");
-
-    private static final int ROWS = 200_000;
+    /// More rows than a read decodes ahead of its consumer, so that the read needs the pool after
+    /// its first batch. A dictionary-encoded column would not do: it costs the read-ahead budget
+    /// next to nothing per row, and on one CPU its whole file is decoded before the first row.
+    private static final int ROWS = 1_000_000;
     private static final int BATCH_SIZE = 1_024;
 
     @RepeatedTest(5)
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aRowReadOnAClosedContextFailsAndItsReaderCloses() throws Exception {
         HardwoodContext context = HardwoodContext.create(1);
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE), context);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(longsFile())), context);
              RowReader rows = reader.rowReader()) {
             rows.next();
             context.close();

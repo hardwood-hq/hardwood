@@ -8,10 +8,8 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,7 +23,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -34,7 +31,6 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -42,18 +38,19 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A read decodes on its context's pool only. Dictionary pages are handed to the pool by whichever
-/// thread needs them: the calling thread probing them for a filter, a fetcher starting a column
-/// chunk, and a planning read on the context's I/O executor. A flat column's cell its fetcher seals after its
-/// last fill is completed by a [SealedFillTask], which the scheduler submits like a page: a
-/// completion takes the buffers only a task of the pool holds ([ScheduledColumn#completed]).
-/// These tests run the read's tasks on [TaskOrderExecutor#inline()], so that every page is filled
-/// before the next is placed and the fetcher's seal comes last.
+/// A read decodes on its context's pool only. The calling thread probing dictionary pages for a
+/// filter hands them to the pool; a column's fetch step starting a column chunk, and the next row
+/// group's planning, both tasks of the pool, decode them in place. A flat column's cell its fetch
+/// step seals after its last fill is completed by a [SealedFillTask], which the scheduler submits
+/// like a page: a completion takes the buffers only a task of the pool holds
+/// ([ScheduledColumn#completed]). These tests run the read's tasks on
+/// [TaskOrderExecutor#inline()], so that every page is filled before the next is placed and the
+/// fetch step's seal comes last.
 ///
 /// The fixture holds three row groups of 1000 rows, `id` running `0..2999`; `bucket` is `0`
 /// below 1500 and `1` from there, dictionary-encoded, so `bucket = 0` is decided by the
 /// dictionaries. `id < 1000` proves the first row group matches in full, so a read of `amount`
-/// filtered on it reads no `id` there: the column's fetcher places a boundary marker.
+/// filtered on it reads no `id` there: the column's fetch step places a boundary marker.
 class DecodeThreadTest {
 
     /// A Snappy dictionary page in a file of one row group, which the filter's probe reads.
@@ -134,9 +131,9 @@ class DecodeThreadTest {
         assertThat(callers).as("the calling thread's probe").contains(Thread.currentThread());
     }
 
-    /// Each column's fetcher parses the dictionary of every chunk it reads, and under a filter the
-    /// next row group's planning reads parse its dictionaries on the I/O executor: every one is
-    /// decoded on the context's pool.
+    /// Each column's fetch step parses the dictionary of every chunk it reads, and under a filter
+    /// the next row group's planning parses its dictionaries: every one is decoded in place on the
+    /// context's pool.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aReadDecodesEveryDictionaryOnThePool() throws Exception {
@@ -145,7 +142,8 @@ class DecodeThreadTest {
             try (ColumnReader values = reader.buildColumnReader("bucket").build()) {
                 assertThat(read(values)).isEqualTo(ROWS);
             }
-            assertThat(callers).as("a fetcher's chunk dictionary").anyMatch(Thread::isVirtual);
+            assertThat(callers).as("a fetch step's chunk dictionary, decoded in place")
+                    .anyMatch(caller -> caller.getName().startsWith("hardwood-"));
             try (ColumnReader values = reader.buildColumnReader("bucket")
                     .filter(FilterPredicate.eq("bucket", 0L)).build()) {
                 assertThat(read(values)).isEqualTo(1500);
@@ -154,28 +152,6 @@ class DecodeThreadTest {
 
         assertThat(callers).hasSizeGreaterThan(ROWS / ROWS_PER_GROUP);
         assertThat(offPool).isEmpty();
-    }
-
-    /// The next row group's planning reads run on the context's I/O executor, its dictionaries
-    /// under a filter among them.
-    @Test
-    void aDictionaryParsedOnTheIoExecutorDecodesOnThePool() throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
-             InputFile input = InputFile.of(file)) {
-            ColumnSchema bucket = reader.getFileSchema().getColumn("bucket");
-            ColumnChunk chunk = reader.getFileMetaData().rowGroups().get(1).columns().get(bucket.columnIndex());
-            input.open();
-            ByteBuffer page = DictionaryParser.readPage(input, chunk, "");
-
-            Thread planner = CompletableFuture.supplyAsync(() -> {
-                assertThat(DictionaryParser.parse(page, bucket, chunk.metaData(), context)).isNotNull();
-                return Thread.currentThread();
-            }, context.ioExecutor()).join();
-
-            assertThat(offPool).isEmpty();
-            assertThat(callers).containsExactly(planner);
-        }
     }
 
     /// Each row group's one page of `amount` leaves its last batch open, and the fetcher seals

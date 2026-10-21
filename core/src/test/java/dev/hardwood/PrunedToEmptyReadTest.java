@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// Exercises the empty-projection short-circuit that
 /// [ParquetFileReader#buildColumnReaders] takes when row-group pruning drops
 /// every row group: it exposes the projected columns as readers over a scan
-/// with no cursors instead of building per-column fetcher threads, batch
+/// with no cursors instead of building per-column fetch steps, batch
 /// buffers, and (on the filtered path) a selection engine. Both the
 /// plain-projection path (dropped by a [RowGroupPredicate]) and the
 /// exact-filter path (dropped by statistics) are covered, for flat and nested

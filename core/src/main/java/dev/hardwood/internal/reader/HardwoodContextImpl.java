@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -48,19 +49,21 @@ public class HardwoodContextImpl implements HardwoodContext {
     /// Sees each decode [#decode] runs.
     interface DecodeObserver {
 
-        /// @param caller the thread that asked for the decode, which waits for it
+        /// @param caller the thread that asked for the decode, which waits for it; the thread
+        ///        running it where it runs in place
         void decoding(Thread caller);
     }
 
-    /// Told of every computation [#compute] hands to the pool, on the thread running it; for tests
-    /// of where metadata parsing runs. `null` for none.
+    /// Told of every computation [#compute] runs, on the thread running it; for tests of where
+    /// metadata parsing runs. `null` for none.
     static volatile ComputeObserver computeObserver;
 
-    /// Sees each computation [#compute] hands to the pool.
+    /// Sees each computation [#compute] runs.
     interface ComputeObserver {
 
         /// @param what the work, as [#compute] names it
-        /// @param caller the thread that asked for it, which waits for it
+        /// @param caller the thread that asked for it, which waits for it; the thread running it
+        ///        where it runs in place
         void computing(String what, Thread caller);
     }
 
@@ -96,11 +99,11 @@ public class HardwoodContextImpl implements HardwoodContext {
         return create(threads, ParquetMetadataReader.FROM_FILE, IO_EXECUTOR);
     }
 
-    /// Create a context whose page tasks run on `executor`, which the context takes as having
-    /// `threads` threads and shuts down when it closes; for tests that decide the order a read's
-    /// tasks run in.
-    static HardwoodContextImpl create(ExecutorService executor, int threads) {
-        return new HardwoodContextImpl(executor, threads, Set.of(), IO_EXECUTOR, createLibdeflatePoolIfAvailable(),
+    /// Create a context whose page tasks and fetch steps run on `executor`, which the context
+    /// takes as having `threads` threads, run by `poolThreads`, and shuts down when it closes;
+    /// for tests that decide the order a read's tasks run in.
+    static HardwoodContextImpl create(ExecutorService executor, int threads, Set<Thread> poolThreads) {
+        return new HardwoodContextImpl(executor, threads, poolThreads, IO_EXECUTOR, createLibdeflatePoolIfAvailable(),
                 ParquetMetadataReader.FROM_FILE);
     }
 
@@ -172,14 +175,36 @@ public class HardwoodContextImpl implements HardwoodContext {
         decodeExecutor.execute(task);
     }
 
-    /// Runs `work` on the context's pool, with a set of its decode buffers, and waits for its
-    /// result. A failure of `work` is thrown as it was thrown.
+    /// Runs a column's fetch step on the context's pool, at the head of its queue.
     ///
-    /// @throws IllegalStateException if the context is closed, or the calling thread is one of
-    ///         its pool's ([#requireOffPool()])
+    /// @throws RejectedExecutionException if the context is closed
+    void executeStep(Runnable step) {
+        decodeExecutor.executeFirst(step);
+    }
+
+    /// Runs speculative CPU work on the context's pool, at the tail of its queue.
+    ///
+    /// @throws RejectedExecutionException if the context is closed
+    void executeSpeculative(Runnable task) {
+        decodeExecutor.executeLast(task);
+    }
+
+    /// Runs `work` on the context's pool, with a set of its decode buffers, and waits for its
+    /// result; on a thread of the pool, such as a column's fetch step, it runs in place. A
+    /// failure of `work` is thrown as it was thrown.
+    ///
+    /// @throws IllegalStateException if the context is closed
     public <T> T decode(Function<DecodeBuffers, T> work) {
-        requireOffPool();
         Thread caller = Thread.currentThread();
+        if (poolThreads.contains(caller)) {
+            return decodeExecutor.decodeInPlace(buffers -> {
+                DecodeObserver observer = decodeObserver;
+                if (observer != null) {
+                    observer.decoding(caller);
+                }
+                return work.apply(buffers);
+            });
+        }
         try {
             return decodeExecutor.decode(buffers -> {
                 DecodeObserver observer = decodeObserver;
@@ -205,6 +230,10 @@ public class HardwoodContextImpl implements HardwoodContext {
     public <T> T compute(String what, Supplier<T> work) {
         Thread caller = Thread.currentThread();
         if (poolThreads.contains(caller)) {
+            ComputeObserver observer = computeObserver;
+            if (observer != null) {
+                observer.computing(what, caller);
+            }
             return work.get();
         }
         try {
@@ -215,6 +244,24 @@ public class HardwoodContextImpl implements HardwoodContext {
                 }
                 return work.get();
             });
+        }
+        catch (RejectedExecutionException e) {
+            throw ScheduledColumn.contextClosed(e);
+        }
+    }
+
+    /// Whether the calling thread is one of the context's pool.
+    boolean isOnPool() {
+        return poolThreads.contains(Thread.currentThread());
+    }
+
+    /// Runs `task`, work a thread off the pool waits for and another thread may run as well, on
+    /// the context's pool, at the head of its queue, and waits for its result.
+    ///
+    /// @throws IllegalStateException if the context is closed
+    <T> T awaitFirst(FutureTask<T> task) {
+        try {
+            return decodeExecutor.awaitFirst(task);
         }
         catch (RejectedExecutionException e) {
             throw ScheduledColumn.contextClosed(e);

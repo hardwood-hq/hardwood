@@ -16,8 +16,6 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
@@ -36,15 +34,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// A caller that is interrupted when it closes a [ScheduledColumn], as a cancelled task is when
 /// its try-with-resources block runs, still gets the guarantee of [ScheduledColumn#close()]: the
-/// fetcher has stopped reading the `InputFile` by the time `close()` returns, and the caller's
-/// interrupt is restored.
+/// column's fetch steps have stopped reading the `InputFile` by the time `close()` returns, and
+/// the caller's interrupt is restored.
 class ScheduledColumnCloseTest {
 
     private static final Path FILE = Path.of("src/test/resources/page_index_test.parquet");
 
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void closeWaitsForTheFetcherWhenTheCallerIsInterrupted() throws Exception {
+    void closeWaitsForTheFetchStepWhenTheCallerIsInterrupted() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
             FileSchema schema = reader.getFileSchema();
@@ -57,8 +55,8 @@ class ScheduledColumnCloseTest {
             int batchCapacity = 64;
             iterator.planBatches(batchCapacity, 0);
 
-            // The fetcher stalls in its first page read, so close() can only return early by
-            // abandoning its wait for the fetcher.
+            // The fetch step stalls in its first page read, so close() can only return early by
+            // abandoning its wait for the step.
             CountDownLatch readStalled = new CountDownLatch(1);
             CountDownLatch release = new CountDownLatch(1);
             AtomicBoolean readReturned = new AtomicBoolean();
@@ -88,7 +86,7 @@ class ScheduledColumnCloseTest {
             ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, stallingSource, exchange, column,
                     batchCapacity, context.decompressorFactory(), null);
             scheduler.start();
-            assertThat(readStalled.await(5, TimeUnit.SECONDS)).as("the fetcher is held inside a page read").isTrue();
+            assertThat(readStalled.await(5, TimeUnit.SECONDS)).as("the fetch step is held inside a page read").isTrue();
 
             AtomicBoolean readReturnedOnClose = new AtomicBoolean();
             AtomicBoolean interruptedOnClose = new AtomicBoolean();
@@ -106,8 +104,8 @@ class ScheduledColumnCloseTest {
             }
             closer.join(TimeUnit.SECONDS.toMillis(10));
 
-            assertThat(closer.isAlive()).as("close() returns once the fetcher exits").isFalse();
-            assertThat(readReturnedOnClose.get()).as("close() does not return while the fetcher reads").isTrue();
+            assertThat(closer.isAlive()).as("close() returns once the fetch step returns").isFalse();
+            assertThat(readReturnedOnClose.get()).as("close() does not return while the fetch step reads").isTrue();
             assertThat(interruptedOnClose.get()).as("close() restores the caller's interrupt").isTrue();
             iterator.close();
             inputFile.close();
@@ -120,7 +118,7 @@ class ScheduledColumnCloseTest {
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void closingOneColumnStopsEveryColumnOfTheRead() throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(2);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
             FileSchema schema = reader.getFileSchema();
             InputFile inputFile = InputFile.of(FILE);
@@ -131,8 +129,9 @@ class ScheduledColumnCloseTest {
             int batchCapacity = 64;
             iterator.planBatches(batchCapacity, 0);
 
-            // Both fetchers are held in their first page read, so neither column ends on its own
-            // and the first close cannot return while its fetcher is held.
+            // Both fetch steps are held in their first page read, each on a thread of the pool, so
+            // neither column ends on its own and the first close cannot return while its step is
+            // held.
             CountDownLatch readsStalled = new CountDownLatch(2);
             CountDownLatch release = new CountDownLatch(1);
             ReadScheduler scheduler = new ReadScheduler(context, batchCapacity, batchCapacity);
@@ -144,13 +143,13 @@ class ScheduledColumnCloseTest {
             ScheduledFlatColumn second = stalledColumn(scheduler, iterator, 1, schema.getColumn(1), secondExchange,
                     batchCapacity, readsStalled, release, context);
             scheduler.start();
-            assertThat(readsStalled.await(5, TimeUnit.SECONDS)).as("both fetchers are held inside a page read")
+            assertThat(readsStalled.await(5, TimeUnit.SECONDS)).as("both fetch steps are held inside a page read")
                     .isTrue();
 
             Thread closer = Thread.ofVirtual().start(first::close);
             try {
                 awaitParkedOrExited(closer);
-                assertThat(closer.isAlive()).as("the first close waits for its held fetcher").isTrue();
+                assertThat(closer.isAlive()).as("the first close waits for its held fetch step").isTrue();
                 assertThat(second.isDone()).as("the second column is stopped by the first close").isTrue();
                 assertThat(secondExchange.isFinished())
                         .as("the second column's consumer sees the end while the first close waits")
@@ -160,75 +159,54 @@ class ScheduledColumnCloseTest {
                 release.countDown();
             }
             closer.join(TimeUnit.SECONDS.toMillis(10));
-            assertThat(closer.isAlive()).as("close() returns once the fetcher exits").isFalse();
+            assertThat(closer.isAlive()).as("close() returns once the fetch step returns").isFalse();
             second.close();
             iterator.close();
             inputFile.close();
         }
     }
 
-    /// A stop that reaches a fetcher waiting for room while the fetcher takes the column lock still
-    /// ends the fetcher. The lock acquire parks, and the stop's unpark wakes that park rather than
-    /// the fetcher's own wait, so the fetcher has to read the stop after the lock, not before.
+    /// A stop that arrives while a fetch step stops for room, after it looked at the stop and
+    /// before it releases its claim, still ends the fetch: the stop finds the claim held and queues
+    /// no step, so the step has to look again once it has released the claim.
     ///
-    /// The single decode thread is held, so the column's page tasks never run, the pages in flight
-    /// per thread admit no more than two, and the fetcher fills its queue and waits for room.
+    /// The single decode thread runs the column's first step, so no page task runs while it
+    /// fetches: the pages in flight per thread admit two, and the step fills its queue and stops
+    /// for room.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void stopReachesAFetcherTakingTheColumnLock() throws Exception {
+    void stopReachesAFetchStepStoppingForRoom() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
-            AtomicReference<Thread> fetcherThread = new AtomicReference<>();
-            try (HeldRead read = HeldRead.startHoldingTheDecodeThread(context, reader, iterator -> new PageSource(iterator, 0) {
-                @Override
-                public PageInfo next() throws IOException {
-                    fetcherThread.set(Thread.currentThread());
-                    return super.next();
+            CountDownLatch stoppedForRoom = new CountDownLatch(1);
+            ScheduledColumn.roomWaitObserver = column -> {
+                if (stoppedForRoom.getCount() > 0) {
+                    stoppedForRoom.countDown();
+                    column.fail(new IllegalStateException("stopped"));
                 }
-            })) {
-                CountDownLatch releaseWorker = read.releaseWorker();
+            };
+            try (HeldRead read = HeldRead.start(context, reader, iterator -> new PageSource(iterator, 0))) {
                 ScheduledFlatColumn scheduled = read.column();
                 try {
-                    awaitTrue(() -> scheduled.queued() == ScheduledColumn.FETCH_AHEAD && fetcherThread.get() != null
-                            && fetcherThread.get().getState() == Thread.State.WAITING
-                            && LockSupport.getBlocker(fetcherThread.get()) == scheduled,
-                            "the fetcher waits for room in its full queue");
-                    Thread fetcher = fetcherThread.get();
-
-                    scheduled.lock.lock();
-                    try {
-                        scheduled.unparkFetcher();
-                        awaitTrue(() -> parkedOnTheColumnLock(fetcher, scheduled),
-                                "the fetcher re-checks for room and waits for the column lock");
-                        scheduled.fail(new IllegalStateException("stopped"));
-                        // The stop unparked the fetcher inside the lock acquire. An unparked
-                        // virtual thread reports RUNNABLE until it parks again, so once it waits
-                        // on the lock again, the acquire has consumed the stop's unpark and no
-                        // permit is pending.
-                        awaitTrue(() -> parkedOnTheColumnLock(fetcher, scheduled),
-                                "the fetcher waits for the column lock again after the stop");
-                    }
-                    finally {
-                        scheduled.lock.unlock();
-                    }
-                    fetcher.join(TimeUnit.SECONDS.toMillis(5));
-
-                    assertThat(fetcher.isAlive()).as("the fetcher sees the stop once it has the lock").isFalse();
+                    assertThat(stoppedForRoom.await(5, TimeUnit.SECONDS)).as("the fetch step stops for room").isTrue();
+                    awaitTrue(() -> scheduled.fetchEnded, "the fetch ends after the stop");
                 }
                 finally {
-                    releaseWorker.countDown();
                     scheduled.close();
                 }
+            }
+            finally {
+                ScheduledColumn.roomWaitObserver = null;
             }
         }
     }
 
     /// Two threads closing one column at once, as a reader and its parent can, both return, and
-    /// only once the column's page task has finished. The single decode thread is held, so the
-    /// column's first page task is submitted and cannot run until it is released.
+    /// only once the column's queued fetch step has finished. The single decode thread is held,
+    /// so the column's first fetch step is queued and cannot run until it is released.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void concurrentClosesBothReturnOnceThePageTaskFinishes() throws Exception {
+    void concurrentClosesBothReturnOnceTheQueuedStepFinishes() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
             try (HeldRead read = HeldRead.startHoldingTheDecodeThread(context, reader, iterator -> new PageSource(iterator, 0))) {
@@ -237,10 +215,10 @@ class ScheduledColumnCloseTest {
                 Thread first;
                 Thread second;
                 try {
-                    awaitTrue(() -> scheduled.tasksInFlight() > 0, "a page task is submitted");
+                    awaitTrue(() -> scheduled.tasksInFlight() > 0, "a fetch step is queued");
                     first = Thread.ofPlatform().start(scheduled::close);
                     awaitTrue(() -> LockSupport.getBlocker(first) == scheduled,
-                            "the first close claimed the column and waits for its page task");
+                            "the first close claimed the column and waits for its fetch step");
                     second = Thread.ofVirtual().start(scheduled::close);
                     awaitParkedOrExited(second);
                     assertThat(second.isAlive()).as("the second close waits for the claimed close").isTrue();
@@ -251,14 +229,14 @@ class ScheduledColumnCloseTest {
                 first.join(TimeUnit.SECONDS.toMillis(5));
                 second.join(TimeUnit.SECONDS.toMillis(5));
 
-                assertThat(first.isAlive()).as("the first close returns once the page task finished").isFalse();
-                assertThat(second.isAlive()).as("the second close returns once the page task finished").isFalse();
+                assertThat(first.isAlive()).as("the first close returns once the fetch step finished").isFalse();
+                assertThat(second.isAlive()).as("the second close returns once the fetch step finished").isFalse();
             }
         }
     }
 
-    /// A close interrupted while it waits for the column's page task goes on waiting without
-    /// spinning, and returns with the interrupt restored once the task has finished.
+    /// A close interrupted while it waits for the column's queued fetch step goes on waiting
+    /// without spinning, and returns with the interrupt restored once the step has finished.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void interruptedCloseWaitsWithoutSpinning() throws Exception {
@@ -270,13 +248,13 @@ class ScheduledColumnCloseTest {
                 AtomicBoolean interruptedOnReturn = new AtomicBoolean();
                 Thread closer;
                 try {
-                    awaitTrue(() -> scheduled.tasksInFlight() > 0, "a page task is submitted");
+                    awaitTrue(() -> scheduled.tasksInFlight() > 0, "a fetch step is queued");
                     closer = Thread.ofPlatform().start(() -> {
                         scheduled.close();
                         interruptedOnReturn.set(Thread.currentThread().isInterrupted());
                     });
                     awaitTrue(() -> LockSupport.getBlocker(closer) == scheduled,
-                            "the close waits for the column's page task");
+                            "the close waits for the column's fetch step");
                     closer.interrupt();
                     awaitTrue(() -> closer.getState() == Thread.State.WAITING
                             && LockSupport.getBlocker(closer) == scheduled && !closer.isInterrupted(),
@@ -294,7 +272,7 @@ class ScheduledColumnCloseTest {
                 }
                 closer.join(TimeUnit.SECONDS.toMillis(5));
 
-                assertThat(closer.isAlive()).as("the close returns once the page task finished").isFalse();
+                assertThat(closer.isAlive()).as("the close returns once the fetch step finished").isFalse();
                 assertThat(interruptedOnReturn.get()).as("the close restores the interrupt").isTrue();
             }
         }
@@ -313,8 +291,8 @@ class ScheduledColumnCloseTest {
         }
 
         /// As [#start], with the context's single decode thread held until [#releaseWorker()] is
-        /// counted down, so that the column's page tasks stay in flight. The first row group is
-        /// planned before, as planning parses its offset indexes on the pool.
+        /// counted down, so that the column's first fetch step stays queued. The first row group
+        /// is planned before, as planning parses its offset indexes on the pool.
         static HeldRead startHoldingTheDecodeThread(HardwoodContextImpl context, ParquetFileReader reader,
                                                     Function<RowGroupIterator, PageSource> source)
                 throws IOException, InterruptedException {
@@ -352,13 +330,6 @@ class ScheduledColumnCloseTest {
         }
     }
 
-    /// Whether `fetcher` is parked in an acquire of `scheduled`'s column lock.
-    private static boolean parkedOnTheColumnLock(Thread fetcher, ScheduledColumn<?> scheduled) {
-        return fetcher.getState() == Thread.State.WAITING
-                && LockSupport.getBlocker(fetcher) instanceof AbstractQueuedSynchronizer
-                && scheduled.lock.hasQueuedThread(fetcher);
-    }
-
     /// Occupies the context's single decode thread until the returned latch is counted down.
     private static CountDownLatch holdTheDecodeThread(HardwoodContextImpl context) throws InterruptedException {
         CountDownLatch release = new CountDownLatch(1);
@@ -376,7 +347,7 @@ class ScheduledColumnCloseTest {
         return release;
     }
 
-    /// A column of `scheduler` whose fetcher's first page read counts `stalled` down and is held
+    /// A column of `scheduler` whose fetch step's first page read counts `stalled` down and is held
     /// until `release`.
     private static ScheduledFlatColumn stalledColumn(ReadScheduler scheduler, RowGroupIterator iterator, int index,
                                                      ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange,

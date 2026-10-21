@@ -33,8 +33,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// columns are read.
 ///
 /// This is the read-path counterpart of [ReaderCloseLatencyTest], and the same defect one step
-/// earlier. That one covers teardown: a fetcher parked on room in its column's queue sees the
-/// stop only if the close unparks it. This covers the read itself: the *consumer* waiting inside
+/// earlier. That one covers teardown: a fetch stopped for room in its column's queue ends only if
+/// the close queues it a step. This covers the read itself: the *consumer* waiting inside
 /// [dev.hardwood.internal.reader.BatchExchange#poll()] cannot see the end-of-stream flag, and
 /// learns of the end only from the sentinel the column's end hands its queue. Teardown strands a
 /// producer whose consumer has stopped consuming; this strands a consumer whose producer has
@@ -102,7 +102,7 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
 
             awaitEvents();
 
-            // Presence, not a count: the scan events are committed on fetcher threads, and one
+            // Presence, not a count: the scan events are committed on the pool's threads, and one
             // of them can miss this recording's flush (see AbstractJfrRecorderTest).
             assertThat(eventsSince(ROW_GROUP_SCANNED_EVENT, measuredFrom).count())
                     .as("the recording saw the measured pass, so an empty stall total means "

@@ -54,10 +54,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// - a page of a column decoded through levels measured before the page ahead of it waits, and
 ///   the task of the page ahead places both ([ScheduledNestedColumn]), including pages that begin
 ///   inside a record, whose leading values go into the cell of the record before; every cell of
-///   such a column is filled inside a task, none on its fetcher.
+///   such a column is filled inside a page task, none on its fetch steps.
 ///
-/// A failure names the seed; the order a seed gives also depends on when the fetchers queue
-/// their pages, so a seed reproduces an order only most of the time.
+/// The fetch steps run on the executor's thread too, among the page tasks. A failure names the
+/// seed; the order a seed gives also depends on when the executor's wait for more tasks times
+/// out, so a seed reproduces an order only most of the time.
 class ShuffledTaskOrderTest {
 
     private static final int SEEDS = 10;
@@ -127,7 +128,7 @@ class ShuffledTaskOrderTest {
         assertThat(counts.outOfOrder).as("pages measured ahead of an earlier page of their column").isPositive();
         assertThat(counts.outOfOrderInsideRecord).as("of them, pages beginning inside a record").isPositive();
         assertThat(counts.fills).as("cells filled").isPositive();
-        assertThat(counts.fillsOutsideTasks).as("cells filled outside a task").isZero();
+        assertThat(counts.fillsOutsideTasks).as("cells filled outside a page task").isZero();
     }
 
     // ==================== Reads ====================

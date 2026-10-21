@@ -26,14 +26,17 @@ import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.reader.PrefetchTasks;
 import dev.hardwood.internal.reader.ScheduledColumn;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -73,14 +76,18 @@ class ParentCloseTest {
     private static final String AWAIT_BUILDS = ReentrantReadWriteLock.WriteLock.class.getName() + "#lock";
 
     /// Serves a file's bytes. Once armed, holds the first read made on a thread the
-    /// arming predicate accepts until [#release()] or [#close()]. Records a read that is
-    /// in flight when the file closes, and one that starts after it closed.
+    /// arming predicate accepts until [#release()] or [#close()], and can hold the reads of a
+    /// range on every other thread until that read is held ([#holdOthersInRange]). Records a
+    /// read that is in flight when the file closes, and one that starts after it closed.
     private static final class GatedInputFile implements InputFile {
 
         private final ByteBuffer data;
         private final CountDownLatch entered = new CountDownLatch(1);
         private final CountDownLatch released = new CountDownLatch(1);
         private final AtomicReference<Predicate<Thread>> gate = new AtomicReference<>();
+        private volatile Predicate<Thread> armed;
+        private volatile long othersHeldFrom = Long.MAX_VALUE;
+        private volatile long othersHeldTo = Long.MAX_VALUE;
         private final AtomicInteger readsInFlight = new AtomicInteger();
         private final List<String> violations = new CopyOnWriteArrayList<>();
         private volatile boolean closed;
@@ -101,6 +108,11 @@ class ParentCloseTest {
             }
             readsInFlight.incrementAndGet();
             try {
+                Predicate<Thread> accepted = armed;
+                if (offset >= othersHeldFrom && offset < othersHeldTo && accepted != null
+                        && !accepted.test(Thread.currentThread())) {
+                    entered.await();
+                }
                 Predicate<Thread> held = gate.get();
                 if (held != null && held.test(Thread.currentThread()) && gate.compareAndSet(held, null)) {
                     entered.countDown();
@@ -138,7 +150,15 @@ class ParentCloseTest {
 
         /// Holds the next read made on a thread `held` accepts.
         void arm(Predicate<Thread> held) {
+            armed = held;
             gate.set(held);
+        }
+
+        /// Holds a read starting in `[from, to)` on a thread the arming predicate does not accept
+        /// until the armed read is held.
+        void holdOthersInRange(long from, long to) {
+            othersHeldFrom = from;
+            othersHeldTo = to;
         }
 
         void awaitHeldRead() throws InterruptedException {
@@ -193,24 +213,39 @@ class ParentCloseTest {
         columns.close();
     }
 
-    /// The read held is one a speculative task on the context's I/O executor started, planning or
-    /// prefetching the second row group. Nothing consumes, but the whole file is within the
-    /// read-ahead cap, so the column's fetcher may reach the second row group and wait on that
-    /// planning; the close then waits for the column before it waits for the prefetches.
+    /// The read held is one a speculative task on the context's I/O executor started: the
+    /// prefetch of the second row group's first chunk. Nothing consumes, but the whole file is
+    /// within the read-ahead cap, so a column's fetch step may reach the second row group and
+    /// read that chunk on demand before the prefetch does, which would leave the prefetch nothing
+    /// to read; the fetch steps' reads of the second row group are held until the prefetch's read
+    /// is, and then wait for it. The close waits for the columns before it waits for the
+    /// prefetches. Two threads, so that a held fetch step leaves one for the row group's
+    /// planning, which starts the prefetch.
     @Test
     void closeWaitsForAStartedPrefetchBeforeClosingTheFile() throws Exception {
         GatedInputFile file = new GatedInputFile(Files.readAllBytes(INDEXED_FILE));
-        ParquetFileReader reader = ParquetFileReader.open(file);
-        file.arm(t -> t.getName().equals("hardwood-io"));
-        ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.all())
-                .batchSize(INDEXED_BATCH_SIZE)
-                .build();
-        file.awaitHeldRead();
+        try (HardwoodContext context = HardwoodContext.create(2)) {
+            ParquetFileReader reader = ParquetFileReader.open(file, context);
+            List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
+            file.arm(t -> t.getName().equals("hardwood-io"));
+            file.holdOthersInRange(firstByte(rowGroups.get(1)), firstByte(rowGroups.get(2)));
+            ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.all())
+                    .batchSize(INDEXED_BATCH_SIZE)
+                    .build();
+            file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
+            closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
 
-        assertThat(file.violations).isEmpty();
-        columns.close();
+            assertThat(file.violations).isEmpty();
+            columns.close();
+        }
+    }
+
+    /// The offset of a row group's first byte: its first column chunk's dictionary page, or its
+    /// first data page where it has none.
+    private static long firstByte(RowGroup rowGroup) {
+        ColumnMetaData first = rowGroup.columns().getFirst().metaData();
+        return first.dictionaryPageOffset() != null ? first.dictionaryPageOffset() : first.dataPageOffset();
     }
 
     @Test

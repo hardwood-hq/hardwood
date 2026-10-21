@@ -750,7 +750,7 @@ public class ParquetFileReader implements Closeable {
         ProjectedSchema decoded = iterator.initialize(readProjection, resolved, metadataFilteringEnabled);
         // Statistics dropped every row group while planning, or bloom filters and
         // dictionaries drop each one the read reaches — no record can match.
-        // Skip building the cursors (fetcher threads + ~batch-sized buffers) and the
+        // Skip building the cursors (fetch steps + ~batch-sized buffers) and the
         // selection engine entirely: the scan has no cursors and is exhausted from
         // the start. Closing the reader or the group closes the scan, which
         // releases the fetch plans and the parent's tracking entry.

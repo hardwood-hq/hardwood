@@ -229,7 +229,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             if (!dictionaryParsed) {
                 // Set the flag *before* parsing so a throw from parseDictionary
                 // doesn't cause a retry loop. This is safe because a throw
-                // propagates to the column's fetcher (ScheduledColumn.runFetcher), which
+                // propagates to the column's fetch step (ScheduledColumn.runFetchStep), which
                 // calls signalError → done=true → the pipeline stops; next() is
                 // never re-entered on the same iterator.
                 dictionaryParsed = true;

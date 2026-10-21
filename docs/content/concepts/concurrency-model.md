@@ -86,11 +86,11 @@ A schema of many columns spreads both the copying and the flush across all the t
   the pace of your loop, and the threads beyond what it can take in compete with it for cores,
   shared caches and memory bandwidth, so such a read can finish sooner, and with less CPU, on 2 to 4
   threads than on the default. Measure the read at a few values of `n` to find its best. Every page a read
-  decodes, dictionary pages included, is decoded on these `n` threads. The same threads parse the
-  footer of every file after the first and the page indexes of each row group, and scan a row
-  group's dictionaries for a filter's values. Fetching bytes, on demand and ahead of the read, runs on the JVM's virtual-thread
-  carriers and spends its time waiting for the storage. The first file's footer is parsed on the
-  thread that opens the reader.
+  decodes, dictionary pages included, is decoded on these `n` threads. The same threads walk each
+  column's pages, parse the footer of every file after the first and the page indexes of each row
+  group, and scan a row group's dictionaries for a filter's values. Bytes fetched ahead of the read
+  are fetched on the JVM's virtual threads; a fetch the read waits for runs on one of the `n`
+  threads. The first file's footer is parsed on the thread that opens the reader.
 
 ## Further reading
 

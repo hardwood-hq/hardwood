@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.ExceptionContext;
@@ -24,15 +25,20 @@ import dev.hardwood.schema.ColumnSchema;
 /// A column whose pages a [ReadScheduler] submits to the decode pool, in row order with the
 /// read's other scheduled columns, and whose page tasks decode straight into the column's batches.
 ///
-/// - The **fetcher**, a virtual thread, pulls the column's pages from its [PageSource], which does
-///   every `InputFile` access, and queues them for the scheduler ([#queue]). It keeps at most
-///   [#FETCH_AHEAD] pages queued.
+/// - The **fetcher** runs as fetch steps, tasks of the decode pool. A step pulls the column's
+///   pages from its [PageSource], which does every `InputFile` access, and queues them for the
+///   scheduler ([#queue]). It queues while fewer than [#FETCH_AHEAD] pages are queued and
+///   returns once that many are; a change that makes room queues the column's next step
+///   ([#scheduleFetch()]). At most one step of a column is queued or running, so the steps of a
+///   column run one after another and see each other's state. The steps go to the head of the
+///   pool's queue, as the read waits for the pages they fetch; a parse or a decode a step needs
+///   runs in place on its thread.
 /// - A **page task**, on the decode pool, decodes its page into the column's cells ([#runPage]).
 /// - **Publishing** takes the completed cells at the head of the column's publish order into its
 ///   [BatchExchange], without waiting. A cell that finds no room stays at the head, and the
 ///   consumer publishes it when it takes a batch ([BatchExchange#setRoomListener]).
 ///
-/// A column without repetition places its pages into cells on the fetcher, from their metadata
+/// A column without repetition places its pages into cells on its fetch steps, from their metadata
 /// ([ScheduledFlatColumn]); a column decoded through levels places them on their tasks, once
 /// decoded and measured ([ScheduledNestedColumn]).
 ///
@@ -50,11 +56,15 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// `hardwood.internal.maxOutstanding` system property.
     static final int MAX_INFLIGHT_PAGES = Integer.getInteger("hardwood.internal.maxOutstanding", 8);
 
-    /// Pages the fetcher keeps queued for the scheduler.
+    /// Pages the fetch steps keep queued for the scheduler.
     static final int FETCH_AHEAD = 2;
 
     /// Stands in the publish order for the end of the read.
     static final Object END = new Object();
+
+    /// Told of every fetch step that stops for room, on its thread, before it releases its claim;
+    /// for tests of the wake protocol. `null` for none.
+    static volatile Consumer<ScheduledColumn<?>> roomWaitObserver;
 
     final ColumnSchema column;
     final PageSource pageSource;
@@ -77,7 +87,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// The read's row of the column's first record not yet published: the first row of the cell
     /// at the head of the publish order, or [#nextRow] when every cell placed is published.
     private volatile long publishedRow;
-    /// Set once the fetcher queues no more pages.
+    /// Set once the fetch steps queue no more pages.
     volatile boolean fetchEnded;
 
     // === Owned by the scheduler, read and written only by the thread submitting ===
@@ -97,11 +107,15 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     // === Pipeline control ===
     /// Set when the column stops: closed, its last batch published, or failed.
     volatile boolean done;
-    /// Page tasks submitted and not finished, which [#close()] waits for.
+    /// Page tasks and fetch steps submitted and not finished, which [#close()] waits for.
     private final AtomicInteger tasks = new AtomicInteger();
     /// Raised when a publish found no room, so the consumer publishes when it takes a batch.
     private final AtomicBoolean publishWanted = new AtomicBoolean();
-    private volatile Thread fetcherThread;
+    /// A fetch step is queued or running; stays set once the fetch has ended, so that no step
+    /// follows it.
+    private final AtomicBoolean fetchScheduled = new AtomicBoolean();
+    /// Raised by every [#scheduleFetch()]: the running step looks again before it returns.
+    private volatile boolean fetchWanted;
     /// The thread that claimed the close and waits for the page tasks; the last task unparks it.
     private volatile Thread closingThread;
     /// Claimed by the one thread that closes the column ([#close()]).
@@ -109,7 +123,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// Released once the claiming thread has closed the column, for every other closer.
     private final CountDownLatch closed = new CountDownLatch(1);
 
-    // === Fetcher only ===
+    // === Fetch steps only ===
     private PageDecoder pageDecoder;
 
     /// Creates a scheduled column and adds it to `scheduler`, which starts it.
@@ -125,20 +139,18 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         scheduler.add(this);
     }
 
-    /// Starts the fetcher. Called by the scheduler.
+    /// Queues the column's first fetch step. Called by the scheduler.
     void start() {
-        fetcherThread = Thread.ofVirtual().unstarted(this::runFetcher);
-        fetcherThread.start();
+        scheduleFetch();
     }
 
     /// Stops every column of the read ([ReadScheduler#stop()]) and waits until this one is
-    /// quiescent: its fetcher has exited and every page task submitted for it has finished, so
-    /// that the caller can release what the `InputFile` owns. Nothing is interrupted.
+    /// quiescent: every fetch step and page task submitted for it has finished, so that the
+    /// caller can release what the `InputFile` owns. Nothing is interrupted.
     ///
     /// A read's columns are closed together, one after another. Stopping them all on the first
     /// close lets the waits of every column overlap: a column still running while an earlier one
-    /// is awaited would go on submitting and decoding pages, and its fetcher would only be woken
-    /// once its own close is reached.
+    /// is awaited would go on fetching, submitting and decoding pages.
     ///
     /// A reader and its parent can close a read on two threads at once. One thread claims the
     /// close and waits for the column; every other closer returns once that close has completed.
@@ -148,11 +160,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             awaitClosed();
             return;
         }
-        boolean interrupted;
+        boolean interrupted = false;
         try {
             scheduler.stop();
-            Thread fetcher = fetcherThread;
-            interrupted = fetcher != null && ScheduledColumn.joinUninterruptibly(fetcher);
             // Written before the count is read, as a task reads it after the count: either this
             // sees the last task's decrement or that task sees this thread and unparks it.
             closingThread = Thread.currentThread();
@@ -190,12 +200,12 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     /// Stops the column without waiting for it: no publish runs after it, its consumer sees the
-    /// end of the stream, and its fetcher is woken to exit. Called by [ReadScheduler#stop()], on
-    /// the thread that closes the read.
+    /// end of the stream, and a fetch step queued for it ends the fetch. Called by
+    /// [ReadScheduler#stop()], on the thread that closes the read.
     void signalStop() {
         stop();
         exchange.finish();
-        unparkFetcher();
+        scheduleFetch();
     }
 
     /// Sets `done` under the column lock, so that no publish runs after it.
@@ -257,7 +267,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             // Not submitted, so not counted by the scheduler.
             uncountTask();
         }
-        unparkFetcher();
+        scheduleFetch();
         return page;
     }
 
@@ -267,11 +277,69 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         signalError(ScheduledColumn.contextClosed(e));
     }
 
-    // ==================== Fetcher ====================
+    // ==================== Fetch steps ====================
 
-    private void runFetcher() {
+    /// Queues the column's next fetch step on the pool, unless one is queued or running, which
+    /// then looks again before it returns, or the fetch has ended. Called on every change that
+    /// may let the column queue a page or end its fetch: a page taken off its queue, a page
+    /// placed, a stop, the end of the read.
+    void scheduleFetch() {
+        if (fetchEnded) {
+            return;
+        }
+        // Raised before the claim is tried: a step that releases the claim reads it after
+        fetchWanted = true;
+        if (!fetchScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        tasks.incrementAndGet();
+        try {
+            scheduler.executeFetch(this::runFetchStep);
+        }
+        catch (RejectedExecutionException e) {
+            uncountTask();
+            endFetch();
+            signalError(ScheduledColumn.contextClosed(e));
+        }
+    }
+
+    /// Runs fetch steps until the column has no room and no change arrived since the last one
+    /// looked, or its fetch ends.
+    private void runFetchStep() {
+        try {
+            while (true) {
+                fetchWanted = false;
+                if (fetch()) {
+                    return;
+                }
+                Consumer<ScheduledColumn<?>> observer = roomWaitObserver;
+                if (observer != null) {
+                    observer.accept(this);
+                }
+                fetchScheduled.set(false);
+                // Released before the flag is read: a change after the step looked either
+                // raised the flag before this read, or finds the claim free and queues a step
+                if (!fetchWanted || !fetchScheduled.compareAndSet(false, true)) {
+                    return;
+                }
+            }
+        }
+        finally {
+            uncountTask();
+        }
+    }
+
+    /// Fetches and queues pages while the column may queue them.
+    ///
+    /// @return whether the column's fetch has ended
+    private boolean fetch() {
+        boolean ended = true;
         try {
             while (!done && !fetchStopped()) {
+                if (!mayQueue()) {
+                    ended = false;
+                    return false;
+                }
                 PageInfo info = pageSource.next();
                 if (info == null) {
                     pagesEnded();
@@ -285,12 +353,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                     break;
                 }
                 scheduler.submit(this);
-                // The flags are read after `mayQueue()`, last before the park: a contended lock
-                // acquire inside `mayQueue()` can consume the unpark of a stop, so a flag read
-                // before it could be stale by the time the thread parks.
-                while (!mayQueue() && !done && !fetchStopped()) {
-                    LockSupport.park(this);
-                }
             }
         }
         catch (Exception e) {
@@ -303,17 +365,25 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             throw err;
         }
         finally {
-            fetchEnded = true;
-            lock.lock();
-            try {
-                nextRow = Long.MAX_VALUE;
-                updatePublishedRow();
+            if (ended) {
+                endFetch();
             }
-            finally {
-                lock.unlock();
-            }
-            scheduler.submit(this);
         }
+        return ended;
+    }
+
+    /// Ends the column's fetch: no step follows, and the scheduler stops waiting for a page of it.
+    private void endFetch() {
+        fetchEnded = true;
+        lock.lock();
+        try {
+            nextRow = Long.MAX_VALUE;
+            updatePublishedRow();
+        }
+        finally {
+            lock.unlock();
+        }
+        scheduler.submit(this);
     }
 
     /// A decoder for the column chunk `info` starts.
@@ -327,27 +397,27 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                 pageSource.getCurrentPageIndex(), pageSource.getCurrentBatches(), decoder, firstRow);
     }
 
-    /// Queues the fetcher's next page for the scheduler, unless it has no records to decode.
+    /// Queues the fetch step's next page for the scheduler, unless it has no records to decode.
     ///
     /// @return whether the column goes on
     abstract boolean queue(PageInfo info, PageDecoder decoder);
 
-    /// Ends the column's stream of pages: the fetcher has queued every page.
+    /// Ends the column's stream of pages: the fetch steps have queued every page.
     abstract void pagesEnded();
 
-    /// Ends the stream with the fetcher's failure, raised once every cell before it is published.
+    /// Ends the stream with a fetch step's failure, raised once every cell before it is published.
     ///
     /// @param betweenWorkItems whether the read failed between two work items, where every
     ///        column's batch ends at the same row
     abstract void fetchFailed(Exception failure, boolean betweenWorkItems);
 
-    /// Whether the fetcher fetches no further page: the column's placement ended before its
+    /// Whether the column fetches no further page: the column's placement ended before its
     /// read did.
     boolean fetchStopped() {
         return false;
     }
 
-    /// Whether the fetcher may queue another page.
+    /// Whether a fetch step may queue another page.
     boolean mayQueue() {
         return queued() < FETCH_AHEAD;
     }
@@ -485,7 +555,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     private void finishRead() {
         done = true;
         exchange.finish();
-        unparkFetcher();
+        scheduleFetch();
         scheduler.submit(this);
     }
 
@@ -497,7 +567,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     void signalError(Throwable t) {
         done = true;
         exchange.signalError(t);
-        unparkFetcher();
+        scheduleFetch();
         scheduler.submit(this);
     }
 
@@ -517,28 +587,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
 
     void unparkScheduler() {
         scheduler.submit(this);
-    }
-
-    void unparkFetcher() {
-        Thread t = fetcherThread;
-        if (t != null) {
-            LockSupport.unpark(t);
-        }
-    }
-    /// Waits for `thread` to exit, carrying on through interrupts.
-    ///
-    /// @return whether the calling thread was interrupted while waiting
-    static boolean joinUninterruptibly(Thread thread) {
-        boolean interrupted = false;
-        while (true) {
-            try {
-                thread.join();
-                return interrupted;
-            }
-            catch (InterruptedException e) {
-                interrupted = true;
-            }
-        }
     }
 
     /// A failure met reading `column`, typed ([#asReadFailure]) and placed with the file, row group

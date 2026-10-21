@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -17,10 +18,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-/// A decode pool for tests that decides the order a read's page tasks run in, one task at a time.
+/// A decode pool for tests that decides the order a read's page tasks and fetch steps run in, one
+/// task at a time.
 ///
 /// - [#inline()] runs each task on the thread that submits it, as it is submitted: a page's task
-///   has run before its column's fetcher takes the next page.
+///   has run before its column's fetch step takes the next page, and a fetch step runs on the
+///   thread whose change queued it.
 /// - [#shuffling(long)] queues the tasks and runs them on a thread of its own, each time picking
 ///   one of the queued tasks at random from a seeded generator. Before it picks, it lets the
 ///   scheduler submit what it may: it waits until the read has as many tasks queued as it may have
@@ -31,10 +34,10 @@ import java.util.concurrent.locks.ReentrantLock;
 /// the steps of the cell protocol that span tasks (which task measures, sizes, places, fills
 /// and completes a cell, and which parks) are taken in the order the seed gives, while the
 /// races inside one step, which the cell's monitor and atomics settle, are left to the tests
-/// running real threads. The fetchers still run on threads of their own, so a seed picks among
-/// whichever tasks they have let the scheduler submit by then. The [Listener] sees every task before and after it runs, on the thread running
-/// it, with the page the scheduler submitted it for, and may inspect the page's state there
-/// without racing the task.
+/// running real threads. The fetch steps are tasks of the executor like the page tasks, so a seed
+/// orders them among the pages too. The [Listener] sees every page task before and after it
+/// runs, on the thread running it, with the page the scheduler submitted it for, and may inspect
+/// the page's state there without racing the task; it does not see the fetch steps.
 ///
 /// The pages are told to the executor through [ReadScheduler#submissionObserver], which
 /// [#install] sets and [#uninstall] clears.
@@ -94,9 +97,12 @@ final class TaskOrderExecutor extends AbstractExecutorService {
         return new TaskOrderExecutor(new Random(seed), target, listener);
     }
 
-    /// A context whose decode pool is this executor, taken as `threads` threads.
+    /// A context whose decode pool is this executor, taken as `threads` threads. The shuffling
+    /// executor's thread is the context's pool thread, so that a fetch step it runs decodes in
+    /// place, as on a pool; the inline executor runs a decode a step waits for as it is
+    /// submitted.
     HardwoodContextImpl context(int threads) {
-        return HardwoodContextImpl.create(this, threads);
+        return HardwoodContextImpl.create(this, threads, runner == null ? Set.of() : Set.of(runner));
     }
 
     /// Lets the executor see the page of each task the scheduler submits.

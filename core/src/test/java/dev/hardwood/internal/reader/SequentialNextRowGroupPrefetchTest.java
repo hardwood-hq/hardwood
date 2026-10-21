@@ -7,10 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +15,6 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
@@ -32,38 +28,36 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The next row group's prefetch fetches the first chunk of a [SequentialFetchPlan] (#1324), and
-/// that fetch is the one the read of the row group then uses.
+/// The first chunk of a [SequentialFetchPlan] in the next row group, which that row group's
+/// prefetch fetches (#1324), is read once, whether the prefetch or the read of the row group gets
+/// to it first.
 class SequentialNextRowGroupPrefetchTest {
 
     private static final int ROWS_PER_ROW_GROUP = 1_000;
 
     @Test
-    void theNextRowGroupsFirstStandaloneChunkIsPrefetchedAndReadOnce() throws Exception {
+    void theNextRowGroupsFirstStandaloneChunkIsReadOnce() throws Exception {
         // One column: its first chunk is a standalone handle.
         CountingInputFile file = read(write("a"));
 
         assertThat(file.reads())
                 .filteredOn(read -> read.reason().contains("rg=1 col='a' seqChunk@0"))
-                .extracting(CountingInputFile.Read::reason)
-                .containsExactly("prefetch rg=1 | rg=1 col='a' seqChunk@0");
+                .hasSize(1);
     }
 
     @Test
-    void theNextRowGroupsFirstSharedRegionIsPrefetchedAndReadOnce() throws Exception {
+    void theNextRowGroupsFirstSharedRegionIsReadOnce() throws Exception {
         // Two back-to-back columns: their first chunks are coalesced into one shared region.
         CountingInputFile file = read(write("a", "b"));
 
         assertThat(file.reads())
                 .filteredOn(read -> read.reason().contains("rg=1 "))
-                .extracting(CountingInputFile.Read::reason)
-                .containsExactly("prefetch rg=1 | rg=1 region=0..1");
+                .hasSize(1);
     }
 
-    /// Reads every row of `data`, holding back the first row group's data until the second row
-    /// group's first data read has been issued, so the prefetch cannot lose the race to the read.
+    /// Reads every row of `data`.
     private static CountingInputFile read(byte[] data) throws Exception {
-        CountingInputFile file = new CountingInputFile(new HoldBackFirstRowGroup(InputFile.of(ByteBuffer.wrap(data))));
+        CountingInputFile file = new CountingInputFile(InputFile.of(ByteBuffer.wrap(data)));
         file.open();
         int rows = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(file);
@@ -103,55 +97,5 @@ class SequentialNextRowGroupPrefetchTest {
         // Every file the writer produces has a page index; the plan under test is the one a
         // file without one takes.
         return FooterRewriter.withoutPageIndex(InMemoryFiles.toByteArray(out));
-    }
-
-    /// Holds back the data reads of row group 0 until row group 1's prefetch has issued a data
-    /// read, or for at most five seconds.
-    private static final class HoldBackFirstRowGroup implements InputFile {
-
-        private final InputFile delegate;
-        private final CountDownLatch nextRowGroupPrefetched = new CountDownLatch(1);
-
-        HoldBackFirstRowGroup(InputFile delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public void open() throws IOException {
-            delegate.open();
-        }
-
-        @Override
-        public ByteBuffer readRange(long offset, int length) throws IOException {
-            String reason = FetchReason.current();
-            if (reason.startsWith("prefetch rg=1 |")) {
-                nextRowGroupPrefetched.countDown();
-            }
-            else if (reason.startsWith("rg=0 ")) {
-                try {
-                    nextRowGroupPrefetched.await(5, TimeUnit.SECONDS);
-                }
-                catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException(e);
-                }
-            }
-            return delegate.readRange(offset, length);
-        }
-
-        @Override
-        public long length() throws IOException {
-            return delegate.length();
-        }
-
-        @Override
-        public String name() {
-            return delegate.name();
-        }
-
-        @Override
-        public void close() throws IOException {
-            delegate.close();
-        }
     }
 }

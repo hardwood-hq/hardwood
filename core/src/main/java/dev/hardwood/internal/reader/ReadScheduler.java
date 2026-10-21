@@ -31,7 +31,7 @@ import dev.hardwood.internal.DecodeExecutor;
 /// next, such as a filter-only column that has published far ahead of the read.
 ///
 /// The scheduler has no thread of its own and does no I/O and no decoding: it runs on whichever
-/// thread changes what may be submitted (a fetcher queuing a page, a page task ending, a column
+/// thread changes what may be submitted (a fetch step queuing a page, a page task ending, a column
 /// publishing a batch or ending), one thread at a time, and a call made while another thread
 /// submits makes that thread look again ([#submit()]).
 ///
@@ -142,7 +142,7 @@ public final class ReadScheduler {
         return !columns.isEmpty();
     }
 
-    /// Starts every column's fetcher. Must be called once, after every column was added.
+    /// Queues every column's first fetch step. Must be called once, after every column was added.
     public void start() {
         started = true;
         for (ScheduledColumn<?> column : columns) {
@@ -163,6 +163,13 @@ public final class ReadScheduler {
         for (ScheduledColumn<?> column : columns) {
             column.signalStop();
         }
+    }
+
+    /// Runs a column's fetch step on the context's pool, at the head of its queue.
+    ///
+    /// @throws RejectedExecutionException if the context is closed
+    void executeFetch(Runnable step) {
+        context.executeStep(step);
     }
 
     /// Submits every page that may be submitted now, after `column`'s state changed. Every change

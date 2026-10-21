@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -93,6 +94,42 @@ class FileMetadataCacheTest {
             inputFile.releaseFooterRead();
             cache.close();
             assertThat(inputFile.closeCount()).isZero();
+            inputFile.close();
+        }
+    }
+
+    /// A thread of the pool that waits for a load a thread off the pool registered runs the load's
+    /// parse in place: the waiting thread is the pool's only one, so a parse handed to the pool
+    /// would never run.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aPoolThreadWaitingForALoadRegisteredOffThePoolRunsItsParse() throws Exception {
+        LatchInputFile inputFile = LatchInputFile.blocked(LATER_FILE);
+        HardwoodContextImpl context = HardwoodContextImpl.create(1);
+        contexts.add(context);
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), context);
+
+        try (ExecutorService callers = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<FileMetaData> offPool = callers.submit(() -> cache.getFileMetaData(0));
+            assertThat(inputFile.awaitFooterRead()).isTrue();
+            AtomicReference<Thread> poolThread = new AtomicReference<>();
+            Future<PreparedFile> onPool = context.executor().submit(() -> {
+                poolThread.set(Thread.currentThread());
+                return cache.getFile(0);
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+            while (poolThread.get() == null || poolThread.get().getState() != Thread.State.WAITING) {
+                assertThat(System.nanoTime()).as("the pool thread waits for the load").isLessThan(deadline);
+                Thread.sleep(1);
+            }
+            inputFile.releaseFooterRead();
+
+            FileMetaData metadata = offPool.get(WAIT_SECONDS, TimeUnit.SECONDS);
+            assertThat(onPool.get(WAIT_SECONDS, TimeUnit.SECONDS).metaData()).isSameAs(metadata);
+        }
+        finally {
+            inputFile.releaseFooterRead();
+            cache.close();
             inputFile.close();
         }
     }

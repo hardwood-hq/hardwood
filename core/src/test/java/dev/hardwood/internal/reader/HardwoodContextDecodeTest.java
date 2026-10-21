@@ -197,10 +197,10 @@ class HardwoodContextDecodeTest {
     }
 
     /// A read waits for the pool's threads, so on one of them it would wait for itself: building it
-    /// there fails, and so does a decode asked for there.
+    /// there fails. A decode asked for there runs in place.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void aReadOnTheContextsOwnPoolFailsInsteadOfHanging() {
+    void aReadOnTheContextsOwnPoolFailsInsteadOfHanging() throws Exception {
         String message = "A read cannot run on a thread of the HardwoodContext it reads with, whose threads "
                 + "it waits for: run it on another thread, or read with another context";
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
@@ -211,15 +211,14 @@ class HardwoodContextDecodeTest {
                     return values.nextBatch();
                 }
             });
-            Future<?> decode = context.executor().submit(() -> context.decode(buffers -> "decoded"));
+            Future<Thread> decode = context.executor().submit(() -> context.decode(buffers -> Thread.currentThread()));
 
-            for (Future<?> onPool : List.of(read, decode)) {
-                assertThatThrownBy(onPool::get)
-                        .isInstanceOf(ExecutionException.class)
-                        .cause()
-                        .isInstanceOf(IllegalStateException.class)
-                        .hasMessage(message);
-            }
+            assertThatThrownBy(read::get)
+                    .isInstanceOf(ExecutionException.class)
+                    .cause()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage(message);
+            assertThat(decode.get().getName()).as("thread running the decode").startsWith("hardwood-");
         }
     }
 

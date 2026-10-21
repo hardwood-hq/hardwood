@@ -37,6 +37,8 @@ class MetadataParseThreadTest {
     private record Computed(String what, Thread caller, Thread runner) {
     }
 
+    private static final String POOL_THREAD = "hardwood-\\d+";
+
     private final List<Computed> computed = new CopyOnWriteArrayList<>();
 
     @AfterEach
@@ -62,6 +64,8 @@ class MetadataParseThreadTest {
         assertThat(rows).isEqualTo(20);
         assertThat(computed).extracting(Computed::what).contains("footer", "page filter", "fetch plans");
         assertRanOnThePool();
+        assertThat(computed).as("computations a fetch step ran in place").anySatisfy(
+                c -> assertThat(c.caller()).isSameAs(c.runner()));
     }
 
     /// A literal inside every row group's `i64` range and absent from all of them leaves the
@@ -86,10 +90,15 @@ class MetadataParseThreadTest {
         assertRanOnThePool();
     }
 
+    /// Every computation ran on a thread of the pool: handed over by a thread off the pool, or
+    /// in place on the thread of the pool that needed it, such as a column's fetch step, which
+    /// never waits for another thread of the pool.
     private void assertRanOnThePool() {
         assertThat(computed).allSatisfy(c -> {
-            assertThat(c.runner().getName()).as("thread running %s", c.what()).matches("hardwood-\\d+");
-            assertThat(c.caller()).as("thread waiting for %s", c.what()).isNotSameAs(c.runner());
+            assertThat(c.runner().getName()).as("thread running %s", c.what()).matches(POOL_THREAD);
+            if (c.caller().getName().matches(POOL_THREAD)) {
+                assertThat(c.caller()).as("thread of the pool needing %s", c.what()).isSameAs(c.runner());
+            }
         });
     }
 }

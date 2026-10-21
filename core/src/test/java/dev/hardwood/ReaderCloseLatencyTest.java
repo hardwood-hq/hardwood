@@ -38,24 +38,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// the dominant term.
 ///
 /// The property under test is that a close costs the same whether one column is projected or
-/// sixteen. [dev.hardwood.internal.reader.ScheduledColumn#close()] joins its column's fetcher
-/// thread and then waits for the column's page tasks, and [ColumnReaders#close()] closes the
-/// columns one at a time. The first close stops every column of the read, so the columns' waits
-/// overlap. The waits are untimed, so a column whose stop does not reach its parked fetcher, or
-/// whose last page task does not wake the close, leaves the close waiting forever, which the
+/// sixteen. [dev.hardwood.internal.reader.ScheduledColumn#close()] waits for its column's fetch
+/// steps and page tasks, and [ColumnReaders#close()] closes the columns one at a time. The first
+/// close stops every column of the read, so the columns' waits overlap. The waits are untimed, so
+/// a column whose stop does not end its fetch, or whose last task does not wake the close,
+/// leaves the close waiting forever, which the
 /// `@Timeout` catches. A column stopped only when its own close is reached waits for its page
 /// tasks in turn rather than alongside the others, and the total goes linear in the projection
 /// width, which the bound catches.
 ///
 /// When close() arrives mid-file, each column's ready queue is at its limit, so its completed
 /// cells wait for the consumer to publish them, the scheduler submits none of its pages past the
-/// read-ahead cap, and its fetcher is parked on room in the column's page queue. The close has
-/// to unpark that fetcher, and its wait for the page tasks has to end as the last task finishes.
+/// read-ahead cap, and its fetch has stopped for room in the column's page queue. The close has
+/// to end that fetch, and its wait for the tasks has to end as the last task finishes.
 /// The cases differ in where the pipeline comes to rest: [ColumnReaders] uses the detaching
 /// `BatchExchange` mode, whose ready queue is limited in rows, and [RowReader] the recycling mode,
-/// whose ready queue is limited in batch holders; a flat column places its pages on the fetcher
-/// ([dev.hardwood.internal.reader.ScheduledFlatColumn]), and a struct field's column places them
-/// on its page tasks and also parks its fetcher on its pages not yet placed
+/// whose ready queue is limited in batch holders; a flat column places its pages on its fetch
+/// steps ([dev.hardwood.internal.reader.ScheduledFlatColumn]), and a struct field's column places
+/// them on its page tasks and also stops its fetch for room among its pages not yet placed
 /// ([dev.hardwood.internal.reader.ScheduledNestedColumn]).
 ///
 /// On the bound: sub-millisecond closes are typical, but the distribution has a heavy tail,
@@ -70,15 +70,15 @@ class ReaderCloseLatencyTest {
     /// Also wide enough for the row-reader case to reproduce at all. Batch size there is
     /// derived from the projection (see [dev.hardwood.internal.reader.BatchSizing]) rather
     /// than set by the caller, so a narrow projection gets batches big enough to swallow the
-    /// whole file, every column reaches EOF and finishes itself, and nothing is left parked for
-    /// close() to release. The effect appears from about 8 columns upward; 16 is comfortably
+    /// whole file, every column reaches EOF and finishes itself, and no fetch is left stopped for
+    /// close() to end. The effect appears from about 8 columns upward; 16 is comfortably
     /// inside that.
     private static final int COLUMNS = 16;
 
     /// Many more rows than the one batch the test consumes. This is the state the property
-    /// needs: with data still to come, each column has filled its ready queue and its fetcher is
-    /// parked on room in its page queue. A file consumed entirely by the first batch does
-    /// not exercise it — the fetcher reaches EOF and exits on its own before close() is called.
+    /// needs: with data still to come, each column has filled its ready queue and its fetch has
+    /// stopped for room in its page queue. A file consumed entirely by the first batch does
+    /// not exercise it — the fetch reaches EOF and ends on its own before close() is called.
     private static final int ROWS = 200_000;
 
     /// Forces many batches per column, so one batch is a small fraction of the file.
@@ -162,7 +162,7 @@ class ReaderCloseLatencyTest {
 
     /// And of the nested row reader, which recycles its batch holders too and whose struct fields
     /// are [dev.hardwood.internal.reader.ScheduledNestedColumn]s: they place their pages on their
-    /// page tasks, and their fetchers also park on the pages not yet placed.
+    /// page tasks, and their fetches also stop for room among the pages not yet placed.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void nestedRowReaderCloseDoesNotScaleWithProjectionWidth() throws Exception {

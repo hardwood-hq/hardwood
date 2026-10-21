@@ -49,9 +49,10 @@ read keeps its prefetches.
 | Work | Thread | Gap |
 | --- | --- | --- |
 | Page decode, decompression, dictionary decode (#1568) | pool | none |
-| Parsing and scans of fetched bytes (#1589) | pool, handed over by the thread that fetched them | stage 3 removes the hand-off |
-| Fetchers: page headers, page filters, demand-path planning, demand fetches | a virtual thread per decoded column, blocking | stages 3 and 4 |
-| Next row group's planning and first chunk, next chunk, next region, later files' footers | a virtual thread per task, which hands its CPU work to the pool and waits | stage 3 |
+| Parsing and scans of fetched bytes (#1589) | pool: in place on fetch steps and planning tasks, handed over by the calling thread | none |
+| Fetch steps (#1597): page headers, page filters, demand-path planning, demand fetches | pool, head of the queue; a demand fetch blocks its thread | stage 4 |
+| Next row group's index window, Bloom filters and first chunk, next chunk, next region, later files' footer reads | a virtual thread per request, which only reads | none |
+| Next row group's planning | pool, a task at the tail of the queue | #1590 |
 | A planning prefetch's dictionary decode | pool, ahead of read-ahead pages | #1590 |
 | Page tasks of reads sharing a context | pool, one FIFO across all reads | #1564 |
 | Writer copy, encode and compression | pool and the caller, submitted to the raw `ExecutorService` | #1564 |
@@ -63,7 +64,7 @@ read keeps its prefetches.
 | --- | --- | --- | --- |
 | 1 | Speculative I/O and footer loads on virtual threads | #1560 | done |
 | 2 | Parsing and scans on the pool | #1589 | done |
-| 3 | Fetchers as steps on the pool | #1597 | see below |
+| 3 | Fetchers as steps on the pool | #1597 | done |
 | 4 | Steps never wait on I/O | #1598 | see below |
 | 5 | Single-threaded mode: `threads(0)` | #1022 | see below |
 | 6 | One I/O scheduler per context | #1264 | #1397's plan |
@@ -99,48 +100,19 @@ selective row read on the N300.
 
 ### Stage 3: fetchers as steps on the pool
 
-**Changes.** A column's fetcher stops being a virtual thread. Its loop body becomes a fetch step
-(`ScheduledColumn`), which queues pages while the column has room and returns when it has
-none; a change that makes room, which today unparks the fetcher, queues the column's next fetch
-step instead. A fetch step runs on the pool, at the head of the queue: the read waits for what
-it fetches. On a thread of the pool, `compute` and `decode` run in place, so the fetch path has
-no hand-off.
+Done (#1597). A column's fetcher runs as fetch steps on the pool, at the head of its queue
+(`ScheduledColumn.runFetchStep`); a change that makes room queues the next step, and a close
+waits for the steps as for page tasks. On a thread of the pool, `compute` and `decode` run in
+place. A later file's footer is read on a virtual thread and parsed by the load that takes it;
+a load on a thread off the pool hands its parse over as a task a thread of the pool waiting for
+the load runs itself (`FileMetadataCache.Load`). The next row group's index window, Bloom
+filters and first chunk are read on virtual threads, and its planning runs as a task at the
+tail of the pool.
 
-A step on the pool must never wait for work only the pool runs, so the speculative tasks split
-along the target model. A virtual thread reads what is known before any parsing: a later
-file's footer bytes, the next row group's index window and Bloom filters, its first chunk, the
-next chunk and region. The footer is parsed by the load that needs it; the next row group is
-planned by a speculative task at the tail of the pool, whose waits are on running threads
-only (`OnceCache` waits on the thread computing).
-
-Closing a column waits for its queued fetch step instead of joining a
-thread; the threaded-only tests (the fetcher-close tests, the tests that hold a fetcher inside
-`PageSource.next()`, `ShuffledTaskOrderTest`'s executor, which holds back every task of the
-pool) become tests of the step; the thread inventory, the back-pressure chain and the close
-protocol in `READ_PIPELINE.md` are rewritten for steps.
-
-**Buys.** The fixed cost of a read and the CPU of its control flow, measured in the spike below; one way of driving a read instead of two, which stages 5 and 6 need.
-
-**Spike.** Branch `1022-fetch-steps-spike` runs the fetchers as steps behind
-`-Dhardwood.internal.fetchSteps`. Against main, one JVM per arm, interleaved:
-
-| Workload | Container | N300, 1.5 GHz pinned |
-| --- | --- | --- |
-| narrow, flat, 1BRC regression presets | −2 to −9 % | −7 to +4 % |
-| 200 files of 1,000 rows | −24 % | −19 % |
-| open and first row, one thread | −19 % | −27 % |
-| `ColumnReaders`, 10 million rows | −7 to −8 % | 0 to −20 % |
-| S3 scans at 30 ms and 235 ms latency | even, identical requests and bytes | not run |
-
-Fetch steps at the tail of the queue lost 10–15 % on small reads, which the head of the queue
-recovers. Flat columnar on the N300 is 4 % slower in the regression preset with 2 % fewer
-instructions, and even under perfnorm's longer iterations; the fetchers on today's carriers
-run beside the n threads of the pool, and steps put them inside the bound. Measured once more
-on the PR, with `threads(n + 1)` as the check.
-
-**Gate.** The core suite passes with steps the only mode; the narrow, flat and 1BRC regression
-contenders and `run-s3` on the container and the N300 against main; any regression beyond the
-flat columnar case above is raised before the PR merges.
+Gate against main, three interleaved rounds per machine: on the container, nothing slower,
+1BRC fan-out −4 % and ids −8 %, everything else within −3 to +1 %; on the N300 at 1.50 GHz,
+1BRC −1 to −5 %, narrow and S3 even, flat +3 % in that session and even (−0.2 %) in the next,
+where `threads(n + 1)` changed neither flat contender beyond the spread of the runs.
 
 ### Stage 4: steps never wait on I/O
 
@@ -194,7 +166,7 @@ on the taxi files at 4 and 8 threads, and the narrow, flat and 1BRC regression c
 container and the N300.
 
 **Within a read (#1590).** Four classes: control steps, work a reader waits for, read-ahead,
-speculative. Stage 3 already needs the first and the last (fetch steps at the head, planning
+speculative. Stage 3 uses the first and the last (fetch steps at the head, planning
 ahead at the tail); the dictionary decodes of a speculative planning task run as speculative.
 
 **The writer** submits its append and flush tasks through the context and takes its share of

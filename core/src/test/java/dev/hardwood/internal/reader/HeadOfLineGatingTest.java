@@ -138,10 +138,11 @@ class HeadOfLineGatingTest {
     }
 
     /// No page is submitted while a column with nothing queued may yet queue a page below it:
-    /// `large`'s fetcher is held before its first page, so its next page may start at row 0, and
-    /// `small`'s page at 16 waits for it. The pool runs each task on the thread submitting it,
+    /// `large`'s fetch step is held before its first page, so its next page may start at row 0,
+    /// and `small`'s page at 16 waits for it. The pool runs each task on the thread submitting it,
     /// so every choice the scheduler makes after `small` queues that page is made before
-    /// `small`'s fetcher asks for its next page.
+    /// `small`'s fetch step asks for its next page. The scheduler starts on a thread of its own,
+    /// which runs both columns' first steps and is held in `large`'s.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void aPageWaitsForAColumnWithNothingQueuedThatMayStartBelowIt() throws Exception {
@@ -163,7 +164,7 @@ class HeadOfLineGatingTest {
             }
         };
         CountDownLatch largeHeld = new CountDownLatch(1);
-        // Counted down as the fetcher asks for each of small's first three pages
+        // Counted down as the fetch step asks for each of small's first three pages
         CountDownLatch smallAsked = new CountDownLatch(3);
 
         TaskOrderExecutor executor = TaskOrderExecutor.inline(null);
@@ -198,16 +199,17 @@ class HeadOfLineGatingTest {
                  ScheduledFlatColumn large = column(scheduler, iterator, largeSource, 1, context, largeExchange)) {
                 columns.add(small);
                 columns.add(large);
+                Thread starter = Thread.ofVirtual().start(scheduler::start);
                 try {
-                    scheduler.start();
                     assertThat(smallAsked.await(STATE_NANOS, TimeUnit.NANOSECONDS))
-                            .as("small's fetcher asked for its third page").isTrue();
+                            .as("small's fetch step asked for its third page").isTrue();
                     assertThat(lastSmall.get()).as("last page of small submitted").isEqualTo(0);
                     assertThat(small.peekReady().firstRow).as("small's waiting page").isEqualTo(SMALL_PAGE);
                 }
                 finally {
                     largeHeld.countDown();
                 }
+                starter.join();
                 read = takeAll(smallExchange, largeExchange);
             }
         }

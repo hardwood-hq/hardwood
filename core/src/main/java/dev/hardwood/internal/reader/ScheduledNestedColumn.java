@@ -266,8 +266,8 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         }
         updatePublishedRow();
         if (unplaced.size() < before) {
-            // The fetcher may wait for room among the unplaced pages
-            unparkFetcher();
+            // The fetch may have stopped for room among the unplaced pages
+            scheduleFetch();
         }
     }
 

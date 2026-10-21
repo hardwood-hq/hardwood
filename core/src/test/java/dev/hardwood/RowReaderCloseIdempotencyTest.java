@@ -22,8 +22,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 /// Pins the [AutoCloseable] contract that `close()` is idempotent: calling it
 /// repeatedly after a reader is depleted must not redo the pipeline teardown.
 ///
-/// `close()` stops every column — it joins the column's fetcher and waits for
-/// its page tasks — plus, on the column path, tears down the iterator-local
+/// `close()` stops every column — it waits for the column's fetch steps and
+/// page tasks — plus, on the column path, tears down the iterator-local
 /// caches.
 /// Without an idempotency guard every redundant `close()` re-ran that work
 /// (issue #659).

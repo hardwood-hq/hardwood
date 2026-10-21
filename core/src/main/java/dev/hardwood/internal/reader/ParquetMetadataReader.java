@@ -85,14 +85,6 @@ public final class ParquetMetadataReader {
         return parse(inputFile, bytes);
     }
 
-    /// As [#read(InputFile)], with the footer read on the calling thread and parsed on
-    /// `context`'s pool, which bounds the CPU a read takes: a footer costs about a microsecond to
-    /// parse per column chunk, tens of milliseconds for a wide file of many row groups.
-    static FileFooter read(InputFile inputFile, HardwoodContextImpl context) throws IOException {
-        FooterBytes bytes = fetch(inputFile);
-        return context.compute("footer", () -> parse(inputFile, bytes));
-    }
-
     /// A footer's bytes as read from the file, before they are parsed.
     private record FooterBytes(ByteBuffer body, int footerLength, long fileSize) {
     }
@@ -143,17 +135,36 @@ public final class ParquetMetadataReader {
     /// @param source the context's source, [#FROM_FILE] when none is installed
     /// @throws StaleMetadataException if the supplied footer does not describe the file
     public static FileFooter load(InputFile inputFile, MetadataSource source) throws IOException {
-        return load(inputFile, source, null);
+        return source == FROM_FILE ? read(inputFile) : supplied(inputFile, source);
     }
 
-    /// As [#load(InputFile, MetadataSource)], with a footer read from the file parsed on
-    /// `context`'s pool ([#read(InputFile, HardwoodContextImpl)]), or on the calling thread when
-    /// `context` is `null`.
-    static FileFooter load(InputFile inputFile, MetadataSource source, HardwoodContextImpl context)
-            throws IOException {
-        if (source == FROM_FILE) {
-            return context == null ? read(inputFile) : read(inputFile, context);
+    /// The I/O of [#load(InputFile, MetadataSource)]: the bytes of a footer read from the file,
+    /// or the footer `source` supplies, checked against the file. [FooterRead#parse] completes
+    /// the load.
+    ///
+    /// @throws StaleMetadataException if the supplied footer does not describe the file
+    static FooterRead readFooter(InputFile inputFile, MetadataSource source) throws IOException {
+        return source == FROM_FILE
+                ? new FooterRead(inputFile, fetch(inputFile), null)
+                : new FooterRead(inputFile, null, supplied(inputFile, source));
+    }
+
+    /// A footer as [#readFooter] read it: the bytes of a footer read from the file, not yet
+    /// parsed, or a supplied footer.
+    record FooterRead(InputFile inputFile, FooterBytes bytes, FileFooter supplied) {
+
+        /// The footer, its bytes parsed on `context`'s pool, which bounds the CPU a read takes: a
+        /// footer costs about a microsecond to parse per column chunk, tens of milliseconds for a
+        /// wide file of many row groups.
+        FileFooter parse(HardwoodContextImpl context) {
+            return supplied != null
+                    ? supplied
+                    : context.compute("footer", () -> ParquetMetadataReader.parse(inputFile, bytes));
         }
+    }
+
+    /// The footer `source` supplies for an opened file, checked against the file.
+    private static FileFooter supplied(InputFile inputFile, MetadataSource source) throws IOException {
         ParsedFooter supplied;
         try {
             supplied = source.footerOf(inputFile);
