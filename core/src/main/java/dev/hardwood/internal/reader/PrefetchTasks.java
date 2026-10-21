@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -19,17 +20,22 @@ import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.reader.ParquetReadException;
 
-/// The speculative tasks one [RowGroupIterator]'s read starts on one executor: on the context's
-/// I/O executor ([HardwoodContextImpl#ioExecutor()]), the reads of the next row group's index
-/// window and first chunk and the one-ahead chunk and region prefetches; at the tail of the
+/// The tasks one [RowGroupIterator]'s read starts on one executor: on the context's I/O executor
+/// ([HardwoodContextImpl#ioExecutor()]), every read of a file not in memory ([RangeRead]), demand
+/// reads a fetch step yields on as well as the speculative ones (the next row group's index
+/// window and first chunk, the one-ahead chunk and region prefetches); at the tail of the
 /// context's pool, the next row group's planning.
 ///
-/// Nothing waits for such a task to deliver, but each reads the input file, so whoever
-/// closes the file must first wait for the ones already running. [#awaitAll()] stops
-/// admitting new tasks, makes those not yet started skip their work, and waits for the rest.
+/// Each reads the input file, so whoever closes the file must first wait for the ones already
+/// running. [#awaitAll()] stops admitting new tasks, makes those not yet started skip their work
+/// (running the drop action [#submit(Runnable, Runnable)] takes, which completes a read so that
+/// no step waits for it forever), and waits for the rest.
 ///
-/// A task's failure does not fail the read, since the demand path repeats the work and
-/// reports what fails there ([#report]). An `Error` is rethrown by [#awaitAll()].
+/// A [RangeRead] completes with its own failure and throws nothing: a demand read's failure
+/// reaches the step waiting for it, and a speculative read's leaves its bytes to a demand read.
+/// Any other task's failure does not fail the read, since the demand path repeats the work and
+/// reports what fails there ([#report]). [#awaitAll()] rethrows an `Error` a task raised, and one
+/// a read failed with that no step took ([#recordFailedRead]).
 public final class PrefetchTasks {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(PrefetchTasks.class.getName()));
@@ -41,6 +47,9 @@ public final class PrefetchTasks {
     private volatile boolean closed;
     /// The first `Error` a task raised, the later ones suppressed beneath it. Guarded by `this`.
     private Error failure;
+    /// The reads that failed with an `Error`, raised by [#awaitAll()] unless a step took it.
+    /// Guarded by `this`.
+    private final List<RangeRead> failedReads = new ArrayList<>();
 
     /// @param executor where the tasks run
     public PrefetchTasks(Executor executor) {
@@ -51,17 +60,26 @@ public final class PrefetchTasks {
     /// [#awaitAll()] has been called or the executor refuses it, in which case the task is
     /// dropped.
     public void submit(Runnable task) {
+        submit(task, () -> {});
+    }
+
+    /// Runs `task` as [#submit(Runnable)] does, and `dropped` instead when the task is dropped:
+    /// at once when it is not admitted, on the executor when [#awaitAll()] is called before it
+    /// starts. A read a step waits for completes either way.
+    public void submit(Runnable task, Runnable dropped) {
         Runnable bound = FetchReason.bind(task);
         CompletableFuture<Void> future;
         synchronized (this) {
             if (closed) {
+                dropped.run();
                 return;
             }
             try {
-                future = CompletableFuture.runAsync(() -> run(bound), executor);
+                future = CompletableFuture.runAsync(() -> run(bound, dropped), executor);
             }
             catch (RejectedExecutionException e) {
                 // The context was closed; the demand path fails the read
+                dropped.run();
                 return;
             }
             running.add(future);
@@ -69,8 +87,9 @@ public final class PrefetchTasks {
         future.whenComplete((ignored, unused) -> running.remove(future));
     }
 
-    private void run(Runnable task) {
+    private void run(Runnable task, Runnable dropped) {
         if (closed) {
+            dropped.run();
             return;
         }
         try {
@@ -83,6 +102,11 @@ public final class PrefetchTasks {
 
     private synchronized void recordFailure(Throwable e) {
         failure = report(e, failure);
+    }
+
+    /// Records a read that failed with an `Error`, for [#awaitAll()] to raise if no step takes it.
+    synchronized void recordFailedRead(RangeRead read) {
+        failedReads.add(read);
     }
 
     /// Reports the failure of speculative work that no caller waits for: a failure of the file
@@ -113,7 +137,8 @@ public final class PrefetchTasks {
     /// started by then returns without doing its work. Does not give up on an interrupt, since
     /// returning early would let the caller close a file a task is still reading. Idempotent.
     ///
-    /// @throws Error the first `Error` a task raised, once every task has finished
+    /// @throws Error the first `Error` a task raised or a read failed with that no step took, once
+    ///         every task has finished
     public void awaitAll() {
         List<CompletableFuture<Void>> started;
         synchronized (this) {
@@ -126,6 +151,15 @@ public final class PrefetchTasks {
         }
         Error raised;
         synchronized (this) {
+            // The steps have ended by now (the caller closes the columns first), so an Error
+            // still untaken is one no step will take
+            for (RangeRead read : failedReads) {
+                Error untaken = read.untakenError();
+                if (untaken != null) {
+                    failure = report(untaken, failure);
+                }
+            }
+            failedReads.clear();
             raised = failure;
             failure = null;
         }

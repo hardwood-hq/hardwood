@@ -52,7 +52,8 @@ read keeps its prefetches.
 | --- | --- | --- |
 | Page decode, decompression, dictionary decode (#1568) | pool | none |
 | Parsing and scans of fetched bytes (#1589) | pool: in place on fetch steps and planning tasks, handed over by the calling thread | none |
-| Fetch steps (#1597): page headers, page filters, demand-path planning, demand fetches | pool, head of the queue; a demand fetch blocks its thread | stage 4 |
+| Fetch steps (#1597): page headers, page filters, demand-path planning, demand fetches | pool, head of the queue; a page's bytes not yet read are read on a virtual thread, which the step yields on (4a) | none |
+| Demand-path planning: index windows, Bloom filters, dictionaries, mask probes, the next file's footer | the fetch step or planning task that plans; a read blocks its thread | stage 4b |
 | Next row group's index window, Bloom filters and first chunk, next chunk, next region, later files' footer reads | a virtual thread per request, which only reads | none |
 | Next row group's planning | pool, a task at the tail of the queue | #1590 |
 | A planning prefetch's dictionary decode | pool, ahead of read-ahead pages | #1590 |
@@ -67,7 +68,7 @@ read keeps its prefetches.
 | 1 | Speculative I/O and footer loads on virtual threads | #1560 | done |
 | 2 | Parsing and scans on the pool | #1589 | done |
 | 3 | Fetchers as steps on the pool | #1597 | done |
-| 4 | Steps never wait on I/O | #1598 | see below |
+| 4 | Steps never wait on I/O | #1598 | 4a done; 4b see below |
 | 5 | Single-threaded mode: `threads(0)` | #1022 | see below |
 | 6 | One I/O scheduler per context | #1264 | see below |
 | 7 | The pool's queue: fairness across reads, priority within a read | #1564, #1590 | see below |
@@ -75,7 +76,7 @@ read keeps its prefetches.
 | # | What it changes | What it buys |
 | --- | --- | --- |
 | 3 | The per-column fetcher threads go: fetch steps run on the pool at the head of its queue; the speculative tasks split into a read on a virtual thread and CPU work on the pool; a column closes without joining a thread | Less cost per read (measured: 200 small files −19 to −24 %, open and first row −19 to −27 % on one thread) and less CPU (−6 to −40 %); no hand-off of parsing on the fetch path; no parking and waking of fetchers, and with them most of the wake and pinning rules; one way of driving a read, which stages 5 and 6 build on |
-| 4 | A step whose bytes are not present issues their request and yields; the completion queues it again | A thread of the pool does CPU work only; a request can wait for stage 6's budget without holding a thread; the pool stays free for the other reads of a shared context. No throughput change on the S3 scans alone, which are bound by I/O |
+| 4 | The plans and the row-group planning become state machines that return the bytes they need instead of reading them; a step whose need is not met yields, and the completion queues it again | A thread of the pool does CPU work only; a request can wait for stage 6's budget without holding a thread; the pool stays free for the other reads of a shared context. No throughput change on the S3 scans alone, which are bound by I/O |
 | 5 | `threads(0)`: the consumer's poll runs the read's queue; the writer takes its path without helpers; `executor()` throws on such a context | #1022: a pipeline on one core with no background CPU, so N pipelines scale with N cores (prototype, one core: −28 to −41 % on small reads, −13 % on a 32 MB scan); reads in an environment without threads, such as the browser build of `dive` |
 | 6 | One scheduler issues every request of a context, within request and byte budgets; a read-ahead depth replaces the one-ahead rules of chunks, regions, row groups and files | Remote throughput within a memory budget; requests merged, split and skipped by #1397's cost model |
 | 7 | Each read keeps its own queue, dispatched round-robin; four classes order a read's work; the writer reaches the pool through the context | A small read beside a full scan keeps close to its idle latency (up to 15× it today); speculative work never delays work a reader waits for; the writer shares the pool fairly |
@@ -118,23 +119,61 @@ where `threads(n + 1)` changed neither flat contender beyond the spread of the r
 
 ### Stage 4: steps never wait on I/O
 
-**Changes.** A step that needs bytes not yet present issues their request on the I/O carrier and yields; the
-completion queues the step again. The yield points are few, since walking page headers over
-fetched bytes needs no further I/O: a column's next chunk or region (a sequential plan's next
-window, or the rest of a page that straddles one), an indexed plan's next range, and a row
-group's planning inputs (its dictionaries, the footer of the next file). A step that yields on a
-range marks it as demand, the priority #1397's scheduler gives a range a reader waits for.
+**Changes.** The code that walks a read's plans does no I/O: it is a state machine over the
+bytes present, and where it needs bytes that are not, it returns the need instead of reading
+(sans-I/O). Its state lives in fields between calls, so a call that returns a need loses
+nothing, and the next call resumes where it stopped. The step that drives it turns a need into a
+request; the one-ahead prefetches the chunk handles and regions start stay as they are until
+stage 6 replaces them with its read-ahead depth. Every request goes through one entry
+(`RangeRead.start`), which returns the request's future: for a file whose bytes are in memory (`MappedInputFile`,
+`ByteBufferInputFile`) a completed one, read in place, and otherwise one a virtual thread
+completes. A need whose future is complete is met at once, so a local read never yields; a step
+whose need is not met registers a resume on the future and returns, and the completion queues
+the step again. A step that yields on a request marks it as demand, the priority #1397's
+scheduler gives a range a reader waits for. A thread off the pool, such as the caller's before
+the read starts, waits for the future.
+
+| Machine | States | Needs |
+| --- | --- | --- |
+| `SequentialFetchPlan`'s walk | page header, repetition levels, page body, per page | the windows holding the bytes of the state; a header that does not fit its peek widens it |
+| `IndexedFetchPlan`'s walk | dictionary, then each page | the dictionary range, then each page group |
+| `PageSource` | planning a work item, walking its plan | what the planner or the plan returns |
+| Row-group planner, one per work item | next file's footer, Bloom filters, dictionaries leaf by leaf, index window, mask probe, page filter and plans | the footer read, the filters' and dictionaries' ranges, the window's requests, the probe's header peeks |
+
+The planner replaces the nested computations of a row group's metadata, arrival and plans. Any
+step that reaches the work item advances it under a claim, as a column's fetch steps do; a step
+that finds it claimed or waiting registers a resume, so no step waits for another thread.
+The parse, the dictionary checks and the planning stay on the pool, run by the step that
+advances the machine.
+
+**Parts.** Two PRs. 4a (done): the request entry, the steps' yield and resume, and the column walks
+(`SequentialFetchPlan`, `IndexedFetchPlan`, `PageSource`), which hold every read of a scan in
+its steady state. 4b: the row-group planner, the next file's footer, and the gate's thread test,
+which holds only once 4b is in.
 
 **Buys.** At 235 ms latency the S3 scans show no cost of pool threads waiting on I/O: the reads are bound
 by I/O, and no decode waits for the thread. The stage is structural: it is what lets stage 6 hold
-a request back for its budget, it frees the pool for the other reads of a shared context, and it
-leaves a thread of the pool doing CPU work only.
+a request back for its budget and see a read's needs before they are issued, it frees the pool
+for the other reads of a shared context, it leaves a thread of the pool doing CPU work only, and
+it gives stage 5 a read the consumer's poll can drive.
 
-**Gate.** A test that every `InputFile` access of a read happens on a virtual thread, apart from
-the reads the caller makes on its own thread before the read starts (the first footer, the
-initial planning probes), which stage 6 takes over; `run-s3`
-at both latencies against stage 3; a shared-context read (a local scan beside a remote one) on
-the container and the N300.
+**Gate.** A test that every read of a file whose bytes are not in memory happens on a virtual
+thread, apart from the reads the caller makes on its own thread before the read starts (the
+first footer, the initial planning probes), which stage 6 takes over; `run-s3` at 30 ms and
+235 ms latency against stage 3; a shared-context read (a local scan beside a remote one) on the
+container and the N300; the narrow, flat and 1BRC regression presets against stage 3. 4a gates
+on the benchmarks alone.
+
+4a against stage 3, three interleaved rounds per machine. The presets and the S3 scans: nothing
+slower on the container or the N300 at 1.50 GHz. A remote scan beside a remote scan of every
+column on one context, at 235 ms latency: 2.4× faster on both machines (container 2,050 → 850 ms,
+N300 2,230 → 925 ms), where stage 3's fetch steps held a pool thread per column in flight; a
+local scan beside it 5–8× faster on average, its worst operation from one round trip (1.5 s) to
+27 ms (container) and 129 ms (N300). A local scan beside a narrow remote scan: 9 % faster on
+the container, 6–9 % slower on the N300, and 6 % slower there at a pool of 6, its best size.
+Stage 3's fetch steps capped the pool's decoding while the remote read waited, close to the
+N300's best concurrency for that read (about 4 decoders, where a narrow scan needs 6 or more);
+4a removes the cap, and choosing decode concurrency per read is #1573's.
 
 ### Stage 5: single-threaded mode
 
@@ -207,8 +246,10 @@ that makes a page runnable, or lets its range go unfetched.
 - Whether the end state goes into the "Components and threading" section of
   `READ_PIPELINE.md` or into a design document of its own, since the writer follows the same
   rules.
-- Whether the default n should leave a processor to the consumer; that is #1573's question
-  and stays there.
+- The default n and the decode concurrency within it, which is #1573's question and stays
+  there. On the N300 a pool of 6 is level with or faster than 8 on every regression contender
+  (up to 10 %), and a local scan beside a remote one is fastest at about 4; the container is
+  fastest at 8 on every contender, and its narrow scan is 14 % slower at 6.
 
 ## End state
 

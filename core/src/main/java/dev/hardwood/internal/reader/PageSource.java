@@ -14,12 +14,13 @@ import dev.hardwood.internal.ExceptionContext;
 /// Per-column iterator that yields [PageInfo] objects across all row groups and files.
 ///
 /// For each row group, obtains a [FetchPlan] from [RowGroupIterator#getColumnPlan]
-/// and drains its page iterator. `PageSource` is agnostic of whether pages are
+/// and drains its [PageWalk]. `PageSource` is agnostic of whether pages are
 /// pre-computed (OffsetIndex) or lazily discovered (sequential scan) — both are
-/// hidden behind the [FetchPlan] iterator.
+/// hidden behind the walk.
 ///
-/// This is the only interface a [ScheduledColumn]'s fetcher sees — a simple
-/// `PageInfo next()` iterator.
+/// This is the only interface a [ScheduledColumn]'s fetch step sees: [#next] returns the next
+/// page, or `null` with [#pending] naming the bytes it needs, or `null` at the end. A walk that
+/// stops on bytes keeps its place, so the next call resumes it.
 public class PageSource {
 
     private final RowGroupIterator rowGroupIterator;
@@ -30,8 +31,11 @@ public class PageSource {
     /// file, so the list can grow behind the cursor.
     private int workItemCursor;
 
-    // Current row group's page iterator
-    private PageIterator currentPlan;
+    // Current row group's page walk
+    private PageWalk currentPlan;
+
+    /// The bytes the last [#next] stopped on.
+    private ByteNeed pending;
 
     // Work item the current plan was built from. Tracked so that we can call
     // RowGroupIterator#releaseWorkItem when this column advances past it,
@@ -93,10 +97,20 @@ public class PageSource {
         return rowGroupIterator.footersSupplied();
     }
 
+    /// The next page, or `null` when there is none to return: the column's pages have ended,
+    /// or the next page needs bytes that are not present, which [#pending] then returns.
     public PageInfo next() throws IOException {
+        pending = null;
         while (true) {
-            if (currentPlan != null && currentPlan.hasNext()) {
-                return currentPlan.next();
+            if (currentPlan != null) {
+                PageInfo page = currentPlan.advance();
+                if (page != null) {
+                    return page;
+                }
+                pending = currentPlan.pending();
+                if (pending != null) {
+                    return null;
+                }
             }
 
             // currentPlan is exhausted (or null) — this column is done with the
@@ -122,7 +136,12 @@ public class PageSource {
             currentPlan = null;
             FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
             currentBatches = rowGroupIterator.getBatches(workItem);
-            currentPlan = plan.isEmpty() ? null : plan.pages();
+            currentPlan = plan.walk();
         }
+    }
+
+    /// The bytes the last [#next] stopped on, or `null` when it returned a page or ended.
+    public ByteNeed pending() {
+        return pending;
     }
 }

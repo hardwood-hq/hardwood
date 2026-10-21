@@ -13,57 +13,57 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.util.Lazy;
 
-/// Lazy fetch handle for a contiguous byte range in a Parquet file.
+/// Fetch handle for a contiguous byte range in a Parquet file.
 ///
 /// Multiple pages within a column share a `ChunkHandle` (one handle per
-/// coalesced page group). The actual `readRange()` call is deferred until
-/// the first page in this chunk is accessed. The first access that finds a next
-/// chunk handle chained triggers its async pre-fetch, whether this handle's bytes
-/// were fetched by that access or earlier by a pre-fetch, to overlap I/O with decode.
+/// coalesced page group). The read is deferred until the bytes are first asked for. The first
+/// [#poll] that finds the bytes present while a next chunk handle is chained starts the next
+/// chunk's speculative read, whether this handle's bytes were read on demand or by an earlier
+/// prefetch, to overlap I/O with decode.
 ///
-/// For local files backed by memory-mapped I/O, `readRange()` returns a
-/// zero-copy slice — the fetch is instant and pre-fetch is effectively a no-op.
-public class ChunkHandle {
-
-    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(ChunkHandle.class.getName()));
+/// A walk asks with [#poll], which never waits and issues no read: it returns the bytes, or
+/// `null` while they are not present, and the handle is then the [ByteNeed] the step that drives
+/// the walk issues ([#issue]). A thread off the pool waits for them ([#ensureFetched]).
+///
+/// A file whose bytes are in memory is sliced in place by [#poll], so a walk over it stops only
+/// to read again bytes whose prefetch failed ([RangeRead#inMemory]).
+public class ChunkHandle implements ByteNeed {
 
     private final InputFile inputFile;
     private final long fileOffset;
     private final int length;
     private final String purpose;
     /// Non-null when this handle is a sub-range of a coalesced
-    /// cross-column region (#374). When set, `ensureFetched()` slices
-    /// the region's buffer instead of issuing its own `readRange`, and
+    /// cross-column region (#374). When set, the handle slices
+    /// the region's buffer instead of issuing its own read, and
     /// the per-handle `nextChunk` chain is unused (pre-fetch is
     /// driven at the region level).
     private final SharedRegion region;
-    /// Where the one-ahead pre-fetch runs; `null` for a region-backed handle, which
-    /// leaves pre-fetch to its region.
+    /// Where the reads of a file not in memory run; `null` for a region-backed handle, which
+    /// leaves its read to the region.
     private final PrefetchTasks prefetchTasks;
     private volatile ChunkHandle nextChunk;
-    private volatile ByteBuffer data;
-    /// Set by the first [#ensureFetched] that finds a next chunk chained, which
-    /// starts that chunk's pre-fetch. A handle a pre-fetch fetched still pre-fetches
-    /// its successor when the read reaches it, so pre-fetch stays one chunk ahead.
+    /// The read under way or done; `null` before the first one starts. Replaced only to repeat
+    /// a speculative read that failed.
+    private volatile RangeRead read;
+    /// Set by the first [#poll] that finds the bytes present while a next chunk is chained, which
+    /// starts that chunk's read. A handle a pre-fetch read still pre-fetches its successor when
+    /// the walk reaches it, so pre-fetch stays one chunk ahead.
     private final AtomicBoolean nextChunkPrefetched = new AtomicBoolean();
-    /// Guards the fetch; a lock rather than a monitor, so that a virtual thread waiting for
-    /// another's fetch, or fetching itself, does not hold its carrier on JDK 21.
-    private final ReentrantLock fetchLock = new ReentrantLock();
+    /// Guards the start of a read; held for no read, as the reads run on their own threads.
+    private final ReentrantLock startLock = new ReentrantLock();
 
     /// Creates a chunk handle for a byte range in the given file.
     ///
     /// @param inputFile the file to read from
     /// @param fileOffset absolute file offset of the first byte
     /// @param length number of bytes in this chunk
-    /// @param purpose human-readable [FetchReason] tag attached to the underlying
-    ///        `readRange` so fetch logs can attribute bytes to a specific
+    /// @param purpose human-readable [dev.hardwood.internal.FetchReason] tag attached to the
+    ///        underlying `readRange` so fetch logs can attribute bytes to a specific
     ///        row-group / column / page-group
-    /// @param prefetchTasks where the one-ahead pre-fetch of the next chunk runs, so the
-    ///        read's owner can wait for it before closing the file
+    /// @param prefetchTasks where the reads run for a file not in memory, so the read's owner
+    ///        can wait for them before closing the file
     public ChunkHandle(InputFile inputFile, long fileOffset, int length, String purpose,
                        PrefetchTasks prefetchTasks) {
         this.inputFile = inputFile;
@@ -76,9 +76,8 @@ public class ChunkHandle {
 
     /// Creates a chunk handle that's a sub-range of a coalesced cross-column
     /// [SharedRegion]. Used when [RowGroupIterator] decides several columns'
-    /// chunks fit cheaply into one ranged GET; each column's
-    /// `ensureFetched()` then slices the shared buffer rather than issuing
-    /// its own `readRange`.
+    /// chunks fit cheaply into one ranged GET; each column's handle then slices
+    /// the shared buffer rather than issuing its own read.
     public ChunkHandle(SharedRegion region, long fileOffset, int length, String purpose) {
         this.inputFile = null;
         this.fileOffset = fileOffset;
@@ -108,94 +107,123 @@ public class ChunkHandle {
         return nextChunk;
     }
 
-    /// Ensures the chunk data is fetched. Triggers fetch on first call,
-    /// returns cached data on subsequent calls. The first call made while a
-    /// next chunk is chained kicks off async pre-fetch of that chunk, whether
-    /// this call fetched the data or found it already fetched by a pre-fetch;
-    /// a pre-fetch fetches through [#fetchData] and so does not chain further.
+    /// This chunk's bytes, or `null` while they are not present, without waiting and without
+    /// issuing a read, except for a file whose bytes are in memory, which it slices in place. The
+    /// first call that finds the bytes present while a next chunk is chained starts the next
+    /// chunk's speculative read.
     ///
-    /// @return the fetched data buffer
-    public ByteBuffer ensureFetched() throws IOException {
-        ByteBuffer buf = data;
-        if (buf == null) {
-            fetchData();
-            buf = data;
-        }
-        // Region-backed handles delegate pre-fetch to SharedRegion.nextRegion,
-        // not to the per-handle nextChunk chain — the chain may still be set
-        // by the per-column page-group construction, but it would re-fetch
-        // bytes the shared region already covers.
+    /// @throws IOException if the demand read failed
+    public ByteBuffer poll() throws IOException {
         if (region != null) {
-            return buf;
+            ByteBuffer regionBytes = region.poll();
+            if (regionBytes == null) {
+                return null;
+            }
+            // Region-backed handles leave pre-fetch to SharedRegion.nextRegion, not to the
+            // per-handle nextChunk chain, which would re-fetch bytes the region covers.
+            return region.sliceOf(regionBytes, fileOffset, length);
         }
+        RangeRead current = read;
+        if (current == null && RangeRead.inMemory(inputFile)) {
+            current = issue();
+        }
+        if (current == null || !current.isDone() || current.failedSpeculatively()) {
+            return null;
+        }
+        ByteBuffer buf = current.bytes("chunk");
         ChunkHandle next = nextChunk;
         if (next != null && !nextChunkPrefetched.get() && nextChunkPrefetched.compareAndSet(false, true)) {
-            prefetch(next);
+            next.startSpeculative();
         }
         return buf;
     }
 
-    /// Fetches `next` on this handle's [PrefetchTasks], which carries the caller's
-    /// [FetchReason] across the thread handoff; otherwise the next-chunk readRange would
-    /// log as `unattributed`.
-    private void prefetch(ChunkHandle next) {
-        prefetchTasks.submit(() -> {
-            try {
-                next.fetchData();
+
+    /// Ensures the chunk data is fetched, waiting for its read; for a thread off the pool. Starts
+    /// the next chunk's read as [#poll] does.
+    ///
+    /// @return the fetched data buffer
+    public ByteBuffer ensureFetched() throws IOException {
+        while (true) {
+            ByteBuffer buf = poll();
+            if (buf != null) {
+                return buf;
             }
-            catch (IOException e) {
-                // Speculative: nothing is waiting on this, and a failed prefetch
-                // leaves the handle unfetched, so the demand path fetches it again
-                // and reports the failure to a caller that is waiting for it.
-                // DEBUG rather than WARN so a sustained backend outage does not
-                // emit one line per chunk for failures that are about to be
-                // reported properly.
-                LOG.get().log(System.Logger.Level.DEBUG,
-                        "Prefetch failed for chunk at offset {0} (length {1}) in {2}",
-                        next.fileOffset, next.length, next.inputFile.name(), e);
-            }
-        });
+            issue().await();
+        }
     }
 
-    /// Fetches this chunk's data if not already cached. Does NOT trigger
-    /// pre-fetch of the next chunk.
-    ///
-    /// When the handle is region-backed (`region != null`), this slices
-    /// the shared region's buffer — the underlying `readRange` happens
-    /// at the region level, once, no matter how many columns share it.
-    private void fetchData() throws IOException {
-        if (data != null) {
+    @Override
+    public RangeRead issue() {
+        if (region != null) {
+            return region.issue();
+        }
+        RangeRead current = read;
+        if (current != null && !current.failedSpeculatively()) {
+            current.raiseToDemand();
+            return current;
+        }
+        startLock.lock();
+        try {
+            current = read;
+            if (current == null || current.failedSpeculatively()) {
+                current = RangeRead.start(inputFile, fileOffset, length, purpose,
+                        RangeRead.Priority.DEMAND, prefetchTasks);
+                read = current;
+            }
+            else {
+                current.raiseToDemand();
+            }
+            return current;
+        }
+        finally {
+            startLock.unlock();
+        }
+    }
+
+    /// Starts this chunk's read ahead of need, unless one is under way or done. A failure leaves
+    /// it to the demand path, which reads the chunk again and reports what fails there.
+    void startSpeculative() {
+        if (region != null) {
+            region.startSpeculative();
             return;
         }
-        fetchLock.lock();
+        if (read != null) {
+            return;
+        }
+        startLock.lock();
         try {
-            if (data != null) {
-                return;
-            }
-            if (region != null) {
-                data = region.slice(fileOffset, length);
-                return;
-            }
-            // If the caller set an outer scope (e.g. "prefetch rg=2"), prepend it
-            // so the log line shows both the calling context and the chunk identity.
-            String outer = FetchReason.current();
-            String composed = "unattributed".equals(outer) ? purpose : outer + " | " + purpose;
-            try (FetchReason.Scope ignored = FetchReason.set(composed)) {
-                data = inputFile.readRange(fileOffset, length);
-            }
-            catch (IOException e) {
-                throw new IOException(
-                        ExceptionContext.filePrefix(inputFile.name())
-                        + "Failed to fetch chunk at offset " + fileOffset
-                        + " (length " + length + ")", e);
+            if (read == null) {
+                read = RangeRead.start(inputFile, fileOffset, length, purpose,
+                        RangeRead.Priority.SPECULATIVE, prefetchTasks);
             }
         }
         finally {
-            fetchLock.unlock();
+            startLock.unlock();
         }
     }
 
-    /// Slices a region from this chunk's data.
+    /// Reads this chunk ahead of need and, once it is read, starts the read of the chunk chained
+    /// after it, as a demand read would; for a speculative task off the pool, which waits for the
+    /// first read so that whoever waits for the task waits for it too. A failure is left to the
+    /// demand path.
+    void prefetch() {
+        if (region != null) {
+            region.prefetch();
+            return;
+        }
+        startSpeculative();
+        RangeRead current = read;
+        current.await();
+        if (current.isDone() && !current.failedSpeculatively()) {
+            ChunkHandle next = nextChunk;
+            if (next != null && nextChunkPrefetched.compareAndSet(false, true)) {
+                next.startSpeculative();
+            }
+        }
+    }
+
+    /// Slices a region from this chunk's data, waiting for it; for a thread off the pool.
     ///
     /// @param absoluteOffset absolute file offset of the region
     /// @param regionLength length of the region in bytes
@@ -204,5 +232,10 @@ public class ChunkHandle {
         ByteBuffer buf = ensureFetched();
         int relOffset = Math.toIntExact(absoluteOffset - fileOffset);
         return buf.slice(relOffset, regionLength);
+    }
+
+    /// Slices a region from bytes [#poll] returned.
+    ByteBuffer slice(ByteBuffer polled, long absoluteOffset, int regionLength) {
+        return polled.slice(Math.toIntExact(absoluteOffset - fileOffset), regionLength);
     }
 }

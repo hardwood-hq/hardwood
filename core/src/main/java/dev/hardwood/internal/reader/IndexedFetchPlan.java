@@ -10,10 +10,8 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
-import java.util.NoSuchElementException;
 
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
@@ -23,10 +21,9 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// Pages are pre-computed at plan time from the OffsetIndex (with filter and
 /// maxRows already applied). Byte data and dictionary parsing are deferred
-/// until the iterator is first advanced — no I/O happens at plan time.
+/// until the walk is first advanced — no I/O happens at plan time.
 final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
 
-    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(IndexedFetchPlan.class.getName()));
 
     private final List<RowGroupIterator.NeededPage> neededPages;
     private final List<RowGroupIterator.PageGroup> pageGroups;
@@ -77,33 +74,21 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     }
 
     /// Fetches the first chunk on the calling thread, which is the speculative task that
-    /// planned this row group, so waiting for that task covers this read.
+    /// planned this row group, so waiting for that task covers this read. A failure leaves the
+    /// handle to the demand path, which reads it again and reports the failure to a caller
+    /// that is waiting for it.
     @Override
     public void prefetch() {
         if (!chunkHandles.isEmpty()) {
             // The dictionary is read first, and its handle prefetches the first page group.
             ChunkHandle first = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
-            try {
-                first.ensureFetched();
-            }
-            catch (IOException e) {
-                // Speculative: nothing is waiting on this, and a failed prefetch
-                // leaves the handle unfetched, so the demand path fetches it again
-                // and reports the failure to a caller that is waiting for it.
-                // DEBUG rather than WARN so a sustained backend outage does not
-                // emit one line per chunk for failures that are about to be
-                // reported properly.
-                LOG.get().log(System.Logger.Level.DEBUG,
-                        "Prefetch failed for the first chunk of column {0} in row group {1}"
-                                + " of {2}",
-                        columnSchema.name(), rowGroupIndex, fileName, e);
-            }
+            first.prefetch();
         }
     }
 
     @Override
-    public PageIterator pages() {
-        return new IndexedPageIterator();
+    public PageWalk walk() {
+        return new IndexedPageWalk();
     }
 
     @Override
@@ -198,9 +183,10 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 rowGroupIndex, fileName, preloadedDictionary);
     }
 
-    /// Iterator that lazily parses the dictionary on first access and yields
-    /// [PageInfo] objects with lazy byte resolution via [ChunkHandle].
-    private class IndexedPageIterator implements PageIterator {
+    /// Walk that parses the dictionary on first access and yields [PageInfo] objects whose bytes
+    /// it takes from the page groups' [ChunkHandle]s. Its needs are known from the offset index:
+    /// the dictionary's handle, then each page's group.
+    private class IndexedPageWalk implements PageWalk {
 
         private Dictionary dictionary;
         private boolean dictionaryParsed;
@@ -209,6 +195,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         private boolean eventEmitted;
         private int index;
         private int currentGroupIndex;
+        /// The bytes the last advance stopped on.
+        private ByteNeed pending;
 
         @Override
         public int currentPage() {
@@ -216,25 +204,30 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         }
 
         @Override
-        public boolean hasNext() {
-            return index < neededPages.size();
+        public ByteNeed pending() {
+            return pending;
         }
 
         @Override
-        public PageInfo next() throws IOException {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
+        public PageInfo advance() throws IOException {
+            pending = null;
+            if (index >= neededPages.size()) {
+                return null;
             }
 
             if (!dictionaryParsed) {
-                // Set the flag *before* parsing so a throw from parseDictionary
+                currentPage = ExceptionContext.DICTIONARY_PAGE;
+                ByteBuffer dictRegion = dictionaryRegion();
+                if (pending != null) {
+                    return null;
+                }
+                // Set the flag *before* parsing so a throw from the parse
                 // doesn't cause a retry loop. This is safe because a throw
                 // propagates to the column's fetch step (ScheduledColumn.runFetchStep), which
-                // calls signalError → done=true → the pipeline stops; next() is
-                // never re-entered on the same iterator.
+                // calls signalError → done=true → the pipeline stops; advance() is
+                // never re-entered on the same walk.
                 dictionaryParsed = true;
-                currentPage = ExceptionContext.DICTIONARY_PAGE;
-                dictionary = parseDictionary();
+                dictionary = parseDictionary(dictRegion);
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 
@@ -249,19 +242,41 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 }
             }
 
-            RowGroupIterator.NeededPage needed = neededPages.get(index++);
+            RowGroupIterator.NeededPage needed = neededPages.get(index);
             currentPage = needed.pageIndex();
             PageLocation loc = needed.location();
             ChunkHandle handle = chunkHandles.get(currentGroupIndex);
-            ByteBuffer pageData = handle.slice(loc.offset(), loc.compressedPageSize());
+            ByteBuffer groupBytes = handle.poll();
+            if (groupBytes == null) {
+                pending = handle;
+                return null;
+            }
+            index++;
+            ByteBuffer pageData = handle.slice(groupBytes, loc.offset(), loc.compressedPageSize());
             PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(),
                     dictionary, needed.mask(), keptRecords(needed));
 
-            if (!eventEmitted && !hasNext()) {
+            if (!eventEmitted && index >= neededPages.size()) {
                 emitEvent();
             }
 
             return page;
+        }
+
+        /// The bytes of the dictionary page and whatever lies between it and the first data page,
+        /// `null` when the plan parses none or they are not present, which then is [#pending].
+        private ByteBuffer dictionaryRegion() throws IOException {
+            if (preloadedDictionary != null || dictionaryStart == 0) {
+                return null;
+            }
+            int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictionaryStart);
+            ChunkHandle holder = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
+            ByteBuffer holderBytes = holder.poll();
+            if (holderBytes == null) {
+                pending = holder;
+                return null;
+            }
+            return holder.slice(holderBytes, dictionaryStart, dictRegionSize);
         }
 
         /// The records `needed` contributes after its mask, for [PageInfo#records()]: its row span
@@ -274,17 +289,13 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             return needed.mask().isAll() ? needed.rows() : needed.mask().totalRecords();
         }
 
-        private Dictionary parseDictionary() throws IOException {
+        private Dictionary parseDictionary(ByteBuffer dictRegion) throws IOException {
             if (preloadedDictionary != null) {
                 return preloadedDictionary;
             }
-            if (dictionaryStart == 0) {
+            if (dictRegion == null) {
                 return null;
             }
-            int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictionaryStart);
-            ChunkHandle holder = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
-            ByteBuffer dictRegion = holder.slice(dictionaryStart, dictRegionSize);
-
             // Not retitled on the way out. The parser says what is wrong with the
             // dictionary — a checksum that disagrees, a header that will not parse —
             // and naming the step that noticed would replace that with less.

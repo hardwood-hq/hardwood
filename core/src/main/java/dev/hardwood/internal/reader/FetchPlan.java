@@ -20,7 +20,7 @@ package dev.hardwood.internal.reader;
 ///   yields a single boundary marker.
 /// - [#EMPTY]: a column with no pages to read in the row group.
 ///
-/// [PageSource] is agnostic of the implementation — it just drains `pages()`.
+/// [PageSource] is agnostic of the implementation — it just drains `walk()`.
 public interface FetchPlan {
 
     /// A plan with no pages: the row group is dropped by its dictionaries, or the
@@ -32,18 +32,22 @@ public interface FetchPlan {
         }
 
         @Override
-        public PageIterator pages() {
-            return PageIterator.empty();
+        public PageWalk walk() {
+            return PageWalk.empty();
         }
     };
 
     /// Returns true if this column has no pages in this row group.
     boolean isEmpty();
 
-    /// Returns an iterator over the pages for this column.
-    /// Pages are yielded in file order. Advancing it, and accessing `pageData()`
-    /// on a `PageInfo`, may reach the file through the underlying [ChunkHandle].
-    PageIterator pages();
+    /// Returns a walk over the pages for this column, in file order, which never waits for I/O.
+    PageWalk walk();
+
+    /// Returns the pages for this column, in file order, waiting for the reads they need; for a
+    /// thread off the pool.
+    default PageIterator pages() {
+        return new PageIterator(walk());
+    }
 
     /// Fetches this plan's first chunk on the calling thread, a speculative task, into
     /// the handle its [#pages] walk reads. No-op for plans that fetch nothing.

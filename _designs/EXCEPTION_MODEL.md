@@ -80,8 +80,8 @@ naming the variant, rather than a type of its own.
 
 **A method declares `IOException` only if it can reach a file.** Parsing a buffer and decoding
 a page cannot, so no `catch (IOException)` around them can turn a corrupt file into a failed
-read. `PageIterator` is a two-method interface rather than a `java.util.Iterator` precisely
-so advancing a column's pages can say it reads.
+read. Advancing a column's pages declares it (`PageWalk.advance`, and `PageIterator`, which is
+not a `java.util.Iterator` for that reason): a walk raises the failure of a read it needs.
 
 ## Error messages
 
@@ -126,15 +126,22 @@ this, also where a footer is loaded and in the byte-level reads outside the pipe
 and reaches the consumer as raised, but is recorded on the way past, or a consumer waiting on
 work that thread will never finish waits for ever.
 
-A prefetch is the exception: nothing waits on it, so its failure does not fail the read. That
-is safe because the buffer field is assigned only on success, so nothing is cached and the
-demand path redoes the work with a caller waiting. A footer prefetch is different:
-`FileMetadataCache` keeps its failure and rethrows it on demand. A failure no caller receives is
-reported by `PrefetchTasks.report`: a failure of the file (an I/O failure, a malformed or
-unsupported file) at DEBUG, since the demand path reports it when it repeats the work, any other
-`RuntimeException` at WARNING, as a defect, and an `Error` is thrown by the close that waits for
-the work, the iterator's for a prefetch task and the `FileMetadataCache`'s for a footer load no
-read asked for, once the files are closed ([READ_PIPELINE.md](READ_PIPELINE.md#thread-inventory)).
+A prefetch is the exception: nothing waits on it, so its failure does not fail the read. A
+chunk or region prefetch keeps its failure in its read (`RangeRead`), which a walk that reaches
+the handle takes as not present: the step issues the read again as demand, and that read's
+failure is raised with a caller waiting. A failed speculative read is logged at DEBUG, and an
+`Error` it fails with is thrown by the iterator's close. A plan prefetch caches nothing on
+failure, and the demand path redoes the work. A footer prefetch is different:
+`FileMetadataCache` keeps its failure and rethrows it on demand. A failure of any other
+speculative task no caller receives is reported by `PrefetchTasks.report`: a failure of the
+file (an I/O failure, a malformed or unsupported file) at DEBUG, since the demand path reports
+it when it repeats the work, any other `RuntimeException` at WARNING, as a defect, and an
+`Error` is thrown by the close that waits for the work, the iterator's for a prefetch task and
+the `FileMetadataCache`'s for a footer load no read asked for, once the files are closed
+([READ_PIPELINE.md](READ_PIPELINE.md#thread-inventory)). A demand read's failure reaches the
+step that waits for it. An `Error` a read fails with reaches the caller once: through the step
+that takes it, or through the iterator's close when no step did, as when the read's column
+stopped while it waited.
 
 ## An annotation the reader cannot use is dropped, not raised
 

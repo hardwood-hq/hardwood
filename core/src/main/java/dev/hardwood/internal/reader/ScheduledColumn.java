@@ -26,8 +26,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// read's other scheduled columns, and whose page tasks decode straight into the column's batches.
 ///
 /// - The **fetcher** runs as fetch steps, tasks of the decode pool. A step pulls the column's
-///   pages from its [PageSource], which does every `InputFile` access, and queues them for the
-///   scheduler ([#queue]). It queues while fewer than [#FETCH_AHEAD] pages are queued and
+///   pages from its [PageSource], whose walks need bytes the step issues reads for and yields on
+///   ([ByteNeed]), and queues them for the scheduler ([#queue]). It queues while fewer than [#FETCH_AHEAD] pages are queued and
 ///   returns once that many are; a change that makes room queues the column's next step
 ///   ([#scheduleFetch()]). At most one step of a column is queued or running, so the steps of a
 ///   column run one after another and see each other's state. The steps go to the head of the
@@ -304,12 +304,21 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     /// Runs fetch steps until the column has no room and no change arrived since the last one
-    /// looked, or its fetch ends.
+    /// looked, its fetch ends, or it needs bytes that are not present. A step that stops on bytes
+    /// issues their read as demand, keeps the column's claim and its count of tasks, and the
+    /// read's completion queues the next step ([#resumeFetch]): no step waits for I/O, and a close
+    /// waits for the read.
     private void runFetchStep() {
+        ByteNeed pending = null;
         try {
             while (true) {
                 fetchWanted = false;
-                if (fetch()) {
+                FetchOutcome outcome = fetch();
+                if (outcome == FetchOutcome.ENDED) {
+                    return;
+                }
+                if (outcome == FetchOutcome.PENDING) {
+                    pending = pageSource.pending();
                     return;
                 }
                 Consumer<ScheduledColumn<?>> observer = roomWaitObserver;
@@ -325,23 +334,57 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             }
         }
         finally {
-            uncountTask();
+            if (pending == null) {
+                uncountTask();
+            }
+            else {
+                // Last: the completion may queue the next step at once, which another thread of
+                // the pool runs
+                pending.issue().whenDone(this::resumeFetch);
+            }
         }
     }
 
-    /// Fetches and queues pages while the column may queue them.
+    /// Queues the step that a read under way stopped, once the read has completed, on the thread
+    /// that completed it. The step holds the column's claim and its count of tasks.
+    private void resumeFetch() {
+        try {
+            scheduler.executeFetch(this::runFetchStep);
+        }
+        catch (RejectedExecutionException e) {
+            uncountTask();
+            endFetch();
+            signalError(ScheduledColumn.contextClosed(e));
+        }
+    }
+
+    /// How a fetch step's [#fetch] stopped.
+    private enum FetchOutcome {
+        /// The column's fetch has ended.
+        ENDED,
+        /// The column's queue is full.
+        NO_ROOM,
+        /// The next page needs bytes that are not present.
+        PENDING
+    }
+
+    /// Fetches and queues pages while the column may queue them and their bytes are present.
     ///
-    /// @return whether the column's fetch has ended
-    private boolean fetch() {
-        boolean ended = true;
+    /// @return how the fetch stopped
+    private FetchOutcome fetch() {
+        FetchOutcome outcome = FetchOutcome.ENDED;
         try {
             while (!done && !fetchStopped()) {
                 if (!mayQueue()) {
-                    ended = false;
-                    return false;
+                    outcome = FetchOutcome.NO_ROOM;
+                    return outcome;
                 }
                 PageInfo info = pageSource.next();
                 if (info == null) {
+                    if (pageSource.pending() != null) {
+                        outcome = FetchOutcome.PENDING;
+                        return outcome;
+                    }
                     pagesEnded();
                     break;
                 }
@@ -365,11 +408,11 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             throw err;
         }
         finally {
-            if (ended) {
+            if (outcome == FetchOutcome.ENDED) {
                 endFetch();
             }
         }
-        return ended;
+        return outcome;
     }
 
     /// Ends the column's fetch: no step follows, and the scheduler stops waiting for a page of it.

@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Objects;
 
 import dev.hardwood.InputFile;
@@ -26,7 +25,6 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
-import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -62,7 +60,6 @@ import dev.hardwood.schema.ColumnSchema;
 /// [#prefetch] fetches the bytes a [#pages] walk then reads.
 public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
 
-    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(SequentialFetchPlan.class.getName()));
 
     /// Minimum chunk size when `maxRows` is active (1 MB).
     /// Sized to roughly one Parquet data page so header scanning does not
@@ -81,6 +78,9 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// stays in effect: a 50 MB column under `head(30)` should not pull
     /// down 50 MB. See #382.
     private static final int FETCH_WHOLE_COLUMN_THRESHOLD = 4 * MAX_ROWS_CHUNK_FLOOR;
+
+    /// A record count not known yet: the page's repetition levels are still to be read.
+    private static final int UNKNOWN = -1;
 
     static final String CHUNK_SIZE_PROPERTY = "hardwood.internal.sequentialChunkSize";
 
@@ -190,28 +190,17 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     }
 
     @Override
-    public PageIterator pages() {
-        return new SequentialPageIterator();
+    public PageWalk walk() {
+        return new SequentialPageWalk();
     }
 
     /// Fetches the first chunk on the calling thread, which is the speculative task that
-    /// planned this row group, into the handle a [#pages] walk reads; waiting for that
-    /// task covers this read.
+    /// planned this row group, into the handle a [#walk] reads; waiting for that task covers
+    /// this read. A failure leaves the handle to the demand path, which reads it again and
+    /// reports the failure to a caller that is waiting for it.
     @Override
     public void prefetch() {
-        try {
-            firstChunk().ensureFetched();
-        }
-        catch (IOException e) {
-            // Speculative: nothing is waiting on this, and a failed prefetch leaves the
-            // handle unfetched, so the demand path fetches it again and reports the
-            // failure to a caller that is waiting for it. DEBUG rather than WARN so a
-            // sustained backend outage does not emit one line per chunk for failures
-            // that are about to be reported properly.
-            LOG.get().log(System.Logger.Level.DEBUG,
-                    "Prefetch failed for the first chunk of column {0} in row group {1} of {2}",
-                    columnSchema.name(), rowGroupIndex, fileName, e);
-        }
+        firstChunk().prefetch();
     }
 
     /// Returns the handle of the first chunk, creating a standalone one if none is attached.
@@ -409,12 +398,20 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         return Math.toIntExact(bounded);
     }
 
-    /// Lazily discovers pages by scanning headers from [ChunkHandle]s.
+    /// Discovers pages by scanning headers from [ChunkHandle]s, as a state machine over the
+    /// bytes present.
     ///
     /// A single `ChunkHandle` serves both header scanning and page data
     /// resolution. As scanning advances past the current chunk, a new
     /// handle is created and chained for one-ahead pre-fetch.
-    private class SequentialPageIterator implements PageIterator {
+    ///
+    /// The page under way is held in fields: its parsed header, the peek it was parsed from, its
+    /// record count once its repetition levels are read, and its inline-statistics decision. A
+    /// chunk the page needs that is not present stops [#advance] with the page's state in place, and
+    /// the next call resumes it, so no header is parsed twice and no byte is read twice. The
+    /// counters of the walk ([#position], [#valuesRead], [#recordsRead], [#pageCount]) move only
+    /// when a page is done with.
+    private class SequentialPageWalk implements PageWalk {
 
         private final ColumnMetaData metaData = columnChunk.metaData();
         /// Where this chunk is, for a page whose statistics turn out to be unusable to name.
@@ -436,13 +433,20 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// page are touched rather than after they parse, because a header that will not
         /// parse is exactly the case with no [PageInfo] to carry it.
         private int currentPage = ExceptionContext.UNKNOWN_PAGE;
-        /// Look-ahead cache for the next page to emit. Populated lazily by
-        /// [#hasNext()] and consumed by [#next()]. Look-ahead is required
-        /// because per-page row masks may drop pages while counters still
-        /// indicate "more values remain"; without the cache, `hasNext()`
-        /// could return `true` and `next()` then have nothing to emit.
-        private PageInfo nextPage;
-        private boolean nextPageComputed;
+        /// The bytes the last [#advance] stopped on.
+        private ByteNeed pending;
+
+        // The page under way, reset by clearPage() once the walk is done with it
+        /// The header of the page at [#position], `null` until it is parsed.
+        private PageHeader header;
+        private int headerSize;
+        /// The bytes the header is parsed from, `0` until the page's first attempt sets it.
+        private int peekSize;
+        /// The page's top-level records, [#UNKNOWN] until its repetition levels are read.
+        private int recordsInPage = UNKNOWN;
+        /// Whether the page's inline statistics are evaluated, and what they decided.
+        private boolean dropDecided;
+        private boolean dropByStats;
 
         // Current chunk handle state
         private ChunkHandle currentHandle;
@@ -450,10 +454,11 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private int handleEnd;   // relative position where current handle ends (exclusive)
         /// The handles the walk has moved past that hold bytes at or after the current page
         /// header, oldest first. A header peek or a repetition-level read can run several
-        /// handles past the page's start before the page itself is read from there, so every
-        /// handle from the page's start onward stays readable from memory rather than being
-        /// fetched again. A handle ending at or before a page header is released when that
-        /// header is read, since no later read starts before it.
+        /// handles past the page's start before the page itself is read from there, and a page
+        /// spanning several handles is copied once all are present, so every handle from the
+        /// page's start onward stays readable from memory rather than being fetched again. A
+        /// handle ending at or before a page header is released when that header is read, since
+        /// no later read starts before it.
         private final List<ChunkHandle> keptHandles = new ArrayList<>();
         /// Where the page header being read starts: no read starts before it, so a handle
         /// ending at or before it is not kept.
@@ -465,51 +470,65 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         }
 
         @Override
-        public boolean hasNext() throws IOException {
-            if (nextPageComputed) {
-                return nextPage != null;
-            }
-            if (exhausted) {
-                return false;
-            }
-            nextPage = findNextEmittablePage();
-            nextPageComputed = true;
-            if (nextPage == null) {
-                exhausted = true;
-                scannedPages = pageCount;
-                emitEvent();
-            }
-            return nextPage != null;
+        public ByteNeed pending() {
+            return pending;
         }
 
         @Override
-        public PageInfo next() throws IOException {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
+        public PageInfo advance() throws IOException {
+            pending = null;
+            if (exhausted) {
+                return null;
             }
-            PageInfo result = nextPage;
-            nextPage = null;
-            nextPageComputed = false;
-            return result;
+            if (!initialized && !initialize()) {
+                return null;
+            }
+            return nextEmittablePage();
         }
 
-        /// Reads a page header at the given relative position, growing the
-        /// peek buffer on EOF. Needed because `DataPageHeader.statistics` may
-        /// carry long `min_value`/`max_value` binaries that push the header
-        /// past the initial peek size.
-        private ParsedHeader readPageHeader(int relPos) throws IOException {
-            int remaining = columnChunkLength - relPos;
-            int peekSize = Math.min(PageFormatProbe.INITIAL_PEEK_SIZE, remaining);
-            // No later read starts before this header, so a handle ending at or before it is
-            // never read again.
-            pageStart = relPos;
-            keptHandles.removeIf(handle -> relativeEnd(handle) <= relPos);
+        /// Ends the walk.
+        private PageInfo end() {
+            exhausted = true;
+            scannedPages = pageCount;
+            emitEvent();
+            return null;
+        }
+
+        /// Forgets the page under way, once the walk has moved past it.
+        private void clearPage() {
+            header = null;
+            headerSize = 0;
+            peekSize = 0;
+            recordsInPage = UNKNOWN;
+            dropDecided = false;
+            dropByStats = false;
+        }
+
+        /// Parses the header of the page at [#position] into [#header], growing the peek on a
+        /// truncated parse, since `DataPageHeader.statistics` may carry long
+        /// `min_value`/`max_value` binaries that push the header past the initial peek size.
+        ///
+        /// @return whether the header is parsed; `false` when its bytes are pending
+        private boolean parseHeader() throws IOException {
+            int remaining = columnChunkLength - position;
+            if (peekSize == 0) {
+                peekSize = Math.min(PageFormatProbe.INITIAL_PEEK_SIZE, remaining);
+                // No later read starts before this header, so a handle ending at or before it is
+                // never read again.
+                pageStart = position;
+                int relPos = position;
+                keptHandles.removeIf(handle -> relativeEnd(handle) <= relPos);
+            }
             while (true) {
-                ByteBuffer headerBuf = readBytes(relPos, peekSize);
+                ByteBuffer headerBuf = readBytes(position, peekSize, true);
+                if (headerBuf == null) {
+                    return false;
+                }
                 ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
                 try {
-                    PageHeader header = PageHeaderReader.read(headerReader);
-                    return new ParsedHeader(header, headerReader.getBytesRead());
+                    header = PageHeaderReader.read(headerReader);
+                    headerSize = headerReader.getBytesRead();
+                    return true;
                 }
                 catch (ThriftTruncatedException truncated) {
                     if (peekSize >= remaining) {
@@ -528,39 +547,39 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             }
         }
 
-        /// Reads bytes at the given relative position, advancing through
-        /// chunks as needed. If the range fits in the current chunk,
-        /// returns a zero-copy slice. If it spans multiple chunks,
-        /// assembles from each. Every handle the read leaves that holds bytes
-        /// of the current page is kept, since the page is read from its start
-        /// afterwards.
-        private ByteBuffer readBytes(int relPos, int length) throws IOException {
-            return readBytes(relPos, length, true);
-        }
-
-        /// Reads a whole page: the last read of that page, so a handle it leaves
-        /// is copied out and not read again, and is released rather than kept.
-        private ByteBuffer readPageBytes(int relPos, int length) throws IOException {
-            return readBytes(relPos, length, false);
-        }
-
+        /// Reads bytes at the given relative position, advancing through chunks as needed: a
+        /// zero-copy slice when the range fits in one chunk, assembled from each chunk when it
+        /// spans several. Every handle the read leaves that holds bytes of the current page is
+        /// kept when `keepLeftHandles` is set, since the page is read from its start afterwards;
+        /// a whole page's read is its last, so it releases them.
+        ///
+        /// @return the bytes, or `null` when a chunk holding them is not present, which is then
+        ///         [#pending]
         private ByteBuffer readBytes(int relPos, int length, boolean keepLeftHandles) throws IOException {
             ChunkHandle kept = keptHandleAt(relPos);
             if (kept != null) {
                 if (relPos + length <= relativeEnd(kept)) {
-                    return kept.slice(columnChunkOffset + relPos, length);
+                    return slice(kept, relPos, length);
                 }
                 return assembleFromChunks(relPos, length, keepLeftHandles);
             }
             if (currentHandle == null || relPos < handleStart || relPos >= handleEnd) {
                 advanceChunk(relPos, keepLeftHandles);
             }
-
             if (relPos + length <= handleEnd) {
-                return currentHandle.slice(columnChunkOffset + relPos, length);
+                return slice(currentHandle, relPos, length);
             }
-
             return assembleFromChunks(relPos, length, keepLeftHandles);
+        }
+
+        /// A slice of `handle`'s bytes, or `null` when they are not present.
+        private ByteBuffer slice(ChunkHandle handle, int relPos, int length) throws IOException {
+            ByteBuffer bytes = handle.poll();
+            if (bytes == null) {
+                pending = handle;
+                return null;
+            }
+            return handle.slice(bytes, columnChunkOffset + relPos, length);
         }
 
         /// Returns the kept handle holding `relPos`, or `null` when none does.
@@ -587,7 +606,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// chunk is always chained for one-ahead pre-fetch. The handle left
         /// goes into [#keptHandles] when `keepLeftHandle` is set and it holds
         /// bytes after [#pageStart], and is released otherwise.
-        private void advanceChunk(int relPos, boolean keepLeftHandle) throws IOException {
+        private void advanceChunk(int relPos, boolean keepLeftHandle) {
             ChunkHandle previous = currentHandle;
             ChunkHandle prefetched = previous != null ? previous.nextChunk() : null;
             if (previous != null) {
@@ -631,37 +650,47 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         }
 
         /// Scans past the dictionary page (if present) on first access.
-        private void initialize() throws IOException {
-            initialized = true;
+        ///
+        /// @return whether the walk is past it; `false` when bytes it needs are pending
+        private boolean initialize() throws IOException {
             if (preloadedDictionary != null) {
                 // The plan starts at the first data page: pruning has read the dictionary page.
                 dictionary = preloadedDictionary;
-                return;
+                initialized = true;
+                return true;
             }
             if (position >= columnChunkLength) {
-                return;
+                initialized = true;
+                return true;
             }
             // The chunk's first page, whichever kind it turns out to be: that is in the
             // header about to be read, so a header that will not parse can only be named by
             // position — and the dictionary page, when there is one, is at this position.
             currentPage = pageCount;
-            ParsedHeader parsed = readPageHeader(position);
-            PageHeader header = parsed.header();
-            int headerSize = parsed.headerSize();
-
+            if (header == null && !parseHeader()) {
+                return false;
+            }
             if (header.type() == PageType.DICTIONARY_PAGE) {
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
                 int compressedSize = header.compressedPageSize();
                 int dictTotalSize = headerSize + compressedSize;
+                ByteBuffer dictPage = readBytes(position, dictTotalSize, false);
+                if (dictPage == null) {
+                    return false;
+                }
+                initialized = true;
                 // The header is already parsed, so hand it over rather than a region the
                 // parser would have to open and read the same header out of again.
-                ByteBuffer compressedData = readPageBytes(position, dictTotalSize)
-                        .slice(headerSize, compressedSize);
-                dictionary = DictionaryParser.parsePage(header, compressedData,
+                dictionary = DictionaryParser.parsePage(header, dictPage.slice(headerSize, compressedSize),
                         columnSchema, metaData, context);
                 position += dictTotalSize;
+                clearPage();
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
+                return true;
             }
+            // A data page: the walk goes on from its parsed header.
+            initialized = true;
+            return true;
         }
 
         /// Scans forward through page headers until an emittable data page is
@@ -669,7 +698,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// either:
         ///
         /// - a flat column's pages cover the row group's `maxRows` budget
-        ///   (returns `null`); or
+        ///   (ends the walk); or
         /// - per-page row masking determines no row of the page falls inside
         ///   [#matchingRows] — the page body is skipped without being read or
         ///   decompressed, saving the codec invocation and value-decode work
@@ -680,58 +709,62 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// even with masked drops because `valuesRead` accumulates each
         /// page's `header.num_values` regardless of whether the page was
         /// kept, dropped, or replaced with a null-placeholder.
-        private PageInfo findNextEmittablePage() throws IOException {
-            if (!initialized) {
-                initialize();
-            }
+        ///
+        /// @return the page, or `null` when the walk ends or bytes the page needs are pending
+        private PageInfo nextEmittablePage() throws IOException {
             // Each loop iteration: read one page header, derive its row mask,
             // then either skip the page (mask null), emit it as a placeholder
             // (inline-stats drop), or emit the body slice.
             while (position < columnChunkLength && valuesRead < metaData.numValues()) {
                 if (reachedMaxRows()) {
-                    return null;
+                    return end();
                 }
                 // Once `recordsRead` has crossed the last matching row, every
                 // remaining page produces a null mask. Exit before parsing
                 // any more page headers so trailing-region scans don't pay
                 // for work we know will be discarded.
                 if (!matchingRows.isAll() && recordsRead >= matchingRows.endRow()) {
-                    return null;
+                    return end();
                 }
                 currentPage = pageCount;
-                ParsedHeader parsed = readPageHeader(position);
-                PageHeader header = parsed.header();
-                int headerSize = parsed.headerSize();
+                if (header == null && !parseHeader()) {
+                    return null;
+                }
                 int totalPageSize = headerSize + header.compressedPageSize();
 
                 if (header.type() != PageType.DATA_PAGE
                         && header.type() != PageType.DATA_PAGE_V2) {
                     // DICTIONARY_PAGE or INDEX_PAGE — skip without emitting.
                     position += totalPageSize;
+                    clearPage();
                     continue;
                 }
 
                 int numValues = (int) getValueCount(header);
 
                 // When masks are inactive we don't need a record count for
-                // the page and `recordsInPageComputed` stays false. When
-                // active, flat columns return `numValues` directly; nested
-                // columns walk the rep-level RLE prefix of a v2 page (a v1
-                // page on a nested column would require decompression —
-                // the row-group-wide gate forbids it).
+                // the page and the records stay uncounted. When active, flat
+                // columns return `numValues` directly; nested columns walk the
+                // rep-level RLE prefix of a v2 page (a v1 page on a nested
+                // column would require decompression — the row-group-wide gate
+                // forbids it).
                 PageRowMask mask;
-                int recordsInPage;
-                boolean recordsInPageComputed;
+                int pageRecords;
                 if (matchingRows.isAll()) {
                     mask = PageRowMask.ALL;
-                    recordsInPage = 0;
-                    recordsInPageComputed = false;
+                    pageRecords = 0;
                 }
                 else {
-                    recordsInPage = computeRecordsInPage(header, headerSize, numValues);
-                    recordsInPageComputed = true;
+                    if (recordsInPage == UNKNOWN) {
+                        int counted = computeRecordsInPage(numValues);
+                        if (counted == UNKNOWN) {
+                            return null;
+                        }
+                        recordsInPage = counted;
+                    }
+                    pageRecords = recordsInPage;
                     long pageFirstRow = recordsRead;
-                    long pageLastRow = pageFirstRow + recordsInPage;
+                    long pageLastRow = pageFirstRow + pageRecords;
                     mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
                 }
 
@@ -739,15 +772,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     // Drop the page entirely — the body bytes are never read,
                     // never decompressed. Counters still advance so the
                     // end-of-iteration guards remain honest.
-                    valuesRead += numValues;
-                    recordsRead += recordsInPage;
-                    position += totalPageSize;
-                    pageCount++;
+                    donePage(numValues, pageRecords, totalPageSize);
                     continue;
                 }
 
+                if (!dropDecided) {
+                    dropByStats = canDropByInlineStats(header);
+                    dropDecided = true;
+                }
                 PageInfo pageInfo;
-                if (canDropByInlineStats(header)) {
+                if (dropByStats) {
                     // Inline-stats drop coexists with the mask: the placeholder
                     // covers exactly the rows the mask would have kept, so
                     // sibling columns see consistent record counts.
@@ -757,7 +791,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                         // we know it (nested columns under active masking) or
                         // its value count (flat columns or inactive masking,
                         // where the two coincide).
-                        placeholderRecords = recordsInPageComputed ? recordsInPage : numValues;
+                        placeholderRecords = recordsInPage != UNKNOWN ? recordsInPage : numValues;
                     }
                     else {
                         placeholderRecords = mask.totalRecords();
@@ -766,14 +800,14 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                             columnSchema.maxRepetitionLevel() == 0 ? placeholderRecords : PageInfo.UNKNOWN_RECORDS);
                 }
                 else {
-                    ByteBuffer pageData = readPageBytes(position, totalPageSize);
+                    ByteBuffer pageData = readBytes(position, totalPageSize, false);
+                    if (pageData == null) {
+                        return null;
+                    }
                     pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask,
                             keptRecords(mask, numValues));
                 }
-                valuesRead += numValues;
-                recordsRead += recordsInPage;
-                position += totalPageSize;
-                pageCount++;
+                donePage(numValues, pageRecords, totalPageSize);
                 return pageInfo;
             }
 
@@ -786,7 +820,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                         + rowGroupRowCount + " rows but pages contain " + recordsRead
                         + " records.");
             }
-            return null;
+            return end();
+        }
+
+        /// Moves the walk past the page under way.
+        private void donePage(int numValues, int pageRecords, int totalPageSize) {
+            valuesRead += numValues;
+            recordsRead += pageRecords;
+            position += totalPageSize;
+            pageCount++;
+            clearPage();
         }
 
         /// The records a data page of `numValues` values contributes after `mask`, for
@@ -809,13 +852,15 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             return maxRows > 0 && columnSchema.maxRepetitionLevel() == 0 && valuesRead >= maxRows;
         }
 
-        /// Computes the number of top-level records in a data page when masks
+        /// Computes the number of top-level records in the page under way when masks
         /// are active. Flat columns return `numValues` directly. Nested
         /// columns walk the v2 page's uncompressed rep-level RLE prefix; a
         /// v1 nested page would require decompression to count records and
         /// is rejected here — the row-group-wide gate is responsible for
         /// promoting `matchingRows` to ALL before we ever reach this branch.
-        private int computeRecordsInPage(PageHeader header, int headerSize, int numValues) throws IOException {
+        ///
+        /// @return the records, or [#UNKNOWN] when the levels are pending
+        private int computeRecordsInPage(int numValues) throws IOException {
             if (columnSchema.maxRepetitionLevel() == 0) {
                 return numValues;
             }
@@ -831,38 +876,62 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 // No repetition levels means every value is a top-level record.
                 return numValues;
             }
-            ByteBuffer repLevels = readBytes(position + headerSize, repLevelLength);
+            ByteBuffer repLevels = readBytes(position + headerSize, repLevelLength, true);
+            if (repLevels == null) {
+                return UNKNOWN;
+            }
             return PageRecordCounter.countTopLevelRecords(repLevels, 0, repLevelLength,
                     numValues, columnSchema.maxRepetitionLevel());
         }
 
-        /// Reads bytes that span multiple chunks by advancing through
-        /// handles and concatenating. Uses a direct buffer so the result is
-        /// usable from FFM-based decompressors (e.g. libdeflate), which
-        /// require native MemorySegments.
+        /// Reads bytes that span multiple chunks by advancing through handles and concatenating,
+        /// once every handle holding a byte of the range is present: a range copied in part
+        /// would leave the handles it passed released, and its next attempt would read them
+        /// again. Uses a direct buffer so the result is usable from FFM-based decompressors
+        /// (e.g. libdeflate), which require native MemorySegments.
+        ///
+        /// @return the bytes, or `null` when a chunk holding them is not present, which is then
+        ///         [#pending]
         private ByteBuffer assembleFromChunks(int relPos, int length, boolean keepLeftHandles) throws IOException {
+            int end = relPos + length;
+            for (int pos = relPos; pos < end; ) {
+                ChunkHandle handle = handleAt(pos, true);
+                if (handle.poll() == null) {
+                    pending = handle;
+                    return null;
+                }
+                pos = relativeEnd(handle);
+            }
             ByteBuffer combined = ByteBuffer.allocateDirect(length);
-            int remaining = length;
-            while (remaining > 0) {
-                long absPos = columnChunkOffset + relPos;
-                int toRead;
-                ChunkHandle kept = keptHandleAt(relPos);
-                if (kept != null) {
-                    toRead = Math.min(relativeEnd(kept) - relPos, remaining);
-                    combined.put(kept.slice(absPos, toRead));
-                }
-                else {
-                    if (relPos < handleStart || relPos >= handleEnd) {
-                        advanceChunk(relPos, keepLeftHandles);
-                    }
-                    toRead = Math.min(handleEnd - relPos, remaining);
-                    combined.put(currentHandle.slice(absPos, toRead));
-                }
-                relPos += toRead;
-                remaining -= toRead;
+            for (int pos = relPos; pos < end; ) {
+                ChunkHandle handle = handleAt(pos, false);
+                int toRead = Math.min(relativeEnd(handle), end) - pos;
+                combined.put(handle.slice(handle.poll(), columnChunkOffset + pos, toRead));
+                pos += toRead;
             }
             combined.flip();
+            if (!keepLeftHandles) {
+                // The range is the page's last read: no later read of it starts before its end.
+                keptHandles.removeIf(handle -> relativeEnd(handle) <= end);
+            }
             return combined;
+        }
+
+        /// The handle holding `relPos`: a kept one, or the current one, which the walk advances
+        /// to `relPos` when `advance` is set, keeping the one it leaves.
+        private ChunkHandle handleAt(int relPos, boolean advance) {
+            ChunkHandle kept = keptHandleAt(relPos);
+            if (kept != null) {
+                return kept;
+            }
+            if (relPos < handleStart || relPos >= handleEnd) {
+                if (!advance) {
+                    throw new IllegalStateException("No chunk holds position " + relPos + " of column '"
+                            + columnSchema.name() + "'");
+                }
+                advanceChunk(relPos, true);
+            }
+            return currentHandle;
         }
 
         private long getValueCount(PageHeader header) {
@@ -921,7 +990,5 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             event.commit();
         }
 
-        private record ParsedHeader(PageHeader header, int headerSize) {
-        }
     }
 }

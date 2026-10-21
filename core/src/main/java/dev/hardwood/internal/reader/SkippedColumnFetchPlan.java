@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.NoSuchElementException;
-
 /// The plan of a column that is not read in a row group: it fetches nothing and yields
 /// one [PageInfo#BOUNDARY_MARKER]. The column places no rows for the row
 /// group; the marker only makes it close its batch in progress at the row where its
@@ -30,22 +28,22 @@ final class SkippedColumnFetchPlan implements FetchPlan {
     }
 
     @Override
-    public PageIterator pages() {
-        return new PageIterator() {
+    public PageWalk walk() {
+        return new PageWalk() {
             private boolean yielded;
 
             @Override
-            public boolean hasNext() {
-                return !yielded;
-            }
-
-            @Override
-            public PageInfo next() {
+            public PageInfo advance() {
                 if (yielded) {
-                    throw new NoSuchElementException();
+                    return null;
                 }
                 yielded = true;
                 return PageInfo.BOUNDARY_MARKER;
+            }
+
+            @Override
+            public ByteNeed pending() {
+                return null;
             }
         };
     }

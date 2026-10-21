@@ -13,9 +13,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.util.Lazy;
 
 /// A contiguous, multi-column byte range fetched in a single
 /// `readRange` call. Exists to coalesce the per-column reads of a row
@@ -24,16 +21,15 @@ import dev.hardwood.internal.util.Lazy;
 /// than N separate ranged GETs (one per column). See #374.
 ///
 /// One [ChunkHandle] per column attaches to a `SharedRegion` and slices
-/// out its sub-range on demand. The first slice triggers the underlying
-/// `readRange`; subsequent slices share the cached buffer.
+/// out its sub-range. Its read is issued once, by the step whose walk needs it first ([#issue]),
+/// and the attached handles share its bytes; a walk polls without waiting, as for a
+/// [ChunkHandle].
 ///
 /// Lifecycle: the region is alive as long as any attached handle still
 /// references it. Eviction of the row group's `FetchPlan[]` drops all
 /// attached handles, the region's strong references go to GC, and the
 /// underlying `ByteBuffer` is reclaimed.
-public final class SharedRegion {
-
-    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(SharedRegion.class.getName()));
+public final class SharedRegion implements ByteNeed {
 
     private final InputFile inputFile;
     private final long fileOffset;
@@ -41,17 +37,18 @@ public final class SharedRegion {
     private final String purpose;
     private final PrefetchTasks prefetchTasks;
     private volatile SharedRegion nextRegion;
-    private volatile ByteBuffer data;
-    /// Set by the first [#ensureFetched] that finds a next region chained, which
-    /// starts that region's pre-fetch. A region a pre-fetch fetched still pre-fetches
-    /// its successor when the read reaches it, so pre-fetch stays one region ahead.
+    /// The read under way or done; `null` before the first one starts. Replaced only to repeat
+    /// a speculative read that failed.
+    private volatile RangeRead read;
+    /// Set by the first [#poll] that finds the bytes present while a next region is chained,
+    /// which starts that region's read. A region a pre-fetch read still pre-fetches its successor
+    /// when the read reaches it, so pre-fetch stays one region ahead.
     private final AtomicBoolean nextRegionPrefetched = new AtomicBoolean();
-    /// Guards the fetch; a lock rather than a monitor, so that a virtual thread waiting for
-    /// another's fetch, or fetching itself, does not hold its carrier on JDK 21.
-    private final ReentrantLock fetchLock = new ReentrantLock();
+    /// Guards the start of a read; held for no read, as the reads run on their own threads.
+    private final ReentrantLock startLock = new ReentrantLock();
 
-    /// @param prefetchTasks where the pre-fetch of the next region runs, so the read's
-    ///        owner can wait for it before closing the file
+    /// @param prefetchTasks where the reads run for a file not in memory, so the read's owner can
+    ///        wait for them before closing the file
     public SharedRegion(InputFile inputFile, long fileOffset, int length, String purpose,
                         PrefetchTasks prefetchTasks) {
         this.inputFile = inputFile;
@@ -70,19 +67,17 @@ public final class SharedRegion {
     }
 
     /// Chains a one-ahead region for asynchronous pre-fetch. The first
-    /// [#ensureFetched] of this region kicks off the next region's fetch
-    /// on a speculative task.
+    /// [#poll] that finds this region's bytes present starts the next region's read.
     public void setNextRegion(SharedRegion next) {
         this.nextRegion = next;
     }
 
-    /// Returns a zero-copy slice covering `[absoluteOffset,
-    /// absoluteOffset + sliceLength)`. Throws [IllegalArgumentException]
-    /// when the slice falls outside this region — coalescer bugs would
-    /// otherwise surface as a generic [IndexOutOfBoundsException] from
-    /// the underlying buffer with no context about which region or
-    /// handle was misaligned.
-    public ByteBuffer slice(long absoluteOffset, int sliceLength) throws IOException {
+    /// Returns a zero-copy slice covering `[absoluteOffset, absoluteOffset + sliceLength)` of
+    /// bytes [#poll] returned. Throws [IllegalArgumentException] when the slice falls outside
+    /// this region — coalescer bugs would otherwise surface as a generic
+    /// [IndexOutOfBoundsException] from the underlying buffer with no context about which region
+    /// or handle was misaligned.
+    ByteBuffer sliceOf(ByteBuffer polled, long absoluteOffset, int sliceLength) {
         if (absoluteOffset < fileOffset
                 || sliceLength < 0
                 || absoluteOffset + sliceLength > (long) fileOffset + length) {
@@ -91,66 +86,101 @@ public final class SharedRegion {
                     + ") falls outside region [" + fileOffset + ", " + (fileOffset + length)
                     + ") (" + purpose + ")");
         }
-        ByteBuffer buf = ensureFetched();
         int rel = Math.toIntExact(absoluteOffset - fileOffset);
-        return buf.slice(rel, sliceLength);
+        return polled.slice(rel, sliceLength);
     }
 
-    /// Ensures the region's data is fetched. First call triggers
-    /// `readRange`; subsequent calls return the cached buffer. The first
-    /// call made while a next region is chained kicks off async pre-fetch of
-    /// that region, whether this call fetched the data or found it already
-    /// fetched by a pre-fetch; a pre-fetch fetches through [#fetchData] and so
-    /// does not chain further.
+    /// Returns a zero-copy slice as [#sliceOf] does, waiting for the read; for a thread off the
+    /// pool.
+    public ByteBuffer slice(long absoluteOffset, int sliceLength) throws IOException {
+        return sliceOf(ensureFetched(), absoluteOffset, sliceLength);
+    }
+
+    /// The region's bytes, waiting for their read; for a thread off the pool. Starts the next
+    /// region's read as [#poll] does.
     public ByteBuffer ensureFetched() throws IOException {
-        ByteBuffer buf = data;
-        if (buf == null) {
-            fetchData();
-            buf = data;
+        while (true) {
+            ByteBuffer buf = poll();
+            if (buf != null) {
+                return buf;
+            }
+            issue().await();
         }
+    }
+
+    /// The region's bytes, or `null` while they are not present, without waiting; see
+    /// [ChunkHandle#poll].
+    ///
+    /// @throws IOException if the demand read failed
+    public ByteBuffer poll() throws IOException {
+        RangeRead current = read;
+        if (current == null && RangeRead.inMemory(inputFile)) {
+            current = issue();
+        }
+        if (current == null || !current.isDone() || current.failedSpeculatively()) {
+            return null;
+        }
+        ByteBuffer buf = current.bytes("region");
         SharedRegion next = nextRegion;
-        if (next != null && !nextRegionPrefetched.get() && nextRegionPrefetched.compareAndSet(false, true)
-                && next.data == null) {
-            prefetchTasks.submit(() -> {
-                try {
-                    next.fetchData();
-                }
-                catch (IOException e) {
-                    // Speculative: nothing is waiting on this, and a failed prefetch
-                    // leaves the region unfetched, so the demand path fetches it again
-                    // and reports the failure to a caller that is waiting for it.
-                    LOG.get().log(System.Logger.Level.DEBUG,
-                            "Prefetch failed for region at offset {0} (length {1}) in {2}",
-                            next.fileOffset, next.length, next.inputFile.name(), e);
-                }
-            });
+        if (next != null && !nextRegionPrefetched.get() && nextRegionPrefetched.compareAndSet(false, true)) {
+            next.startSpeculative();
         }
         return buf;
     }
 
-    private void fetchData() throws IOException {
-        if (data != null) {
+    @Override
+    public RangeRead issue() {
+        RangeRead current = read;
+        if (current != null && !current.failedSpeculatively()) {
+            current.raiseToDemand();
+            return current;
+        }
+        startLock.lock();
+        try {
+            current = read;
+            if (current == null || current.failedSpeculatively()) {
+                current = RangeRead.start(inputFile, fileOffset, length, purpose,
+                        RangeRead.Priority.DEMAND, prefetchTasks);
+                read = current;
+            }
+            else {
+                current.raiseToDemand();
+            }
+            return current;
+        }
+        finally {
+            startLock.unlock();
+        }
+    }
+
+    /// Reads the region ahead of need and, once it is read, starts the read of the next region;
+    /// see [ChunkHandle#prefetch].
+    void prefetch() {
+        startSpeculative();
+        RangeRead current = read;
+        current.await();
+        if (!current.failedSpeculatively()) {
+            SharedRegion next = nextRegion;
+            if (next != null && nextRegionPrefetched.compareAndSet(false, true)) {
+                next.startSpeculative();
+            }
+        }
+    }
+
+    /// Starts the region's read ahead of need, unless one is under way or done.
+    void startSpeculative() {
+        if (read != null) {
             return;
         }
-        fetchLock.lock();
+        startLock.lock();
         try {
-            if (data != null) {
-                return;
-            }
-            String outer = FetchReason.current();
-            String composed = "unattributed".equals(outer) ? purpose : outer + " | " + purpose;
-            try (FetchReason.Scope ignored = FetchReason.set(composed)) {
-                data = inputFile.readRange(fileOffset, length);
-            }
-            catch (IOException e) {
-                throw new IOException(
-                        ExceptionContext.filePrefix(inputFile.name())
-                        + "Failed to fetch region at offset " + fileOffset
-                        + " (length " + length + ")", e);
+            if (read == null) {
+                read = RangeRead.start(inputFile, fileOffset, length, purpose,
+                        RangeRead.Priority.SPECULATIVE, prefetchTasks);
             }
         }
         finally {
-            fetchLock.unlock();
+            startLock.unlock();
         }
     }
 }
