@@ -178,18 +178,27 @@ class DecodeThreadTest {
         }
     }
 
-    /// The fetcher of `id`, a filter-only column, places a boundary marker for the first row
-    /// group, which seals the column's open cell once every page in it has been filled: the read's
-    /// tasks run as they are submitted, so each page is filled before the next is placed.
+    /// Each row group's one page of `amount` leaves its last batch open, and the fetcher seals
+    /// that batch's cell where the row group ends. The read's tasks run as they are submitted, and
+    /// the fetcher submits each page itself, so the page has filled the cell by the time the
+    /// fetcher seals it, and a [SealedFillTask] completes it.
+    ///
+    /// The read has one column and nothing consumes until the sealed fill is submitted: a second
+    /// fetcher, or a consumer taking a batch, submits pages too, and runs a page on its own thread
+    /// while the fetcher seals the page's cell, which the page then completes itself.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void aSealedFillTaskCompletesTheCellABoundaryMarkerSeals() throws Exception {
+    void aSealedFillTaskCompletesTheCellItsFetcherSealsAfterItsLastFill() throws Exception {
         TaskOrderExecutor executor = TaskOrderExecutor.inline(null);
         try (HardwoodContextImpl context = executor.context(2);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file), context);
-             ColumnReader values = reader.buildColumnReader("amount")
-                     .filter(FilterPredicate.lt("id", 1000L)).batchSize(64).build()) {
-            assertThat(read(values)).isEqualTo(1000);
+             ColumnReader values = reader.buildColumnReader("amount").batchSize(64).build()) {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (flatSealedFillTasks.get() == 0 && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+            assertThat(flatSealedFillTasks).as("sealed fills submitted before the read").hasPositiveValue();
+            assertThat(read(values)).isEqualTo(ROWS);
         }
 
         assertThat(executor.failure()).isNull();
