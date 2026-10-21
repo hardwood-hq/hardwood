@@ -450,6 +450,14 @@ public final class BinaryBatchValues {
         return Flba12Timestamps.toInstant(buffers[bufferIds[idx]], start, ends[idx] - start, unit);
     }
 
+    /// Decode value `idx` as the instant its legacy `INT96` timestamp stands for, reading the
+    /// bytes where they sit rather than materialising a `byte[]` for them.
+    public Instant int96InstantAt(int idx) {
+        ensureViews();
+        int start = starts[idx];
+        return LogicalTypeConverter.int96ToInstant(buffers[bufferIds[idx]], start, ends[idx] - start);
+    }
+
     /// Decode value `idx` as the wall clock its `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` payload
     /// stands for, reading the bytes where they sit.
     public LocalDateTime flba12LocalDateTimeAt(int idx, LogicalType.TimeUnit unit) {

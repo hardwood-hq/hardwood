@@ -160,7 +160,7 @@ final class LeafDecoder {
     }
 
     static Instant int96TimestampAt(Object values, int idx) {
-        return LogicalTypeConverter.int96ToInstant(((BinaryBatchValues) values).byteArrayAt(idx));
+        return ((BinaryBatchValues) values).int96InstantAt(idx);
     }
 
     static LocalDateTime localTimestampAt(Object values, int idx, PhysicalType type, LogicalType logicalType) {

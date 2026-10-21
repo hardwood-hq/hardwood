@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.stream.Stream;
 
@@ -56,6 +57,15 @@ class LogicalTypeConverterTest {
     @MethodSource("int96Cases")
     void int96ToInstantDecodesKnownValues(String name, byte[] bytes, Instant expected) {
         assertThat(LogicalTypeConverter.int96ToInstant(bytes)).isEqualTo(expected);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("int96Cases")
+    void int96ToInstantReadsAValueInsideABufferAtItsOffset(String name, byte[] bytes, Instant expected) {
+        byte[] buffer = new byte[bytes.length + 5];
+        Arrays.fill(buffer, (byte) 0x7F);
+        System.arraycopy(bytes, 0, buffer, 3, bytes.length);
+        assertThat(LogicalTypeConverter.int96ToInstant(buffer, 3, bytes.length)).isEqualTo(expected);
     }
 
     /// A `BYTE_ARRAY` `DECIMAL` value stored as no bytes is zero, as a filter predicate on the
@@ -112,6 +122,9 @@ class LogicalTypeConverterTest {
     @Test
     void int96ToInstantRejectsWrongLength() {
         assertThatThrownBy(() -> LogicalTypeConverter.int96ToInstant(new byte[11]))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("INT96 requires exactly 12 bytes, got 11");
+        assertThatThrownBy(() -> LogicalTypeConverter.int96ToInstant(new byte[20], 2, 11))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("INT96 requires exactly 12 bytes, got 11");
     }

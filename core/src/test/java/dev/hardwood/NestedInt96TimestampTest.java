@@ -71,6 +71,15 @@ class NestedInt96TimestampTest {
                 .containsExactly(FIRST, SECOND));
     }
 
+    @Test
+    void genericValuesDecodeToInstants() throws IOException {
+        withFirstRow(rows -> {
+            assertThat(rows.getValue("at")).isEqualTo(FIRST);
+            assertThat(rows.getStruct("event").getValue("at")).isEqualTo(FIRST);
+            assertThat(rows.getList("samples").get(1)).isEqualTo(SECOND);
+        });
+    }
+
     private interface RowAssertion {
         void accept(RowReader rows);
     }

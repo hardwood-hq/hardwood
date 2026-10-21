@@ -327,8 +327,8 @@ public final class LogicalTypeConverter {
                 Integer.toUnsignedLong(intAt(bytes, offset + 8)));
     }
 
-    /// The little-endian `int` at `offset`, the byte order `INTERVAL` fields are
-    /// stored in. `& 0xFF` blocks sign extension on each byte's promotion.
+    /// The little-endian `int` at `offset`, the byte order `INTERVAL` fields and the words of an
+    /// `INT96` timestamp are stored in. `& 0xFF` blocks sign extension on each byte's promotion.
     private static int intAt(byte[] bytes, int offset) {
         return (bytes[offset] & 0xFF)
                 | ((bytes[offset + 1] & 0xFF) << 8)
@@ -362,12 +362,17 @@ public final class LogicalTypeConverter {
     /// Convert a legacy INT96 timestamp (12 bytes, little-endian: 8 bytes nanos-of-day,
     /// 4 bytes Julian day) to an [Instant]. Used by Apache Spark and Hive.
     public static Instant int96ToInstant(byte[] bytes) {
-        if (bytes.length != FixedWidths.INT96) {
-            throw new ParquetReadException("INT96 requires exactly " + FixedWidths.INT96 + " bytes, got " + bytes.length);
+        return int96ToInstant(bytes, 0, bytes.length);
+    }
+
+    /// The [Instant] the 12-byte legacy INT96 timestamp at `offset` stands for, for a caller
+    /// holding the value inside a larger buffer.
+    public static Instant int96ToInstant(byte[] bytes, int offset, int length) {
+        if (length != FixedWidths.INT96) {
+            throw new ParquetReadException("INT96 requires exactly " + FixedWidths.INT96 + " bytes, got " + length);
         }
-        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        long nanosOfDay = bb.getLong(0);
-        int julianDay = bb.getInt(8);
+        long nanosOfDay = Integer.toUnsignedLong(intAt(bytes, offset)) | (long) intAt(bytes, offset + 4) << 32;
+        int julianDay = intAt(bytes, offset + 8);
         long epochDay = julianDay - JULIAN_EPOCH_OFFSET_DAYS;
         long epochSecond = epochDay * 86400L + nanosOfDay / 1_000_000_000L;
         long nanoAdjustment = nanosOfDay % 1_000_000_000L;

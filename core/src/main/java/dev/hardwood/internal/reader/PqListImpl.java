@@ -132,11 +132,7 @@ final class PqListImpl implements PqList {
             return new NestedList<>(this::get);
         }
         int projCol = listDesc.firstLeafProjCol();
-        if (LeafKind.of(elementSchema) == LeafKind.STRING) {
-            return new LeafList<>(pos -> batch.getString(projCol, pos));
-        }
-        return new LeafList<>(pos ->
-                LeafDecoder.decode(batch.getValue(projCol, pos), elementSchema));
+        return new LeafList<>(pos -> batch.decodeLeaf(projCol, pos, elementSchema));
     }
 
     @Override
