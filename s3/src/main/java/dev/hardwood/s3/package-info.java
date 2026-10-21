@@ -8,7 +8,7 @@
 
 /// Amazon S3 backend for reading and writing Parquet files in object storage.
 ///
-/// [S3Source] is the main entry point, providing [dev.hardwood.InputFile]
+/// [S3Source] is the entry point for both directions, providing [dev.hardwood.InputFile]
 /// instances backed by S3 range requests and [dev.hardwood.OutputFile]
 /// instances backed by uploads. Uses a lightweight HTTP client
 /// with no AWS SDK dependency; for AWS SDK credential integration, see

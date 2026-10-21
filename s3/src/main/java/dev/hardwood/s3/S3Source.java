@@ -19,11 +19,13 @@ import java.util.Objects;
 
 import dev.hardwood.s3.internal.S3Api;
 
-/// A configured connection to an S3-compatible object store.
+/// A configured connection to an S3-compatible object store, the source of the files read
+/// from it and written to it.
 ///
 /// Holds the region, endpoint, credentials (or anonymous access), and HTTP client needed
-/// to create [S3InputFile] and [S3OutputFile] instances. Reuse a single `S3Source` across
-/// multiple files for connection pooling and credential reuse.
+/// to create [S3InputFile] instances for reading and [S3OutputFile] instances for writing.
+/// Reuse a single `S3Source` across multiple files, in either direction, for connection
+/// pooling and credential reuse.
 ///
 /// **URL styles:**
 /// - **Virtual-hosted** (default): `https://{bucket}.s3.{region}.amazonaws.com/{key}`
@@ -224,7 +226,9 @@ public final class S3Source implements Closeable {
         }
 
         /// Sends requests unsigned, for buckets that allow public read access.
-        /// Mutually exclusive with [#credentials(S3CredentialsProvider)].
+        /// Mutually exclusive with [#credentials(S3CredentialsProvider)]. A source built this
+        /// way cannot create output files: [S3Source#outputFile(String, String)] throws
+        /// [IllegalStateException].
         public Builder anonymous() {
             this.anonymous = true;
             return this;

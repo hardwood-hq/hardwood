@@ -22,7 +22,7 @@ Application code should import only from the packages marked **Public API**.
 | [`dev.hardwood.schema`](/api/latest/dev/hardwood/schema/package-summary.html) | **Public API** | Schema representation: file schema, column schemas, and column projection. |
 | [`dev.hardwood.row`](/api/latest/dev/hardwood/row/package-summary.html) | **Public API** | Value types for nested data access: structs, lists, and maps. |
 | [`dev.hardwood.avro`](/api/latest/dev/hardwood/avro/package-summary.html) | **Public API** | Avro GenericRecord support: schema conversion and row materialization (`hardwood-avro` module). |
-| [`dev.hardwood.s3`](/api/latest/dev/hardwood/s3/package-summary.html) | **Public API** | S3 object storage support: `S3Source`, `S3InputFile`, `S3Credentials`, `S3CredentialsProvider`, `RangeBacking` (`hardwood-s3` module, zero external dependencies). |
+| [`dev.hardwood.s3`](/api/latest/dev/hardwood/s3/package-summary.html) | **Public API** | S3 object storage support: `S3Source`, `S3InputFile`, `S3OutputFile`, `S3Credentials`, `S3CredentialsProvider`, `RangeBacking` (`hardwood-s3` module, zero external dependencies). |
 | [`dev.hardwood.aws.auth`](/api/latest/dev/hardwood/aws/auth/package-summary.html) | **Public API** | Bridges the AWS SDK credential chain to Hardwood's `S3CredentialsProvider` (`hardwood-aws-auth` module, optional). |
 | [`dev.hardwood.jfr`](/api/latest/dev/hardwood/jfr/package-summary.html) | **Public API** | JFR event types emitted during file reading, decoding, and pipeline operations. |
 | `dev.hardwood.internal.*` | **Internal** | Implementation details — not part of the public API and may change without notice. |

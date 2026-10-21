@@ -33,7 +33,7 @@ try (S3Source source = S3Source.builder()
 }
 ```
 
-The source is configured as for reading; [Reading from S3](s3.md) covers credentials and S3-compatible endpoints. The bucket must already exist.
+One `S3Source` serves reads and writes alike; [Reading from S3](s3.md) covers credentials and S3-compatible endpoints. A source built with `anonymous()` cannot write. The bucket must already exist.
 
 ## Change the part size
 

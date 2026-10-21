@@ -27,7 +27,7 @@ Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): creden
 
 ## S3Source and configuration
 
-`S3Source` is a configured connection to one S3-compatible service. It owns the `HttpClient` and the `S3Api` built on it, and creates `S3InputFile` instances for `(bucket, key)` pairs or `s3://bucket/key` URIs, singly or in lists (`inputFilesInBucket`, `inputFiles`; the latter may span buckets). One source is meant to serve many files, which share its connection pool and credential provider.
+`S3Source` is a configured connection to one S3-compatible service; "source" names the store the files come from and go to, not a direction. It owns the `HttpClient` and the `S3Api` built on it, and creates `S3InputFile` instances for `(bucket, key)` pairs or `s3://bucket/key` URIs, singly or in lists (`inputFilesInBucket`, `inputFiles`; the latter may span buckets), and `S3OutputFile` instances through `outputFile` ([S3OutputFile](#s3outputfile)). One source is meant to serve many files, which share its connection pool and credential provider. One type serves both directions because every connection setting applies to reads and writes alike, and a job that reads and writes the same service then shares one pool; the settings that apply to one direction only (`rangeBacking` and `tempDir` to reads, `uploadPartSize` to writes, and `anonymous`, which rules out writes) sit on the same builder.
 
 | Builder option | Default | Contract |
 |---|---|---|
@@ -38,10 +38,11 @@ Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): creden
 | `anonymous` | off | Sends every request unsigned. Mutually exclusive with `credentials`; `build()` throws when both are set. |
 | `connectTimeout` | 10 s | Applied to the `HttpClient` the source builds; ignored with a caller-supplied client. |
 | `requestTimeout` | 30 s | Per HTTP request, applied by `S3Api` to every request. |
-| `maxRetries` | 3 | Retries per `GET` (see [Errors and retries](#errors-and-retries)); negative values are rejected. |
+| `maxRetries` | 3 | Retries per request, reads and writes alike (see [Errors and retries](#errors-and-retries)); negative values are rejected. |
 | `httpClient` | built by the source | A caller-supplied client is never closed by the source. |
 | `rangeBacking` | `NONE` | Range cache mode for every file from this source (see [Range backing](#range-backing)). |
 | `tempDir` | `java.io.tmpdir` | Backing-file directory under `SPARSE_TEMPFILE`; ignored under `NONE`. |
+| `uploadPartSize` | 8 MiB | Part size of `S3OutputFile` uploads; at least 5 MiB, rejected by the setter otherwise (see [S3OutputFile](#s3outputfile)). |
 
 `S3Source.close()` closes the `HttpClient` only when the source built it. `S3InputFile.close()` never touches the client, so closing a file leaves the source usable for the next one; closing the source ends every file created from it.
 
