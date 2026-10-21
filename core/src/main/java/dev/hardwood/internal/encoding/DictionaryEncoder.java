@@ -31,6 +31,7 @@ public final class DictionaryEncoder {
     private int[] slotValue;
     private int[] slotIndex;
     private int mask;
+    private int shift;
     private int threshold; // resize when size exceeds this (~75% load)
 
     // Distinct values in index order — the dictionary body.
@@ -44,7 +45,7 @@ public final class DictionaryEncoder {
 
     /// The index assigned to `value`, or `-1` if it has not been seen. Does not assign.
     public int indexOf(int value) {
-        int slot = hash(value) & mask;
+        int slot = DictionarySlots.home(value, shift);
         while (slotIndex[slot] != EMPTY) {
             if (slotValue[slot] == value) {
                 return slotIndex[slot];
@@ -93,7 +94,7 @@ public final class DictionaryEncoder {
     }
 
     private void insert(int value, int index) {
-        int slot = hash(value) & mask;
+        int slot = DictionarySlots.home(value, shift);
         while (slotIndex[slot] != EMPTY) {
             slot = (slot + 1) & mask;
         }
@@ -117,12 +118,20 @@ public final class DictionaryEncoder {
         this.slotIndex = new int[capacity];
         Arrays.fill(slotIndex, EMPTY);
         this.mask = capacity - 1;
+        this.shift = DictionarySlots.shift(capacity);
         this.threshold = capacity - (capacity >> 2); // 75%
     }
 
-    /// Fibonacci hashing spreads sequential and clustered `INT32` keys across the table.
-    private static int hash(int value) {
-        return value * 0x9E3779B1;
+    /// The mean number of slots a lookup of a held value visits, from each entry's distance to
+    /// the slot it starts probing at; how well the placement spreads the values held.
+    double meanProbes() {
+        long probes = 0;
+        for (int s = 0; s < slotIndex.length; s++) {
+            if (slotIndex[s] != EMPTY) {
+                probes += ((s - DictionarySlots.home(slotValue[s], shift)) & mask) + 1;
+            }
+        }
+        return (double) probes / size;
     }
 
     /// The bytes this dictionary retains: the distinct values, and the open-addressing table that

@@ -24,6 +24,7 @@ public final class LongDictionaryEncoder {
     private long[] slotValue;
     private int[] slotIndex;
     private int mask;
+    private int shift;
     private int threshold;
 
     private long[] values;
@@ -36,7 +37,7 @@ public final class LongDictionaryEncoder {
 
     /// The index assigned to `value`, or `-1` if it has not been seen. Does not assign.
     public int indexOf(long value) {
-        int slot = hash(value) & mask;
+        int slot = DictionarySlots.home(value, shift);
         while (slotIndex[slot] != EMPTY) {
             if (slotValue[slot] == value) {
                 return slotIndex[slot];
@@ -85,7 +86,7 @@ public final class LongDictionaryEncoder {
     }
 
     private void insert(long value, int index) {
-        int slot = hash(value) & mask;
+        int slot = DictionarySlots.home(value, shift);
         while (slotIndex[slot] != EMPTY) {
             slot = (slot + 1) & mask;
         }
@@ -109,13 +110,20 @@ public final class LongDictionaryEncoder {
         this.slotIndex = new int[capacity];
         Arrays.fill(slotIndex, EMPTY);
         this.mask = capacity - 1;
+        this.shift = DictionarySlots.shift(capacity);
         this.threshold = capacity - (capacity >> 2); // 75%
     }
 
-    /// Fibonacci hashing over the mixed high and low words spreads sequential and clustered
-    /// 64-bit keys across the table.
-    private static int hash(long value) {
-        return (int) ((value ^ (value >>> 32)) * 0x9E3779B1L);
+    /// The mean number of slots a lookup of a held value visits, from each entry's distance to
+    /// the slot it starts probing at; how well the placement spreads the values held.
+    double meanProbes() {
+        long probes = 0;
+        for (int s = 0; s < slotIndex.length; s++) {
+            if (slotIndex[s] != EMPTY) {
+                probes += ((s - DictionarySlots.home(slotValue[s], shift)) & mask) + 1;
+            }
+        }
+        return (double) probes / size;
     }
 
     /// The bytes this dictionary retains: the distinct values, and the open-addressing table that
