@@ -109,9 +109,9 @@ The decision is recorded in a tree of `AvroPlanNode`, one node per value positio
 | `FIXED` | raw accessor | `GenericData.Fixed` of the declared size |
 | `STRING` | string accessor | `String` |
 | `UUID` | UUID accessor | canonical `String` |
-| `DECIMAL` | decimal accessor | `ByteBuffer` of the unscaled bytes |
+| `DECIMAL` | raw accessor: a `BYTE_ARRAY` value's stored bytes as read (an empty value as the one byte of zero), an `INT32` or `INT64` value as its unscaled bytes | `ByteBuffer` of the unscaled bytes |
 | `STRUCT` | struct accessor; the raw route for a list element, where a `FILE` group's decoded form is a `PqFile` | nested `GenericRecord` |
-| `VARIANT` | Variant accessor | two-field `GenericRecord` of the canonical bytes |
+| `VARIANT` | Variant accessor | two-field `GenericRecord` wrapping the variant's own arrays, which the row reader copied out of the batch |
 | `LIST` | list accessor | `java.util.List` |
 | `MAP` | map accessor | `java.util.Map` with `String` keys |
 | `NULL` | none | a non-null value is an invariant failure |
@@ -135,16 +135,16 @@ List elements and map values switch on the same `Kind` through their own accesso
 
 | Kinds | Field and map value | List element |
 |---|---|---|
-| `BOOLEAN`, `INT`, `LONG`, `FLOAT`, `DOUBLE`, `UNSIGNED_INT32`, `BINARY`, `FIXED` (the raw kinds) | `getRawValue` | `getRaw(index)` |
-| `STRING`, `UUID`, `DECIMAL`, `STRUCT`, `VARIANT`, `LIST`, `MAP` | the typed accessor | `get(index)`, checked against the class the kind requires |
+| `BOOLEAN`, `INT`, `LONG`, `FLOAT`, `DOUBLE`, `UNSIGNED_INT32`, `BINARY`, `FIXED`, `DECIMAL` (the raw kinds) | `getRawValue` | `getRaw(index)` |
+| `STRING`, `UUID`, `STRUCT`, `VARIANT`, `LIST`, `MAP` | the typed accessor | `get(index)`, checked against the class the kind requires |
 
-The raw kinds share one conversion (`rawToAvro`) at all three positions. A temporal column is therefore the stored number wherever it sits; one that materialized as a number in one position and a `java.time` object in another would produce records that contradict their own schema.
+The raw kinds other than `DECIMAL` share one conversion (`rawToAvro`) at all three positions, and `DECIMAL` one of its own (`decimalBytes`). The stored bytes of a `BYTE_ARRAY` decimal are already Avro's encoding, so it is copied once, out of the batch, and never decoded. A temporal column is therefore the stored number wherever it sits; one that materialized as a number in one position and a `java.time` object in another would produce records that contradict their own schema.
 
 **Validation.** Every value is checked against the representation its `Kind` requires before conversion: a raw or generic value for its Java class, a typed accessor's result for an unexpected null, a `fixed` payload for its declared width. A mismatch throws `IllegalArgumentException` naming the position (`field`, `struct field`, `list element`, or `map value for key`), the Avro type, and the actual Java type. The Avro type is qualified with the `Kind` where the two differ, so a `UINT_32` column reads as `Avro LONG (UNSIGNED_INT32)`. The message carries the `[fileName] ` prefix of the core readers ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#error-messages)), taken from the underlying reader through the internal `FileAwareRowReader`, so a multi-file read names the file of the current row. The location is flat: a nested failure names the innermost position only. A mismatch means the plan and the row reader disagree, which is a defect, not a property of the file.
 
 `ENUM` materializes through `STRING`. Parquet declares no symbol set, so there is no membership to validate.
 
-Tests: `AvroRowReaderTest` (hardwood-avro).
+Tests: `AvroRowReaderTest`, `AvroDecimalBytesTest` (hardwood-avro).
 
 ## Name resolution
 

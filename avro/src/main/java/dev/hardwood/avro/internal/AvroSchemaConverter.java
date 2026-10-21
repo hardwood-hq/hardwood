@@ -379,8 +379,8 @@ public final class AvroSchemaConverter {
 
     /// A `FIXED_LEN_BYTE_ARRAY`-backed decimal materializes as Avro `fixed` and is
     /// read as the raw on-disk bytes; every other backing type materializes as
-    /// `bytes` carrying the unscaled magnitude, which only the decimal accessor
-    /// recovers from an `INT32`/`INT64` column.
+    /// `bytes` carrying the unscaled two's-complement value, the stored bytes of a
+    /// `BYTE_ARRAY` column and the encoded number of an `INT32`/`INT64` one.
     private AvroPlanNode convertDecimalType(PhysicalType physicalType, LogicalType.DecimalType d,
             SchemaNode.PrimitiveNode prim) {
         org.apache.avro.LogicalType decimal = LogicalTypes.decimal(d.precision(), d.scale());

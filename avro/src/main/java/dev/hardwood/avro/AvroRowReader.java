@@ -9,7 +9,7 @@ package dev.hardwood.avro;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,6 +24,7 @@ import org.apache.avro.generic.GenericRecord;
 import dev.hardwood.avro.internal.AvroPlanNode;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.FileAwareRowReader;
+import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -158,7 +159,7 @@ public class AvroRowReader implements Closeable {
                     rawToAvro(accessor.getRawValue(name), node, location);
             case STRING -> requireValue(accessor.getString(name), node, location);
             case UUID -> uuidString(requireValue(accessor.getUuid(name), node, location));
-            case DECIMAL -> decimalBytes(requireValue(accessor.getDecimal(name), node, location));
+            case DECIMAL -> decimalBytes(accessor.getRawValue(name), node, location);
             case STRUCT -> materializeRecord(requireValue(accessor.getStruct(name), node, location),
                     node, RecordPosition.STRUCT);
             case VARIANT -> materializeVariant(requireValue(accessor.getVariant(name), node, location),
@@ -202,10 +203,13 @@ public class AvroRowReader implements Closeable {
         };
     }
 
+    /// The reader builds every variant over its own copy of the stored bytes, so the record
+    /// wraps those arrays rather than copying them again.
     private static GenericRecord materializeVariant(PqVariant variant, Schema recordSchema) {
+        PqVariantImpl owned = (PqVariantImpl) variant;
         GenericRecord record = new GenericData.Record(recordSchema);
-        record.put(0, ByteBuffer.wrap(variant.metadata()));
-        record.put(1, ByteBuffer.wrap(variant.value()));
+        record.put(0, owned.wrapMetadata());
+        record.put(1, owned.wrapValue());
         return record;
     }
 
@@ -235,10 +239,10 @@ public class AvroRowReader implements Closeable {
         return switch (node.kind()) {
             case BOOLEAN, INT, LONG, FLOAT, DOUBLE, UNSIGNED_INT32, BINARY, FIXED ->
                     rawToAvro(pqList.getRaw(index), node, location);
+            case DECIMAL -> decimalBytes(pqList.getRaw(index), node, location);
             // Decoded value: the Avro representation is defined in terms of the logical
             // value, which the raw physical bytes or number do not carry.
             case UUID -> uuidString(requireValueType(pqList.get(index), UUID.class, node, location));
-            case DECIMAL -> decimalBytes(requireValueType(pqList.get(index), BigDecimal.class, node, location));
             case STRING -> requireValueType(pqList.get(index), String.class, node, location);
             // Raw: a FILE element is a record of its children, which only the raw route returns
             // as a struct.
@@ -275,7 +279,7 @@ public class AvroRowReader implements Closeable {
                     rawToAvro(entry.getRawValue(), node, location);
             case STRING -> requireValue(entry.getStringValue(), node, location);
             case UUID -> uuidString(requireValue(entry.getUuidValue(), node, location));
-            case DECIMAL -> decimalBytes(requireValue(entry.getDecimalValue(), node, location));
+            case DECIMAL -> decimalBytes(entry.getRawValue(), node, location);
             case STRUCT -> materializeRecord(requireValue(entry.getStructValue(), node, location),
                     node, RecordPosition.STRUCT);
             case VARIANT -> materializeVariant(requireValue(entry.getVariantValue(), node, location),
@@ -290,9 +294,18 @@ public class AvroRowReader implements Closeable {
     }
 
     /// Encode a decimal as the two's-complement big-endian unscaled bytes Avro's
-    /// `decimal` logical type expects on a `BYTES` schema.
-    private static ByteBuffer decimalBytes(BigDecimal value) {
-        return ByteBuffer.wrap(value.unscaledValue().toByteArray());
+    /// `decimal` logical type expects on a `BYTES` schema. A `BYTE_ARRAY` column stores
+    /// those bytes, which pass on as read, except that an empty value, which stands for
+    /// zero, becomes the one byte Avro needs; an `INT32` or `INT64` column stores the
+    /// unscaled value.
+    private ByteBuffer decimalBytes(Object raw, AvroPlanNode node, ValueLocation location) {
+        return switch (raw) {
+            case byte[] bytes -> ByteBuffer.wrap(bytes.length == 0 ? new byte[1] : bytes);
+            case Integer unscaled -> ByteBuffer.wrap(BigInteger.valueOf(unscaled).toByteArray());
+            case Long unscaled -> ByteBuffer.wrap(BigInteger.valueOf(unscaled).toByteArray());
+            case null, default -> throw materializationFailure(node, location, raw,
+                    "required byte[], java.lang.Integer or java.lang.Long");
+        };
     }
 
     private static String uuidString(UUID value) {

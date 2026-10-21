@@ -8,6 +8,7 @@
 package dev.hardwood.internal.variant;
 
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -61,6 +62,18 @@ public final class PqVariantImpl implements PqVariant {
 
     int valueHeaderOffset() {
         return valueOffset;
+    }
+
+    /// The metadata bytes, wrapped without a copy. The reader builds a variant over its own copy
+    /// of the batch's bytes, so the buffer exposes no batch storage; writing into it changes what
+    /// this value and the values nested in it read.
+    public ByteBuffer wrapMetadata() {
+        return ByteBuffer.wrap(metadata.buffer());
+    }
+
+    /// The bytes of this value, wrapped without a copy, as [#wrapMetadata()] wraps the metadata.
+    public ByteBuffer wrapValue() {
+        return ByteBuffer.wrap(valueBuf, valueOffset, VariantValueDecoder.valueLength(valueBuf, valueOffset)).slice();
     }
 
     @Override
