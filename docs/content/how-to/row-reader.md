@@ -179,3 +179,33 @@ The columns each physical accessor reads are listed under [Physical accessors](.
 #### Decoded generic access
 
 When the column type is not known ahead of time, `getValue` returns the value decoded to its logical-type representation and `getRawValue` the boxed physical value; see [Generic accessors](../reference/accessors.md#generic-accessors). In hot loops, prefer the typed accessors.
+
+### Keeping values past the current row
+
+Every value an accessor returns can be kept after `next()`. A kept `PqStruct`, `PqList` or `PqMap` still reads the row it was obtained from:
+
+```java
+List<PqStruct> addresses = new ArrayList<>();
+while (rowReader.hasNext()) {
+    rowReader.next();
+    addresses.add(rowReader.getStruct("address"));
+}
+String firstCity = addresses.get(0).getString("city");
+```
+
+A kept struct, list or map holds the whole batch of rows it was read from in memory: the values of every projected column in that batch, not just its own. Keeping one row out of each batch keeps every batch. To keep a few fields of selected rows, copy them into your own objects:
+
+```java
+record Address(String city, String zip) {}
+
+List<Address> addresses = new ArrayList<>();
+while (rowReader.hasNext()) {
+    rowReader.next();
+    PqStruct address = rowReader.getStruct("address");
+    if ("Hamburg".equals(address.getString("city"))) {
+        addresses.add(new Address(address.getString("city"), address.getString("zip")));
+    }
+}
+```
+
+What each kind of value keeps in memory is listed under [Value lifetime](../reference/accessors.md#value-lifetime).

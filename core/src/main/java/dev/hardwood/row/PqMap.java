@@ -28,10 +28,11 @@ import java.util.UUID;
 /// }
 /// ```
 ///
-/// A `PqMap` and its [Entry] objects are flyweights over the underlying read
-/// batch — accessors resolve to column data on each call. The flyweight is
-/// valid for as long as the batch it was obtained from is current; it is not
-/// safe to hold across `rowReader.next()` calls.
+/// A `PqMap` and its [Entry] objects are flyweights over the batch of rows they
+/// were read from: accessors read the column data on each call. They can be held
+/// after the reader moves on and keep reading their own row; while one is
+/// reachable, the values of every projected column in that batch stay in memory.
+/// To keep a few maps of many rows, copy their entries out instead.
 public interface PqMap {
 
     /// Get all entries in this map.
@@ -160,7 +161,7 @@ public interface PqMap {
 
         /// Get the key as a BINARY.
         ///
-        /// @return the byte array key value
+        /// @return the key's bytes, as a new array on each call
         byte[] getBinaryKey();
 
         /// Get the key, decoded to its logical-type representation.
@@ -227,7 +228,7 @@ public interface PqMap {
 
         /// Get the value as a BINARY.
         ///
-        /// @return the byte array value, or null if the value is null
+        /// @return the value's bytes, as a new array on each call, or null if the value is null
         byte[] getBinaryValue();
 
         /// Get the value as a DATE.

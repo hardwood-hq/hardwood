@@ -13,10 +13,11 @@ package dev.hardwood.row;
 /// This interface is used for nested struct access, not for top-level row iteration.
 /// For top-level row access, use [dev.hardwood.reader.RowReader] directly.
 ///
-/// A `PqStruct` is a flyweight over the underlying read batch — its accessors
-/// resolve to column data on each call. The flyweight is valid for as long as
-/// the batch it was obtained from is current; it is not safe to hold across
-/// `rowReader.next()` calls.
+/// A `PqStruct` is a flyweight over the batch of rows it was read from: its accessors
+/// read the column data on each call. It can be held after the reader moves on and
+/// keeps reading its own row; while it is reachable, the values of every projected
+/// column in that batch stay in memory. To keep a few fields of many rows, copy the
+/// fields out instead.
 ///
 /// ```java
 /// while (rowReader.hasNext()) {

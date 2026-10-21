@@ -29,7 +29,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// - **Recycling** (`BatchExchange.recycling()`): batch holders cycle between producer and
 ///   consumer via `freeQueue` and `readyQueue`; a cell takes a free holder when there is one and a
 ///   new one from the factory otherwise ([#newBatch]). Used by [FlatRowReader] and
-///   [NestedRowReader] where the consumer returns batches after reading.
+///   [NestedRowReader] where the consumer returns batches after reading. A flat cell refills a
+///   returned holder's arrays; a nested cell gives the holder new arrays for every batch
+///   ([NestedFill]), so the values a row reader's flyweights refer to are never overwritten.
 ///
 /// - **Detaching** (`BatchExchange.detaching()`): allocates a fresh batch each time
 ///   the producer needs one via the `batchFactory`. The consumer keeps ownership of each

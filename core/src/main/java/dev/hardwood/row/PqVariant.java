@@ -30,15 +30,19 @@ import java.util.UUID;
 /// Every nested Variant sub-value (array element, object field value) is itself
 /// a `PqVariant`, so navigation composes naturally.
 ///
+/// A `PqVariant` the row reader returns is built over its own copy of the stored
+/// bytes: it can be held after the reader moves on and keeps no other values in
+/// memory.
+///
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/VariantEncoding.md">Parquet Variant Encoding</a>
 public interface PqVariant {
 
     // ==================== Raw canonical bytes ====================
 
-    /// The canonical Variant metadata bytes.
+    /// The canonical Variant metadata bytes, as a new array on each call.
     byte[] metadata();
 
-    /// The canonical Variant value bytes.
+    /// The canonical Variant value bytes, as a new array on each call.
     byte[] value();
 
     // ==================== Type introspection ====================

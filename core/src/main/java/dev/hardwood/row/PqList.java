@@ -22,10 +22,12 @@ import java.util.UUID;
 /// [PqIntList] / [PqLongList] / [PqDoubleList] types (with `PrimitiveIterator.OfInt`
 /// and friends — no boxing). All other typed accessors return [List].
 ///
-/// A `PqList` is a flyweight over the underlying read batch — its `get(int)` and
-/// the lazy [List] views returned by the typed accessors resolve to column data
-/// on each call. The flyweight is valid for as long as the batch it was obtained
-/// from is current; it is not safe to hold across `rowReader.next()` calls.
+/// A `PqList` is a flyweight over the batch of rows it was read from: its `get(int)` and
+/// the lazy [List] views returned by the typed accessors read the column data on each
+/// call. The list and its views can be held after the reader moves on and keep reading
+/// their own row; while one is reachable, the values of every projected column in that
+/// batch stay in memory. To keep a few lists of many rows, copy their elements out
+/// instead.
 ///
 /// ```java
 /// // String list
@@ -151,7 +153,8 @@ public interface PqList {
     ///         [FieldAccessor#getString(String)] describes
     List<String> strings();
 
-    /// View the elements as a [List] of binary (`byte[]`) values.
+    /// View the elements as a [List] of binary (`byte[]`) values. Each `get` returns a
+    /// new array.
     List<byte[]> binaries();
 
     /// View the elements as a [List] of [LocalDate] values.

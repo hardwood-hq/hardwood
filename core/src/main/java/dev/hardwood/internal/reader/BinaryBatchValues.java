@@ -109,8 +109,10 @@ public final class BinaryBatchValues {
 
     /// Whether a reader must call [#ensureViews] before reading the views: they are not allocated
     /// yet, or dictionary values were recorded without their views. The accessors test this one
-    /// flag per value.
-    private boolean viewsPending;
+    /// flag per value. Volatile and cleared only once the views are written, so a thread that reads
+    /// it clear sees them, whichever thread built them: a row-reader value may be read on another
+    /// thread than the reader's.
+    private volatile boolean viewsPending;
 
     /// End of the range whose dictionary values were recorded without views
     /// ([#finishFill]), `0` when there are none.
@@ -319,30 +321,33 @@ public final class BinaryBatchValues {
     }
 
     /// Builds the deferred views: each dictionary value points at its entry in the dictionary's
-    /// own bytes, which the batch takes as one of its buffers.
-    private void buildViews() {
-        viewArrays();
-        viewsPending = false;
-        if (deferredEnd == 0) {
+    /// own bytes, which the batch takes as one of its buffers. Synchronized, so that two threads
+    /// reading one batch build them once.
+    private synchronized void buildViews() {
+        if (!viewsPending) {
             return;
         }
-        if (viewDemand != null) {
-            viewDemand.requested = true;
-        }
-        int end = deferredEnd;
-        deferredEnd = 0;
-        int[] entryOffsets = dictionary.entryOffsets();
-        if (dictionaryBuffer < 0) {
-            dictionaryBuffer = addBuffer(dictionary.entryBytes());
-        }
-        for (int i = 0; i < end; i++) {
-            int entry = dictIndices[i];
-            if (entry >= 0) {
-                bufferIds[i] = dictionaryBuffer;
-                starts[i] = entryOffsets[entry];
-                ends[i] = entryOffsets[entry + 1];
+        viewArrays();
+        if (deferredEnd > 0) {
+            if (viewDemand != null) {
+                viewDemand.requested = true;
+            }
+            int end = deferredEnd;
+            deferredEnd = 0;
+            int[] entryOffsets = dictionary.entryOffsets();
+            if (dictionaryBuffer < 0) {
+                dictionaryBuffer = addBuffer(dictionary.entryBytes());
+            }
+            for (int i = 0; i < end; i++) {
+                int entry = dictIndices[i];
+                if (entry >= 0) {
+                    bufferIds[i] = dictionaryBuffer;
+                    starts[i] = entryOffsets[entry];
+                    ends[i] = entryOffsets[entry + 1];
+                }
             }
         }
+        viewsPending = false;
     }
 
     /// The values at `map[0, count)` as a batch of their own, with their dictionary and entry

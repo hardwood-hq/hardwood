@@ -15,7 +15,15 @@ import dev.hardwood.row.StructAccessor;
 /// Provides row-oriented iteration over a Parquet file.
 ///
 /// A `RowReader` is a stateful, mutable view providing access to the current row
-/// in the iterator. The values returned by its accessors change between calls of [#next()].
+/// in the iterator: its accessors read the row [#next()] moved to. A value an accessor
+/// has returned does not change when the reader moves on, and can be held. A binary
+/// value (`getBinary`, or `getRawValue` of a binary column) is a new `byte[]` per call,
+/// which the caller owns. A [dev.hardwood.row.PqStruct], [dev.hardwood.row.PqList] or
+/// [dev.hardwood.row.PqMap] reads the batch of rows it was obtained from, and keeps that
+/// batch in memory while it is reachable; to keep a few values of many rows, copy them
+/// out instead. A value can be handed to another thread and read
+/// there while this reader moves on; neither this reader nor a value is safe for use by
+/// several threads at once.
 ///
 /// Usage example:
 /// ```java

@@ -108,6 +108,26 @@ expose `PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and `i
 without boxing. For nested `list<list<int>>` (or `<long>` / `<double>`), iterate the outer list via
 `lists()` and call `ints()` / `longs()` / `doubles()` on each inner `PqList`.
 
+## Value lifetime
+
+A value an accessor returns does not change when the reader moves to another row, and can be held
+for as long as the caller needs it. The reader reads rows in batches; some values refer to the
+batch their row was read from, and while such a value is reachable, that batch stays in memory.
+
+| Value | Accessors | Kept in memory while reachable |
+|---|---|---|
+| `byte[]` | `getBinary`, `binaries()`, `getBinaryKey()`, `getBinaryValue()`, and every generic and raw accessor (`getValue`, `getRawValue`, `get`, `getRaw`, `values()`, `rawValues()`, `getKey()`, `getRawKey()`) that returns a value as bytes | the array alone: each call returns a new array, which the caller owns and may modify |
+| `String`, `BigDecimal`, `UUID`, `Instant` and the other decoded values | the typed and generic accessors | the value alone |
+| `PqStruct`, `PqList`, `PqMap`, `PqMap.Entry`, `PqIntList`, `PqLongList`, `PqDoubleList`, the `List` views of the typed `PqList` accessors | `getStruct`, `getList`, `getMap`, `getEntries()`, `structs()`, `lists()`, `maps()`, `ints()`, `strings()` and the other typed views | the values of every projected column in the row's batch |
+| `PqFile` | `getFile`, `files()`, `getFileValue()` | the inline bytes of every value in the row's batch |
+| `PqVariant` | `getVariant`, `variants()`, `getVariantValue()` | its own copy of the stored bytes; `metadata()` and `value()` return a new copy on each call |
+
+A struct, list or map reads its values from the batch on each access, so holding one costs no copy;
+holding many from different batches keeps each of those batches in memory.
+
+A held value can be handed to another thread and read there while the reader moves on. A value is
+not safe for use by several threads at once.
+
 ## FILE groups
 
 A group annotated `FILE` holds a reference to a range of bytes. Its children are matched by name;
@@ -124,8 +144,8 @@ a group may define any of them, in any order, or none, and each is `OPTIONAL`:
 
 A field is set when its child is present and non-null; a string child holding the empty string is
 not set. `offset()` returns `0` when no offset is set; `size()` throws `IllegalStateException` when
-no size is set. A `PqFile` the reader returns can be held after the reader moves on; while it is
-reachable, the inline bytes of every value in the batch it was read from stay in memory.
+no size is set. A `PqFile` the reader returns can be held after the reader moves on; what it keeps
+in memory is listed under [Value lifetime](#value-lifetime).
 
 A value is valid when:
 

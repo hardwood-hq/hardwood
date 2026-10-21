@@ -79,7 +79,7 @@ public interface FieldAccessor {
     /// Get a BINARY field value by name.
     ///
     /// @param name the field name
-    /// @return the byte array, or null if the field is null
+    /// @return a new byte array on each call, which the caller owns, or null if the field is null
     byte[] getBinary(String name);
 
     /// Get a DATE field value by name.
