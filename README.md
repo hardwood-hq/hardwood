@@ -135,9 +135,10 @@ The `hardwood` CLI compiles to a GraalVM native binary. Requires GraalVM (Java 2
 sdk install java 25.0.2-graalce
 ```
 
-Then build the `cli` module and its dependencies:
+Then add the certificates the binary must reject to that GraalVM's block list, and build the `cli` module and its dependencies:
 
 ```shell
+tools/block-certificates.sh
 ./mvnw -Dnative package -pl cli -am
 ```
 

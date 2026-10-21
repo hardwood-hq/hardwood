@@ -13,6 +13,12 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
+## 1.0.1.Final
+
+**Bug fixes:**
+
+- The native CLI rejects TLS certificates issued under intermediate CAs whose private keys have been compromised, including with a trust store passed via `-Djavax.net.ssl.trustStore` ([#1604](https://github.com/hardwood-hq/hardwood/issues/1604))
+
 ## 1.0.0.Final (2026-06-25)
 
 [Announcement blog post](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/) · [API changes](/api-changes/1.0.0.Final/)
