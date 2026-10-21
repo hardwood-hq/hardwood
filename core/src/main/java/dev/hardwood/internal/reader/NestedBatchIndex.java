@@ -149,6 +149,11 @@ final class NestedBatchIndex {
         return ((BinaryBatchValues) valueArrays[projectedCol]).byteArrayAt(valueIndex);
     }
 
+    /// Tests value `valueIndex` of a varlength column with `test`, without a copy of it.
+    boolean testBinary(int projectedCol, int valueIndex, BinaryValueTest test) {
+        return ((BinaryBatchValues) valueArrays[projectedCol]).testAt(valueIndex, test);
+    }
+
     /// Get a UTF-8 decoded string for value `valueIndex` of a varlength column.
     String getString(int projectedCol, int valueIndex) {
         return ((BinaryBatchValues) valueArrays[projectedCol]).stringAt(valueIndex);

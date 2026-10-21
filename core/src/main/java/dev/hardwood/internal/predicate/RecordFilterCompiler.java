@@ -10,7 +10,7 @@ package dev.hardwood.internal.predicate;
 import java.util.List;
 import java.util.function.IntUnaryOperator;
 
-import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.reader.InPlaceBinaryAccessor;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
@@ -104,9 +104,9 @@ public final class RecordFilterCompiler {
             case ResolvedPredicate.BinaryPredicate p -> {
                 int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
-                        ? indexedBinaryLeaf(idx, p.op(), p.value(), p.comparison())
+                        ? indexedBinaryLeaf(idx, BatchFilterCompiler.binaryMatcher(p))
                         : binaryLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()),
-                                p.op(), p.value(), p.comparison());
+                                BatchFilterCompiler.binaryMatcher(p));
             }
             case ResolvedPredicate.IntInPredicate p -> {
                 int idx = indexedLeaf(p.columnIndex(), leafIndex);
@@ -137,9 +137,9 @@ public final class RecordFilterCompiler {
             case ResolvedPredicate.BinaryInPredicate p -> {
                 int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
-                        ? indexedBinaryInLeaf(idx, p.values(), p.comparison())
-                        : binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(),
-                                p.comparison());
+                        ? indexedBinaryLeaf(idx, BatchFilterCompiler.binaryInMatcher(p))
+                        : binaryLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()),
+                                BatchFilterCompiler.binaryInMatcher(p));
             }
             case ResolvedPredicate.FloatInPredicate p -> {
                 int idx = indexedLeaf(p.columnIndex(), leafIndex);
@@ -450,39 +450,24 @@ public final class RecordFilterCompiler {
         };
     }
 
-    private static RowMatcher binaryLeaf(String[] path, String name, Operator op, byte[] v, Comparison comparison) {
-        return switch (op) {
-            case EQ -> row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return comparison.compare(a.getBinary(name), v) == 0;
-            };
-            case NOT_EQ -> row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return comparison.compare(a.getBinary(name), v) != 0;
-            };
-            case LT -> row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return comparison.compare(a.getBinary(name), v) < 0;
-            };
-            case LT_EQ -> row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return comparison.compare(a.getBinary(name), v) <= 0;
-            };
-            case GT -> row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return comparison.compare(a.getBinary(name), v) > 0;
-            };
-            case GT_EQ -> row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return comparison.compare(a.getBinary(name), v) >= 0;
-            };
+    /// A comparison or membership on a binary column, which `test` answers for the value where it
+    /// sits in its batch, in the order of the predicate's
+    /// [ResolvedPredicate.BinaryPredicate.Comparison]: a `DECIMAL` compares by value and an `INT96`
+    /// by instant, so another encoding of a literal still compares equal to it.
+    private static RowMatcher binaryLeaf(String[] path, String name, BinaryBatchMatcher test) {
+        return row -> {
+            StructAccessor a = resolve(row, path);
+            return a != null && !a.isNull(name) && testBinary(a, name, test);
         };
+    }
+
+    /// Tests the value of the binary field `name` of `a`, in place where `a` holds it in a batch.
+    private static boolean testBinary(StructAccessor a, String name, BinaryBatchMatcher test) {
+        if (a instanceof InPlaceBinaryAccessor inPlace) {
+            return inPlace.testBinary(name, test);
+        }
+        byte[] value = a.getBinary(name);
+        return test.testValue(value, 0, value.length);
     }
 
     private static RowMatcher intInLeaf(String[] path, String name, int[] values) {
@@ -504,20 +489,6 @@ public final class RecordFilterCompiler {
             long val = a.getLong(name);
             for (long value : values) {
                 if (value == val) return true;
-            }
-            return false;
-        };
-    }
-
-    /// Membership in the column's order, like [#binaryLeaf]'s `EQ`: a `DECIMAL` compares by value
-    /// and an `INT96` by instant, so another encoding of a probe is still a member.
-    private static RowMatcher binaryInLeaf(String[] path, String name, byte[][] values, Comparison comparison) {
-        return row -> {
-            StructAccessor a = resolve(row, path);
-            if (a == null || a.isNull(name)) return false;
-            byte[] val = a.getBinary(name);
-            for (byte[] value : values) {
-                if (comparison.compare(val, value) == 0) return true;
             }
             return false;
         };
@@ -674,15 +645,17 @@ public final class RecordFilterCompiler {
         };
     }
 
-    private static RowMatcher indexedBinaryLeaf(int idx, Operator op, byte[] v, Comparison comparison) {
-        return switch (op) {
-            case EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) == 0;
-            case NOT_EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) != 0;
-            case LT -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) < 0;
-            case LT_EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) <= 0;
-            case GT -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) > 0;
-            case GT_EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) >= 0;
-        };
+    /// See [#binaryLeaf].
+    private static RowMatcher indexedBinaryLeaf(int idx, BinaryBatchMatcher test) {
+        return row -> !row.isNull(idx) && testBinary(row, idx, test);
+    }
+
+    private static boolean testBinary(StructAccessor row, int idx, BinaryBatchMatcher test) {
+        if (row instanceof InPlaceBinaryAccessor inPlace) {
+            return inPlace.testBinary(idx, test);
+        }
+        byte[] value = row.getBinary(idx);
+        return test.testValue(value, 0, value.length);
     }
 
     private static RowMatcher indexedIntInLeaf(int idx, int[] values) {
@@ -702,18 +675,6 @@ public final class RecordFilterCompiler {
             long val = row.getLong(idx);
             for (long value : values) {
                 if (value == val) return true;
-            }
-            return false;
-        };
-    }
-
-    /// See [#binaryInLeaf].
-    private static RowMatcher indexedBinaryInLeaf(int idx, byte[][] values, Comparison comparison) {
-        return row -> {
-            if (row.isNull(idx)) return false;
-            byte[] val = row.getBinary(idx);
-            for (byte[] value : values) {
-                if (comparison.compare(val, value) == 0) return true;
             }
             return false;
         };

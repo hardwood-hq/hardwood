@@ -32,7 +32,7 @@ import dev.hardwood.row.PqVariant;
 ///       Used for top-level structs.</li>
 /// - **Position mode**: uses a fixed value index directly.
 ///       Used for struct elements within lists/maps.</li>
-final class PqStructImpl implements PqStruct {
+final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor {
 
     private final NestedBatchIndex batch;
     private final TopLevelFieldMap.FieldDesc.Struct desc;
@@ -155,6 +155,16 @@ final class PqStructImpl implements PqStruct {
     @Override
     public byte[] getBinary(int fieldIndex) {
         return readBinary(primitiveAt(fieldIndex));
+    }
+
+    @Override
+    public boolean testBinary(String name, BinaryValueTest test) {
+        return testBinary(lookupPrimitive(name), test);
+    }
+
+    @Override
+    public boolean testBinary(int fieldIndex, BinaryValueTest test) {
+        return testBinary(primitiveAt(fieldIndex), test);
     }
 
     @Override
@@ -351,7 +361,7 @@ final class PqStructImpl implements PqStruct {
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
+            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
         }
         return ((int[]) batch.valueArrays[projCol])[idx];
     }
@@ -360,7 +370,7 @@ final class PqStructImpl implements PqStruct {
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
+            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
         }
         return ((long[]) batch.valueArrays[projCol])[idx];
     }
@@ -369,7 +379,7 @@ final class PqStructImpl implements PqStruct {
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
+            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
         }
         if (child.schema().type() == PhysicalType.FLOAT) {
             return ((float[]) batch.valueArrays[projCol])[idx];
@@ -382,7 +392,7 @@ final class PqStructImpl implements PqStruct {
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
+            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
         }
         return ((double[]) batch.valueArrays[projCol])[idx];
     }
@@ -391,7 +401,7 @@ final class PqStructImpl implements PqStruct {
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
+            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
         }
         return ((boolean[]) batch.valueArrays[projCol])[idx];
     }
@@ -412,6 +422,15 @@ final class PqStructImpl implements PqStruct {
             return null;
         }
         return batch.getBinary(projCol, idx);
+    }
+
+    private boolean testBinary(TopLevelFieldMap.FieldDesc.Primitive child, BinaryValueTest test) {
+        int projCol = child.projectedCol();
+        int idx = resolveValueIndex(projCol);
+        if (batch.isElementNull(projCol, idx)) {
+            throw new IllegalStateException("Field '" + child.schema().name() + "' is null");
+        }
+        return batch.testBinary(projCol, idx, test);
     }
 
     /// The value index of `child` in the current record, or -1 when the field is null.

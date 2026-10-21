@@ -362,22 +362,8 @@ public final class BatchFilterCompiler {
                 case EQ -> new LongEqBatchMatcher(p.value());
                 case NOT_EQ -> new LongNotEqBatchMatcher(p.value());
             };
-            case ResolvedPredicate.BinaryPredicate p -> dictionaryAware(switch (p.op()) {
-                case GT -> new BinaryGtBatchMatcher(p.value(), p.comparison());
-                case LT -> new BinaryLtBatchMatcher(p.value(), p.comparison());
-                case LT_EQ -> new BinaryLtEqBatchMatcher(p.value(), p.comparison());
-                case GT_EQ -> new BinaryGtEqBatchMatcher(p.value(), p.comparison());
-                case EQ -> BinaryShortEqBatchMatcher.supports(p.comparison(), p.value())
-                        ? new BinaryShortEqBatchMatcher(p.value(), p.comparison(), false)
-                        : new BinaryEqBatchMatcher(p.value(), p.comparison());
-                case NOT_EQ -> BinaryShortEqBatchMatcher.supports(p.comparison(), p.value())
-                        ? new BinaryShortEqBatchMatcher(p.value(), p.comparison(), true)
-                        : new BinaryNotEqBatchMatcher(p.value(), p.comparison());
-            });
-            case ResolvedPredicate.BinaryInPredicate p -> dictionaryAware(
-                    BinaryShortInBatchMatcher.supports(p.comparison(), p.values())
-                    ? new BinaryShortInBatchMatcher(p.values(), p.comparison(), false)
-                    : new BinaryInBatchMatcher(p.values(), p.comparison()));
+            case ResolvedPredicate.BinaryPredicate p -> dictionaryAware(binaryMatcher(p));
+            case ResolvedPredicate.BinaryInPredicate p -> dictionaryAware(binaryInMatcher(p));
             case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(p.values());
             case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(p.values());
             case ResolvedPredicate.UnsignedIntInPredicate p -> new IntInBatchMatcher(p.values());
@@ -392,6 +378,30 @@ public final class BatchFilterCompiler {
                     "Unsupported predicate type reached leafMatcher: " + leaf.getClass().getSimpleName()
                             + " — isSupported should have rejected this");
         };
+    }
+
+    /// The matcher of a binary comparison, which tests a value's bytes where they sit. The record
+    /// matcher's binary leaves test their values with it too.
+    static BinaryBatchMatcher binaryMatcher(ResolvedPredicate.BinaryPredicate p) {
+        return switch (p.op()) {
+            case GT -> new BinaryGtBatchMatcher(p.value(), p.comparison());
+            case LT -> new BinaryLtBatchMatcher(p.value(), p.comparison());
+            case LT_EQ -> new BinaryLtEqBatchMatcher(p.value(), p.comparison());
+            case GT_EQ -> new BinaryGtEqBatchMatcher(p.value(), p.comparison());
+            case EQ -> BinaryShortEqBatchMatcher.supports(p.comparison(), p.value())
+                    ? new BinaryShortEqBatchMatcher(p.value(), p.comparison(), false)
+                    : new BinaryEqBatchMatcher(p.value(), p.comparison());
+            case NOT_EQ -> BinaryShortEqBatchMatcher.supports(p.comparison(), p.value())
+                    ? new BinaryShortEqBatchMatcher(p.value(), p.comparison(), true)
+                    : new BinaryNotEqBatchMatcher(p.value(), p.comparison());
+        };
+    }
+
+    /// The matcher of a binary membership; see [#binaryMatcher].
+    static BinaryBatchMatcher binaryInMatcher(ResolvedPredicate.BinaryInPredicate p) {
+        return BinaryShortInBatchMatcher.supports(p.comparison(), p.values())
+                ? new BinaryShortInBatchMatcher(p.values(), p.comparison(), false)
+                : new BinaryInBatchMatcher(p.values(), p.comparison());
     }
 
     private static BinaryBatchMatcher dictionaryAware(BinaryBatchMatcher matcher) {

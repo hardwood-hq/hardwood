@@ -311,6 +311,11 @@ public final class NestedBatchDataView {
         return getBinary(lookupPrimitive(name));
     }
 
+    /// Tests the value of the binary field `name`; see [InPlaceBinaryAccessor#testBinary(String, BinaryValueTest)].
+    public boolean testBinary(String name, BinaryValueTest test) {
+        return testBinary(lookupPrimitive(name), test);
+    }
+
     public LocalDate getDate(String name) {
         return readDate(lookupPrimitive(name));
     }
@@ -362,6 +367,17 @@ public final class NestedBatchDataView {
             return null;
         }
         return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).byteArrayAt(valueIdx);
+    }
+
+    /// Tests the value of the binary field at `projectedIndex`; see
+    /// [InPlaceBinaryAccessor#testBinary(int, BinaryValueTest)].
+    public boolean testBinary(int projectedIndex, BinaryValueTest test) {
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
+            throw new IllegalStateException("Field '" + lookupPrimitiveByIndex(projectedIndex).schema().name() + "' is null");
+        }
+        return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).testAt(valueIdx, test);
     }
 
     public LocalDate getDate(int projectedIndex) {
@@ -506,6 +522,15 @@ public final class NestedBatchDataView {
         int projCol = p.projectedCol();
         int valueIdx = cachedValueIndex[projCol];
         return batchIndex.isElementNull(projCol, valueIdx) ? -1 : valueIdx;
+    }
+
+    private boolean testBinary(TopLevelFieldMap.FieldDesc.Primitive p, BinaryValueTest test) {
+        int projCol = p.projectedCol();
+        int valueIdx = cachedValueIndex[projCol];
+        if (batchIndex.isElementNull(projCol, valueIdx)) {
+            throw new IllegalStateException("Field '" + p.schema().name() + "' is null");
+        }
+        return batchIndex.testBinary(projCol, valueIdx, test);
     }
 
     private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive p) {

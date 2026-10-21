@@ -403,6 +403,12 @@ public final class BinaryBatchValues {
         return Arrays.copyOfRange(buffers[bufferIds[idx]], starts[idx], ends[idx]);
     }
 
+    /// Tests value `idx` with `test`, handing it the bytes where they sit.
+    public boolean testAt(int idx, BinaryValueTest test) {
+        ensureViews();
+        return test.testValue(buffers[bufferIds[idx]], starts[idx], ends[idx]);
+    }
+
     /// Whether value `idx` holds exactly the bytes of `other`, compared where they sit rather than
     /// through a copy.
     public boolean equalsAt(int idx, byte[] other) {

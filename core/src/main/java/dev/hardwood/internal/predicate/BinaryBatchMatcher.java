@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.predicate;
 
+import dev.hardwood.internal.reader.BinaryValueTest;
+
 /// Marker for `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` typed [ColumnBatchMatcher]s. Implementations
 /// cast `batch.values` to [dev.hardwood.internal.reader.BinaryBatchValues] and compare each value's
 /// `bytes()[starts()[i], ends()[i])` view against the literal in place, without materialising a
@@ -19,11 +21,12 @@ package dev.hardwood.internal.predicate;
 ///
 /// The literal's [ResolvedPredicate.BinaryPredicate.Comparison] decides both the order the bytes
 /// compare in and whether equality may be byte equality; implementations take it at construction.
-public non-sealed interface BinaryBatchMatcher extends ColumnBatchMatcher {
+public non-sealed interface BinaryBatchMatcher extends ColumnBatchMatcher, BinaryValueTest {
 
     /// Tests one non-null value in `bytes[from, to)` with the same semantics as
     /// [#test]. Dictionary-aware evaluation uses this operation once per
     /// referenced entry; rows without a dictionary entry use it on their byte
-    /// view.
+    /// view, and the record matcher's binary leaves on the value of the record it tests.
+    @Override
     boolean testValue(byte[] bytes, int from, int to);
 }

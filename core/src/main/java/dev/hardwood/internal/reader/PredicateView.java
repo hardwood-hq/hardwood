@@ -50,7 +50,7 @@ import dev.hardwood.schema.SchemaNode;
 /// Indexed access uses the view's own index space, which [#indexOf] maps a file leaf column
 /// into: the flat predicate columns occupy `[0, flatCount)`, and the top-level fields of the
 /// nested projection follow.
-public final class PredicateView implements StructAccessor {
+public final class PredicateView implements InPlaceBinaryAccessor {
 
     /// Decoded column index of each flat predicate column, by slot.
     private final int[] flatProjected;
@@ -299,6 +299,13 @@ public final class PredicateView implements StructAccessor {
                 : ((BinaryBatchValues) values).float16At(record);
     }
 
+    private boolean flatTestBinary(int slot, BinaryValueTest test) {
+        if (flatNull(slot)) {
+            throw new IllegalStateException("Flat predicate column " + flatProjected[slot] + " is null at record " + record);
+        }
+        return ((BinaryBatchValues) flatValues[slot]).testAt(record, test);
+    }
+
     private int nestedIndex(int index) {
         return index - flatProjected.length;
     }
@@ -338,6 +345,11 @@ public final class PredicateView implements StructAccessor {
     @Override public byte[] getBinary(String name) {
         int slot = flatSlot(name);
         return slot >= 0 ? ((BinaryBatchValues) flatValues[slot]).byteArrayAt(record) : nested(name).getBinary(name);
+    }
+
+    @Override public boolean testBinary(String name, BinaryValueTest test) {
+        int slot = flatSlot(name);
+        return slot >= 0 ? flatTestBinary(slot, test) : nested(name).testBinary(name, test);
     }
 
     @Override public PqStruct getStruct(String name) {
@@ -394,6 +406,12 @@ public final class PredicateView implements StructAccessor {
         return index < flatProjected.length
                 ? ((BinaryBatchValues) flatValues[index]).byteArrayAt(record)
                 : nestedView.getBinary(nestedIndex(index));
+    }
+
+    @Override public boolean testBinary(int index, BinaryValueTest test) {
+        return index < flatProjected.length
+                ? flatTestBinary(index, test)
+                : nestedView.testBinary(nestedIndex(index), test);
     }
 
     // ---- Never invoked by a compiled RowMatcher ----
