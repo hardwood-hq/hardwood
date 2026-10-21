@@ -146,11 +146,14 @@ echo "Running Maven release:prepare release:perform..."
 # Restore the cli_release_tag / cli_docker_tag placeholder values to
 # 1.0-early-access so main's HEAD points at the rolling early-access binaries.
 # The release tag (created by release:prepare above) already captured the
-# version-specific values.
-sed -i "s|^  cli_release_tag: .*|  cli_release_tag: 1.0-early-access|" docs/mkdocs.yml
-sed -i "s|^  cli_docker_tag: .*|  cli_docker_tag: 1.0-early-access|" docs/mkdocs.yml
-git add docs/mkdocs.yml
-git commit -m "[release] Restore CLI download link for dev docs"
+# version-specific values. Only main builds the dev docs; a release from any
+# other branch keeps the links to its own binaries.
+if [[ "${BASE_BRANCH}" == "main" ]]; then
+  sed -i "s|^  cli_release_tag: .*|  cli_release_tag: 1.0-early-access|" docs/mkdocs.yml
+  sed -i "s|^  cli_docker_tag: .*|  cli_docker_tag: 1.0-early-access|" docs/mkdocs.yml
+  git add docs/mkdocs.yml
+  git commit -m "[release] Restore CLI download link for dev docs"
+fi
 
 git push -u origin "release/${RELEASE_VERSION}"
 # Push the tag created by release:prepare so JReleaser finds it on the release
