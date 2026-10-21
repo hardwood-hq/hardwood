@@ -356,7 +356,18 @@ final class BinaryPageValues {
     /// Rows must be asked for in increasing order.
     void copyPlain(int pageRow, int length, int[] starts, int[] ends, int[] bufferIds, int destPos,
                    PlainBytes dest) {
+        copyPlain(pageRow, length, starts, ends, bufferIds, destPos, dest, 0);
+    }
+
+    /// Writes the plain values of page rows `[pageRow, pageRow + length)` as values from
+    /// `destPos`, as the overload without `slotLevel` does, except that a row whose definition level
+    /// is below `slotLevel` takes no value slot.
+    ///
+    /// @return the value slots written
+    int copyPlain(int pageRow, int length, int[] starts, int[] ends, int[] bufferIds, int destPos,
+                  PlainBytes dest, int slotLevel) {
         skipTo(pageRow);
+        int value = destPos;
         if (stride > 0) {
             for (int i = 0; i < length; i++) {
                 int r = pageRow + i;
@@ -367,15 +378,15 @@ final class BinaryPageValues {
                     for (int b = 0; b < width; b++) {
                         chunk[pos + b] = data[at + b * stride];
                     }
-                    view(starts, ends, bufferIds, destPos + i, dest.id(), pos, width);
+                    view(starts, ends, bufferIds, value++, dest.id(), pos, width);
                     dest.advance(width);
                 }
-                else {
-                    view(starts, ends, bufferIds, destPos + i, 0, 0, 0);
+                else if (definitionLevels[r] >= slotLevel) {
+                    view(starts, ends, bufferIds, value++, 0, 0, 0);
                 }
             }
             row = pageRow + length;
-            return;
+            return value - destPos;
         }
         if (width > 0 && definitionLevels == null) {
             int i = 0;
@@ -393,6 +404,7 @@ final class BinaryPageValues {
                 i += n;
             }
             nonNull += length;
+            value += length;
         }
         else {
             int prefixLength = width == 0 && prefixed ? 4 : 0;
@@ -403,17 +415,18 @@ final class BinaryPageValues {
                     byte[] chunk = dest.room(valueLength);
                     int pos = dest.position();
                     System.arraycopy(data, dataPos + prefixLength, chunk, pos, valueLength);
-                    view(starts, ends, bufferIds, destPos + i, dest.id(), pos, valueLength);
+                    view(starts, ends, bufferIds, value++, dest.id(), pos, valueLength);
                     dest.advance(valueLength);
                     dataPos += prefixLength + valueLength;
                     nonNull++;
                 }
-                else {
-                    view(starts, ends, bufferIds, destPos + i, 0, 0, 0);
+                else if (definitionLevels[r] >= slotLevel) {
+                    view(starts, ends, bufferIds, value++, 0, 0, 0);
                 }
             }
         }
         row = pageRow + length;
+        return value - destPos;
     }
 
     private static void view(int[] starts, int[] ends, int[] bufferIds, int value, int id, int start, int length) {
@@ -427,24 +440,38 @@ final class BinaryPageValues {
     /// which are `null` only for a page with no null. Rows must be asked for in increasing order.
     void copyIds(int pageRow, int length, int[] dictIndices, int[] starts, int[] ends, int[] bufferIds,
                  int destPos) {
+        copyIds(pageRow, length, dictIndices, starts, ends, bufferIds, destPos, 0);
+    }
+
+    /// Writes the entry ids of page rows `[pageRow, pageRow + length)` as values from `destPos`, as
+    /// the overload without `slotLevel` does, except that a row whose definition level is below
+    /// `slotLevel` takes no value slot.
+    ///
+    /// @return the value slots written
+    int copyIds(int pageRow, int length, int[] dictIndices, int[] starts, int[] ends, int[] bufferIds,
+                int destPos, int slotLevel) {
         skipTo(pageRow);
+        int slots = length;
         if (definitionLevels == null) {
             System.arraycopy(ids, nonNull, dictIndices, destPos, length);
             nonNull += length;
         }
         else {
+            int dest = destPos;
             for (int i = 0; i < length; i++) {
-                int dest = destPos + i;
-                if (definitionLevels[pageRow + i] == maxDefinitionLevel) {
-                    dictIndices[dest] = ids[nonNull++];
+                int level = definitionLevels[pageRow + i];
+                if (level == maxDefinitionLevel) {
+                    dictIndices[dest++] = ids[nonNull++];
                 }
-                else {
+                else if (level >= slotLevel) {
                     dictIndices[dest] = -1;
-                    view(starts, ends, bufferIds, dest, 0, 0, 0);
+                    view(starts, ends, bufferIds, dest++, 0, 0, 0);
                 }
             }
+            slots = dest - destPos;
         }
         row = pageRow + length;
+        return slots;
     }
 
     /// Moves the cursor to `pageRow`, past the values of the rows a mask drops.

@@ -25,7 +25,7 @@ import dev.hardwood.schema.ColumnSchema;
 ///   bytes at the segment's place in the cell's plain bytes, or its dictionary entry id;
 /// - definition levels: copied, or filled with the column's maximum for an all-present page;
 /// - repetition levels: copied, or filled with `0` for a column without repetition;
-/// - the record offsets of the records it starts.
+/// - the record offsets of the records it starts, unless the index mode reads none (`REAL_VIEW`).
 ///
 /// A fixed-size-list page writes no levels into a cell whose every segment is from a page of the
 /// same `k`: the batch is fixed-width, its boundaries implicit. In any other cell it writes the
@@ -35,7 +35,10 @@ import dev.hardwood.schema.ColumnSchema;
 /// The batch keeps its levels unless its index mode drops them (`REAL_VIEW`), which builds the
 /// real-items view from levels written to the filling task's scratch instead, and only the
 /// levels the view reads: the repetition levels of a column with repetition, and the definition
-/// levels of a batch that is not all present.
+/// levels of a batch that is not all present. Every segment writes its levels before any writes
+/// its values, so the view is built first; where the batch has phantom positions (null or empty
+/// parents), its values are allocated at the real leaf count and each segment writes only its
+/// real leaves, each straight to its real position.
 final class NestedFill {
 
     private static final DecodeBuffers.Slot<PageDecoder.LevelScratch> VIEW_LEVELS = DecodeBuffers.slot();
@@ -80,49 +83,81 @@ final class NestedFill {
             repetitionLevels = column.maxRepetitionLevel() > 0 ? scratch.repetitionLevels(values) : null;
         }
 
-        Object out = BatchExchange.allocateArray(column, values);
-        int[] recordOffsets = new int[records];
-        if (out instanceof BinaryBatchValues binary) {
-            fillBinary(segments, values, binary, viewDemand);
-        }
         for (int i = 0; i < segments.size(); i++) {
-            NestedSegment segment = segments.get(i);
-            if (!(out instanceof BinaryBatchValues)) {
+            copyLevels(segments.get(i), definitionLevels, repetitionLevels, maxDefinitionLevel);
+        }
+        NestedLevelComputer.RealView realView = keepLevels ? null
+                : NestedIndex.realView(definitionLevels, repetitionLevels, values, records, fixedWidth ? k : 0,
+                        allPresent, maxDefinitionLevel, layers);
+        // A row below the leaf's item threshold is a phantom position, which takes no value slot.
+        // The leaf's item repetition threshold is the number of REPEATED layers, which is the
+        // column's maximum repetition level, so the definition level alone tells a phantom; each
+        // write is checked against the view's count all the same.
+        int slots = realView != null ? realView.valueCount() : values;
+        int slotLevel = slots != values ? layers.itemDefThresholds()[layers.count()] : 0;
+
+        Object out = BatchExchange.allocateArray(column, slots);
+        if (out instanceof BinaryBatchValues binary) {
+            fillBinary(segments, slots, binary, viewDemand, slotLevel);
+        }
+        else {
+            int dest = 0;
+            for (int i = 0; i < segments.size(); i++) {
+                NestedSegment segment = segments.get(i);
                 try {
-                    copyInPlace(segment, out);
+                    dest += copyInPlace(segment, out, dest, slotLevel);
                 }
                 catch (RuntimeException e) {
                     throw new SegmentFillException(segment.page, e);
                 }
             }
-            copyLevels(segment, definitionLevels, repetitionLevels, maxDefinitionLevel);
-            PageMeasure measure = segment.page.measure;
-            int shift = segment.cellValueOffset - segment.valueStart;
-            for (int r = segment.recordStart; r < segment.recordEnd; r++) {
-                recordOffsets[segment.cellRecordOffset + r - segment.recordStart] = measure.recordStart(r) + shift;
-            }
+            requireAllSlots(dest, slots);
         }
 
         NestedBatch batch = exchange.newBatch();
         batch.values = out;
         batch.recordCount = records;
         batch.valueCount = values;
-        batch.recordOffsets = recordOffsets;
+        batch.recordOffsets = keepLevels ? recordOffsets(segments, records) : null;
         batch.definitionLevels = keepLevels ? definitionLevels : null;
         batch.repetitionLevels = keepLevels ? repetitionLevels : null;
         batch.fixedListK = fixedWidth ? k : 0;
         batch.allPresent = allPresent;
         batch.fileName = cell.fileName;
         batch.filterAlwaysMatches = cell.alwaysMatches;
+        batch.realView = realView;
+        batch.realValues = realView != null ? out : null;
         NestedIndex.compute(batch, definitionLevels, repetitionLevels, maxDefinitionLevel, layers, mode);
         return batch;
+    }
+
+    /// Checks that the segments wrote a value to every one of the batch's `slots`.
+    private static void requireAllSlots(int written, int slots) {
+        if (written != slots) {
+            throw new IllegalStateException("A cell's segments wrote " + written + " leaf values where the batch has "
+                    + slots);
+        }
+    }
+
+    /// The cell value offset of each record the segments start.
+    private static int[] recordOffsets(List<NestedSegment> segments, int records) {
+        int[] recordOffsets = new int[records];
+        for (int i = 0; i < segments.size(); i++) {
+            NestedSegment segment = segments.get(i);
+            PageMeasure measure = segment.page.measure;
+            int shift = segment.cellValueOffset - segment.valueStart;
+            for (int r = segment.recordStart; r < segment.recordEnd; r++) {
+                recordOffsets[segment.cellRecordOffset + r - segment.recordStart] = measure.recordStart(r) + shift;
+            }
+        }
+        return recordOffsets;
     }
 
     /// Writes every segment's binary values: the plain values' bytes, copied into the batch's
     /// chunks in segment order, and their views; the dictionary values' entry ids, their views built
     /// when a reader first needs them.
     private static void fillBinary(List<NestedSegment> segments, int valueCount, BinaryBatchValues out,
-                                   BinaryBatchValues.ViewDemand viewDemand) {
+                                   BinaryBatchValues.ViewDemand viewDemand, int slotLevel) {
         long plainBytes = 0;
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
@@ -130,21 +165,23 @@ final class NestedFill {
         }
         PlainBytes dest = new PlainBytes(out, plainBytes);
         boolean[] wroteIds = new boolean[segments.size()];
+        // Where each segment's values start among the batch's, its last entry the value count
+        int[] valueStarts = new int[segments.size() + 1];
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
             try {
-                fillBinary(segment, out, dest, wroteIds, i);
+                valueStarts[i + 1] = valueStarts[i] + fillBinary(segment, out, dest, wroteIds, i, valueStarts[i], slotLevel);
             }
             catch (RuntimeException e) {
                 throw new SegmentFillException(segment.page, e);
             }
         }
+        requireAllSlots(valueStarts[segments.size()], valueCount);
         if (out.dictionary != null) {
             boolean complete = true;
             for (int i = 0; i < segments.size(); i++) {
                 if (!wroteIds[i]) {
-                    NestedSegment segment = segments.get(i);
-                    Arrays.fill(out.dictIndices, segment.cellValueOffset, segment.cellValueOffset + segment.values(), -1);
+                    Arrays.fill(out.dictIndices, valueStarts[i], valueStarts[i + 1], -1);
                     complete = false;
                 }
             }
@@ -156,10 +193,13 @@ final class NestedFill {
         }
     }
 
-    /// Writes one segment's binary values: its plain values' bytes to `dest` and their views, or
-    /// its entry ids, recording in `wroteIds[index]` that it wrote ids.
-    private static void fillBinary(NestedSegment segment, BinaryBatchValues out, PlainBytes dest,
-                                   boolean[] wroteIds, int index) {
+    /// Writes one segment's binary values from value `valueStart`: its plain values' bytes to
+    /// `dest` and their views, or its entry ids, recording in `wroteIds[index]` that it wrote ids.
+    /// A row whose definition level is below `slotLevel` takes no value slot.
+    ///
+    /// @return the value slots written
+    private static int fillBinary(NestedSegment segment, BinaryBatchValues out, PlainBytes dest,
+                                  boolean[] wroteIds, int index, int valueStart, int slotLevel) {
         // Each fill reads through a view of its own: in-place values keep a cursor, and two cells
         // sharing the page may be filled from it at once
         BinaryPageValues values = segment.page.measure.binary().view();
@@ -178,38 +218,42 @@ final class NestedFill {
         }
         int kept = segment.valueStart;
         int end = segment.valueEnd;
+        int destPos = valueStart;
         while (kept < end) {
             int run = runs == null ? 0 : runs.runOf(kept);
             int n = runs == null ? end - kept : Math.min(end - kept, runs.remaining(run, kept));
             int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
-            int destPos = segment.cellValueOffset + kept - segment.valueStart;
-            if (ids != null) {
-                values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos);
-            }
-            else {
-                values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos, dest);
-            }
+            destPos += ids != null
+                    ? values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos,
+                            slotLevel)
+                    : values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos,
+                            dest, slotLevel);
             kept += n;
         }
+        return destPos - valueStart;
     }
 
     /// Writes a segment of a page read in place straight from the page's bytes, through the kept
-    /// runs of a masked page.
-    private static void copyInPlace(NestedSegment segment, Object out) {
+    /// runs of a masked page, from value `valueStart`. A row whose definition level is below
+    /// `slotLevel` takes no value slot.
+    ///
+    /// @return the value slots written
+    private static int copyInPlace(NestedSegment segment, Object out, int valueStart, int slotLevel) {
         PageDecoder.InPlaceNestedPage inPlace = segment.page.inPlace;
         FlatPageValues values = inPlace.flat().view();
         KeptRuns runs = inPlace.runs();
         if (runs == null) {
-            values.copy(segment.valueStart, out, segment.cellValueOffset, segment.values());
-            return;
+            return values.copy(segment.valueStart, out, valueStart, segment.values(), slotLevel);
         }
         int kept = segment.valueStart;
+        int destPos = valueStart;
         while (kept < segment.valueEnd) {
             int run = runs.runOf(kept);
             int n = Math.min(segment.valueEnd - kept, runs.remaining(run, kept));
-            values.copy(runs.pagePosition(run, kept), out, segment.cellValueOffset + kept - segment.valueStart, n);
+            destPos += values.copy(runs.pagePosition(run, kept), out, destPos, n, slotLevel);
             kept += n;
         }
+        return destPos - valueStart;
     }
 
     /// Writes the segment's levels into the arrays given, each `null` when it is not written.

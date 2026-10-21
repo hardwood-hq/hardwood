@@ -380,7 +380,9 @@ public final class NestedLevelComputer {
     /// 1-to-1 correspondence with the raw value stream — either the chain has
     /// no `REPEATED` layers, or this batch has no phantom (null/empty parent)
     /// positions, so the map would be the identity — and the raw values array
-    /// can pass through without compaction.
+    /// can pass through without compaction. A view built without the map
+    /// (see [#computeRealView(int\[\], int\[\], int, int, int, Layers, boolean)])
+    /// has `null` here too; its batch's values are already the real leaf values.
     public record RealView(int[][] layerOffsets, long[][] layerValidity,
                            long[] leafValidity, int valueCount,
                            int[] realToRawLeaf) {}
@@ -400,15 +402,24 @@ public final class NestedLevelComputer {
     public static RealView computeRealView(int[] defLevels, int[] repLevels,
                                            int rawValueCount, int recordCount,
                                            int maxDefLevel, Layers layers) {
+        return computeRealView(defLevels, repLevels, rawValueCount, recordCount, maxDefLevel, layers, true);
+    }
+
+    /// Builds the real-items-only view as [#computeRealView(int\[\], int\[\], int, int, int, Layers)]
+    /// does, with the real-to-raw map only where `withMap` asks for it: a batch whose values are
+    /// written at their real positions has no use for it.
+    public static RealView computeRealView(int[] defLevels, int[] repLevels,
+                                           int rawValueCount, int recordCount,
+                                           int maxDefLevel, Layers layers, boolean withMap) {
         return repLevels == null
                 ? repetitionFreeView(defLevels, rawValueCount, maxDefLevel, layers)
-                : repeatedView(defLevels, repLevels, rawValueCount, maxDefLevel, layers);
+                : repeatedView(defLevels, repLevels, rawValueCount, maxDefLevel, layers, withMap);
     }
 
     /// The view of a column with repetition levels, built layer by layer as
     /// [#computeRealView] describes.
     private static RealView repeatedView(int[] defLevels, int[] reps, int rawValueCount, int maxDefLevel,
-                                         Layers layers) {
+                                         Layers layers, boolean withMap) {
         int layerCount = layers.count();
         int[] itemDef = layers.itemDefThresholds();
         int[] itemRep = layers.itemRepThresholds();
@@ -444,7 +455,7 @@ public final class NestedLevelComputer {
         // (null/empty parent) positions, and the map would be the identity. It stays null, the
         // pass-through signal a REPEATED-free chain uses, so the consumer reads the batch's
         // (already per-batch fresh) value array directly instead of gathering a copy.
-        int[] realToRaw = leaves != rawValueCount ? new int[leaves] : null;
+        int[] realToRaw = withMap && leaves != rawValueCount ? new int[leaves] : null;
         long[] leafValidity = absentLeaves != 0 ? new long[(leaves + 63) >>> 6] : null;
         if (realToRaw != null || leafValidity != null) {
             leafPass(defs, reps, leaves, leafRep, leafDef, maxDefLevel, realToRaw, leafValidity);

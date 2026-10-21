@@ -26,7 +26,8 @@ package dev.hardwood.internal.reader;
 /// `count(k) + 1`, with the final entry equal to the count at the next
 /// inner level (or [#valueCount] for the innermost).
 public final class NestedBatch {
-    // Raw arrays (written by the cell's fill, NestedFill)
+    // Raw arrays (written by the cell's fill, NestedFill). On the REAL_VIEW path `values` holds the
+    // real leaf values alone, as `realValues` does, and `recordOffsets` is null.
     public Object values;
     public int recordCount;
     public int valueCount;
@@ -69,9 +70,8 @@ public final class NestedBatch {
     /// selection (for which the consumer builds a view lazily from the sliced levels).
     public NestedLevelComputer.RealView realView;
 
-    /// Real-items-only leaf values, set with [#realView]: gathered by the cell's fill from
-    /// [#values] when the batch has phantom positions, so the compaction runs off the serial
-    /// consumer, and [#values] itself when no gather is needed (`realView.realToRawLeaf() ==
-    /// null`). `null` wherever [#realView] is.
+    /// Real-items-only leaf values, set with [#realView]: [#values] itself, which the cell's fill
+    /// writes at the real leaf positions, skipping phantom positions. `null` wherever [#realView]
+    /// is.
     public Object realValues;
 }

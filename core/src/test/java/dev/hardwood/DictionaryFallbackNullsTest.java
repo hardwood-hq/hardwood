@@ -10,6 +10,7 @@ package dev.hardwood;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntPredicate;
 
@@ -44,6 +45,7 @@ class DictionaryFallbackNullsTest {
     private static final int ROWS = 4_000;
     private static final Path NESTED_FILE = Path.of("src/test/resources/dict_plain_fallback_nested.parquet");
     private static final int NESTED_ROWS = 3_000;
+    private static final Path PHANTOM_FILE = Path.of("src/test/resources/dict_plain_fallback_nested_phantoms.parquet");
 
     private static String label(int row) {
         if (row % 7 == 3 || row % 300 == 0 || row % 300 == 299) {
@@ -187,6 +189,43 @@ class DictionaryFallbackNullsTest {
         });
         assertThat(firstBatch).as("a batch ending on the null-only PLAIN record, and one past it")
                 .containsExactly(1, -1);
+    }
+
+    /// The fallback on a repeated leaf whose lists may be null or empty, on page edges as well as
+    /// inside pages: every value lands at its list's position, whichever encoding its page has,
+    /// with batch edges inside pages and in one batch holding the whole file.
+    @ParameterizedTest
+    @ValueSource(ints = { 7, 301, NESTED_ROWS })
+    void aNestedBatchWithNullAndEmptyListsHoldsEveryValueAcrossTheFallback(int batchSize) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PHANTOM_FILE));
+             ColumnReader labels = reader.buildColumnReader("labels.list.element").batchSize(batchSize).build()) {
+            int row = 0;
+            while (labels.nextBatch()) {
+                String[] strings = labels.getStrings();
+                int[] offsets = labels.getLayerOffsets(0);
+                Validity lists = labels.getLayerValidity(0);
+                for (int r = 0; r < labels.getRecordCount(); r++) {
+                    List<String> expected = phantomLabels(row + r);
+                    assertThat(lists.isNull(r)).as("row %d list is null", row + r).isEqualTo(expected == null);
+                    assertThat(Arrays.asList(strings).subList(offsets[r], offsets[r + 1]))
+                            .as("row %d", row + r)
+                            .isEqualTo(expected == null ? List.of() : expected);
+                }
+                row += labels.getRecordCount();
+            }
+            assertThat(row).isEqualTo(NESTED_ROWS);
+        }
+    }
+
+    /// The labels of row `row` of the fixture with null and empty lists, `null` for a null list.
+    private static List<String> phantomLabels(int row) {
+        if (row % 11 == 3 || row % 150 == 149) {
+            return null;
+        }
+        if (row % 13 == 4 || row % 150 == 1) {
+            return List.of();
+        }
+        return Arrays.asList(nestedLabel(row, 0), nestedLabel(row, 1));
     }
 
     private static String nestedLabel(int row, int element) {

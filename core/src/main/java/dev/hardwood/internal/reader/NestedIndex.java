@@ -19,35 +19,45 @@ final class NestedIndex {
     private NestedIndex() {
     }
 
-    /// Computes the batch's index for `mode` from its levels.
+    /// The real-items view of a batch on `REAL_VIEW`, built from its levels before its values are
+    /// written, so that the fill writes each real leaf value straight to its real position.
     ///
-    /// @param definitionLevels the batch's definition levels for `[0, valueCount)`, which the
-    ///        batch itself carries unless `mode` is `REAL_VIEW`; `null` for a fixed-width batch,
-    ///        and on `REAL_VIEW` for an all-present batch
-    /// @param repetitionLevels the batch's repetition levels likewise; on `REAL_VIEW` `null` also
-    ///        for a column without repetition
+    /// The consumer reads only the real-items view and values. An all-present batch has no phantom
+    /// positions, so its offsets equal the all-items offsets: only those are built. A batch with
+    /// phantom positions builds the full view, without the real-to-raw map, as its values are never
+    /// written at their raw positions. Either way a structural read gets its offsets without a
+    /// consumer-side scan, and a flat leaf read ignores them.
+    ///
+    /// @param definitionLevels the batch's definition levels for `[0, valueCount)`; `null` for a
+    ///        fixed-width or an all-present batch
+    /// @param repetitionLevels the batch's repetition levels likewise; `null` for a fixed-width
+    ///        batch or a column without repetition
+    static NestedLevelComputer.RealView realView(int[] definitionLevels, int[] repetitionLevels, int valueCount,
+                                                 int recordCount, int fixedListK, boolean allPresent,
+                                                 int maxDefinitionLevel, NestedLevelComputer.Layers layers) {
+        if (fixedListK > 0) {
+            return new NestedLevelComputer.RealView(
+                    NestedLevelComputer.fixedListLayerOffsets(fixedListK, recordCount, layers),
+                    new long[layers.count()][], null, valueCount, null);
+        }
+        if (allPresent || allDefsMax(definitionLevels, valueCount, maxDefinitionLevel)) {
+            return new NestedLevelComputer.RealView(
+                    NestedLevelComputer.computeLayerOffsets(repetitionLevels, valueCount, recordCount, layers),
+                    new long[layers.count()][], null, valueCount, null);
+        }
+        return NestedLevelComputer.computeRealView(definitionLevels, repetitionLevels, valueCount, recordCount,
+                maxDefinitionLevel, layers, false);
+    }
+
+    /// Computes the batch's all-items index for `mode` from its levels. A batch on `REAL_VIEW`
+    /// carries its [#realView] instead, and computes nothing here.
+    ///
+    /// @param definitionLevels the batch's definition levels for `[0, valueCount)`; `null` for a
+    ///        fixed-width batch
+    /// @param repetitionLevels the batch's repetition levels likewise
     static void compute(NestedBatch batch, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
                         NestedLevelComputer.Layers layers, NestedIndexMode mode) {
         if (mode == NestedIndexMode.REAL_VIEW) {
-            // Unfiltered ColumnReader: the consumer reads only the real-items view and values. An
-            // all-present batch has no phantom positions, so its offsets equal the all-items
-            // offsets: only those are built, and the dense values pass through. A batch with
-            // phantom positions builds the full view and gathers the real leaf values. Either way
-            // a structural read gets its offsets without a consumer-side scan, and a flat leaf
-            // read ignores them.
-            boolean allPresent = batch.fixedListK > 0 || batch.allPresent
-                    || allDefsMax(definitionLevels, batch.valueCount, maxDefinitionLevel);
-            if (allPresent) {
-                batch.realValues = batch.values;
-                batch.realView = allPresentView(batch, repetitionLevels, layers);
-            }
-            else {
-                NestedLevelComputer.RealView view = NestedLevelComputer.computeRealView(definitionLevels,
-                        repetitionLevels, batch.valueCount, batch.recordCount, maxDefinitionLevel, layers);
-                batch.realView = view;
-                int[] map = view.realToRawLeaf();
-                batch.realValues = map != null ? LeafCompaction.compact(batch.values, map) : batch.values;
-            }
             batch.elementValidity = null;
             batch.multiLevelOffsets = null;
             return;
@@ -93,17 +103,5 @@ final class NestedIndex {
             }
         }
         return true;
-    }
-
-    /// The real-items view of an all-present batch: only the layer offsets, which without phantom
-    /// positions equal the all-items offsets. Every validity is `null` (all present) and
-    /// `realToRawLeaf` is `null` (the dense values are the real leaf values).
-    private static NestedLevelComputer.RealView allPresentView(NestedBatch batch, int[] repetitionLevels,
-                                                               NestedLevelComputer.Layers layers) {
-        int[][] offsets = batch.fixedListK > 0
-                ? NestedLevelComputer.fixedListLayerOffsets(batch.fixedListK, batch.recordCount, layers)
-                : NestedLevelComputer.computeLayerOffsets(repetitionLevels, batch.valueCount, batch.recordCount,
-                        layers);
-        return new NestedLevelComputer.RealView(offsets, new long[layers.count()][], null, batch.valueCount, null);
     }
 }

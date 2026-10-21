@@ -259,19 +259,34 @@ final class FlatPageValues {
     /// Writes page rows `[pageRow, pageRow + length)` to `out` from `destPos`. A null leaves its
     /// element as it is. Rows must be asked for in increasing order.
     void copy(int pageRow, Object out, int destPos, int length) {
+        copy(pageRow, out, destPos, length, 0);
+    }
+
+    /// Writes page rows `[pageRow, pageRow + length)` to `out` from `destPos`, each row whose
+    /// definition level is at least `slotLevel` to the next slot and any other row to none. A null
+    /// leaves its slot as it is. Rows must be asked for in increasing order.
+    ///
+    /// @return the slots written
+    int copy(int pageRow, Object out, int destPos, int length, int slotLevel) {
         skipTo(pageRow);
+        int slots = length;
         if (definitionLevels == null) {
             copyDense(out, destPos, length);
             nonNull += length;
         }
         else {
+            int dest = destPos;
             for (int i = 0; i < length; i++) {
-                if (definitionLevels[pageRow + i] == maxDefinitionLevel) {
-                    copyOne(out, destPos + i, nonNull++);
+                int level = definitionLevels[pageRow + i];
+                if (level == maxDefinitionLevel) {
+                    copyOne(out, dest, nonNull++);
                 }
+                dest += level >= slotLevel ? 1 : 0;
             }
+            slots = dest - destPos;
         }
         row = pageRow + length;
+        return slots;
     }
 
     private void skipTo(int pageRow) {

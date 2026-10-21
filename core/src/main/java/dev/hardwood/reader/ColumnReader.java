@@ -504,7 +504,7 @@ public class ColumnReader implements Closeable {
 
     /// Returns the leaf-values backing array sized to [#getValueCount()].
     /// For flat columns this is the underlying batch array. For nested columns
-    /// it is, in order: the pre-compacted `realValues` of the cell's fill when present;
+    /// it is, in order: the `realValues` the cell's fill wrote when present;
     /// otherwise pass-through of the batch values when no compaction is needed
     /// (no `REPEATED` layer, or an all-present batch with no phantom positions);
     /// otherwise a freshly compacted typed array (batches derived by record
@@ -519,7 +519,7 @@ public class ColumnReader implements Closeable {
 
     /// The untrimmed leaf-values backing store. For flat columns this is the
     /// underlying batch array. For nested columns it is, in order: the
-    /// pre-compacted `realValues` of the cell's fill when present; otherwise pass-through of the
+    /// `realValues` the cell's fill wrote when present; otherwise pass-through of the
     /// batch values when no compaction is needed (no `REPEATED` layer, or an
     /// all-present batch with no phantom positions); otherwise a freshly
     /// compacted typed array (batches derived by record selection).
@@ -529,7 +529,7 @@ public class ColumnReader implements Closeable {
         }
         NestedBatch batch = currentNestedBatch;
         if (batch.realValues != null) {
-            return batch.realValues;               // pre-compacted by the cell's fill
+            return batch.realValues;               // written at the real positions by the cell's fill
         }
         int[] map = ensureRealView().realToRawLeaf();
         return map == null

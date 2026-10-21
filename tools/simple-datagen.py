@@ -7549,6 +7549,37 @@ pq.write_table(
 print("\nGenerated dict_plain_fallback_nested.parquet:")
 print(f"  - {FALLBACK_NESTED_ROWS} rows, labels: list<string> of two, dictionary pages, then PLAIN once the dictionary outgrows 1 KiB; nulls on page edges and every 5th row; id: INT64")
 
+# The fallback on a repeated leaf whose lists may be null or empty: `labels` as in
+# dict_plain_fallback_nested.parquet, but a row's list is null every 11th row and on each page's
+# last row, and empty every 13th row and on each page's second row. A batch then mixes entry ids,
+# plain values, null elements and positions of null and empty lists across pages of both
+# encodings.
+def _fallback_phantom_labels(row):
+    if row % 11 == 3 or row % 150 == 149:
+        return None
+    if row % 13 == 4 or row % 150 == 1:
+        return []
+    return [_fallback_nested_label(row, e) for e in range(2)]
+pq.write_table(
+    pa.table({
+        'labels': pa.array([_fallback_phantom_labels(i) for i in range(FALLBACK_NESTED_ROWS)],
+                           type=pa.list_(pa.string())),
+        'id': pa.array(range(FALLBACK_NESTED_ROWS), type=pa.int64()),
+    }, schema=pa.schema([
+        pa.field('labels', pa.list_(pa.string()), nullable=True),
+        pa.field('id', pa.int64(), nullable=False),
+    ])),
+    'core/src/test/resources/dict_plain_fallback_nested_phantoms.parquet',
+    use_dictionary=['labels.list.element'],
+    compression='none',
+    data_page_version='1.0',
+    dictionary_pagesize_limit=1024,
+    write_batch_size=300,
+    data_page_size=1,
+)
+print("\nGenerated dict_plain_fallback_nested_phantoms.parquet:")
+print(f"  - {FALLBACK_NESTED_ROWS} rows, labels: as dict_plain_fallback_nested.parquet, with null and empty lists every 11th/13th row and on page edges; id: INT64")
+
 # Dictionary-encoded INT96 timestamps: a few distinct instants repeated, written in
 # the legacy INT96 form, so a column reader exposes dictionary ids for an INT96 column.
 INT96_DICT_ROWS = 300

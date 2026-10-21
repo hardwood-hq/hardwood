@@ -111,32 +111,34 @@ Tests: `ScheduledNestedColumnTest`, which compares each read, at several batch c
 
 ## Index modes
 
-Before a cell's batch is published, `NestedIndex.compute` derives per-batch structures on the thread that filled it, off the serial consumer. What it derives is fixed per column by a `NestedIndexMode` the constructing reader chooses:
+Before a cell's batch is published, the fill derives per-batch structures on the thread that filled it, off the serial consumer: `NestedIndex.realView` before the values are written, `NestedIndex.compute` after. What it derives is fixed per column by a `NestedIndexMode` the constructing reader chooses:
 
 | Mode | Reader | Batch carries | Derived before publish |
 |---|---|---|---|
 | `ALL_ITEMS` | `NestedRowReader` | raw definition and repetition levels | `elementValidity` and layer-indexed `multiLevelOffsets` over **all items**: a null or empty container keeps a phantom position in the next layer's index |
-| `REAL_VIEW` | unfiltered `ColumnReader` (`ColumnScan.open` without a filter) | no levels; `realView`, `realValues` | the real-items view ([Real view](#real-view)); the all-items index is skipped |
+| `REAL_VIEW` | unfiltered `ColumnReader` (`ColumnScan.open` without a filter) | no levels, no record offsets; `realView`, and the real leaf values as both `values` and `realValues` | the real-items view ([Real view](#real-view)); the all-items index is skipped |
 | `REAL_VIEW_KEEP_LEVELS` | filtered `ColumnReader` | raw levels | nothing: the batch is compacted by record selection before any view is built |
 
-The two reader families read disjoint batch state: the all-items path reads raw levels through `NestedBatchIndex` and the row views (`PqListImpl`, `PqStructImpl`, `PqMapImpl`, `NestedBatchDataView`, `VariantShredReassembler`); the column path reads only the real-items view and values. `REAL_VIEW` drops the levels because no `ColumnReader` accessor reads them; adding one would require keeping them, or rebuilding them, on that mode.
+The two reader families read disjoint batch state: the all-items path reads raw levels through `NestedBatchIndex` and the row views (`PqListImpl`, `PqStructImpl`, `PqMapImpl`, `NestedBatchDataView`, `VariantShredReassembler`); the column path reads only the real-items view and values. `REAL_VIEW` drops the levels and the record offsets because no `ColumnReader` accessor reads them; adding one would require keeping them, or rebuilding them, on that mode.
 
 On a fixed-width batch every mode skips the level scans: `ALL_ITEMS` gets `multiLevelOffsets` from `fixedListLayerOffsets` and `null` validity.
 
 ## Real view
 
-The real-items view (`NestedLevelComputer.RealView`, defined in [COLUMN_READER.md](COLUMN_READER.md#real-view)) is a pure function of the batch's levels, record count, max definition level and layers. On `REAL_VIEW` the batch carries no levels: the fill writes the levels the view reads to the filling task's scratch instead, the repetition levels of a column with repetition and the definition levels of a batch that is not all present, and builds the view from them.
+The real-items view (`NestedLevelComputer.RealView`, defined in [COLUMN_READER.md](COLUMN_READER.md#real-view)) is a pure function of the batch's levels, record count, max definition level and layers. On `REAL_VIEW` the batch carries no levels: the fill writes the levels the view reads to the filling task's scratch instead, the repetition levels of a column with repetition and the definition levels of a batch that is not all present, and builds the view from them. Every segment writes its levels before any segment writes its values, so the view, and with it the real leaf count, is known when the values are allocated.
 
 On `REAL_VIEW` the fill builds one of two views:
 
 | Batch | View | Leaf values |
 |---|---|---|
 | All-present: `fixedListK > 0`, or `allPresent`, or every definition level at max | **Lean view**: layer offsets only (`computeLayerOffsets`, or `fixedListLayerOffsets` for a fixed-width batch), every validity `null`, `realToRawLeaf` `null` | `realValues` = the batch values |
-| Has phantom positions | Full `computeRealView` | compacted through `realToRawLeaf` by `LeafCompaction`; passed through when the map is the identity |
+| Has phantom positions | Full `computeRealView`, without `realToRawLeaf` | allocated at the real leaf count; each segment writes its real leaves alone, straight to their real positions |
 
-An all-present batch has no phantom positions, so its real-items offsets equal the all-items offsets and every validity is trivially all-present; the lean view is the full view without the per-layer presence, leaf-validity and gather-map work. It is built unconditionally, so a structural read (`getLayerOffsets`, `getLayerValidity`) finds its offsets ready and a flat leaf read (the embedding-vector pattern) ignores them.
+A raw position is a real leaf when its definition level reaches the leaf's item threshold (`Layers.itemDefThresholds()` past the innermost layer), whatever its repetition level, so a segment tells a phantom position from its page's definition levels alone: the page copy (`FlatPageValues.copy`, `BinaryPageValues.copyPlain` and `copyIds`) takes a slot level, below which a row takes no value slot, and returns the slots it wrote. The batch's largest array is allocated once, at its final size, and no gather map is built.
 
-**Consumer.** `ColumnReader.ensureRealView()` returns the batch's `realView` when set. Otherwise the batch came from record selection (`ColumnScan.compactNestedBatch`, which slices the raw levels and values per kept record and carries no view), and the reader builds the view lazily from the sliced levels, or arithmetically for a fixed-width batch (`fixedListRealView`). Leaf values resolve in the same order: the batch's `realValues`, else the batch values when `realToRawLeaf` is `null`, else a compacted copy.
+An all-present batch has no phantom positions, so its real-items offsets equal the all-items offsets and every validity is trivially all-present; the lean view is the full view without the per-layer presence and leaf-validity work. It is built unconditionally, so a structural read (`getLayerOffsets`, `getLayerValidity`) finds its offsets ready and a flat leaf read (the embedding-vector pattern) ignores them.
+
+**Consumer.** `ColumnReader.ensureRealView()` returns the batch's `realView` when set. Otherwise the batch came from record selection (`ColumnScan.compactNestedBatch`, which slices the raw levels and values per kept record and carries no view), and the reader builds the view lazily from the sliced levels, or arithmetically for a fixed-width batch (`fixedListRealView`). Leaf values resolve in the same order: the batch's `realValues`, else the batch values when `realToRawLeaf` is `null`, else a copy compacted through it by `LeafCompaction`.
 
 Tests: `ColumnReaderLayerModelTest`, `ColumnReaderExactFilterTest`, `FixedSizeListFastPathReadTest`, `DifferentialReadTest`, `RealViewEquivalenceTest`.
 

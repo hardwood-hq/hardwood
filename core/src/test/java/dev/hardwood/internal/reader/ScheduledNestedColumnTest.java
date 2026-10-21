@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.lang.reflect.Array;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -320,9 +321,8 @@ class ScheduledNestedColumnTest {
             int[] rep = repetitionLevels.stream().mapToInt(Integer::intValue).toArray();
             NestedLevelComputer.RealView view = NestedLevelComputer.computeRealView(def, repeated ? rep : null, count,
                     starts.length - 1, maxDefinitionLevel, layers);
-            int[] recordOffsets = Arrays.copyOf(starts, starts.length - 1);
             int[] map = view.realToRawLeaf();
-            return ScheduledNestedColumnTest.realRecords(view, layers, recordOffsets, starts.length - 1,
+            return ScheduledNestedColumnTest.realRecords(view, layers, starts.length - 1,
                     leaf -> values.get(map != null ? map[leaf] : leaf));
         }
     }
@@ -339,7 +339,7 @@ class ScheduledNestedColumnTest {
         for (NestedBatch batch : batches) {
             if (batch.realView != null) {
                 Object realValues = batch.realValues;
-                records.addAll(realRecords(batch.realView, layers, batch.recordOffsets, batch.recordCount,
+                records.addAll(realRecords(batch.realView, layers, batch.recordCount,
                         leaf -> value(realValues, leaf)));
                 continue;
             }
@@ -363,29 +363,27 @@ class ScheduledNestedColumnTest {
     }
 
     /// The records of a real-items view, each as its nested structure: a struct as `{…}`, a list
-    /// as `[…]`, an absent item as `null`, and each present leaf as its value and, after `@`,
-    /// where its value lies among the record's values.
+    /// as `[…]`, an absent item as `null`, and each present leaf as its value.
     private static List<String> realRecords(NestedLevelComputer.RealView view, NestedLevelComputer.Layers layers,
-                                            int[] recordOffsets, int recordCount, IntFunction<String> leafValue) {
+                                            int recordCount, IntFunction<String> leafValue) {
         List<String> records = new ArrayList<>();
         for (int r = 0; r < recordCount; r++) {
             StringBuilder record = new StringBuilder();
-            realItem(record, view, layers, 0, r, recordOffsets[r], leafValue);
+            realItem(record, view, layers, 0, r, leafValue);
             records.add(record.toString());
         }
         return records;
     }
 
     private static void realItem(StringBuilder out, NestedLevelComputer.RealView view,
-                                 NestedLevelComputer.Layers layers, int layer, int slot, int recordOffset,
+                                 NestedLevelComputer.Layers layers, int layer, int slot,
                                  IntFunction<String> leafValue) {
         if (layer == layers.count()) {
             if (!present(view.leafValidity(), slot)) {
                 out.append("null");
                 return;
             }
-            int raw = view.realToRawLeaf() != null ? view.realToRawLeaf()[slot] : slot;
-            out.append(leafValue.apply(slot)).append('@').append(raw - recordOffset);
+            out.append(leafValue.apply(slot));
             return;
         }
         if (!present(view.layerValidity()[layer], slot)) {
@@ -394,7 +392,7 @@ class ScheduledNestedColumnTest {
         }
         if (layers.kinds()[layer] == LayerKind.STRUCT) {
             out.append('{');
-            realItem(out, view, layers, layer + 1, slot, recordOffset, leafValue);
+            realItem(out, view, layers, layer + 1, slot, leafValue);
             out.append('}');
             return;
         }
@@ -404,7 +402,7 @@ class ScheduledNestedColumnTest {
             if (child > offsets[slot]) {
                 out.append(", ");
             }
-            realItem(out, view, layers, layer + 1, child, recordOffset, leafValue);
+            realItem(out, view, layers, layer + 1, child, leafValue);
         }
         out.append(']');
     }
@@ -427,7 +425,8 @@ class ScheduledNestedColumnTest {
     }
 
     /// Checks what a batch's arrays must satisfy whatever its capacity: they hold exactly its
-    /// values and records, and an all-present batch holds no null.
+    /// values and records, and an all-present batch holds no null. A batch with a real-items view
+    /// holds its real leaf values alone, and no record offsets.
     private static void assertWellFormed(NestedBatch actual, int maxDefinitionLevel, String what) {
         if (actual.allPresent && actual.definitionLevels != null) {
             assertThat(actual.definitionLevels).as(what + " all present levels").containsOnly(maxDefinitionLevel);
@@ -435,6 +434,15 @@ class ScheduledNestedColumnTest {
         if (actual.definitionLevels != null) {
             assertThat(actual.definitionLevels).as(what + " definition level array").hasSize(actual.valueCount);
             assertThat(actual.repetitionLevels).as(what + " repetition level array").hasSize(actual.valueCount);
+        }
+        if (actual.realView != null) {
+            assertThat(actual.recordOffsets).as(what + " record offset array").isNull();
+            assertThat(actual.realValues).as(what + " real values").isSameAs(actual.values);
+            if (!(actual.values instanceof BinaryBatchValues)) {
+                assertThat(Array.getLength(actual.values)).as(what + " real value array")
+                        .isEqualTo(actual.realView.valueCount());
+            }
+            return;
         }
         assertThat(actual.recordOffsets).as(what + " record offset array").hasSize(actual.recordCount);
     }
