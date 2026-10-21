@@ -13,7 +13,7 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
-## 1.1.0.Beta3
+## 1.1.0.Beta3 (2026-10-21)
 
 **Bug fixes:**
 
