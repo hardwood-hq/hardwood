@@ -244,6 +244,17 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void oversizedListSizeRejected() {
+        // ColumnMetaData: field 8 key_value_metadata as a list of structs, the size nibble escaped
+        // to a varint of 2^31. Cast to int, that is a negative capacity for the map it pre-sizes.
+        assertThatThrownBy(() -> ColumnMetaDataReader.read(
+                reader(0x89, 0xFC, 0x80, 0x80, 0x80, 0x80, 0x08, STOP)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed Parquet metadata: collection declares 2147483648 elements but only "
+                        + "1 bytes remain");
+    }
+
+    @Test
     void columnIndexWithShortPerPageArrayRejected() {
         // ColumnIndex: two pages, but only one null count. PageFilterEvaluator indexes
         // null_counts with a page count that comes from elsewhere.
