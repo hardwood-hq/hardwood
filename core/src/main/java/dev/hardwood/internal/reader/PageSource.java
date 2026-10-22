@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column iterator that yields [PageInfo] objects across all row groups and files.
 ///
@@ -56,6 +57,11 @@ public class PageSource {
         // No work items taken here: asking for them plans the read, and a page
         // source is built per projected column when the reader is. The cursor
         // pulls them one at a time as this column advances. See #1107.
+    }
+
+    /// The read's working-set handle for this column, whose chunk's schema is `schema`.
+    WorkingSet.Column workingSet(ColumnSchema schema) {
+        return rowGroupIterator.workingSet().column(projectedColumnIndex, schema);
     }
 
     /// Returns the name of the file currently being read, or `null` if no work item
@@ -148,6 +154,7 @@ public class PageSource {
             currentPlan = null;
             FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
             currentBatches = rowGroupIterator.getBatches(workItem);
+            rowGroupIterator.workingSet().enter(projectedColumnIndex, currentBatches);
             currentPlan = plan.walk();
         }
     }

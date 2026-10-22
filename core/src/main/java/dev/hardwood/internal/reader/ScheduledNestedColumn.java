@@ -118,7 +118,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     @Override
     PageDecoder newPageDecoder(PageInfo info) {
         return new PageDecoder(info.columnMetaData(), info.columnSchema(), decompressorFactory,
-                fixedListFastPathEnabled);
+                fixedListFastPathEnabled, pageSource.workingSet(info.columnSchema()));
     }
 
     @Override

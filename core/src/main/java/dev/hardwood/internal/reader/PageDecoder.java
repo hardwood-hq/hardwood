@@ -218,6 +218,9 @@ public class PageDecoder {
     /// column that is not binary.
     private final int binaryWidth;
 
+    /// Where the decoder charges each page before decoding it.
+    private final WorkingSet.Column workingSet;
+
     /// Constructor for page decoding, with the fixed-size-list fast path enabled.
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
         this(columnMetaData, column, decompressorFactory, true);
@@ -233,7 +236,19 @@ public class PageDecoder {
     ///         `FIXED_LEN_BYTE_ARRAY` whose width is absent or not positive
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
                        boolean fixedListFastPathEnabled) {
+        this(columnMetaData, column, decompressorFactory, fixedListFastPathEnabled, WorkingSet.standalone(column));
+    }
+
+    /// Constructor for the page decoding of a read, which charges each page to the read's
+    /// working set before decoding it.
+    ///
+    /// @param workingSet the read's handle for this column
+    /// @throws dev.hardwood.reader.SchemaIncompatibleException if the column is a
+    ///         `FIXED_LEN_BYTE_ARRAY` whose width is absent or not positive
+    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
+                       boolean fixedListFastPathEnabled, WorkingSet.Column workingSet) {
         this.columnMetaData = columnMetaData;
+        this.workingSet = workingSet;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
@@ -288,7 +303,7 @@ public class PageDecoder {
                                       DecodeBuffers buffers) {
         requireColumn(binaryWidth >= 0 && column.maxRepetitionLevel() == 0, "decodeFlatBinary");
         InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false, buffers);
-        BinaryPageValues values = binaryValues(page, dictionary, scratch);
+        BinaryPageValues values = binaryValues(page, dictionary, scratch, false);
         page.commit(column);
         return values;
     }
@@ -304,7 +319,7 @@ public class PageDecoder {
                                           DecodeBuffers buffers) {
         InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true, buffers);
         FlatPageValues flat = binaryWidth < 0 ? numericValues(page, dictionary, scratch) : null;
-        BinaryPageValues binary = binaryWidth < 0 ? null : binaryValues(page, dictionary, scratch);
+        BinaryPageValues binary = binaryWidth < 0 ? null : binaryValues(page, dictionary, scratch, true);
         page.commit(column);
         return new InPlaceNestedPage(page.numValues, page.definitionLevels, page.repetitionLevels,
                 page.fixedListK, flat, binary, null);
@@ -378,7 +393,8 @@ public class PageDecoder {
         };
     }
 
-    private BinaryPageValues binaryValues(InPlacePage page, Dictionary dictionary, LevelScratch scratch) {
+    private BinaryPageValues binaryValues(InPlacePage page, Dictionary dictionary, LevelScratch scratch,
+                                          boolean kept) {
         int maxDefLevel = column.maxDefinitionLevel();
         return switch (page.encoding) {
             case PLAIN -> BinaryPageValues.plain(column.type(), binaryWidth, page.definitionLevels, maxDefLevel,
@@ -388,7 +404,9 @@ public class PageDecoder {
             case DELTA_LENGTH_BYTE_ARRAY -> BinaryPageValues.deltaLength(page.definitionLevels, maxDefLevel,
                     page.numValues, page.data, page.valuesOffset, page.limit, scratch);
             case DELTA_BYTE_ARRAY -> BinaryPageValues.deltaByteArray(binaryWidth, page.definitionLevels,
-                    maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit, scratch);
+                    maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit, scratch,
+                    valueBytes -> workingSet.page(page.numValues, page.uncompressedSize, page.decodedBytes,
+                            page.encoding, kept, valueBytes));
             default -> {
                 int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
                 int[] ids = decodeIds(page.data, page.valuesOffset, page.limit, idCount, scratch);
@@ -412,7 +430,7 @@ public class PageDecoder {
     /// @param fixedListK the elements per record of a fixed-size-list page, `0` for any other page
     private record InPlacePage(Encoding encoding, byte[] data, int limit, int valuesOffset, ByteBuffer storedValues,
                                int numValues, int[] definitionLevels, int[] repetitionLevels, int fixedListK, int compressedSize,
-                               int uncompressedSize, PageDecodedEvent event) {
+                               int uncompressedSize, long decodedBytes, PageDecodedEvent event) {
 
         void commit(ColumnSchema column) {
             event.column = column.name();
@@ -454,7 +472,6 @@ public class PageDecoder {
         else {
             throw new ParquetReadException("Unexpected page type for a data page: " + pageHeader.type());
         }
-
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
         int headerSize = headerReader.getBytesRead();
@@ -476,6 +493,10 @@ public class PageDecoder {
                                       DecodeBuffers buffers) {
         boolean stored = columnMetaData.codec() == CompressionCodec.UNCOMPRESSED
                 && readsStoredValues(header.encoding(), pageData);
+        if (!stored) {
+            // Charged before it is decompressed; a page read in place, once its levels are known
+            workingSet.page(header.numValues(), limit, limit, header.encoding(), ownBytes);
+        }
         byte[] data;
         ByteBuffer body;
         if (stored) {
@@ -508,6 +529,7 @@ public class PageDecoder {
         ByteBuffer storedValues = null;
         if (stored) {
             // The level sections are decoded from a copy, and the values read where they lie
+            workingSet.page(numValues, limit, offset, header.encoding(), ownBytes);
             data = scratch.levelBytes(offset);
             body.get(0, data, 0, offset);
             storedValues = body.slice(offset, limit - offset);
@@ -518,7 +540,7 @@ public class PageDecoder {
                         FixedSizeListDetector.ROWS_UNKNOWN)
                 : 0;
         return levels(header.encoding(), data, limit, offset, storedValues, numValues, data, repOffset, repLength,
-                data, defOffset, defLength, k, compressedSize, limit, event, scratch);
+                data, defOffset, defLength, k, compressedSize, limit, stored ? offset : limit, event, scratch);
     }
 
     private InPlacePage readV2InPlace(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
@@ -529,6 +551,15 @@ public class PageDecoder {
         int valuesOffset = repLength + defLength;
         int storedValuesLength = pageData.remaining() - valuesOffset;
         int numValues = header.numValues();
+        boolean compressed = isValueRegionCompressed(header, storedValuesLength);
+        boolean valuesInPlace = readsStoredValues(header.encoding(), pageData)
+                && (!compressed || columnMetaData.codec() == CompressionCodec.UNCOMPRESSED);
+        boolean storedInPlace = !valuesInPlace && !compressed && !ownBytes && pageData.hasArray();
+        int valuesLength = uncompressedPageSize - repLength - defLength;
+        // The levels are copied; the values decompressed or copied, unless read where they lie
+        long decodedBytes = valuesOffset
+                + (valuesInPlace || storedInPlace ? 0 : compressed ? Math.max(0, valuesLength) : storedValuesLength);
+        workingSet.page(numValues, uncompressedPageSize, decodedBytes, header.encoding(), ownBytes);
         // The level sections are never compressed: they are decoded from the page's bytes
         byte[] levelData = scratch.levelBytes(valuesOffset);
         pageData.get(pageData.position(), levelData, 0, valuesOffset);
@@ -538,9 +569,7 @@ public class PageDecoder {
         int offset;
         int limit;
         ByteBuffer storedValues = null;
-        boolean compressed = isValueRegionCompressed(header, storedValuesLength);
-        if (readsStoredValues(header.encoding(), pageData)
-                && (!compressed || columnMetaData.codec() == CompressionCodec.UNCOMPRESSED)) {
+        if (valuesInPlace) {
             if (compressed) {
                 // Flagged compressed in a chunk without a codec, as parquet-java writes it
                 UncompressedDecompressor.requireStoredSize(storedValuesLength, uncompressedPageSize - valuesOffset);
@@ -551,7 +580,6 @@ public class PageDecoder {
             limit = 0;
         }
         else if (compressed) {
-            int valuesLength = uncompressedPageSize - repLength - defLength;
             ByteBuffer compressedValues = pageData.slice(valuesOffset, storedValuesLength);
             Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
             data = decompressor.decompress(compressedValues, valuesLength,
@@ -559,7 +587,7 @@ public class PageDecoder {
             offset = 0;
             limit = valuesLength;
         }
-        else if (!ownBytes && pageData.hasArray()) {
+        else if (storedInPlace) {
             // Stored values are read where they lie, for a fill within the page's task
             data = pageData.array();
             offset = pageData.arrayOffset() + pageData.position() + valuesOffset;
@@ -572,7 +600,7 @@ public class PageDecoder {
             limit = storedValuesLength;
         }
         return levels(header.encoding(), data, limit, offset, storedValues, numValues, levelData, 0, repLength,
-                levelData, repLength, defLength, k, compressedSize, uncompressedPageSize, event, scratch);
+                levelData, repLength, defLength, k, compressedSize, uncompressedPageSize, decodedBytes, event, scratch);
     }
 
     /// Whether a page in `encoding` whose value section is stored uncompressed in `pageData` is
@@ -662,7 +690,7 @@ public class PageDecoder {
     private InPlacePage levels(Encoding encoding, byte[] data, int limit, int valuesOffset, ByteBuffer storedValues,
                                int numValues,
                                byte[] repData, int repOffset, int repLength, byte[] defData, int defOffset,
-                               int defLength, int k, int compressedSize, int uncompressedSize,
+                               int defLength, int k, int compressedSize, int uncompressedSize, long decodedBytes,
                                PageDecodedEvent event, LevelScratch scratch) {
         int[] repetitionLevels = null;
         int[] definitionLevels = null;
@@ -676,7 +704,7 @@ public class PageDecoder {
             }
         }
         return new InPlacePage(encoding, data, limit, valuesOffset, storedValues, numValues, definitionLevels,
-                repetitionLevels, k, compressedSize, uncompressedSize, event);
+                repetitionLevels, k, compressedSize, uncompressedSize, decodedBytes, event);
     }
 
     /// Decodes the `idCount` dictionary ids of a dictionary-encoded page's value section

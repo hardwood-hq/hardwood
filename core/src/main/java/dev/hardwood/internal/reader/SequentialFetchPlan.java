@@ -137,6 +137,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final long rowGroupRowCount;
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
+    private final WorkingSet.Column workingSet;
     /// Where the one-ahead pre-fetch of each chunk runs.
     private final PrefetchTasks prefetchTasks;
     /// The [ChunkHandle] of the first chunk, shared by [#prefetch] and every [#pages] walk so
@@ -157,7 +158,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  long maxRows, int rowGroupIndex, String fileName,
                                  List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
                                  RowRanges matchingRows, long rowGroupRowCount,
-                                 Dictionary preloadedDictionary, PrefetchTasks prefetchTasks) {
+                                 Dictionary preloadedDictionary, PrefetchTasks prefetchTasks,
+                                 WorkingSet.Column workingSet) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -182,6 +184,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.rowGroupRowCount = rowGroupRowCount;
         this.preloadedDictionary = preloadedDictionary;
         this.prefetchTasks = prefetchTasks;
+        this.workingSet = workingSet;
     }
 
     @Override
@@ -312,7 +315,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       RowRanges matchingRows, long rowGroupRowCount) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
                 maxRows, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount, null, 0,
-                new PrefetchTasks(context.ioExecutor()));
+                new PrefetchTasks(context.ioExecutor()), WorkingSet.standalone(columnSchema));
     }
 
     /// @param dropReadability the readability `dropLeaves` decide inline page statistics under
@@ -324,13 +327,15 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     ///        the plan starts reading; ignored without a preloaded dictionary
     /// @param prefetchTasks where the one-ahead pre-fetch of each chunk runs; the overloads
     ///        without it give the plan tasks of its own that nothing waits for
+    /// @param workingSet where the plan charges the dictionary it parses; the overloads without
+    ///        it give the plan a working set of its own
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
                                       List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
                                       RowRanges matchingRows, long rowGroupRowCount,
                                       Dictionary preloadedDictionary, long preloadedDictionaryEnd,
-                                      PrefetchTasks prefetchTasks) {
+                                      PrefetchTasks prefetchTasks, WorkingSet.Column workingSet) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         long totalCompressedSize = columnChunk.metaData().totalCompressedSize();
         if (totalCompressedSize > Integer.MAX_VALUE) {
@@ -355,7 +360,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
                 dropLeaves == null ? List.of() : dropLeaves, dropReadability,
                 matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount,
-                preloadedDictionary, prefetchTasks);
+                preloadedDictionary, prefetchTasks, workingSet);
     }
 
     /// Computes the per-fetch chunk size.
@@ -655,6 +660,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private boolean initialize() throws IOException {
             if (preloadedDictionary != null) {
                 // The plan starts at the first data page: pruning has read the dictionary page.
+                workingSet.dictionary(preloadedDictionary);
                 dictionary = preloadedDictionary;
                 initialized = true;
                 return true;
@@ -682,7 +688,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 // The header is already parsed, so hand it over rather than a region the
                 // parser would have to open and read the same header out of again.
                 dictionary = DictionaryParser.parsePage(header, dictPage.slice(headerSize, compressedSize),
-                        columnSchema, metaData, context);
+                        columnSchema, metaData, context, workingSet);
                 position += dictTotalSize;
                 clearPage();
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
