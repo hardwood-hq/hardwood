@@ -122,12 +122,15 @@ public final class FileMetadataCache {
     }
 
     /// Starts reading the footer of `fileIndex` on the I/O executor, unless a load or a read is
-    /// registered, the index is past the last file, the cache is closed, or the context has no
-    /// pool and the file's bytes are in memory.
+    /// registered, the index is past the last file, the cache is closed, or the file's bytes are in
+    /// memory and the footer is read from the file or the context has no pool. A footer a
+    /// [MetadataSource] supplies is prefetched on a context with a pool, since the source may wait
+    /// for a remote store.
     void prefetch(int fileIndex) {
-        if (!context.hasPool() && fileIndex >= 0 && fileIndex < inputFiles.size()
-                && RangeRead.inMemory(inputFiles.get(fileIndex))) {
-            // Its read waits for nothing, so the load on the thread driving the read reads it
+        if (fileIndex >= 0 && fileIndex < inputFiles.size()
+                && RangeRead.inMemory(inputFiles.get(fileIndex))
+                && (!footersSupplied() || !context.hasPool())) {
+            // Its read waits for nothing, so the load on the thread that asks for the file reads it
             return;
         }
         CompletableFuture<OpenedFooter> read = new CompletableFuture<>();

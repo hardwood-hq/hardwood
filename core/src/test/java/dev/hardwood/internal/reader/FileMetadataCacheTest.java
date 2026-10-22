@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -28,10 +29,12 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.reader.FileMetadataCache.PreparedFile;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.ParsedFooter;
 import dev.hardwood.reader.ParquetFileReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -169,6 +172,56 @@ class FileMetadataCacheTest {
             assertThat(inputFile.openCount()).isEqualTo(1);
             assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
             assertThat(inputFile.openCount()).isEqualTo(1);
+        }
+        finally {
+            cache.close();
+            inputFile.close();
+        }
+    }
+
+    /// A file whose bytes are in memory is read where its load runs: a prefetch would only move a
+    /// slice of the mapping to another thread and back.
+    @Test
+    void prefetchOfAFileInMemoryStartsNoRead() throws Exception {
+        InputFile inputFile = InputFile.of(Paths.get(LATER_FILE));
+        List<Runnable> queued = new ArrayList<>();
+        FileMetadataCache cache = cache(inputFile, queued::add);
+
+        try {
+            cache.prefetch(0);
+            assertThat(queued).isEmpty();
+            assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
+            assertThat(queued).isEmpty();
+        }
+        finally {
+            cache.close();
+            inputFile.close();
+        }
+    }
+
+    /// A footer a `MetadataSource` supplies is prefetched for a file in memory too:
+    /// the source may wait for a remote store, which no thread of the pool may.
+    @Test
+    @Tag("pool")
+    void prefetchOfASuppliedFooterRunsOnAVirtualThreadForAFileInMemory() throws Exception {
+        ParsedFooter footer;
+        try (InputFile source = InputFile.of(Paths.get(LATER_FILE))) {
+            source.open();
+            footer = ParsedFooter.readFrom(source);
+        }
+        List<Thread> callers = new CopyOnWriteArrayList<>();
+        HardwoodContextImpl context = (HardwoodContextImpl) HardwoodContext.builder().threads(1).metadataSource(file -> {
+            callers.add(Thread.currentThread());
+            return footer;
+        }).build();
+        contexts.add(context);
+        InputFile inputFile = InputFile.of(Paths.get(LATER_FILE));
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), context);
+
+        try {
+            cache.prefetch(0);
+            assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
+            assertThat(callers).singleElement().satisfies(caller -> assertThat(caller.isVirtual()).isTrue());
         }
         finally {
             cache.close();

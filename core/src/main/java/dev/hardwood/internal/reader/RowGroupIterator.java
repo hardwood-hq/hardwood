@@ -984,8 +984,9 @@ public class RowGroupIterator implements Closeable {
     ///
     /// That call stays on the caller, so that planning the next file is done by the time the
     /// read reaches it. What the caller waits for there is the next file's footer, whose read
-    /// [#triggerPrefetch] has already started — except under a filter, where planning also
-    /// probes that file's bloom filters, which nothing has started.
+    /// [#triggerPrefetch] has already started, or which the caller reads in place for a file
+    /// whose bytes are in memory ([FileMetadataCache#prefetch]) — and under a filter, where
+    /// planning also probes that file's bloom filters, which nothing has started.
     ///
     /// A planning failure is not raised here. The iterator keeps it, and every column's own
     /// request for the next work item rethrows it, so each column fails when its read reaches
@@ -2054,7 +2055,8 @@ public class RowGroupIterator implements Closeable {
         return fileMetadataCache.getFile(fileIndex);
     }
 
-    /// Triggers async loading of the file at the given index.
+    /// Triggers async loading of the file at the given index, where [FileMetadataCache#prefetch]
+    /// starts one.
     private void triggerPrefetch(int fileIndex) {
         fileMetadataCache.prefetch(fileIndex);
     }
