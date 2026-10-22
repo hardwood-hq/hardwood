@@ -582,7 +582,7 @@ class WriterDifferentialTest {
 
     @Test
     void duckDbReadsByteStreamSplitDoubles(@TempDir Path dir) throws Exception {
-        // Floating point is what byte-stream-split is for, and it is also all DuckDB 1.4.4
+        // Floating point is what byte-stream-split is for, and it is also all DuckDB 1.5.6
         // accepts: it rejects the encoding outright for INT32, INT64 and FIXED_LEN_BYTE_ARRAY,
         // which the format has allowed since parquet-format 2.10 ("BYTE_STREAM_SPLIT encoding is
         // only supported for FLOAT or DOUBLE data"). Those three are not left unchecked — the
