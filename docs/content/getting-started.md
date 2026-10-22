@@ -118,7 +118,7 @@ If you attempt to read a file using a compression codec whose library is not on 
 
 ## Command-Line Tool
 
-The `hardwood` command-line tool ships as a GraalVM native binary for Linux, macOS, and Windows, available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). The [CLI reference](reference/cli.md) documents its commands.
+The `hardwood` command-line tool ships as a GraalVM native binary for Linux (x86_64 and aarch64), macOS (Apple silicon) and Windows (x86_64), available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). On an Intel Mac, run the [Docker image](#docker), whose amd64 variant Docker Desktop runs there. The [CLI reference](reference/cli.md) documents its commands.
 
 !!! note "macOS"
     The binary is not notarized. On first run, macOS Gatekeeper will block it. Remove the quarantine flag after extracting:

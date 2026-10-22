@@ -15,6 +15,10 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0.CR1 (unreleased)
 
+**Breaking Changes:**
+
+- The native CLI is no longer published for macOS on Intel; on those machines the CLI runs from the Docker image ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
+
 **Deprecations:**
 
 - `HardwoodContext.executor()` is deprecated for removal in the next major release, without a replacement ([#1581](https://github.com/hardwood-hq/hardwood/issues/1581))
