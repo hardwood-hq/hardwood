@@ -76,7 +76,10 @@ class FlatAppendTest {
                 PhysicalType.BOOLEAN, PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY };
         for (PhysicalType type : types) {
             for (Shape shape : Shape.values()) {
-                for (double nullRatio : new double[]{ 0.0, 0.1, 0.9 }) {
+                // A REQUIRED leaf has no nulls to draw and its seed leaves the ratio out, so every
+                // ratio would append the same batches.
+                double[] nullRatios = shape == Shape.REQUIRED ? new double[]{ 0.0 } : new double[]{ 0.0, 0.1, 0.9 };
+                for (double nullRatio : nullRatios) {
                     for (Cardinality cardinality : Cardinality.values()) {
                         cases.add(Arguments.of(type, shape, nullRatio, cardinality, ColumnEncoding.AUTO));
                     }
