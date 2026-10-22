@@ -151,7 +151,7 @@ class NestedFillThreadTest {
                     return page;
                 }
             };
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), batchSize, batchSize);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), batchSize, batchSize);
             ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, pageSource, exchange, column,
                     batchSize, context.decompressorFactory(), layers, NestedIndexMode.ALL_ITEMS, true);
             scheduledColumn.set(scheduled);

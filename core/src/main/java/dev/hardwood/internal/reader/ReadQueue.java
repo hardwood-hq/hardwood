@@ -15,7 +15,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.DecodeExecutor;
 
 /// The fetch steps, page tasks and planning of one read on a context without a pool
@@ -36,7 +38,7 @@ import dev.hardwood.internal.DecodeExecutor;
 /// The queue counts its outstanding work: the items queued or running, and the fetch steps that
 /// yielded on a read in flight ([#yielded()]). With none outstanding, nothing changes what a poll
 /// looks at any more.
-public final class ReadQueue {
+public final class ReadQueue implements ReadExecutor {
 
     private final HardwoodContextImpl context;
     private final ConcurrentLinkedDeque<Runnable> items = new ConcurrentLinkedDeque<>();
@@ -49,26 +51,41 @@ public final class ReadQueue {
         this.context = context;
     }
 
-    /// The read's queue on `context`, `null` where the context has a pool, which runs the read's
-    /// work instead.
-    static ReadQueue forContext(HardwoodContextImpl context) {
-        return context.hasPool() ? null : new ReadQueue(context);
-    }
-
     /// Queues a fetch step, at the head.
     ///
     /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
-    void addFirst(Runnable step) {
+    @Override
+    public void executeStep(Runnable step) {
         checkOpen();
         outstanding.incrementAndGet();
         items.addFirst(step);
         signal();
     }
 
-    /// Queues a page task or planning, at the tail.
+    /// Queues a page task, at the tail, to run with a set of the context's decode buffers on the
+    /// thread that takes it.
     ///
     /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
-    void addLast(Runnable task) {
+    @Override
+    public void executePage(Consumer<DecodeBuffers> task) {
+        addLast(() -> context.runInPlace(task));
+    }
+
+    /// One: the thread driving the read runs its pages, whichever threads run the queue.
+    @Override
+    public int decodeThreads() {
+        return 1;
+    }
+
+    /// Queues planning, at the tail.
+    ///
+    /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
+    @Override
+    public void executePlanning(Runnable task) {
+        addLast(task);
+    }
+
+    private void addLast(Runnable task) {
         checkOpen();
         outstanding.incrementAndGet();
         items.addLast(task);
@@ -100,13 +117,15 @@ public final class ReadQueue {
     }
 
     /// Counts a fetch step that yielded on a read in flight as outstanding, until [#resumed()].
-    void yielded() {
+    @Override
+    public void yielded() {
         outstanding.incrementAndGet();
     }
 
     /// Ends the count of a yielded fetch step, after the completion of its read queued the step
     /// again or failed to.
-    void resumed() {
+    @Override
+    public void resumed() {
         outstanding.decrementAndGet();
         signal();
     }

@@ -84,7 +84,7 @@ class ScheduledColumnCloseTest {
                 }
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchCapacity);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), batchCapacity, batchCapacity);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), batchCapacity, batchCapacity);
             ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, stallingSource, exchange, column,
                     batchCapacity, context.decompressorFactory(), null);
             scheduler.start();
@@ -136,7 +136,7 @@ class ScheduledColumnCloseTest {
             // held.
             CountDownLatch readsStalled = new CountDownLatch(2);
             CountDownLatch release = new CountDownLatch(1);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), batchCapacity, batchCapacity);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), batchCapacity, batchCapacity);
             ScheduledFlatColumn first = stalledColumn(scheduler, iterator, 0, schema.getColumn(0),
                     BatchExchange.detachingFlat(schema.getColumn(0).name(), batchCapacity), batchCapacity, readsStalled,
                     release, context);
@@ -318,7 +318,7 @@ class ScheduledColumnCloseTest {
                 releaseWorker = holdTheDecodeThread(context);
             }
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), BATCH_CAPACITY);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), BATCH_CAPACITY, BATCH_CAPACITY);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), BATCH_CAPACITY, BATCH_CAPACITY);
             ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, source.apply(iterator), exchange,
                     column, BATCH_CAPACITY, context.decompressorFactory(), null);
             scheduler.start();

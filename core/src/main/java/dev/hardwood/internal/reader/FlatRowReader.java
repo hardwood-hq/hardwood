@@ -295,7 +295,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // only while statistics prove every row of the row groups it reaches matches.
         rowGroupIterator.planBatches(batchSize, maxRows);
         ColumnPipeline[] pipelines = new ColumnPipeline[projectedColumnCount];
-        ReadScheduler scheduler = new ReadScheduler(context, rowGroupIterator.readQueue(), batchSize, budgetRows);
+        ReadScheduler scheduler = new ReadScheduler(rowGroupIterator.readExecutor(), batchSize, budgetRows);
         @SuppressWarnings("unchecked")
         BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
 

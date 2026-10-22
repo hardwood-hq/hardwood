@@ -23,8 +23,8 @@ import dev.hardwood.reader.ParquetReadException;
 /// The tasks one [RowGroupIterator]'s read starts on one executor: on the context's I/O executor
 /// ([HardwoodContextImpl#ioExecutor()]), every read of a file not in memory ([RangeRead]), demand
 /// reads a fetch step yields on as well as the speculative ones (the next row group's index
-/// window and first chunk, the one-ahead chunk and region prefetches); at the tail of the
-/// context's pool, the next row group's planning.
+/// window and first chunk, the one-ahead chunk and region prefetches); at the tail of the read's
+/// executor ([ReadExecutor#executePlanning]), the next row group's planning.
 ///
 /// Each reads the input file, so whoever closes the file must first wait for the ones already
 /// running. [#awaitAll()] stops admitting new tasks, makes those not yet started skip their work
@@ -71,13 +71,14 @@ public final class PrefetchTasks {
         this.queue = null;
     }
 
-    /// Tasks at the tail of a read's queue, on a context without a pool.
+    /// The planning a read runs ahead of its columns, at the tail of its executor
+    /// ([ReadExecutor#executePlanning]).
     ///
-    /// @param queue the read's queue, which runs the tasks and which [#awaitAll()] runs while it
-    ///        waits for them
-    PrefetchTasks(ReadQueue queue) {
-        this.executor = queue::addLast;
-        this.queue = queue;
+    /// @param readExecutor the read's executor; where it is the read's own queue, [#awaitAll()]
+    ///        runs the queue while it waits for the tasks
+    PrefetchTasks(ReadExecutor readExecutor) {
+        this.executor = readExecutor::executePlanning;
+        this.queue = readExecutor instanceof ReadQueue readQueue ? readQueue : null;
     }
 
     /// Runs `task` on the executor, carrying the caller's [FetchReason], unless

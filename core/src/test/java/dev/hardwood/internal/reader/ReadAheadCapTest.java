@@ -130,7 +130,7 @@ class ReadAheadCapTest {
             iterator.planBatches(BATCH, 0);
             ColumnSchema column = iterator.referenceSchema().getColumn(0);
             PageSource source = new PageSource(iterator, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), BATCH, budgetRows);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), BATCH, budgetRows);
             if (repeated) {
                 BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), BATCH);
                 try (ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, source, exchange,

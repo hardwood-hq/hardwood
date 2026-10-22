@@ -137,8 +137,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         this.decompressorFactory = decompressorFactory;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
         exchange.setRoomListener(this::roomPossible);
-        if (scheduler.queue() != null) {
-            exchange.setQueue(scheduler.queue());
+        if (scheduler.executor() instanceof ReadQueue queue) {
+            exchange.setQueue(queue);
         }
         scheduler.add(this);
     }
@@ -173,8 +173,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             // Written before the count is read, as a task reads it after the count: either this
             // sees the last task's decrement or that task sees this thread and unparks it.
             closingThread = Thread.currentThread();
-            ReadQueue queue = scheduler.queue();
-            if (queue != null) {
+            if (scheduler.executor() instanceof ReadQueue queue) {
                 queue.runUntil(() -> tasks.get() == 0);
             }
             while (tasks.get() > 0) {
@@ -319,8 +318,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// bytes issues their read as demand; one that stops on a work item's planning leaves it to the
     /// virtual thread that plans it. Either keeps the column's claim and its count of tasks, and
     /// the need's completion queues the next step ([#resumeFetch]): no step waits for I/O, and a
-    /// close waits for the read and the planning. On a context without a pool, the read's queue
-    /// counts the step as outstanding until then ([ReadQueue#yielded()]).
+    /// close waits for the read and the planning. The read's executor counts the step as
+    /// outstanding until then ([ReadExecutor#yielded()]).
     private void runFetchStep() {
         Need pending = null;
         try {
@@ -353,10 +352,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             else {
                 // Last: the completion may queue the next step at once, which another thread of
                 // the pool runs
-                ReadQueue queue = scheduler.queue();
-                if (queue != null) {
-                    queue.yielded();
-                }
+                scheduler.executor().yielded();
                 pending.whenMet(this::resumeFetch);
             }
         }
@@ -375,10 +371,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         }
         finally {
             // After the step is queued, so that the read's queue is never seen idle in between
-            ReadQueue queue = scheduler.queue();
-            if (queue != null) {
-                queue.resumed();
-            }
+            scheduler.executor().resumed();
         }
     }
 

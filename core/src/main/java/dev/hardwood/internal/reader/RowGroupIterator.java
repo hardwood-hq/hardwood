@@ -91,16 +91,14 @@ public class RowGroupIterator implements Closeable {
     /// The speculative reads this iterator's read has started, on the I/O executor; [#close()]
     /// waits for them.
     private final PrefetchTasks prefetchTasks;
-    /// The speculative planning this iterator's read has started, at the tail of the pool or of
-    /// the read's queue; [#close()] waits for it.
+    /// The speculative planning this iterator's read has started, at the tail of its executor;
+    /// [#close()] waits for it.
     private final PrefetchTasks planningTasks;
-    /// The read's queue on a context without a pool, which its scheduler and its planning share;
-    /// `null` where the pool runs the read's work.
-    private final ReadQueue readQueue;
-    /// Whether the read prefetches and plans the next row group ahead of its columns: always on a
-    /// context with a pool, and on one without only for a read of files not in memory, where a
-    /// prefetch's request overlaps the work of the thread driving the read.
-    private final boolean speculates;
+    /// Runs the read's fetch steps, page tasks and planning: the context's pool, or a queue of the
+    /// read's own on a context without one. Its scheduler and its planning share it.
+    private final ReadExecutor readExecutor;
+    /// Where the read plans its work items and the next row group, fixed once for the read.
+    private final PlanningMode planningMode;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -199,10 +197,40 @@ public class RowGroupIterator implements Closeable {
     /// The planning of each work item a column has reached, keyed by work item index, for a read
     /// that plans on virtual threads ([#planning]); evicted with the work item's other caches.
     private final Map<Integer, WorkItemPlanning> plannings = new ConcurrentHashMap<>();
-    /// Whether planning a work item runs on the fetch step that reaches it ([#planning]): every file
-    /// of the read holds its bytes in memory, so planning waits for no read, or the context has no
-    /// pool, so the step runs on the thread driving the read, which planning may block.
-    private final boolean planInline;
+
+    /// Where a read plans its work items and the next row group ahead of its columns, by whether
+    /// every file of the read holds its bytes in memory and whether the context has a pool:
+    ///
+    /// | Files | Pool | Zero threads |
+    /// |---|---|---|
+    /// | not all in memory | [#VIRTUAL_THREAD] | [#ON_STEP_PLAN_AHEAD] |
+    /// | all in memory | [#ON_STEP_PLAN_AHEAD] | [#ON_STEP] |
+    private enum PlanningMode {
+        /// A work item is planned on a virtual thread, since its planning waits for reads, and a
+        /// fetch step that reaches it first yields on it ([#planning]); the next row group is
+        /// planned on the virtual thread of its prefetch.
+        VIRTUAL_THREAD,
+        /// A work item is planned on the fetch step that reaches it: no read can wait, or the step
+        /// runs on the thread driving a read of a context without a pool, which planning may
+        /// block. The next row group is planned ahead as a task at the tail of the read's executor.
+        ON_STEP_PLAN_AHEAD,
+        /// A work item is planned on the fetch step that reaches it, and nothing is planned or
+        /// prefetched ahead: on one thread, with no read that waits, that would only reorder the
+        /// read's work.
+        ON_STEP;
+
+        static PlanningMode of(boolean inMemory, boolean hasPool) {
+            if (inMemory) {
+                return hasPool ? ON_STEP_PLAN_AHEAD : ON_STEP;
+            }
+            return hasPool ? VIRTUAL_THREAD : ON_STEP_PLAN_AHEAD;
+        }
+
+        /// Whether the read prefetches and plans the next row group ahead of its columns.
+        boolean plansAhead() {
+            return this != ON_STEP;
+        }
+    }
 
     /// A single unit of work: one row group in one file.
     ///
@@ -345,24 +373,19 @@ public class RowGroupIterator implements Closeable {
         this.ownsFileMetadataCache = ownsFileMetadataCache;
         this.closeListener = closeListener;
         this.inputFiles = fileMetadataCache.inputFiles();
-        boolean inMemory = inputFiles.stream().allMatch(RangeRead::inMemory);
-        this.planInline = inMemory || !context.hasPool();
-        this.speculates = !inMemory || context.hasPool();
+        this.planningMode = PlanningMode.of(inputFiles.stream().allMatch(RangeRead::inMemory), context.hasPool());
         this.context = context;
-        this.readQueue = ReadQueue.forContext(context);
+        this.readExecutor = ReadExecutor.forContext(context);
         this.prefetchTasks = new PrefetchTasks(context.ioExecutor());
-        this.planningTasks = readQueue != null
-                ? new PrefetchTasks(readQueue)
-                : new PrefetchTasks(context::executeSpeculative);
+        this.planningTasks = new PrefetchTasks(readExecutor);
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
         this.physicalSkip = physicalSkip;
     }
 
-    /// The read's queue on a context without a pool, which the read's [ReadScheduler] takes;
-    /// `null` where the context's pool runs the read's work.
-    public ReadQueue readQueue() {
-        return readQueue;
+    /// The read's executor, which the read's [ReadScheduler] takes.
+    public ReadExecutor readExecutor() {
+        return readExecutor;
     }
 
     /// Returns the maximum rows limit (0 = unlimited).
@@ -902,7 +925,7 @@ public class RowGroupIterator implements Closeable {
         // computation: prefetching plans the next file when this one is exhausted, which reads
         // a footer and, under a filter, probes bloom filters, and every other column asking
         // for this row group's plans waits for the whole of the computation.
-        if (speculates && nextRowGroupPrefetched.add(workItemIndex)) {
+        if (planningMode.plansAhead() && nextRowGroupPrefetched.add(workItemIndex)) {
             prefetchNextRowGroup(workItem);
         }
         return plans;
@@ -945,12 +968,12 @@ public class RowGroupIterator implements Closeable {
     /// Triggers async pre-computation and pre-fetch for the next row group, as tasks
     /// [#close()] waits for. The I/O planning needs first, the row group's index window and
     /// Bloom filters, is read on a virtual thread, which then plans the row group, reading its
-    /// dictionaries under a filter; the first chunk is read on a virtual thread again. A read whose
-    /// files are all in memory reads nothing that waits, so it plans the row group as a task at the
-    /// tail of the pool instead.
+    /// dictionaries under a filter; the first chunk is read on a virtual thread again. A read that
+    /// plans on the step ([PlanningMode#ON_STEP_PLAN_AHEAD]) plans the row group as a task at the
+    /// tail of its executor instead.
     ///
-    /// The caller plans the current work item: a virtual thread ([#planning]), or, for a read
-    /// whose files are all in memory, the fetch step that reached the work item. Planning the next
+    /// The caller plans the current work item: a virtual thread ([#planning]), or, for a read that
+    /// plans on the step, the fetch step that reached the work item ([PlanningMode]). Planning the next
     /// row group happens once ([OnceCache]): whoever reaches it while it is being planned waits for
     /// that planning, a virtual thread or a step of a read that waits for no read, and one that
     /// reaches it first plans it itself, and the prefetch finds it planned.
@@ -1005,21 +1028,21 @@ public class RowGroupIterator implements Closeable {
                         return;
                     }
                 }
-                if (planInline) {
-                    planningTasks.submit(() -> planAhead(nextWorkItem));
-                }
-                else {
+                if (planningMode == PlanningMode.VIRTUAL_THREAD) {
                     // Planning waits for the row group's dictionaries, so it stays on the
                     // virtual thread; its CPU work runs on the pool
                     planAhead(nextWorkItem);
+                }
+                else {
+                    planningTasks.submit(() -> planAhead(nextWorkItem));
                 }
             }
         });
     }
 
     /// Plans `nextWorkItem` ahead of its read, on the virtual thread of its prefetch or, for a read
-    /// whose files are all in memory, on the pool, and prefetches its first chunk on the I/O
-    /// executor.
+    /// that plans on the step, as a task of the read's executor ([PlanningMode]), and prefetches
+    /// its first chunk on the I/O executor.
     private void planAhead(WorkItem nextWorkItem) {
         RowGroupPlans nextPlans = fetchPlanCache.computeIfAbsent(
                 nextWorkItem.workItemIndex(),
@@ -1930,13 +1953,13 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// The planning of the work item at `index`: the work item with its fetch plans computed, or
-    /// `null` once the read is done. A read whose files are all in memory plans on the calling
-    /// thread, and the planning returned is complete. Any other read plans each work item once, on
+    /// `null` once the read is done. A read that plans on the step ([PlanningMode]) plans on the
+    /// calling thread, and the planning returned is complete. Any other read plans each work item once, on
     /// a virtual thread of the read's prefetch tasks, since planning waits for reads: the next
     /// file's footer, the row group's Bloom filters, dictionaries and page index; a fetch step that
     /// gets the planning before it completes yields on it.
     WorkItemPlanning planning(int index) {
-        if (planInline) {
+        if (planningMode != PlanningMode.VIRTUAL_THREAD) {
             WorkItemPlanning planning = new WorkItemPlanning();
             planning.run(p -> plan(index, p), prefetchTasks);
             return planning;

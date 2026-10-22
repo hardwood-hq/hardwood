@@ -340,7 +340,7 @@ class BatchPlanTest {
                 }
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), 64, 64);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), 64, 64);
             try (ScheduledFlatColumn worker = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
                     context.decompressorFactory(), null)) {
                 scheduler.start();
@@ -415,7 +415,7 @@ class BatchPlanTest {
                 }
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), 64, 64);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), 64, 64);
             try (ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
                     context.decompressorFactory(), null)) {
                 scheduler.start();
@@ -476,7 +476,7 @@ class BatchPlanTest {
                 }
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), 64, 64);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), 64, 64);
             try (ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
                     context.decompressorFactory(), null)) {
                 scheduler.start();
@@ -522,7 +522,7 @@ class BatchPlanTest {
                 }
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), 64, 64);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), 64, 64);
             try (ScheduledFlatColumn worker = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
                     context.decompressorFactory(), null)) {
                 scheduler.start();

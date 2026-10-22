@@ -216,7 +216,7 @@ class ScheduledNestedColumnTest {
             NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema)[columnIndex];
             BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
             PageSource pageSource = new PageSource(iterator, columnIndex);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), batchSize, batchSize);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), batchSize, batchSize);
             ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, pageSource, exchange, column,
                     batchSize, context.decompressorFactory(), layers, mode, true);
             scheduler.start();

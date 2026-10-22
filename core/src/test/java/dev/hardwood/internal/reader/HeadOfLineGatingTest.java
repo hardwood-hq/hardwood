@@ -106,7 +106,7 @@ class HeadOfLineGatingTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(THREADS);
              RowGroupIterator iterator = iterator(context, file)) {
             iterator.planBatches(BATCH, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), BATCH, BUDGET_ROWS);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), BATCH, BUDGET_ROWS);
             BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
             BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
             BatchExchange<BatchExchange.Batch> aheadExchange = BatchExchange.detachingFlat("ahead", BATCH);
@@ -174,7 +174,7 @@ class HeadOfLineGatingTest {
         try (HardwoodContextImpl context = executor.context(1);
              RowGroupIterator iterator = iterator(context, file)) {
             iterator.planBatches(BATCH, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), BATCH, BUDGET_ROWS);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), BATCH, BUDGET_ROWS);
             BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
             BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
             PageSource smallSource = new PageSource(iterator, 0) {

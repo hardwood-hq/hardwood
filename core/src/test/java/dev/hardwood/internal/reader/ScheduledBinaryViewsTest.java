@@ -124,7 +124,7 @@ class ScheduledBinaryViewsTest {
                         b.matches = new long[1];
                         return b;
                     }, batch -> batch.capacity, 10);
-            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), 10, 10);
+            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), 10, 10);
             ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, new PageSource(iterator, 0), exchange, column,
                     10, context.decompressorFactory(), filter);
             if (requestViews) {
