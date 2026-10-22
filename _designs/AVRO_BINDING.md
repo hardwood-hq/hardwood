@@ -60,7 +60,7 @@ Tests: `AvroRowReaderTest` (hardwood-avro).
 | `INT96` | — | `fixed(12)` | `FIXED` | `GenericData.Fixed` of the stored bytes |
 | any | `NULL` | `null` | `NULL` | always `null` |
 
-Values keep Avro's raw representation: temporal values are the stored number, and no Avro logical-type conversion is applied. Avro has no nanosecond logical types in the Avro version the module builds against, and no timestamp wider than a long, so `NANOS` columns carry a plain `long` and a 96-bit timestamp its stored bytes. A `fixed` other than `interval` and `float16` is a named type called after its column (see [Name resolution](#name-resolution)). The width of a `FIXED_LEN_BYTE_ARRAY` is its declared `type_length`; conversion rejects a column that declares none.
+Values keep Avro's raw representation: temporal values are the stored number, and no Avro logical-type conversion is applied. `NANOS` columns carry a plain `long` with no Avro logical type, and a 96-bit timestamp its stored bytes, since Avro has no timestamp wider than a long. A `fixed` other than `interval` and `float16` is a named type called after its column (see [Name resolution](#name-resolution)). The width of a `FIXED_LEN_BYTE_ARRAY` is its declared `type_length`; conversion rejects a column that declares none.
 
 ### Groups and repetition
 
