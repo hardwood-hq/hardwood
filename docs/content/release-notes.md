@@ -23,6 +23,12 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `HardwoodContext.executor()` is deprecated for removal in the next major release, without a replacement ([#1581](https://github.com/hardwood-hq/hardwood/issues/1581))
 
+**Security:**
+
+- The native CLI is built with GraalVM CE 25 Innovation releases and embeds JDK 25.0.4.1 ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
+- CLI releases publish `checksums_sha256.txt` and build provenance attestations for the archives and the Docker image, verifiable with `gh attestation verify` ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
+- The CLI Docker image is based on Fedora 44 ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
+
 ## 1.1.0.Beta3 (2026-10-21)
 
 **Bug fixes:**
