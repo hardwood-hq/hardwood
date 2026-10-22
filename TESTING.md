@@ -97,7 +97,7 @@ A test that asserts the shape of a batch, such as its record count or a value at
 
 ## Zero-thread contexts
 
-`./mvnw verify -pl core -Pzero-threads` runs the core suite a second time with the internal system property `hardwood.internal.zeroThreads`, which makes every context created by `HardwoodContext.create` or its builder one of zero threads, whose reads run on the threads calling the readers ([READ_PIPELINE.md](_designs/READ_PIPELINE.md#a-context-of-zero-threads)). Tests that pin how work spreads over a pool's threads, or that rely on a read's work running while no thread drives the read, are tagged `pool` and stay out. The profile runs on demand, for a change to how a read or a write is driven; `ZeroThreadContextTest` covers the mode in every build.
+`./mvnw verify -pl core -Pzero-threads` runs the core suite a second time with the internal system property `hardwood.internal.zeroThreads`, which makes every context created by `HardwoodContext.create` or its builder one of zero threads, whose reads run on the threads calling the readers ([THREADING.md](_designs/THREADING.md#a-context-of-zero-threads)). Tests that pin how work spreads over a pool's threads, or that rely on a read's work running while no thread drives the read, are tagged `pool` and stay out. The profile runs on demand, for a change to how a read or a write is driven; `ZeroThreadContextTest` covers the mode in every build.
 
 ## Task orders
 

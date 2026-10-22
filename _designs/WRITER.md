@@ -6,6 +6,7 @@ Related documents:
 
 - [WRITER_INPUT.md](WRITER_INPUT.md): what the caller hands the writer (the schema builder, the `ColumnBatch` contract, shredding, annotation ranges, the `RowWriter` layer)
 - [WRITER_ENCODING.md](WRITER_ENCODING.md): how a buffered column chunk becomes pages (page layout and cuts, the `AUTO` dictionary decision and its probes, named encoding policies, codecs, statistics)
+- [THREADING.md](THREADING.md): the threads a write runs on beside the reads of a shared context, and a context of zero threads
 - [WRITER_VALIDATION.md](WRITER_VALIDATION.md): how produced files are checked against independent readers
 - [docs/content/concepts/write-model.md](../docs/content/concepts/write-model.md): the user-facing account of the same model
 - [docs/content/reference/writer.md](../docs/content/reference/writer.md): the options and rejections

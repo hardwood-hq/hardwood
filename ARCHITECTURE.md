@@ -51,6 +51,7 @@ flowchart LR
     subgraph crosscutting["Cross-cutting"]
         LOGICAL_TYPES
         EXCEPTION_MODEL
+        THREADING
     end
 
     subgraph project["Project"]
@@ -73,13 +74,16 @@ flowchart LR
     WRITER_VALIDATION -. checks .-> WRITER_ENCODING
     LOGICAL_TYPES -. annotations .-> read
     LOGICAL_TYPES -. annotations .-> write
+    THREADING -. runs .-> READ_PIPELINE
+    THREADING -. runs .-> WRITER
 ```
 
 | Area | Documents |
 |---|---|
-| Read path | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) (row groups to published batches, threading, batch sizing, multi-file planning), [ROW_READER.md](_designs/ROW_READER.md), [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) (levels to nested batches), [VALUE_DECODE.md](_designs/VALUE_DECODE.md) (page values to Java values) |
+| Read path | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) (row groups to published batches, batch sizing, multi-file planning), [ROW_READER.md](_designs/ROW_READER.md), [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) (levels to nested batches), [VALUE_DECODE.md](_designs/VALUE_DECODE.md) (page values to Java values) |
 | Filtering | [PREDICATE_MODEL.md](_designs/PREDICATE_MODEL.md) (the `FilterPredicate` API and its resolution), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) (pruning row groups and pages from metadata), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) (exact row filtering on both readers), [DICTIONARY_SPACE_EVALUATION.md](_designs/DICTIONARY_SPACE_EVALUATION.md) (binary predicates decided once per dictionary entry) |
 | I/O and metadata | [INPUT_FILES.md](_designs/INPUT_FILES.md), [S3_STORAGE.md](_designs/S3_STORAGE.md), [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) (which bytes a read requests), [FILE_METADATA.md](_designs/FILE_METADATA.md) (footer, Thrift parsing, page index), [EXCEPTION_MODEL.md](_designs/EXCEPTION_MODEL.md) |
+| Threading | [THREADING.md](_designs/THREADING.md) (which thread runs a read's and a writer's work: the context's pool, virtual threads for I/O, contexts of zero threads) |
 | Writer | [WRITER.md](_designs/WRITER.md) (write model, row-group lifecycle, memory), [WRITER_INPUT.md](_designs/WRITER_INPUT.md) (schema builder, `ColumnBatch`, shredding, `RowWriter`), [WRITER_ENCODING.md](_designs/WRITER_ENCODING.md) (page layout, dictionary selection, codecs, statistics), [WRITER_VALIDATION.md](_designs/WRITER_VALIDATION.md) (interop gate) |
 | Types | [LOGICAL_TYPES.md](_designs/LOGICAL_TYPES.md) (annotations, timestamps, Variant, geospatial), [AVRO_BINDING.md](_designs/AVRO_BINDING.md) (`hardwood-avro`) |
 | CLI | [DIVE_ARCHITECTURE.md](_designs/DIVE_ARCHITECTURE.md), [DIVE_UI_RULES.md](_designs/DIVE_UI_RULES.md), [CLI_VALUE_RENDERING.md](_designs/CLI_VALUE_RENDERING.md), [CLI_LOGGING.md](_designs/CLI_LOGGING.md) (stdout, stderr and log records) |
@@ -99,7 +103,7 @@ A file whose top-level fields are all primitive and whose columns have no repeti
 The public API (`PqIntList`, `getLong()`, `ColumnReader`'s typed arrays) avoids boxing wherever possible. Internal code uses primitive arrays (`int[]`, `long[]`) rather than `List<Integer>`.
 
 ### Row-Ordered Decode into Batches
-Each decoded column (the projection plus any filter-only predicate columns) has a fetcher virtual thread that fetches its pages. One scheduler per read submits every column's pages, in row order, to a fixed platform-thread pool owned by the `HardwoodContext`, where they are decoded straight into batches, with back-pressure towards the consumer ([READ_PIPELINE.md](_designs/READ_PIPELINE.md)).
+Each decoded column (the projection plus any filter-only predicate columns) fetches its pages in steps on a fixed platform-thread pool owned by the `HardwoodContext`, and its reads run on virtual threads. One scheduler per read submits every column's pages, in row order, to the same pool, where they are decoded straight into batches, with back-pressure towards the consumer ([READ_PIPELINE.md](_designs/READ_PIPELINE.md), [THREADING.md](_designs/THREADING.md)).
 
 ### Minimal Dependencies
 `hardwood-core` has no required runtime dependency. GZIP goes through the JDK; the other codecs use compression libraries that are optional, needed only for the codecs a file uses. LZO is not supported. `hardwood-s3` implements its S3 client and SigV4 signing without the AWS SDK.

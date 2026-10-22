@@ -9,6 +9,7 @@ Related documents:
 - [FILE_METADATA.md](FILE_METADATA.md): parsing the footer and the page index
 - [READ_PIPELINE.md](READ_PIPELINE.md): how the pipeline drains the plans (`PageSource`, the scheduled columns, the work list, row-group transitions)
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decisions that choose rows and pages
+- [THREADING.md](THREADING.md): the pool threads that run the walks' fetch steps and the virtual threads their reads yield on
 
 ## Fetch sequence
 
@@ -73,7 +74,7 @@ Tests: `CoalescingPolicyTest`, `CoalescedRangesTest`, `PageRangeIoTest`, `Dictio
 
 A `FetchPlan` is one decoded column's view of one row group: `isEmpty()`, a `PageWalk` over `PageInfo`s in file order, and `prefetch()`. `PageSource` drains whichever plan it is given without knowing its type, and the only choice between the two page-reading plans is whether the column chunk has an OffsetIndex.
 
-**A walk never waits for I/O.** A `PageWalk` is a state machine over the bytes its chunk handles hold: `advance()` returns the next page, or `null` with `pending()` naming the bytes the next page needs while they are not present, or `null` at the end. The walk issues no read. The walk keeps the state it reached, a sequential walk's parsed page header included, so the next `advance()` resumes there, parses nothing twice and reads no byte twice. A column's fetch step drives the walk, issues the read of the pending bytes and yields on it ([READ_PIPELINE.md](READ_PIPELINE.md#thread-inventory)); a thread off the pool walks through `PageIterator`, which issues each read and waits for it. Tests: `FetchStepYieldTest`.
+**A walk never waits for I/O.** A `PageWalk` is a state machine over the bytes its chunk handles hold: `advance()` returns the next page, or `null` with `pending()` naming the bytes the next page needs while they are not present, or `null` at the end. The walk issues no read. The walk keeps the state it reached, a sequential walk's parsed page header included, so the next `advance()` resumes there, parses nothing twice and reads no byte twice. A column's fetch step drives the walk, issues the read of the pending bytes and yields on it ([THREADING.md](THREADING.md#invariants)); a thread off the pool walks through `PageIterator`, which issues each read and waits for it. Tests: `FetchStepYieldTest`.
 
 | Plan | Chosen when | Pages | I/O at plan time |
 |---|---|---|---|
