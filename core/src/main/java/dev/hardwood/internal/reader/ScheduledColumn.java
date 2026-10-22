@@ -427,7 +427,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
 
     /// A decoder for the column chunk `info` starts.
     PageDecoder newPageDecoder(PageInfo info) {
-        return new PageDecoder(info.columnMetaData(), info.columnSchema(), decompressorFactory);
+        return new PageDecoder(info.columnMetaData(), info.columnSchema(), decompressorFactory, true,
+                pageSource.workingSet(info.columnSchema()));
     }
 
     /// A page of the column, for its queue: where it came from, and the decoder of its chunk.

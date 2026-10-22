@@ -41,7 +41,7 @@ final class BatchPlan {
 
     /// The plan of a row group after the row cap ended the read; no column reaches it.
     private static final RowGroupBatches AFTER_END =
-            new RowGroupBatches(-1, null, false, false, 0, 0, 0, 0, 0, false, -1);
+            new RowGroupBatches(-1, null, false, false, 0, 0, 0, 0, 0, false, -1, 0);
 
     private final int capacity;
     private final boolean endsAtRowGroups;
@@ -129,7 +129,7 @@ final class BatchPlan {
         }
         if (keptRows == 0) {
             return new RowGroupBatches(workItemIndex, fileName, flag, false, 0, 0, capacity, 0, 0, false,
-                    plannedRows);
+                    plannedRows, 0);
         }
         if (filtered && !alwaysMatches) {
             capHeld = false;
@@ -149,6 +149,7 @@ final class BatchPlan {
             capLeft -= rows;
         }
 
+        int continuedRows = openRows;
         int firstRows = (int) Math.min(capacity - openRows, rows);
         long rest = rows - firstRows;
         int lastRows = rest == 0 ? firstRows : (int) (rest % capacity == 0 ? capacity : rest % capacity);
@@ -162,7 +163,8 @@ final class BatchPlan {
         long rowsBefore = plannedRows;
         plannedRows += rows;
         return new RowGroupBatches(workItemIndex, fileName, flag, closesOpenBatch, keptRows,
-                firstRows, capacity, segmentCount, lastOpen ? -lastRows : lastRows, endsRead, rowsBefore);
+                firstRows, capacity, segmentCount, lastOpen ? -lastRows : lastRows, endsRead, rowsBefore,
+                continuedRows);
     }
 
     /// The batches of one row group, as segments of its kept rows in row order. The first segment
@@ -184,9 +186,17 @@ final class BatchPlan {
     /// @param endsRead whether the row cap ends the read at the end of the last segment
     /// @param readRowsBefore the rows the plan takes from every row group before this one, which
     ///        is the read's row this row group's first planned row is at
+    /// @param continuedRows rows the batch the first segment continues holds from earlier row
+    ///        groups, `0` when the first segment starts a batch
     record RowGroupBatches(int workItemIndex, String fileName, boolean alwaysMatches,
                            boolean closesOpenBatch, long keptRows, int firstRows, int capacity,
-                           int segmentCount, int signedLastRows, boolean endsRead, long readRowsBefore) {
+                           int segmentCount, int signedLastRows, boolean endsRead, long readRowsBefore,
+                           int continuedRows) {
+
+        /// The read's row the batch holding the row group's first planned row starts at.
+        long batchStartRow() {
+            return readRowsBefore - continuedRows;
+        }
 
         /// Rows of segment `i`.
         int segmentRows(int i) {

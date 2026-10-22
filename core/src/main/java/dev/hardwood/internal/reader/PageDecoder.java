@@ -218,6 +218,9 @@ public class PageDecoder {
     /// column that is not binary.
     private final int binaryWidth;
 
+    /// Where the decoder charges each page before decoding it.
+    private final WorkingSet.Column workingSet;
+
     /// Constructor for page decoding, with the fixed-size-list fast path enabled.
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
         this(columnMetaData, column, decompressorFactory, true);
@@ -233,7 +236,19 @@ public class PageDecoder {
     ///         `FIXED_LEN_BYTE_ARRAY` whose width is absent or not positive
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
                        boolean fixedListFastPathEnabled) {
+        this(columnMetaData, column, decompressorFactory, fixedListFastPathEnabled, WorkingSet.standalone(column));
+    }
+
+    /// Constructor for the page decoding of a read, which charges each page to the read's
+    /// working set before decoding it.
+    ///
+    /// @param workingSet the read's handle for this column
+    /// @throws dev.hardwood.reader.SchemaIncompatibleException if the column is a
+    ///         `FIXED_LEN_BYTE_ARRAY` whose width is absent or not positive
+    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
+                       boolean fixedListFastPathEnabled, WorkingSet.Column workingSet) {
         this.columnMetaData = columnMetaData;
+        this.workingSet = workingSet;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
@@ -288,7 +303,7 @@ public class PageDecoder {
                                       DecodeBuffers buffers) {
         requireColumn(binaryWidth >= 0 && column.maxRepetitionLevel() == 0, "decodeFlatBinary");
         InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false, buffers);
-        BinaryPageValues values = binaryValues(page, dictionary, scratch);
+        BinaryPageValues values = binaryValues(page, dictionary, scratch, false);
         page.commit(column);
         return values;
     }
@@ -304,7 +319,7 @@ public class PageDecoder {
                                           DecodeBuffers buffers) {
         InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true, buffers);
         FlatPageValues flat = binaryWidth < 0 ? numericValues(page, dictionary, scratch) : null;
-        BinaryPageValues binary = binaryWidth < 0 ? null : binaryValues(page, dictionary, scratch);
+        BinaryPageValues binary = binaryWidth < 0 ? null : binaryValues(page, dictionary, scratch, true);
         page.commit(column);
         return new InPlaceNestedPage(page.numValues, page.definitionLevels, page.repetitionLevels,
                 page.fixedListK, flat, binary, null);
@@ -378,7 +393,8 @@ public class PageDecoder {
         };
     }
 
-    private BinaryPageValues binaryValues(InPlacePage page, Dictionary dictionary, LevelScratch scratch) {
+    private BinaryPageValues binaryValues(InPlacePage page, Dictionary dictionary, LevelScratch scratch,
+                                          boolean kept) {
         int maxDefLevel = column.maxDefinitionLevel();
         return switch (page.encoding) {
             case PLAIN -> BinaryPageValues.plain(column.type(), binaryWidth, page.definitionLevels, maxDefLevel,
@@ -388,7 +404,8 @@ public class PageDecoder {
             case DELTA_LENGTH_BYTE_ARRAY -> BinaryPageValues.deltaLength(page.definitionLevels, maxDefLevel,
                     page.numValues, page.data, page.valuesOffset, page.limit, scratch);
             case DELTA_BYTE_ARRAY -> BinaryPageValues.deltaByteArray(binaryWidth, page.definitionLevels,
-                    maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit, scratch);
+                    maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit, scratch,
+                    valueBytes -> workingSet.page(page.numValues, page.uncompressedSize, kept, valueBytes));
             default -> {
                 int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
                 int[] ids = decodeIds(page.data, page.valuesOffset, page.limit, idCount, scratch);
@@ -454,6 +471,9 @@ public class PageDecoder {
         else {
             throw new ParquetReadException("Unexpected page type for a data page: " + pageHeader.type());
         }
+        workingSet.page(pageHeader.type() == PageType.DATA_PAGE
+                ? pageHeader.dataPageHeader().numValues()
+                : pageHeader.dataPageHeaderV2().numValues(), pageHeader.uncompressedPageSize(), ownBytes);
 
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();

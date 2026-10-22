@@ -117,6 +117,7 @@ public class RowGroupIterator implements Closeable {
     /// The columns the read exposes and decodes; `null` until [#initialize]. Every plan spans
     /// its decoded columns.
     private ReadProjection projection;
+    private WorkingSet workingSet;
     private ResolvedPredicate filterPredicate;
     /// Planning state, carried between files because a file is planned when the
     /// read reaches it rather than all at once.
@@ -383,6 +384,12 @@ public class RowGroupIterator implements Closeable {
         this.physicalSkip = physicalSkip;
     }
 
+    /// The read's working set, which its fetch plans and page decoders charge; `null` until
+    /// [#initialize(ReadProjection, ResolvedPredicate, boolean)].
+    public WorkingSet workingSet() {
+        return workingSet;
+    }
+
     /// The read's executor, which the read's [ReadScheduler] takes.
     public ReadExecutor readExecutor() {
         return readExecutor;
@@ -494,6 +501,7 @@ public class RowGroupIterator implements Closeable {
         ProjectedSchema projected = projection.decoded();
         this.metadataFilteringEnabled = metadataFilteringEnabled;
         this.projection = projection;
+        this.workingSet = new WorkingSet(projected.getProjectedColumnCount());
         this.filterPredicate = filter;
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
         this.dropLeavesByColumn = filter != null && metadataFilteringEnabled
@@ -1195,7 +1203,7 @@ public class RowGroupIterator implements Closeable {
                         perRgMaxRows, leaves, BoundsReadability.ofOneColumn(readability.int96TimestampOrder(fileOrdinal)),
                         matchingRows, rowGroup.numRows(), preloadedDictionary,
                         shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal),
-                        prefetchTasks);
+                        prefetchTasks, workingSet.column(projCol, columnSchema));
                 continue;
             }
 
@@ -1262,7 +1270,8 @@ public class RowGroupIterator implements Closeable {
                         neededPages, groups, handles, dictionaryHandle, dictStart,
                         firstDataPageOffset,
                         columnSchema, columnChunk,
-                        context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary);
+                        context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary,
+                        workingSet.column(projCol, columnSchema));
             }
             catch (ParquetReadException e) {
                 throw new ParquetReadException(ExceptionContext.readPrefix(inputFile.name(),

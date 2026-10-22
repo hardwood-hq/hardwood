@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
+import java.util.function.LongConsumer;
 
 import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
 import dev.hardwood.metadata.PhysicalType;
@@ -186,10 +187,13 @@ final class BinaryPageValues {
     ///
     /// @param width the width of a `FIXED_LEN_BYTE_ARRAY` column's values, which every value must
     ///        have; `0` for a `BYTE_ARRAY` column
+    /// @param chargeValues told the bytes the values take once reconstructed, before they are
+    ///        allocated
     ///
     /// @throws ParquetReadException if the value section is malformed
     static BinaryPageValues deltaByteArray(int width, int[] definitionLevels, int maxDefinitionLevel, int numValues,
-                                           byte[] data, int offset, int limit, PageDecoder.LevelScratch scratch) {
+                                           byte[] data, int offset, int limit, PageDecoder.LevelScratch scratch,
+                                           LongConsumer chargeValues) {
         int nonNull = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, numValues);
         int[] prefixLengths = scratch.ids(nonNull);
         int[] suffixLengths = scratch.lengths(nonNull);
@@ -211,6 +215,7 @@ final class BinaryPageValues {
             throw new ParquetReadException("DELTA_BYTE_ARRAY values of a page take " + total
                     + " bytes, more than one array holds");
         }
+        chargeValues.accept(total);
         byte[] values = scratch.valueBytes((int) total);
         int pos = 0;
         int previousStart = 0;

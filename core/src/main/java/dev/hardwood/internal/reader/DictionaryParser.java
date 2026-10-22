@@ -206,11 +206,22 @@ public final class DictionaryParser {
     /// @return the parsed dictionary, or `null` if no dictionary page is found
     public static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema,
                             ColumnMetaData metaData, HardwoodContextImpl context) {
-        return context.decode(buffers -> parse(dictRegion, columnSchema, metaData, context, buffers));
+        return parse(dictRegion, columnSchema, metaData, context, WorkingSet.standalone(columnSchema));
+    }
+
+    /// Parses the dictionary page at the start of `dictRegion` as [#parse] does, charging it to
+    /// a read's working set before it is decompressed.
+    ///
+    /// @param workingSet the read's handle for the column
+    /// @return the parsed dictionary, or `null` if no dictionary page is found
+    public static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema, ColumnMetaData metaData,
+                                   HardwoodContextImpl context, WorkingSet.Column workingSet) {
+        return context.decode(buffers -> parse(dictRegion, columnSchema, metaData, context, workingSet, buffers));
     }
 
     private static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema, ColumnMetaData metaData,
-                                    HardwoodContextImpl context, DecodeBuffers buffers) {
+                                    HardwoodContextImpl context, WorkingSet.Column workingSet,
+                                    DecodeBuffers buffers) {
         ThriftCompactReader probeReader = new ThriftCompactReader(dictRegion, 0);
         PageHeader header = PageHeaderReader.read(probeReader);
 
@@ -221,7 +232,7 @@ public final class DictionaryParser {
         int headerSize = probeReader.getBytesRead();
         ByteBuffer compressedData = dictRegion.slice(headerSize, header.compressedPageSize());
 
-        return parsePage(header, compressedData, columnSchema, metaData, context, buffers);
+        return parsePage(header, compressedData, columnSchema, metaData, context, workingSet, buffers);
     }
 
     /// Parses a dictionary page whose header the caller has already read. Like [#parse], it
@@ -253,13 +264,25 @@ public final class DictionaryParser {
     public static Dictionary parsePage(PageHeader header, ByteBuffer compressedData,
                             ColumnSchema columnSchema, ColumnMetaData metaData,
                             HardwoodContextImpl context) {
+        return parsePage(header, compressedData, columnSchema, metaData, context,
+                WorkingSet.standalone(columnSchema));
+    }
+
+    /// Parses a dictionary page whose header the caller has already read, as [#parsePage] does,
+    /// charging it to a read's working set before it is decompressed.
+    ///
+    /// @param workingSet the read's handle for the column
+    /// @return the parsed dictionary
+    public static Dictionary parsePage(PageHeader header, ByteBuffer compressedData, ColumnSchema columnSchema,
+                                       ColumnMetaData metaData, HardwoodContextImpl context,
+                                       WorkingSet.Column workingSet) {
         return context.decode(buffers -> parsePage(header, compressedData, columnSchema, metaData, context,
-                buffers));
+                workingSet, buffers));
     }
 
     private static Dictionary parsePage(PageHeader header, ByteBuffer compressedData, ColumnSchema columnSchema,
                                         ColumnMetaData metaData, HardwoodContextImpl context,
-                                        DecodeBuffers buffers) {
+                                        WorkingSet.Column workingSet, DecodeBuffers buffers) {
         // A read has checked this already; the metadata tools parse dictionaries without a read
         FixedWidthValidator.validate(null, columnSchema);
         if (header.type() != PageType.DICTIONARY_PAGE) {
@@ -289,6 +312,7 @@ public final class DictionaryParser {
             CrcValidator.assertCorrectCrc(header.crc(), compressedData);
         }
 
+        workingSet.dictionary(numValues, header.uncompressedPageSize());
         return decompress(compressedData, numValues, header.uncompressedPageSize(),
                 columnSchema, metaData.codec(), context, buffers);
     }

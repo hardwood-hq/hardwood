@@ -43,6 +43,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     private final String fileName;
     /// The dictionary pruning has already read, or `null` when the plan reads it.
     private final Dictionary preloadedDictionary;
+    /// Where the plan charges the dictionary it parses.
+    private final WorkingSet.Column workingSet;
 
     private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
                               List<RowGroupIterator.PageGroup> pageGroups,
@@ -53,7 +55,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                               ColumnSchema columnSchema, ColumnChunk columnChunk,
                               HardwoodContextImpl context,
                               int rowGroupIndex, String fileName,
-                              Dictionary preloadedDictionary) {
+                              Dictionary preloadedDictionary, WorkingSet.Column workingSet) {
         this.neededPages = neededPages;
         this.pageGroups = pageGroups;
         this.chunkHandles = chunkHandles;
@@ -66,6 +68,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
         this.preloadedDictionary = preloadedDictionary;
+        this.workingSet = workingSet;
     }
 
     @Override
@@ -168,6 +171,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     ///        OffsetIndex (may differ from `neededPages.get(0)` when filtering)
     /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
     ///        the page groups leave the dictionary page out; `null` otherwise
+    /// @param workingSet where the plan charges the dictionary it parses
     static IndexedFetchPlan build(List<RowGroupIterator.NeededPage> neededPages,
                                    List<RowGroupIterator.PageGroup> pageGroups,
                                    List<ChunkHandle> chunkHandles,
@@ -177,10 +181,10 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                                    ColumnSchema columnSchema, ColumnChunk columnChunk,
                                    HardwoodContextImpl context,
                                    int rowGroupIndex, String fileName,
-                                   Dictionary preloadedDictionary) {
+                                   Dictionary preloadedDictionary, WorkingSet.Column workingSet) {
         return new IndexedFetchPlan(neededPages, pageGroups, chunkHandles, dictionaryHandle, dictionaryStart,
                 firstDataPageOffset, columnSchema, columnChunk, context,
-                rowGroupIndex, fileName, preloadedDictionary);
+                rowGroupIndex, fileName, preloadedDictionary, workingSet);
     }
 
     /// Walk that parses the dictionary on first access and yields [PageInfo] objects whose bytes
@@ -291,6 +295,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
 
         private Dictionary parseDictionary(ByteBuffer dictRegion) throws IOException {
             if (preloadedDictionary != null) {
+                workingSet.dictionary(preloadedDictionary);
                 return preloadedDictionary;
             }
             if (dictRegion == null) {
@@ -299,7 +304,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             // Not retitled on the way out. The parser says what is wrong with the
             // dictionary — a checksum that disagrees, a header that will not parse —
             // and naming the step that noticed would replace that with less.
-            return DictionaryParser.parse(dictRegion, columnSchema, columnChunk.metaData(), context);
+            return DictionaryParser.parse(dictRegion, columnSchema, columnChunk.metaData(), context, workingSet);
         }
 
         private void emitEvent() {

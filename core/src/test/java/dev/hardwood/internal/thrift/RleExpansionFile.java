@@ -8,6 +8,8 @@
 package dev.hardwood.internal.thrift;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.CRC32;
+import java.util.zip.GZIPOutputStream;
 
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -22,6 +25,8 @@ import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.PageEncodingStats;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -36,6 +41,12 @@ public final class RleExpansionFile {
     private static final byte[] MAGIC = "PAR1".getBytes(StandardCharsets.US_ASCII);
 
     private static final int PAGE_TYPE_DATA_PAGE_V2 = 3;
+
+    /// The encoding stats of a chunk whose one data page is dictionary-encoded, which lets pruning
+    /// read its dictionary.
+    private static final List<PageEncodingStats> DICTIONARY_ENCODED = List.of(
+            new PageEncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
+            new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, 1));
 
     private RleExpansionFile() {
     }
@@ -73,6 +84,90 @@ public final class RleExpansionFile {
         out.writeBytes(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN)
                 .putInt(footerBytes.length).array());
         out.writeBytes(MAGIC);
+        return out.toByteArray();
+    }
+
+    /// `rowGroups` row groups of `columns` required `INT64` columns `c0`, `c1`, …, compressed with
+    /// GZIP: each chunk a dictionary page of `dictionaryBytes` zero bytes, `dictionaryBytes / 8`
+    /// entries of `0`, and one data page repeating entry 0 `pageValues` times, which the encoding
+    /// stats record, so that pruning can read the dictionary. The dictionary pages take a few KiB
+    /// each on disk whatever they declare.
+    public static byte[] buildWide(int columns, int rowGroups, int dictionaryBytes, int pageValues) {
+        byte[] dictionary = gzipZeros(dictionaryBytes);
+        byte[] body = dataPageBody(pageValues);
+        byte[] compressedBody = gzip(body);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.writeBytes(MAGIC);
+        List<RowGroup> groups = new ArrayList<>();
+        for (int g = 0; g < rowGroups; g++) {
+            List<ColumnChunk> chunks = new ArrayList<>();
+            long groupSize = 0;
+            for (int c = 0; c < columns; c++) {
+                long dictionaryOffset = out.size();
+                ThriftCompactWriter dictionaryHeader = new ThriftCompactWriter();
+                PageHeaderWriter.writeDictionaryPageV1(dictionaryHeader, dictionaryBytes / Long.BYTES,
+                        dictionaryBytes, dictionary.length, crc(dictionary), Encoding.PLAIN);
+                out.writeBytes(dictionaryHeader.toByteArray());
+                out.writeBytes(dictionary);
+
+                long dataOffset = out.size();
+                ThriftCompactWriter dataHeader = new ThriftCompactWriter();
+                PageHeaderWriter.writeDataPageV1(dataHeader, pageValues, body.length, compressedBody.length,
+                        crc(compressedBody), Encoding.RLE_DICTIONARY);
+                out.writeBytes(dataHeader.toByteArray());
+                out.writeBytes(compressedBody);
+                long chunkSize = out.size() - dictionaryOffset;
+                groupSize += chunkSize;
+
+                ColumnMetaData metaData = new ColumnMetaData(PhysicalType.INT64,
+                        List.of(Encoding.PLAIN, Encoding.RLE_DICTIONARY), FieldPath.of("c" + c),
+                        CompressionCodec.GZIP, pageValues, chunkSize, chunkSize, Map.of(), dataOffset,
+                        dictionaryOffset, null, null, null, null, DICTIONARY_ENCODED, null);
+                chunks.add(new ColumnChunk(metaData, null, null, null, null, null));
+            }
+            groups.add(new RowGroup(chunks, groupSize, pageValues));
+        }
+
+        List<SchemaElement> schema = new ArrayList<>();
+        schema.add(new SchemaElement("r", null, null, null, columns, null, null, null, null, null));
+        for (int c = 0; c < columns; c++) {
+            schema.add(new SchemaElement("c" + c, PhysicalType.INT64, null, RepetitionType.REQUIRED, null, null,
+                    null, null, null, null));
+        }
+        ThriftCompactWriter footer = new ThriftCompactWriter();
+        FileMetaDataWriter.write(footer, new FileMetaData(1, schema, (long) pageValues * rowGroups, groups, Map.of(),
+                null, List.of()));
+        byte[] footerBytes = footer.toByteArray();
+        out.writeBytes(footerBytes);
+        out.writeBytes(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(footerBytes.length).array());
+        out.writeBytes(MAGIC);
+        return out.toByteArray();
+    }
+
+    private static byte[] gzipZeros(int size) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] zeros = new byte[1 << 20];
+        try (GZIPOutputStream gzip = new GZIPOutputStream(out)) {
+            for (int written = 0; written < size; written += zeros.length) {
+                gzip.write(zeros, 0, Math.min(zeros.length, size - written));
+            }
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return out.toByteArray();
+    }
+
+    private static byte[] gzip(byte[] bytes) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (GZIPOutputStream gzip = new GZIPOutputStream(out)) {
+            gzip.write(bytes);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
         return out.toByteArray();
     }
 
