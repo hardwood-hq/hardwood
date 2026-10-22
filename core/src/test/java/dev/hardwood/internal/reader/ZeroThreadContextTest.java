@@ -479,7 +479,8 @@ class ZeroThreadContextTest {
     }
 
     /// A read of the fixture's files, not in memory, over `v` in batches of 100, whose
-    /// consumer runs on a thread of its own and waits for a read held after the first batch.
+    /// consumer runs on a thread of its own and waits for a read on a virtual thread held after
+    /// the first batch.
     private static final class HeldRead implements AutoCloseable {
 
         final CountDownLatch held = new CountDownLatch(1);
@@ -551,7 +552,9 @@ class ZeroThreadContextTest {
         }
     }
 
-    /// A file not in memory whose reads, once its [HeldRead] is armed, wait until it is released.
+    /// A file not in memory whose reads on a virtual thread, once its [HeldRead] is armed, wait
+    /// until it is released. A read the consumer makes on its own thread, planning a work item,
+    /// goes through: held, it would leave the consumer waiting inside the read rather than for it.
     private static final class HeldInputFile extends CountingInputFile {
 
         private final HeldRead read;
@@ -563,7 +566,7 @@ class ZeroThreadContextTest {
 
         @Override
         public ByteBuffer readRange(long offset, int length) throws IOException {
-            if (read.armed.get()) {
+            if (read.armed.get() && Thread.currentThread().isVirtual()) {
                 read.held.countDown();
                 boolean interrupted = false;
                 while (true) {
