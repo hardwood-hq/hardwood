@@ -323,8 +323,9 @@ class PageBodyBoundTest {
         return metaData(PhysicalType.INT64, codec, encoding);
     }
 
+    /// The metadata of a chunk that no page here outgrows.
     private static ColumnMetaData metaData(PhysicalType type, CompressionCodec codec, Encoding encoding) {
-        return new ColumnMetaData(type, List.of(encoding), FieldPath.of("c"), codec, 0, 0, 0,
+        return new ColumnMetaData(type, List.of(encoding), FieldPath.of("c"), codec, Long.MAX_VALUE, 0, 0,
                 Map.of(), 0, null, null, null, null, null, List.of(), null);
     }
 

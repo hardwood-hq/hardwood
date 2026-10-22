@@ -18,7 +18,7 @@ Related documents:
 
 The steps, in order (`PageDecoder.readInPlace`):
 
-1. Parse the page header from the buffer (`PageHeaderReader`). A header exceeding the [page limit](#page-decode) is refused as it is parsed. A page that is not a data page, or whose encoding has no in-place reader for the column's type, is refused before anything is decompressed ([Refusal](#encodings-and-readers)).
+1. Parse the page header from the buffer (`PageHeaderReader`). A header exceeding the [page limit](#page-decode) is refused as it is parsed, and a data page declaring more values than its column chunk's `num_values` before anything is sized from it: the two then disagree about the column. A page that is not a data page, or whose encoding has no in-place reader for the column's type, is refused before anything is decompressed ([Refusal](#encodings-and-readers)).
 2. Slice the body without copying. If the header carries a CRC, check it over the stored (compressed) body (`CrcValidator`); a mismatch raises `ParquetReadException`.
 3. Decompress and split the body by page type:
 

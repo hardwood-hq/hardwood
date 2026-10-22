@@ -75,7 +75,7 @@ PageSource.next() ─→ fetcher ─→ Placer (flat): segments into cells ─�
                                               consumer ←── readyQueue (BatchExchange)
 ```
 
-The fetcher takes each `PageInfo` from its `PageSource`. It builds a new `PageDecoder` when a page's column chunk metadata is incompatible with the current one, which a file transition brings. A `PageInfo` is one of three kinds:
+The fetcher takes each `PageInfo` from its `PageSource`. It builds a new `PageDecoder` for each column chunk its pages come from (`PageDecoder.decodesChunk`), since a decoder checks a page against its own chunk's metadata ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)). A `PageInfo` is one of three kinds:
 
 | Kind | Produced by | Handling |
 |---|---|---|

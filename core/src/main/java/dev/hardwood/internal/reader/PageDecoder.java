@@ -214,13 +214,11 @@ public class PageDecoder {
         };
     }
 
-    /// Checks if this PageDecoder is compatible with the given column metadata.
-    /// Used for cross-file prefetching to determine if PageDecoder can be reused.
-    ///
-    /// @param otherMetaData the column metadata to check against
-    /// @return true if compatible (same codec), false otherwise
-    public boolean isCompatibleWith(ColumnMetaData otherMetaData) {
-        return columnMetaData.codec() == otherMetaData.codec();
+    /// Whether this is the decoder of the column chunk `metaData` describes. A decoder checks a
+    /// page against its own chunk's metadata, so a page of another chunk takes a decoder of its
+    /// own, even one with the same codec.
+    public boolean decodesChunk(ColumnMetaData metaData) {
+        return columnMetaData == metaData;
     }
 
     /// Gets the decompressor factory used by this PageDecoder.
@@ -393,6 +391,15 @@ public class PageDecoder {
         }
     }
 
+    /// Refuses a data page declaring more values than its whole column chunk. The page and the
+    /// chunk then disagree about the column, and the page's count would size its scratch.
+    private void requireWithinChunk(int pageValues) {
+        if (pageValues > columnMetaData.numValues()) {
+            throw new ParquetReadException("Data page declares " + pageValues
+                    + " values, more than the " + columnMetaData.numValues() + " of its column chunk");
+        }
+    }
+
     /// Reads the header of a data page, refuses it before decompressing it if its encoding is not
     /// defined over the column's type ([#requireReader]), and decodes its levels.
     ///
@@ -405,10 +412,12 @@ public class PageDecoder {
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
         if (pageHeader.type() == PageType.DATA_PAGE) {
             DataPageHeader header = pageHeader.dataPageHeader();
+            requireWithinChunk(header.numValues());
             requireReader(header.encoding(), header.encodingValue(), dictionary);
         }
         else if (pageHeader.type() == PageType.DATA_PAGE_V2) {
             DataPageHeaderV2 header = pageHeader.dataPageHeaderV2();
+            requireWithinChunk(header.numValues());
             requireReader(header.encoding(), header.encodingValue(), dictionary);
         }
         else {

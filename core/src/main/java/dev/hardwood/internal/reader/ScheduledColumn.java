@@ -389,7 +389,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                     break;
                 }
                 if (!info.isBoundaryMarker()
-                        && (pageDecoder == null || !pageDecoder.isCompatibleWith(info.columnMetaData()))) {
+                        && (pageDecoder == null || !pageDecoder.decodesChunk(info.columnMetaData()))) {
                     pageDecoder = newPageDecoder(info);
                 }
                 if (!queue(info, pageDecoder)) {

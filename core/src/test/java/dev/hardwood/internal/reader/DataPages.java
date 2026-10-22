@@ -87,9 +87,10 @@ final class DataPages {
         return result;
     }
 
+    /// A decoder of a chunk of `column` that no page here outgrows.
     static PageDecoder decoder(ColumnSchema column, CompressionCodec codec) {
         ColumnMetaData metaData = new ColumnMetaData(column.type(), List.of(Encoding.PLAIN), FieldPath.of("c"),
-                codec, 0, 0, 0, Map.of(), 0, null, null, null, null, null, List.of(), null);
+                codec, Long.MAX_VALUE, 0, 0, Map.of(), 0, null, null, null, null, null, List.of(), null);
         return new PageDecoder(metaData, column, new DecompressorFactory(null));
     }
 

@@ -71,6 +71,41 @@ class DeclaredValueCountTest {
         }
     }
 
+    @Test
+    void pageDeclaringMoreValuesThanItsChunkFails() {
+        assertThatThrownBy(() -> countRows(RleExpansionFile.build(1000, 1, 999)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page declares 1000 values, "
+                        + "more than the 999 of its column chunk");
+    }
+
+    @Test
+    void pagesAddingUpToTheirChunkRead() throws IOException {
+        assertThat(countRows(RleExpansionFile.build(1000, 3, 3000))).isEqualTo(3000);
+    }
+
+    @Test
+    void v2PageDeclaringMoreValuesThanItsChunkFails() {
+        assertThatThrownBy(() -> countRows(RleExpansionFile.build(true, new Chunk(1000, 1, 999))))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page declares 1000 values, "
+                        + "more than the 999 of its column chunk");
+    }
+
+    @Test
+    void v2PagesAddingUpToTheirChunkRead() throws IOException {
+        assertThat(countRows(RleExpansionFile.build(true, new Chunk(1000, 3, 3000)))).isEqualTo(3000);
+    }
+
+    @Test
+    void eachPageIsCheckedAgainstItsOwnRowGroupsChunk() throws IOException {
+        // The second row group's page holds more values than the first row group's whole chunk:
+        // checked against the first chunk, as a decoder kept across chunks would, it is refused.
+        byte[] file = RleExpansionFile.build(false, new Chunk(10, 1, 10), new Chunk(1000, 1, 1000));
+
+        assertThat(countRows(file)).isEqualTo(1010);
+    }
+
     /// The rows of the first 100 000 a row reader yields, each checked to hold the one dictionary
     /// value.
     private static long countRows(byte[] file) throws IOException {
