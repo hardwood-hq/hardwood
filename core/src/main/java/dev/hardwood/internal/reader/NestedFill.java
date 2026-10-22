@@ -69,18 +69,19 @@ final class NestedFill {
 
         int[] definitionLevels = null;
         int[] repetitionLevels = null;
+        PageDecoder.LevelScratch viewLevels = null;
         if (!fixedWidth && keepLevels) {
             definitionLevels = new int[values];
             repetitionLevels = new int[values];
         }
         else if (!fixedWidth) {
-            PageDecoder.LevelScratch scratch = buffers.get(VIEW_LEVELS);
-            if (scratch == null) {
-                scratch = new PageDecoder.LevelScratch();
-                buffers.set(VIEW_LEVELS, scratch);
+            viewLevels = buffers.get(VIEW_LEVELS);
+            if (viewLevels == null) {
+                viewLevels = new PageDecoder.LevelScratch();
+                buffers.set(VIEW_LEVELS, viewLevels);
             }
-            definitionLevels = allPresent ? null : scratch.definitionLevels(values);
-            repetitionLevels = column.maxRepetitionLevel() > 0 ? scratch.repetitionLevels(values) : null;
+            definitionLevels = allPresent ? null : viewLevels.definitionLevels(values);
+            repetitionLevels = column.maxRepetitionLevel() > 0 ? viewLevels.repetitionLevels(values) : null;
         }
 
         for (int i = 0; i < segments.size(); i++) {
@@ -128,6 +129,10 @@ final class NestedFill {
         batch.realView = realView;
         batch.realValues = realView != null ? out : null;
         NestedIndex.compute(batch, definitionLevels, repetitionLevels, maxDefinitionLevel, layers, mode);
+        if (viewLevels != null) {
+            // A cell of very long lists holds more values than a batch has rows
+            viewLevels.trim();
+        }
         return batch;
     }
 

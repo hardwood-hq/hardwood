@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -73,6 +74,25 @@ class LibdeflateDecompressorIT {
             assertThat(buffer.position()).as("%s position", kind).isEqualTo(position);
             assertThat(buffer.limit()).as("%s limit", kind).isEqualTo(limit);
         }
+    }
+
+    /// A page above what a set of buffers keeps decompresses into native memory of its own, from
+    /// a heap page and a direct one alike.
+    @ParameterizedTest
+    @EnumSource(PageBuffer.class)
+    void decompressesAPageAboveTheRetainedSize(PageBuffer kind) throws Exception {
+        byte[] original = new byte[DecodeBuffers.RETAINED_BYTES + 1];
+        Random random = new Random(13);
+        for (int i = 0; i < original.length; i++) {
+            original[i] = (byte) (random.nextInt(16) + 'a');
+        }
+        ByteBuffer buffer = kind.wrap(gzipCompress(original));
+        DecodeBuffers buffers = TestDecodeBuffers.create();
+
+        byte[] result = new LibdeflateDecompressor(pool).decompress(buffer, original.length,
+                new byte[original.length], buffers);
+
+        assertThat(result).as("%s", kind).isEqualTo(original);
     }
 
     @Test

@@ -46,9 +46,13 @@ public class PageDecoder {
     /// [Dictionary#parse] copies out.
     private static final DecodeBuffers.Slot<byte[]> TRANSIENT_BYTES = DecodeBuffers.slot();
 
-    /// The task's [#TRANSIENT_BYTES] buffer, grown to at least `size` bytes. Its contents are
-    /// valid until the next call with `buffers`.
+    /// The task's [#TRANSIENT_BYTES] buffer, grown to at least `size` bytes, or a buffer of its
+    /// own above [DecodeBuffers#RETAINED_BYTES]. Its contents are valid until the next call with
+    /// `buffers`.
     static byte[] transientBytes(DecodeBuffers buffers, int size) {
+        if (size > DecodeBuffers.RETAINED_BYTES) {
+            return new byte[size];
+        }
         byte[] bytes = buffers.get(TRANSIENT_BYTES);
         if (bytes == null || bytes.length < size) {
             bytes = new byte[size];
@@ -59,6 +63,33 @@ public class PageDecoder {
 
     /// Reusable level-decoding buffers owned by one in-flight page slot.
     static final class LevelScratch {
+
+        /// Drops the buffers larger than [DecodeBuffers#RETAINED_BYTES], once the page that needed
+        /// them is done with them.
+        void trim() {
+            repetitionLevels = retained(repetitionLevels);
+            definitionLevels = retained(definitionLevels);
+            ids = retained(ids);
+            bytePrefix = retained(bytePrefix);
+            recordStarts = retained(recordStarts);
+            bytes = retained(bytes);
+            levelBytes = retained(levelBytes);
+            lengths = retained(lengths);
+            valueBytes = retained(valueBytes);
+            keptDefinitionLevels = retained(keptDefinitionLevels);
+            keptRepetitionLevels = retained(keptRepetitionLevels);
+        }
+
+        private static int[] retained(int[] buffer) {
+            return buffer != null && (long) buffer.length * Integer.BYTES > DecodeBuffers.RETAINED_BYTES
+                    ? null
+                    : buffer;
+        }
+
+        private static byte[] retained(byte[] buffer) {
+            return buffer != null && buffer.length > DecodeBuffers.RETAINED_BYTES ? null : buffer;
+        }
+
         private int[] repetitionLevels;
         private int[] definitionLevels;
 

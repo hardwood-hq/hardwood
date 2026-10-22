@@ -28,16 +28,15 @@ public class SnappyDecompressor implements Decompressor {
         try {
             // Declared by the codec, which uncompresses a buffer and reaches nothing.
             if (compressed.hasArray()) {
-                byte[] input = compressed.array();
-                int offset = compressed.arrayOffset() + compressed.position();
-                int length = compressed.remaining();
-                // The stream's own length, checked before the native call writes into `dest`
-                int declared = Snappy.uncompressedLength(input, offset, length);
-                if (declared != uncompressedSize) {
-                    throw new ParquetReadException("Snappy decompression size mismatch: expected "
-                            + uncompressedSize + ", got " + declared);
-                }
-                actualSize = Snappy.uncompress(input, offset, length, dest, 0);
+                actualSize = uncompressHeap(compressed.array(), compressed.arrayOffset() + compressed.position(),
+                        compressed.remaining(), uncompressedSize, dest);
+            }
+            else if (uncompressedSize > DecodeBuffers.RETAINED_BYTES) {
+                // A page above what a set of buffers keeps goes heap to heap: a direct buffer of
+                // its own would be freed only when a collection finds it
+                byte[] input = new byte[compressed.remaining()];
+                compressed.duplicate().get(input);
+                actualSize = uncompressHeap(input, 0, input.length, uncompressedSize, dest);
             }
             else {
                 ByteBuffer directOutput = borrowDirectBuffer(buffers, uncompressedSize);
@@ -57,6 +56,17 @@ public class SnappyDecompressor implements Decompressor {
                     "Snappy decompression size mismatch: expected " + uncompressedSize + ", got " + actualSize);
         }
         return dest;
+    }
+
+    private static int uncompressHeap(byte[] input, int offset, int length, int uncompressedSize, byte[] dest)
+            throws IOException {
+        // The stream's own length, checked before the native call writes into `dest`
+        int declared = Snappy.uncompressedLength(input, offset, length);
+        if (declared != uncompressedSize) {
+            throw new ParquetReadException("Snappy decompression size mismatch: expected "
+                    + uncompressedSize + ", got " + declared);
+        }
+        return Snappy.uncompress(input, offset, length, dest, 0);
     }
 
     private static ByteBuffer borrowDirectBuffer(DecodeBuffers buffers, int minSize) {
