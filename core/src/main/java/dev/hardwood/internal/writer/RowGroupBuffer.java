@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutorService;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.thrift.PageLimit;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.CompressionCodec;
@@ -88,8 +89,8 @@ public final class RowGroupBuffer {
         // however many columns it has.
         long budgetBytesPerColumn = rowGroupBufferTargetBytes / columns.length;
         for (int c = 0; c < columns.length; c++) {
-            columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, pageTargetRows, budgetBytesPerColumn,
-                    targetRows, encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
+            columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, pageTargetRows,
+                    PageLimit.DEFAULT_MAX_PAGE_VALUES, budgetBytesPerColumn, targetRows, encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
         }
     }
 

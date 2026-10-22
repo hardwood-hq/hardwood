@@ -26,6 +26,7 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.compression.CompressorFactory;
+import dev.hardwood.internal.thrift.PageLimit;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -159,8 +160,8 @@ class FlatAppendTest {
 
     private static ColumnChunkBuffer buffer(FileSchema schema, ColumnEncoding encoding, double bloomFilterFpp) {
         // Small pages, so a chunk has many and the page cuts are compared too.
-        return new ColumnChunkBuffer(schema.getColumn(0), 4096, WriterConfig.DEFAULT_PAGE_TARGET_ROWS, 1 << 20,
-                RowGroupBuffer.MAX_ROWS, encoding, 64, new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
+        return new ColumnChunkBuffer(schema.getColumn(0), 4096, WriterConfig.DEFAULT_PAGE_TARGET_ROWS,
+                PageLimit.DEFAULT_MAX_PAGE_VALUES, 1 << 20, RowGroupBuffer.MAX_ROWS, encoding, 64, new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
                 CompressionCodec.UNCOMPRESSED, RowGroupBuffer.MAX_STORE_CAPACITY, bloomFilterFpp);
     }
 

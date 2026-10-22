@@ -14,14 +14,19 @@ package dev.hardwood.internal.thrift;
 /// output from `uncompressed_page_size`, the level and dictionary-id scratch from
 /// `num_values`. Nothing else in the file bounds either, since an RLE run encodes any count in
 /// a few bytes, so the header readers hold both to this limit.
-final class PageLimit {
+public final class PageLimit {
 
     static final String MAX_PAGE_BYTES_PROPERTY = "hardwood.internal.maxPageBytes";
 
     /// How the error for a data page's `num_values` names its bound.
     static final String MAX_PAGE_VALUES_BOUND = MAX_PAGE_BYTES_PROPERTY + " / " + Integer.BYTES;
 
-    private static final int DEFAULT_MAX_PAGE_BYTES = 256 * 1024 * 1024;
+    /// The largest `uncompressed_page_size` a reader accepts without the override.
+    public static final int DEFAULT_MAX_PAGE_BYTES = 256 * 1024 * 1024;
+
+    /// The most values a data page may declare to a reader without the override: what a writer
+    /// holds its pages to, so that every reader opens the files it writes.
+    public static final int DEFAULT_MAX_PAGE_VALUES = DEFAULT_MAX_PAGE_BYTES / Integer.BYTES;
 
     private PageLimit() {
     }

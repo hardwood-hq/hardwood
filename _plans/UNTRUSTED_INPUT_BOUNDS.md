@@ -77,8 +77,11 @@ page limit in `VALUE_DECODE.md`.
 `DataPageHeaderReader` and `DataPageHeaderV2Reader` reject a `num_values` above the page limit
 divided by 4, the bytes of one `int` scratch entry. A hand-built file with the shape of DuckDB's
 `42.parquet` (a one-entry dictionary and data pages of `2^31 − 1` values in a single RLE run)
-fails with `ParquetReadException` instead of `OutOfMemoryError` at `LevelScratch.ids`. Check that
-`WriterConfig`'s page row target cannot produce a page the reader refuses.
+fails with `ParquetReadException` instead of `OutOfMemoryError` at `LevelScratch.ids`. The
+writer cuts its pages at the default count (`ColumnChunkBuffer.pageCut`), which only binds for a
+caller who raises both `pageTargetBytes` and `pageTargetRows`, and clamps its byte target to half
+the page limit, since the cut does not charge a page's framing. A single record of more entries
+or bytes is still one page.
 
 ### Stage 4: #610 page against chunk
 

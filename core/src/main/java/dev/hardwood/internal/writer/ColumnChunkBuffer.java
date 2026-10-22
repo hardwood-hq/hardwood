@@ -24,6 +24,7 @@ import dev.hardwood.internal.encoding.DictionaryEncoder;
 import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridEncoder;
 import dev.hardwood.internal.thrift.PageHeaderWriter;
+import dev.hardwood.internal.thrift.PageLimit;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -114,6 +115,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     private final int levelBytesPerEntry;
     private final long pageTargetBits; // encoded bits after which a data page is cut
     private final int pageTargetRows; // records after which a data page is cut
+    private final int maxPageEntries; // entries after which a data page is cut, the reader's limit
 
     /// This chunk's repetition and definition levels, one unsigned byte per entry, `null` when the
     /// column is unlevelled. Levels are retained rather than encoded as they arrive because a
@@ -243,9 +245,19 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// gives the dictionary up rather than let the table outgrow what an array can hold.
     private static final int LAST_DICTIONARY_INDEX = DictionaryEncoder.MAX_SIZE - 1;
 
+    /// The most bytes a data page is cut at, whatever `pageTargetBytes` asks for: half the
+    /// reader's default page limit ([PageLimit#DEFAULT_MAX_PAGE_BYTES]). The cut charges a page's
+    /// levels and values, not the framing around them (run headers, level length prefixes), so a
+    /// page cut at the limit itself could come out a few bytes past it; at half, that framing
+    /// stays far inside.
+    static final int MAX_PAGE_TARGET_BYTES = PageLimit.DEFAULT_MAX_PAGE_BYTES / 2;
+
     /// @param column the column's schema (physical type, level depths)
-    /// @param pageTargetBytes encoded bytes after which a data page is cut
+    /// @param pageTargetBytes encoded bytes after which a data page is cut, at most
+    ///        [#MAX_PAGE_TARGET_BYTES]
     /// @param pageTargetRows records after which a data page is cut
+    /// @param maxPageEntries entries after which a data page is cut whatever the two targets
+    ///        allow, the most a reader accepts in a page ([PageLimit#DEFAULT_MAX_PAGE_VALUES])
     /// @param encoding this column's resolved encoding policy
     /// @param compressor compresses each page body before framing
     /// @param codec the codec `compressor` applies, recorded in the chunk metadata
@@ -254,8 +266,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     ///        [#NO_BLOOM_FILTER]
     /// @param budgetBytesPerColumn the row group's byte target divided among its columns
     /// @param targetRows the records at which the row group is cut
-    ColumnChunkBuffer(ColumnSchema column, int pageTargetBytes, int pageTargetRows, long budgetBytesPerColumn,
-                      int targetRows, ColumnEncoding encoding, int statisticsTruncationLength,
+    ColumnChunkBuffer(ColumnSchema column, int pageTargetBytes, int pageTargetRows, int maxPageEntries,
+                      long budgetBytesPerColumn, int targetRows, ColumnEncoding encoding, int statisticsTruncationLength,
                       Compressor compressor, CompressionCodec codec, int storeCapacity, double bloomFilterFpp) {
         this.budgetBytes = budgetBytesPerColumn;
         this.targetRows = targetRows;
@@ -269,8 +281,9 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         WriterSchemaShape.requireStorableLevels(column);
         this.levelBitsPerEntry = defLevelBits + repLevelBits;
         this.levelBytesPerEntry = (maxDefLevel > 0 ? 1 : 0) + (maxRepLevel > 0 ? 1 : 0);
-        this.pageTargetBits = (long) pageTargetBytes * Byte.SIZE;
+        this.pageTargetBits = (long) cutTargetBytes(pageTargetBytes) * Byte.SIZE;
         this.pageTargetRows = pageTargetRows;
+        this.maxPageEntries = maxPageEntries;
         this.encoding = encoding;
         int startingCapacity = ValueEncoder.startingCapacity(budgetBytesPerColumn,
                 ValueEncoder.eagerBytesPerValue(column,
@@ -288,6 +301,12 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         this.codec = codec;
         this.storeCapacity = storeCapacity;
         this.bloomFilterFpp = bloomFilterFpp;
+    }
+
+    /// The byte target a page is cut at for a configured `pageTargetBytes`: that target, clamped to
+    /// [#MAX_PAGE_TARGET_BYTES] so that no configuration writes a page a reader refuses.
+    static int cutTargetBytes(int pageTargetBytes) {
+        return Math.min(pageTargetBytes, MAX_PAGE_TARGET_BYTES);
     }
 
     /// Binds the value encoder to this batch's source, then appends records
@@ -955,9 +974,9 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// Where the page starting at `entryFrom` ends: its entry count in the high half of the
     /// result and the present values among them in the low half, the two being found in one walk
     /// because the second follows from the first. It takes whole records while they fit the byte
-    /// target and the record target, and at least one record, since the page index requires every
-    /// page to start at a record boundary: a record larger than the byte target ends the page it
-    /// starts.
+    /// target, the record target and the entry limit, and at least one record, since the page
+    /// index requires every page to start at a record boundary: a record larger than the byte
+    /// target or the entry limit ends the page it starts.
     ///
     /// A page is cut here rather than while records arrive because only here is what it costs
     /// known. The chunk's encoding is settled, so a value costs the index that will represent it
@@ -976,7 +995,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         // for the columns that need it.
         if (offsets == null && maxDefLevel == 0 && maxRepLevel == 0) {
             long entryBits = levelBitsPerEntry + uniformValueBits;
-            long fit = Math.min(pageTargetRows,
+            long fit = Math.min(Math.min(pageTargetRows, maxPageEntries),
                     Math.max(1, (pageTargetBits - pageOverheadBits) / Math.max(1, entryBits)));
             int entries = (int) Math.min(entryCount - entryFrom, fit);
             return pageCut(entries, entries);
@@ -990,8 +1009,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         // ends if the record it is in overflows the byte target.
         int recordStart = entryFrom;
         int valuesBeforeRecord = valueFrom;
-        // Set once the page's first record alone overflows the byte target: the page ends where
-        // that record does.
+        // Set once the page's first record alone overflows the byte target or the entry limit:
+        // the page ends where that record does.
         boolean full = false;
         for (int entry = entryFrom; entry < entryCount; entry++) {
             if (repetitions == null || repetitions[entry] == 0) {
@@ -1009,7 +1028,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                         ? uniformValueBits
                         : (long) (Integer.BYTES + offsets[value + 1] - offsets[value]) * Byte.SIZE;
             }
-            if (!full && entry > entryFrom && bits + entryBits > pageTargetBits) {
+            if (!full && entry > entryFrom
+                    && (bits + entryBits > pageTargetBits || entry - entryFrom == maxPageEntries)) {
                 if (recordStart > entryFrom) {
                     return pageCut(recordStart - entryFrom, valuesBeforeRecord - valueFrom);
                 }

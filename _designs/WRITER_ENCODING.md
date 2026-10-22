@@ -65,7 +65,9 @@ The three delta encodings and `ALP` are the exception. Their width is a property
 
 The record target exists for the page index. Without it, a column whose values encode small (a dictionary column of narrow indices, a run of repeated values) holds a whole row group in one or two pages, and its column index has nothing to prune by.
 
-Tests: `WriterLayoutTest`, `WriterDictionaryTest`, `WriterEncodingPolicyTest`, `ColumnMetaDataWriterTest`, `RowGroupDictionaryFilterSourceTest`, `WriterInteropTest` (parquet-testing-runner).
+**A page holds at most as many entries as a reader accepts.** The reader refuses a data page declaring more values than its page limit, 64 Mi without the override ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), so the cut also ends a page at that many entries (`PageLimit.DEFAULT_MAX_PAGE_VALUES`), through the same overflow as the byte target, and clamps the byte target to half the reader's 256 MiB limit (`ColumnChunkBuffer.MAX_PAGE_TARGET_BYTES`): the cut does not charge a page's framing (run headers, level length prefixes), so a page cut at the limit itself could pass it. At the default targets neither binds; they bind only for a caller who raises both targets. A single record of more entries or bytes is still a page of its own, which a reader opens only with the override.
+
+Tests: `WriterLayoutTest`, `WriterDictionaryTest`, `WriterEncodingPolicyTest`, `ColumnMetaDataWriterTest`, `RowGroupDictionaryFilterSourceTest`, `PageEntryLimitTest`, `WriterInteropTest` (parquet-testing-runner).
 
 ## Encoding selection
 
