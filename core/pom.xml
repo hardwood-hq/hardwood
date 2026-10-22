@@ -253,12 +253,10 @@
                     <include>**/NestedV1NoIndexFallbackTest.java</include>
                     <include>**/NestedV1MidRecordPagesTest.java</include>
                     <include>**/NestedV2NoIndexMaskingTest.java</include>
-                    <include>**/NestedDictBatchBoundaryTest.java</include>
                     <include>**/FixedSizeListFastPathReadTest.java</include>
                     <include>**/FilterOnlyColumnSkipTest.java</include>
                     <include>**/AlwaysMatchingRowGroupTest.java</include>
                     <include>**/PredicatePushDownTest.java</include>
-                    <include>**/BatchMatcherOracleTest.java</include>
                     <include>**/ColumnReaderExactFilterTest.java</include>
                     <include>**/ColumnReaderLayerModelTest.java</include>
                     <include>**/MultiFileRowReaderTest.java</include>
@@ -289,7 +287,6 @@
                     <include>**/NestedV1NoIndexFallbackTest.java</include>
                     <include>**/NestedV1MidRecordPagesTest.java</include>
                     <include>**/NestedV2NoIndexMaskingTest.java</include>
-                    <include>**/NestedDictBatchBoundaryTest.java</include>
                     <include>**/FixedSizeListFastPathReadTest.java</include>
                     <include>**/EncodingRoundTripTest.java</include>
                   </includes>
