@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.ByteArrayOutputStream;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +33,33 @@ class FixedSizeListDetectorTest {
         // k = 4, 8 rows: pattern 0,1,1,1 repeated -> every byte is 0xEE.
         byte[] rep = bitPacked(repeatVector(4, 8));
         assertThat(detect(rep, 32, 8)).isEqualTo(new FixedWidth(4));
+    }
+
+    @Test
+    void rejectsGroupCountPastIntRange() {
+        // The k = 4, 8 rows stream, its header declaring 2^32 + 4 groups: narrowed, that is the 4
+        // groups that follow, and the stream would be detected as the shape the decode refuses.
+        long header = (((1L << 32) + 4) << 1) | 1;
+        byte[] varint = new byte[6];
+        int length = 0;
+        while ((header & ~0x7FL) != 0) {
+            varint[length++] = (byte) ((header & 0x7F) | 0x80);
+            header >>>= 7;
+        }
+        varint[length++] = (byte) header;
+        byte[] rep = concat(Arrays.copyOf(varint, length), new byte[] {(byte) 0xEE, (byte) 0xEE, (byte) 0xEE,
+                (byte) 0xEE});
+        assertThat(detect(rep, 32, 8)).isEqualTo(FixedSizeListShape.NOT_APPLICABLE);
+    }
+
+    @Test
+    void rejectsAHeaderVarintPastALong() {
+        // A bit-packed header of 4 groups whose tenth byte, 0x02, falls past a long: dropped, the
+        // header reads as the 4 groups that follow
+        byte[] header = { (byte) 0x89, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x02 };
+        byte[] rep = concat(header, new byte[] {(byte) 0xEE, (byte) 0xEE, (byte) 0xEE, (byte) 0xEE});
+        assertThat(detect(rep, 32, 8)).isEqualTo(FixedSizeListShape.NOT_APPLICABLE);
     }
 
     @Test

@@ -56,6 +56,30 @@ class PageRecordCounterTest {
         assertThat(records).isEqualTo(3);
     }
 
+    /// An RLE run of `2^32 + 3` zeros narrows to a run of 3, which would count three records.
+    @Test
+    void testRepeatCountPastIntRangeIsRefused() {
+        byte[] data = new byte[11];
+        int length = writeUnsignedVarInt(data, 0, ((1L << 32) + 3) << 1);
+        data[length++] = 0x00;
+        byte[] run = Arrays.copyOf(data, length);
+
+        assertThatThrownBy(() -> PageRecordCounter.countTopLevelRecords(run, 0, run.length, 3, 1))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid RLE/Bit-Packing run: repeat count 4294967299 exceeds 2147483647");
+    }
+
+    /// A tenth header byte of `0x02` lands past a long; dropped, the header reads as an RLE run of 3.
+    @Test
+    void testHeaderVarintPastALongIsRefused() {
+        byte[] run = { (byte) 0x86, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x02, 0x00 };
+
+        assertThatThrownBy(() -> PageRecordCounter.countTopLevelRecords(run, 0, run.length, 3, 1))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid RLE/Bit-Packing run: header varint longer than 64 bits");
+    }
+
     /// `numValues == 0` is a degenerate page — return 0 without touching the
     /// decoder. Exercised because the iterator may encounter empty pages on
     /// pathological writers without fetching the rep-level prefix.

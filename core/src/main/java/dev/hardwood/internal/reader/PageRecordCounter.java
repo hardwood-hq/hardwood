@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader;
 
 import java.nio.ByteBuffer;
 
+import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
+import dev.hardwood.internal.encoding.Uleb128;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Counts top-level records inside a single Parquet data page without invoking
@@ -113,6 +115,9 @@ final class PageRecordCounter {
             int shift = 0;
             while (pos < dataEnd) {
                 int b = data.get(pos++) & 0xFF;
+                if (Uleb128.overflowsLong(shift, b)) {
+                    throw new ParquetReadException("Invalid RLE/Bit-Packing run: header varint longer than 64 bits");
+                }
                 header |= (long) (b & 0x7F) << shift;
                 if ((b & 0x80) == 0) {
                     break;
@@ -122,7 +127,7 @@ final class PageRecordCounter {
 
             if ((header & 1) == 0) {
                 // RLE run: a single value repeated `repeatCount` times.
-                int repeatCount = (int) (header >> 1);
+                int repeatCount = RleBitPackingHybridDecoder.runValues(header);
                 int value = 0;
                 int bytesNeeded = (bitWidth + 7) / 8;
                 for (int i = 0; i < bytesNeeded && pos < dataEnd; i++) {
@@ -138,11 +143,10 @@ final class PageRecordCounter {
                 continue;
             }
 
-            // Bit-packed run: `groups` 8-value groups; each group consumes
+            // Bit-packed run: 8-value groups; each group consumes
             // exactly `bitWidth` bytes. We may stop mid-run when `remaining`
             // is exhausted; any unread bytes are discarded with the walker.
-            int groups = (int) (header >> 1);
-            int runLength = groups * 8;
+            int runLength = RleBitPackingHybridDecoder.runValues(header);
             int toRead = Math.min(remaining, runLength);
             int read = 0;
 

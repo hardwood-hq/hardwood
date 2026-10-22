@@ -13,6 +13,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
+import dev.hardwood.internal.encoding.Uleb128;
 
 /// Recognises the fixed-width fixed-size-list shape from a Parquet data page's
 /// repetition/definition level streams alone — on both `DataPageV1` and
@@ -164,6 +165,8 @@ public final class FixedSizeListDetector {
     /// @param maxDefinitionLevel the column's maximum definition level
     /// @return [FixedSizeListShape.FixedWidth] with the detected `k`, or
     ///         [FixedSizeListShape#NOT_APPLICABLE]
+    /// @throws dev.hardwood.reader.ParquetReadException if the definition levels open with a run
+    ///         the decode refuses ([RleBitPackingHybridDecoder#runValues])
     public static FixedSizeListShape detect(
             byte[] repData, int repOffset, int repLength,
             byte[] defData, int defOffset, int defLength,
@@ -255,6 +258,10 @@ public final class FixedSizeListDetector {
             int shift = 0;
             while (pos < end) {
                 int b = data[pos++] & 0xFF;
+                if (Uleb128.overflowsLong(shift, b)) {
+                    // Longer than any count a run can hold; the decode refuses it
+                    return FixedSizeListShape.NOT_APPLICABLE;
+                }
                 header |= (long) (b & 0x7F) << shift;
                 if ((b & 0x80) == 0) {
                     break;
@@ -267,7 +274,7 @@ public final class FixedSizeListDetector {
                 // later it means the stream is not a fixed-width small-k list.
                 return idx == 0 ? FixedSizeListShape.UNDETERMINED : FixedSizeListShape.NOT_APPLICABLE;
             }
-            int groups = (int) (header >> 1);
+            int groups = groupCount(header);
             if (groups <= 0 || groups > end - pos) {
                 return FixedSizeListShape.NOT_APPLICABLE;
             }
@@ -338,6 +345,10 @@ public final class FixedSizeListDetector {
             int shift = 0;
             while (pos < end) {
                 int b = data[pos++] & 0xFF;
+                if (Uleb128.overflowsLong(shift, b)) {
+                    // Longer than any count a run can hold; the decode refuses it
+                    return FixedSizeListShape.NOT_APPLICABLE;
+                }
                 header |= (long) (b & 0x7F) << shift;
                 if ((b & 0x80) == 0) {
                     break;
@@ -345,8 +356,8 @@ public final class FixedSizeListDetector {
                 shift += 7;
             }
             if ((header & 1) == 1) {
-                int groups = (int) (header >> 1);
-                if (groups > end - pos) {
+                int groups = groupCount(header);
+                if (groups < 0 || groups > end - pos) {
                     return FixedSizeListShape.UNDETERMINED;
                 }
                 for (int g = 0; g < groups && k < 0 && idx < numValues; g++) {
@@ -377,8 +388,8 @@ public final class FixedSizeListDetector {
                 }
             }
             else {
-                int runLen = (int) (header >> 1);
-                if (pos >= end || runLen > numValues - idx) {
+                int runLen = repeatCount(header);
+                if (pos >= end || runLen < 0 || runLen > numValues - idx) {
                     return FixedSizeListShape.UNDETERMINED;
                 }
                 int value = data[pos++] & 0xFF;
@@ -431,6 +442,10 @@ public final class FixedSizeListDetector {
             int shift = 0;
             while (pos < end) {
                 int b = data[pos++] & 0xFF;
+                if (Uleb128.overflowsLong(shift, b)) {
+                    // Longer than any count a run can hold; the decode refuses it
+                    return FixedSizeListShape.NOT_APPLICABLE;
+                }
                 header |= (long) (b & 0x7F) << shift;
                 if ((b & 0x80) == 0) {
                     break;
@@ -449,8 +464,8 @@ public final class FixedSizeListDetector {
                 // read; `levelsLeft`, clamped to `numValues`, is the padding-safe
                 // count. The sub-word remainder (and any run shorter than a word)
                 // falls to the scalar bit loop below.
-                int groups = (int) (header >> 1);
-                if (groups > end - pos) {
+                int groups = groupCount(header);
+                if (groups < 0 || groups > end - pos) {
                     return FixedSizeListShape.NOT_APPLICABLE;
                 }
                 int levelsLeft = Math.min(groups * 8, numValues - idx);
@@ -493,8 +508,8 @@ public final class FixedSizeListDetector {
             }
             else {
                 // RLE run: (header >> 1) copies of a one-byte value.
-                int runLen = (int) (header >> 1);
-                if (pos >= end || runLen > numValues - idx) {
+                int runLen = repeatCount(header);
+                if (pos >= end || runLen < 0 || runLen > numValues - idx) {
                     return FixedSizeListShape.NOT_APPLICABLE;
                 }
                 int value = data[pos++] & 0xFF;
@@ -648,6 +663,21 @@ public final class FixedSizeListDetector {
             a = t;
         }
         return a;
+    }
+
+    /// The 8-value groups of a bit-packed run's header, or `-1` where the run holds more than
+    /// `Integer.MAX_VALUE` values, which the decode refuses: narrowed, the count would wrap to a
+    /// negative or a smaller one and pass the bounds the caller checks it against.
+    private static int groupCount(long header) {
+        long groups = header >>> 1;
+        return groups > Integer.MAX_VALUE / 8 ? -1 : (int) groups;
+    }
+
+    /// The repeat count of an RLE run's header, or `-1` past `Integer.MAX_VALUE`, as for
+    /// [#groupCount].
+    private static int repeatCount(long header) {
+        long count = header >>> 1;
+        return count > Integer.MAX_VALUE ? -1 : (int) count;
     }
 
     private static long readLongLE(byte[] data, int off) {

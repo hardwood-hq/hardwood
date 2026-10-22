@@ -246,18 +246,35 @@ public class RleBitPackingHybridDecoder {
         }
 
         long header = readUnsignedVarInt();
-
-        if ((header & 1) == 1) {
-            // Bit-packed: header >> 1 = number of 8-value groups
-            remainingInRun = (int) (header >> 1) * 8;
-            isRleRun = false;
-        }
-        else {
-            // RLE: header >> 1 = repeat count
-            remainingInRun = (int) (header >> 1);
+        remainingInRun = runValues(header);
+        isRleRun = (header & 1) == 0;
+        if (isRleRun) {
             currentValue = readRleValue();
-            isRleRun = true;
         }
+    }
+
+    /// The values a run holds, from its header: `header >> 1` repeats of one value for an RLE
+    /// run, `header >> 1` groups of 8 for a bit-packed one.
+    ///
+    /// The header is a varint read as a `long`, and a run is consumed in an `int`: narrowed past
+    /// its range, the count would wrap to a negative one, which never runs out, or to a smaller
+    /// one, which misreads what follows. Such a count is refused.
+    ///
+    /// @throws ParquetReadException if the run holds more than `Integer.MAX_VALUE` values
+    public static int runValues(long header) {
+        long count = header >>> 1;
+        if ((header & 1) == 1) {
+            if (count > Integer.MAX_VALUE / 8) {
+                throw new ParquetReadException("Invalid RLE/Bit-Packing run: " + count
+                        + " bit-packed groups of 8 values exceed " + Integer.MAX_VALUE + " values");
+            }
+            return (int) count * 8;
+        }
+        if (count > Integer.MAX_VALUE) {
+            throw new ParquetReadException("Invalid RLE/Bit-Packing run: repeat count " + count
+                    + " exceeds " + Integer.MAX_VALUE);
+        }
+        return (int) count;
     }
 
     private int readRleValue() {
@@ -457,6 +474,9 @@ public class RleBitPackingHybridDecoder {
         int shift = 0;
         while (pos < dataEnd) {
             int b = data[pos++] & 0xFF;
+            if (Uleb128.overflowsLong(shift, b)) {
+                throw new ParquetReadException("Invalid RLE/Bit-Packing run: header varint longer than 64 bits");
+            }
             result |= (long) (b & 0x7F) << shift;
             if ((b & 0x80) == 0) {
                 break;
