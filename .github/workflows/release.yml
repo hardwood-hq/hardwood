@@ -43,6 +43,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # JReleaser closes the release's milestone.
+      issues: write
     steps:
       - name: 'Check out repository'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0 — https://github.com/actions/checkout/releases/tag/v6.1.0
@@ -109,6 +111,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/release-cli.yml
     with:
       release-version: ${{ inputs.release-version }}

@@ -60,6 +60,8 @@ Trigger the `Release` workflow from the GitHub Actions UI with the following inp
 - **Stage**: `UPLOAD` to upload the release to the deploy to the Maven Central portal (you can examine it at https://central.sonatype.com/publishing/deployments then), or `FULL` to publish directly to Maven Central
 - **Latest**: whether the GitHub release becomes the repository's latest release and the CLI image is tagged `latest`; leave checked unless the release is a fix of an older line
 
+The release closes the open GitHub milestone named after the release version (e.g. `1.1.0.CR1`), if there is one.
+
 To test a staged release, check out the release tag and run:
 
 ```shell

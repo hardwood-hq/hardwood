@@ -98,6 +98,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: 'Check out repository'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0 — https://github.com/actions/checkout/releases/tag/v6.1.0
@@ -110,6 +112,15 @@ jobs:
           path: artifacts
           pattern: artifacts-*
           merge-multiple: true
+
+      - name: 'Write checksums'
+        working-directory: artifacts
+        run: sha256sum -- * > checksums_sha256.txt
+
+      - name: 'Attest build provenance'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2 — https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2
+        with:
+          subject-checksums: artifacts/checksums_sha256.txt
 
       - name: 'List artifacts'
         run: ls -la artifacts/
@@ -212,6 +223,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - name: 'Download digests'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2 — https://github.com/actions/download-artifact/releases/tag/v8.0.2
@@ -236,3 +249,19 @@ jobs:
           docker buildx imagetools create \
             --tag ghcr.io/${{ github.repository }}:1.0-early-access \
             $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+
+      - name: 'Resolve the image digest'
+        id: digest
+        run: |
+          digest=$(docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:1.0-early-access" --format '{{json .Manifest}}' | jq -r .digest)
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Not an image digest: $digest" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: 'Attest build provenance'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2 — https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.digest.outputs.digest }}

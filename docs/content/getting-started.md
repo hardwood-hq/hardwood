@@ -127,6 +127,28 @@ The `hardwood` command-line tool ships as a GraalVM native binary for Linux (x86
     xattr -r -d com.apple.quarantine hardwood-cli-*/
     ```
 
+### Verifying a Download
+
+Each release lists the SHA-256 hash of every archive in `checksums_sha256.txt`. Download it next to the archive and check the archive against it:
+
+```shell
+sha256sum --ignore-missing -c checksums_sha256.txt            # Linux
+shasum -a 256 --ignore-missing -c checksums_sha256.txt        # macOS
+```
+
+On Windows, `Get-FileHash <archive>` in PowerShell prints the hash to compare with the archive's line in the file.
+
+The archives and the Docker image also carry a build provenance attestation, which names the workflow run that built them. The [GitHub CLI](https://cli.github.com/) checks it, and `--signer-workflow` restricts the check to the release workflow:
+
+```shell
+gh attestation verify <archive> -R hardwood-hq/hardwood \
+  --signer-workflow hardwood-hq/hardwood/.github/workflows/release-cli.yml
+gh attestation verify oci://ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} -R hardwood-hq/hardwood \
+  --signer-workflow hardwood-hq/hardwood/.github/workflows/release-cli.yml
+```
+
+Early-access builds are signed by `.github/workflows/cli-early-access.yml` instead.
+
 ### Shell Completion
 
 The distribution includes completion scripts for Bash, Zsh, and Fish under `bin/`:

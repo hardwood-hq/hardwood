@@ -303,7 +303,7 @@
           <plugin>
             <groupId>org.jreleaser</groupId>
             <artifactId>jreleaser-maven-plugin</artifactId>
-            <version>1.22.0</version>
+            <version>1.26.0</version>
           </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
@@ -690,6 +690,10 @@
                   <github>
                     <overwrite>true</overwrite>
                     <makeLatest>${jreleaser.makeLatest}</makeLatest>
+                    <!-- Milestones carry the bare version, the tag a `v` prefix. -->
+                    <milestone>
+                      <name>{{projectVersion}}</name>
+                    </milestone>
                     <changelog>
                       <formatted>ALWAYS</formatted>
                       <contributors>
