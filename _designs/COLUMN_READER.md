@@ -102,7 +102,7 @@ A view is `int`, which bounds one buffer, not the batch: a batch's bytes are spr
 
 `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf, `null` at null positions, and cache the result per batch. `getStrings()` requires a text column (`BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or unannotated) and throws `IllegalArgumentException` otherwise; on a dictionary-encoded `STRING`, `ENUM` or `JSON` column it returns one interned `String` per dictionary entry through the batch's dictionary indices (see [VALUE_DECODE.md](VALUE_DECODE.md)), and on an unannotated column one `String` per value. Both arrays have length `getValueCount()`, not `getRecordCount()`.
 
-Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`, `BinaryBatchValuesTest`, `ScheduledBinaryViewsTest`, `ParallelBinaryFillTest`.
+Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`, `BinaryBatchValuesTest`, `ScheduledBinaryViewsTest`, `BinaryFillChunksTest`.
 
 ### Dictionary ids
 
