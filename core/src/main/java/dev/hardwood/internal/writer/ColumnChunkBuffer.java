@@ -639,6 +639,13 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         abandonedAtVerdict = false;
     }
 
+    /// Whether a verdict has given this chunk's dictionary up since the chunk started. Flush clears
+    /// it as it decides whether to intern the chunk again, so it is meaningful only before
+    /// [#encodeTo].
+    boolean abandonedAtVerdict() {
+        return abandonedAtVerdict;
+    }
+
     /// The bytes this chunk retains: its level streams a byte per entry, its dictionary indices,
     /// and whatever the value encoder holds. This is what the row-group writer sums to decide when
     /// to flush, and it is measured rather than accumulated — every term is a length the buffers

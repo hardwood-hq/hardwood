@@ -39,7 +39,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// rather than through the shredder an entry at a time. The two must leave a chunk that encodes
 /// to the same bytes and metadata, which these check by appending the same batches both ways —
 /// across every physical type, the null shapes a flat column can take, and the cardinalities that
-/// keep, abandon at a probe, or keep through a probe a chunk's dictionary.
+/// keep, abandon at a probe, or keep through the probes a chunk's dictionary. Each case is also held
+/// to the outcome its cardinality is for; with nine tenths of the values null no verdict runs, and
+/// every cardinality is decided at flush.
 class FlatAppendTest {
 
     private static final int RECORDS_PER_BATCH = 20_000;
@@ -61,8 +63,10 @@ class FlatAppendTest {
         FEW,
         /// Every value distinct: the dictionary is abandoned at a probe.
         ALL_DISTINCT,
-        /// Distinct through the first probe, repeating after: the dictionary loses the first probe
-        /// and wins the second, so it survives.
+        /// Distinct at first, repeating after: the dictionary is kept through the verdicts. The
+        /// distinct values count from the first record of the file rather than of the chunk, so
+        /// whether a verdict falls inside them, and is lost, depends on the null ratio and the row
+        /// group; the case asserts the dictionary's survival, not a lost verdict.
         FRONT_LOADED,
         /// Distinct through both probes, then repeating the chunk's first values: the dictionary
         /// is given up at a probe, and the types whose dictionary wins over the chunk are interned
@@ -125,6 +129,11 @@ class FlatAppendTest {
                 }
             }
             assertThat(flat.retainedBytes()).isEqualTo(shredded.retainedBytes());
+            // The cardinality reaches the outcome it is for, where a verdict can run at all.
+            assertThat(flat.abandonedAtVerdict()).as("dictionary given up at a verdict")
+                    .isEqualTo(abandonedAtVerdict(type, nullRatio, cardinality, encoding));
+            assertThat(shredded.abandonedAtVerdict()).as("shredded: dictionary given up at a verdict")
+                    .isEqualTo(flat.abandonedAtVerdict());
             InMemoryOutputFile flatOut = OutputFile.inMemory();
             InMemoryOutputFile shreddedOut = OutputFile.inMemory();
             flatOut.create();
@@ -136,6 +145,16 @@ class FlatAppendTest {
             flat.reset();
             shredded.reset();
         }
+    }
+
+    /// Whether the chunk's dictionary is given up at a verdict. The two verdicts that give it up fall
+    /// at 8,192 and 16,384 present values, which a chunk of 40,000 records reaches with a tenth of
+    /// them null but not with nine tenths; at that ratio every cardinality is decided at flush.
+    /// `BOOLEAN` is never dictionary-encoded, and a `PLAIN` policy keeps no dictionary to give up.
+    private static boolean abandonedAtVerdict(PhysicalType type, double nullRatio, Cardinality cardinality,
+                                              ColumnEncoding encoding) {
+        boolean verdictsRun = nullRatio <= 0.1 && type != PhysicalType.BOOLEAN && encoding == ColumnEncoding.AUTO;
+        return verdictsRun && (cardinality == Cardinality.ALL_DISTINCT || cardinality == Cardinality.RECOVERED);
     }
 
     private static ColumnChunkBuffer buffer(FileSchema schema, ColumnEncoding encoding, double bloomFilterFpp) {
