@@ -246,9 +246,11 @@ jobs:
       - name: 'Create and push multi-arch manifest'
         working-directory: ${{ runner.temp }}/digests
         run: |
+          refs=()
+          for digest in *; do refs+=("ghcr.io/${{ github.repository }}@sha256:$digest"); done
           docker buildx imagetools create \
             --tag ghcr.io/${{ github.repository }}:1.0-early-access \
-            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+            "${refs[@]}"
 
       - name: 'Resolve the image digest'
         id: digest

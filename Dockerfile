@@ -57,6 +57,23 @@ RUN d=/etc/pki/ca-trust/source/blocklist \
 ARG GH_STACK_VERSION=v0.1.1
 RUN gh extension install github/gh-stack --pin "$GH_STACK_VERSION"
 
+# actionlint checks the GitHub workflows, running ShellCheck over their `run:` scripts. Fedora
+# does not package it, so the release archive is pinned by version and SHA-256.
+ARG ACTIONLINT_VERSION=1.7.12
+ARG ACTIONLINT_SHA256_X86_64=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+ARG ACTIONLINT_SHA256_AARCH64=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6
+RUN case "$(uname -m)" in \
+      x86_64) arch=amd64 sha256="$ACTIONLINT_SHA256_X86_64" ;; \
+      aarch64) arch=arm64 sha256="$ACTIONLINT_SHA256_AARCH64" ;; \
+      *) echo "No actionlint build for $(uname -m)" >&2; exit 1 ;; \
+    esac \
+    && archive="/tmp/actionlint.tar.gz" \
+    && curl -fsSL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" \
+    && echo "$sha256  $archive" | sha256sum -c - \
+    && tar -xzf "$archive" -C /usr/local/bin actionlint \
+    && rm "$archive" \
+    && actionlint -version
+
 # Install SDKMAN and Java 25 (Temurin). The GA build (25-tem) can leave a virtual thread parked
 # forever under timed blocking-queue waits (JDK-8369227, fixed in 25.0.3), which hangs readers (#1230).
 ENV SDKMAN_DIR="/root/.sdkman"

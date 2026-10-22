@@ -228,11 +228,13 @@ jobs:
         env:
           LATEST_TAG: ${{ inputs.latest && format('--tag ghcr.io/{0}:latest', github.repository) || '' }}
         run: |
+          refs=()
+          for digest in *; do refs+=("ghcr.io/${{ github.repository }}@sha256:$digest"); done
           # shellcheck disable=SC2086 # LATEST_TAG is empty or one --tag option
           docker buildx imagetools create \
             --tag ghcr.io/${{ github.repository }}:${{ inputs.release-version }} \
             $LATEST_TAG \
-            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+            "${refs[@]}"
 
       - name: 'Resolve the image digest'
         id: digest

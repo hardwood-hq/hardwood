@@ -1,6 +1,6 @@
 # Build infrastructure
 
-Covers the quality and packaging infrastructure of Hardwood's Maven build: the `qa` profile and the checks it runs, the project-local Error Prone checks in `error-prone-checks/`, how the CI jobs resolve and cache what they build against, the JVM arguments every test runs with, the build metadata stamped into every JAR, and the rule that keeps plugin versions in the parent POM.
+Covers the quality and packaging infrastructure of Hardwood's Maven build: the `qa` profile and the checks it runs, the project-local Error Prone checks in `error-prone-checks/`, how the CI jobs resolve and cache what they build against, what the build trusts and how each input is pinned, the permissions of the workflow tokens, the integrity data published with the CLI, the JVM arguments every test runs with, the build metadata stamped into every JAR, and the rule that keeps plugin versions in the parent POM.
 
 Related documents:
 
@@ -16,9 +16,11 @@ Related documents:
 | `pom.xml` (parent) | `<pluginManagement>` for every plugin, the `qa` and `quick` profiles, the `capture-git-info` execution, the JAR manifest configuration |
 | `error-prone-checks/` (`hardwood-error-prone-checks`) | The project-local Error Prone checks; build-only, never deployed |
 | `.mvn/jvm.config` | `jdk.compiler` exports and opens that Error Prone needs inside the Maven JVM |
-| `.mvn/maven.config` | Reactor parallelism (`-T`) and the number of test JVMs per module (`-DforkCount`) |
+| `.mvn/maven.config` | Reactor parallelism (`-T`), the number of test JVMs per module (`-DforkCount`) and strict checksum validation (`--strict-checksums`) |
+| `.mvn/wrapper/maven-wrapper.properties` | The Maven distribution the wrapper runs and its SHA-256 |
 | `etc/` | License header templates and the Eclipse formatter configuration |
 | `.github/workflows/` | CI; `pr-build.yml` gates pull requests, `main-build.yml` builds `main` and seeds the caches the PR build reads |
+| `.github/dependabot.yml` | Weekly update proposals for the GitHub Actions, the Maven dependencies and the container base images |
 
 `hardwood-error-prone-checks` is the first module of the reactor. It sets `maven.deploy.skip`, because the checks run only during this repository's compilation and no published artifact depends on them at runtime.
 
@@ -129,9 +131,39 @@ The closure is not offline: a cache miss or a changed POM resolves third-party a
 - `retag-latest-image.yml`, run by hand, points the CLI image's `latest` tag at the image of an existing release.
 - Every job that builds the native binary runs `tools/block-certificates.sh` after setting up GraalVM, and `release-cli.yml` and `cli-early-access.yml` run `NativeBinarySmokeIT.embedsEveryBlockedCertificate` against each platform's binary before uploading it (see [NATIVE_BUILD.md](../NATIVE_BUILD.md#blocked-certificates)). `release-cli.yml` builds with `install`, so that this second Maven invocation resolves the Hardwood modules from the local repository.
 
-All actions are referenced by commit SHA.
-
 Untested: no check enforces that a PR job has a `main` counterpart or that a closure is complete; the `dev/hardwood` deletion makes an incomplete closure fail the job.
+
+## Supply chain
+
+Every input the build downloads is pinned. The JDKs are pinned by major version, so each build gets their latest update; every other input is fixed by a version and, where the format allows, a checksum:
+
+| Input | Pinned by | Updated by |
+|---|---|---|
+| GitHub Actions | Full commit SHA, with the release tag in a trailing comment | Dependabot, one weekly pull request for all actions |
+| Runner images | A versioned label (`ubuntu-24.04`, `windows-2025-vs2026`, `macos-26`); no `-latest` label | Hand |
+| Maven | The wrapper's `distributionUrl` and `distributionSha256Sum`; the wrapper refuses a distribution with another SHA-256 | Hand, the sum taken from a distribution checked against Apache's published SHA-512 and release signature |
+| Maven artifacts | Their versions in the POMs; `--strict-checksums` fails the build on an artifact whose checksum is missing or wrong | Dependabot, weekly, minor and patch updates grouped |
+| Container base images | A Fedora release tag (`fedora-minimal:44`) rather than a digest, so each build of the CLI image picks up that release's package updates | Dependabot, weekly, for the CLI image and the dev container |
+| Build JDKs | Temurin by major version through `actions/setup-java` (`java-version: '25'`, and `'21'` for the Java 21 integration tests), resolved to the latest update on each run | Floats with the releases |
+| Native toolchain | GraalVM CE, the latest JDK 25 Innovation release (`version: '25i-latest'`), whose SHA-256 setup-graalvm checks against the download service's metadata | Floats with the releases |
+
+The oldest glibc the Linux binary runs on, its highest `GLIBC_` symbol version in `objdump -T`, comes from the GraalVM release rather than from the runner image: a build on a glibc 2.43 host requires glibc 2.34, as one on Ubuntu 24.04 does. A GraalVM update can raise it. Untested: no job checks it.
+
+### Token permissions
+
+Every workflow declares `permissions: contents: read`. A job that writes declares its own grant, limited to what it uses: `contents: write` to push or publish a GitHub release, `packages: write` to push the image, `issues: write` for JReleaser to close the release's milestone, and `id-token: write` with `attestations: write` to attest provenance. A reusable workflow cannot exceed its caller's grant, so the `release-cli` job of `release.yml` carries every grant the jobs of `release-cli.yml` need.
+
+### Release outputs
+
+| Output | Integrity data |
+|---|---|
+| Maven Central artifacts | PGP signatures, from JReleaser |
+| CLI archives | `checksums_sha256.txt` on the GitHub release, and a build provenance attestation for every archive it lists |
+| CLI image | A build provenance attestation for the multi-arch index digest, so it holds under every tag pointing at that digest |
+
+The attestations are created by `actions/attest-build-provenance`, kept by GitHub, and checked with `gh attestation verify`. The signing identity is the workflow file that runs the attest step: `release-cli.yml` for a release, also when `release.yml` calls it, and `cli-early-access.yml` for an early-access build. The getting-started guide tells users to check that identity with `--signer-workflow`, so moving the attest step to another workflow file breaks that command. No SBOM is published.
+
+The dev container carries `actionlint`, which checks the workflows' syntax, expressions and `run:` scripts; CI does not run it. Untested: no check enforces that an action is pinned by SHA, that a runner label is versioned, or that a job's grant is minimal.
 
 ## Manifest build metadata
 
