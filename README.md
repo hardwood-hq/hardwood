@@ -98,6 +98,7 @@ See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide fo
 | [PERFORMANCE.md](PERFORMANCE.md) | Benchmark results and how to run performance tests. |
 | [TESTING.md](TESTING.md) | How the automated tests are organised and run, plus manual testing recipes (e.g. S3 via s3proxy). |
 | [RELEASING.md](RELEASING.md) | Release process. |
+| [SECURITY.md](SECURITY.md) | How to report a vulnerability. |
 
 ---
 
@@ -112,6 +113,7 @@ See [hardwood.dev](https://hardwood.dev/#articles-talks-podcasts) for a list of 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — how to find work, the issue-first workflow, commit message format, and PR expectations.
 
 - File bugs and feature requests on the [issue tracker](https://github.com/hardwood-hq/hardwood/issues).
+- Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 - Ask questions or discuss ideas on [GitHub Discussions](https://github.com/hardwood-hq/hardwood/discussions).
 - Looking for something to work on? Browse [`good first issue`](https://github.com/hardwood-hq/hardwood/labels/good%20first%20issue) and [`help wanted`](https://github.com/hardwood-hq/hardwood/labels/help%20wanted).
 
