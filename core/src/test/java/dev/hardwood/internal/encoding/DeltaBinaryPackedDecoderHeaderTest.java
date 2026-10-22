@@ -110,6 +110,32 @@ class DeltaBinaryPackedDecoderHeaderTest {
     }
 
     @Test
+    void readsALastMiniblockPaddedToItsFullLength() throws IOException {
+        // 100, 103, 107, 110, 114: deltas 3, 4, 3, 4 at a minimum of 3 leave residuals 0, 1, 0, 1
+        // at width 1. The miniblock holds 32 values, so its four bytes carry 28 of padding.
+        byte[] page = concat(lastMiniblock(), new byte[] { 0, 0, 0 });
+
+        assertThat(decode(page, 5)).containsExactly(100, 103, 107, 110, 114);
+    }
+
+    @Test
+    void refusesALastMiniblockCutToTheBytesItsValuesNeed() {
+        // "If there are not enough values to fill the last miniblock, we pad the miniblock so that
+        // its length is always the number of values in a full miniblock multiplied by the bit
+        // width" (parquet-format, Encodings.md). The byte the four residuals take is not a miniblock.
+        assertThatThrownBy(() -> decode(lastMiniblock(), 5))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF reading miniblock data: expected 4 bytes, got 1");
+    }
+
+    /// A page of five values whose one block ends in its first miniblock, through the first byte
+    /// of that miniblock's data: the byte holding the four residuals.
+    private static byte[] lastMiniblock() {
+        byte[] block = concat(zigzag(3), new byte[] { 1, 0, 0, 0 });
+        return concat(concat(header(128, 4, 5, 100), block), new byte[] { 0b1010 });
+    }
+
+    @Test
     void refusesABitWidthWiderThanALong() {
         byte[] page = concat(concat(header(128, 1, 5, 100), zigzag(3)), new byte[] { (byte) 200 });
 
