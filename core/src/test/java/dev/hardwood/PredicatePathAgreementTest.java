@@ -7,17 +7,12 @@
  */
 package dev.hardwood;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -25,33 +20,20 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
-import java.util.zip.GZIPInputStream;
 
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
-import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
-import dev.hardwood.internal.predicate.LogContext;
-import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
@@ -59,14 +41,10 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
-import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-import static dev.hardwood.internal.predicate.FilterDecision.ALWAYS_MATCHES;
-import static dev.hardwood.internal.predicate.FilterDecision.CANNOT_MATCH;
-import static dev.hardwood.internal.predicate.FilterDecision.MIGHT_MATCH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
@@ -78,10 +56,8 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /// never a null row. Disagreement is therefore always the reader's, and it shows up as the row
 /// numbers that differ rather than as a count.
 ///
-/// **Values.** The oracle is only as right as the values it reads, so [#readsTheValuesTheFixtureHolds]
-/// first holds those values to what `tools/simple-datagen.py` wrote: each corpus has a
-/// `<corpus>.values.tsv.gz` beside its files, with every row's logical and physical value. A decoding
-/// defect fails there, once, rather than passing on both sides of every predicate.
+/// **Values.** The oracle is only as right as the values it reads, and [PredicateCorpusTest] holds
+/// those to what `tools/simple-datagen.py` wrote. The layouts are described on [PredicateCorpus].
 ///
 /// **Read paths.** A predicate takes a different route through the reader depending on how it is
 /// built and configured, and a literal resolved wrongly can show on one route only:
@@ -92,27 +68,9 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 ///   page and answers from values alone
 /// - the `ColumnReader`, with and without metadata filtering
 ///
-/// **Layouts.** `predicate_single`, `predicate_multi`, `predicate_dict` and `predicate_bloom` hold
-/// the same 400 rows in one row group, in four, dictionary-encoded, and in four with a Bloom filter
-/// on every column that takes one, so the row-group bounds, the page index, the dictionary and the
-/// Bloom filter each decide a predicate that the record-level comparison decides again.
-/// `predicate_nested` adds a struct whose leaf is null under a present struct, and a leaf below a
-/// repeated path. `predicate_opaque` carries, in the single, dictionary and Bloom layouts, the
-/// columns that stay out of the corpus the differential tests read: `BSON`, which DuckDB cannot
-/// open, `INTERVAL`, a `DECIMAL` over `BYTE_ARRAY` holding a padded and an empty encoding, a `NULL`
-/// column and `GEOMETRY`.
-/// `predicate_int96` carries `INT96` columns in the same three layouts, one value stored under a
-/// non-canonical encoding, and bounds recorded in byte order rather than in time order.
-/// `predicate_int96_ordered` holds the same values, every one canonical, in ten-row row groups
-/// under `INT96_TIMESTAMP_ORDER`, with bounds and null counts on both leaves, so a row group can be
-/// dropped or decided in full by them.
-/// `predicate_ts12` carries `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)` of every unit, in the
-/// single, multi, dictionary and Bloom layouts, with values past the `INT64` nanosecond range on both
-/// sides of the epoch and bounds recorded in the order of the values. Its `pages` layout holds one
-/// value per page under a page index, so the page index decides the predicates too.
-class PredicatePathAgreementTest {
-
-    private static final Path RES = Paths.get("src/test/resources/predicate");
+/// One subclass per read path runs every cell of that path, so the cells spread over the test
+/// JVMs instead of running one after another in one.
+abstract class PredicatePathAgreementTest extends PredicateCorpus {
 
     /// Matches no row — nothing sorts below the empty string, and `__row__` is never negative — and
     /// reads `zz` and `__row__` in both conjunctions, which the batch compiler cannot give one bitmap
@@ -125,90 +83,25 @@ class PredicatePathAgreementTest {
             .option("hardwood.metadata-filtering", "false")
             .build();
 
-    private static HardwoodContext context;
+    private final boolean columnReader;
+    private final boolean metadataFiltering;
+    private final boolean forceRecordPath;
 
-    /// Values of one column of one file, read unfiltered: the logical value an accessor returns
-    /// and the physical one, indexed by row.
-    private static final Map<String, List<Object[]>> VALUES = new HashMap<>();
-
-    /// The values `tools/simple-datagen.py` wrote to each corpus, read once.
-    private static final Map<String, Map<String, List<String[]>>> WRITTEN = new HashMap<>();
-
-    /// The schema of each layout, read once: every case of every path asks it for the column it
-    /// filters.
-    private static final Map<String, FileSchema> SCHEMAS = new HashMap<>();
-
-    @BeforeAll
-    static void openContext() {
-        context = HardwoodContext.create();
+    /// The read path a subclass runs every cell through. A read path is a subclass, so each one
+    /// that exists has its cells run.
+    ///
+    /// @param columnReader read through the `ColumnReader` rather than the `RowReader`
+    /// @param metadataFiltering read with `hardwood.metadata-filtering` on
+    /// @param forceRecordPath put the filter on the record-level path by `or`-ing in [#NEVER]
+    PredicatePathAgreementTest(boolean columnReader, boolean metadataFiltering, boolean forceRecordPath) {
+        this.columnReader = columnReader;
+        this.metadataFiltering = metadataFiltering;
+        this.forceRecordPath = forceRecordPath;
     }
 
-    @AfterAll
-    static void closeContext() {
-        context.close();
-        VALUES.clear();
-        WRITTEN.clear();
-        SCHEMAS.clear();
-    }
-
-    // ==================== Layouts ====================
-
-    record Layout(String name, Path path) {
-        @Override public String toString() {
-            return name;
-        }
-    }
-
-    private static final Layout SINGLE = new Layout("single-rg", RES.resolve("predicate_single.parquet"));
-    private static final Layout MULTI = new Layout("multi-rg", RES.resolve("predicate_multi.parquet"));
-    private static final Layout DICTIONARY = new Layout("dictionary", RES.resolve("predicate_dict.parquet"));
-    private static final Layout BLOOM = new Layout("bloom", RES.resolve("predicate_bloom.parquet"));
-    private static final Layout NESTED = new Layout("nested", RES.resolve("predicate_nested_single.parquet"));
-    private static final Layout NESTED_MULTI = new Layout("nested-multi-rg",
-            RES.resolve("predicate_nested_multi.parquet"));
-    private static final Layout OPAQUE = new Layout("opaque", RES.resolve("predicate_opaque_single.parquet"));
-    private static final Layout OPAQUE_DICTIONARY = new Layout("opaque-dictionary",
-            RES.resolve("predicate_opaque_dict.parquet"));
-    private static final Layout OPAQUE_BLOOM = new Layout("opaque-bloom",
-            RES.resolve("predicate_opaque_bloom.parquet"));
-
-    private static final Layout INT96_SINGLE = new Layout("int96", RES.resolve("predicate_int96_single.parquet"));
-    private static final Layout INT96_MULTI = new Layout("int96-multi-rg",
-            RES.resolve("predicate_int96_multi.parquet"));
-    private static final Layout INT96_DICTIONARY = new Layout("int96-dictionary",
-            RES.resolve("predicate_int96_dict.parquet"));
-    private static final Layout INT96_ORDERED = new Layout("int96-ordered",
-            RES.resolve("predicate_int96_ordered_multi.parquet"));
-
-    private static final Layout TS12_SINGLE = new Layout("ts12", RES.resolve("predicate_ts12_single.parquet"));
-    private static final Layout TS12_MULTI = new Layout("ts12-multi-rg", RES.resolve("predicate_ts12_multi.parquet"));
-    private static final Layout TS12_DICTIONARY = new Layout("ts12-dictionary",
-            RES.resolve("predicate_ts12_dict.parquet"));
-    private static final Layout TS12_BLOOM = new Layout("ts12-bloom", RES.resolve("predicate_ts12_bloom.parquet"));
-    private static final Layout TS12_PAGES = new Layout("ts12-pages", RES.resolve("predicate_ts12_pages.parquet"));
-
-    private static final List<Layout> LAYOUTS = List.of(SINGLE, MULTI, DICTIONARY, BLOOM, NESTED, NESTED_MULTI,
-            OPAQUE, OPAQUE_DICTIONARY, OPAQUE_BLOOM, INT96_SINGLE, INT96_MULTI, INT96_DICTIONARY,
-            INT96_ORDERED, TS12_SINGLE, TS12_MULTI, TS12_DICTIONARY, TS12_BLOOM, TS12_PAGES);
-
-    // ==================== Read paths ====================
-
-    enum ReadPath {
-        ROW_READER(false, true, false),
-        ROW_READER_RECORD_PATH(false, true, true),
-        ROW_READER_NO_METADATA(false, false, false),
-        COLUMN_READER(true, true, false),
-        COLUMN_READER_NO_METADATA(true, false, false);
-
-        private final boolean columnReader;
-        private final boolean metadataFiltering;
-        private final boolean forceRecordPath;
-
-        ReadPath(boolean columnReader, boolean metadataFiltering, boolean forceRecordPath) {
-            this.columnReader = columnReader;
-            this.metadataFiltering = metadataFiltering;
-            this.forceRecordPath = forceRecordPath;
-        }
+    /// The read path, as the subclass that runs it, for assertion messages.
+    private String path() {
+        return getClass().getSimpleName();
     }
 
     // ==================== The rule ====================
@@ -1012,19 +905,19 @@ class PredicatePathAgreementTest {
             List<String> columns = columnsOf(layout);
             return cases.stream()
                     .filter(c -> columns.contains(c.column()) || isGroup(columns, c.column()))
-                    .flatMap(c -> Stream.of(ReadPath.values()).map(path -> Arguments.of(layout, c, path)));
+                    .map(c -> Arguments.of(layout, c));
         });
     }
 
-    @ParameterizedTest(name = "{0} / {1} / {2}")
+    @ParameterizedTest(name = "{0} / {1}")
     @MethodSource("cells")
-    void answersByTheRule(Layout layout, Case testCase, ReadPath path) throws Exception {
+    void answersByTheRule(Layout layout, Case testCase) throws Exception {
         String excludedBy = EXCLUDED.get(testCase.id());
 
         if (testCase.expect() instanceof Rejected rejected) {
-            Throwable thrown = catchThrowable(() -> read(layout, testCase.predicate(), path));
+            Throwable thrown = catchThrowable(() -> read(layout, testCase.predicate()));
             if (excludedBy == null) {
-                assertThat(thrown).as("%s / %s / %s", layout, testCase, path)
+                assertThat(thrown).as("%s / %s / %s", layout, testCase, path())
                         .isInstanceOf(IllegalArgumentException.class)
                         .hasMessage(rejected.message());
             }
@@ -1034,22 +927,22 @@ class PredicatePathAgreementTest {
                 // that refuses it settles what it says.
                 assertThat(thrown)
                         .as("%s / %s / %s is excluded by %s, and now is rejected as the rule says: "
-                                + "delete the exclusion", layout, testCase, path, excludedBy)
+                                + "delete the exclusion", layout, testCase, path(), excludedBy)
                         .isNull();
             }
             return;
         }
 
         List<Long> expected = expectedRows(layout, testCase);
-        List<Long> actual = read(layout, testCase.predicate(), path);
+        List<Long> actual = read(layout, testCase.predicate());
 
         if (excludedBy == null) {
-            assertThat(actual).as("%s / %s / %s", layout, testCase, path).isEqualTo(expected);
+            assertThat(actual).as("%s / %s / %s", layout, testCase, path()).isEqualTo(expected);
         }
         else {
             assertThat(actual)
                     .as("%s / %s / %s is excluded by %s, and now agrees with the rule: "
-                            + "delete the exclusion", layout, testCase, path, excludedBy)
+                            + "delete the exclusion", layout, testCase, path(), excludedBy)
                     .isNotEqualTo(expected);
         }
     }
@@ -1058,9 +951,9 @@ class PredicatePathAgreementTest {
     /// every non-null row, since the column holds nothing earlier; negating the conjunction pushes
     /// its negation down to the leaves, and the branch that comes back must match no row rather
     /// than the rows `ts_us_utc` is null on.
-    @ParameterizedTest(name = "{0} / {1}")
-    @MethodSource("flatLayoutsAndPaths")
-    void negatingAConstantInsideAConjunctionKeepsNullsOut(Layout layout, ReadPath path) throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("flatLayouts")
+    void negatingAConstantInsideAConjunctionKeepsNullsOut(Layout layout) throws Exception {
         FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
                 FilterPredicate.gtEq("ts_us_utc", Instant.MIN),
                 FilterPredicate.gt("i32", 0)));
@@ -1073,142 +966,25 @@ class PredicatePathAgreementTest {
             }
         }
 
-        assertThat(read(layout, filter, path)).as("%s / %s", layout, path).isEqualTo(expected);
+        assertThat(read(layout, filter)).as("%s / %s", layout, path()).isEqualTo(expected);
     }
 
-    static Stream<Arguments> flatLayoutsAndPaths() {
-        return Stream.of(SINGLE, MULTI, DICTIONARY, BLOOM)
-                .flatMap(layout -> Stream.of(ReadPath.values()).map(path -> Arguments.of(layout, path)));
-    }
-
-    /// `i32_req` is the only column whose row groups the harness sees decided as matching in full,
-    /// which skips per-row evaluation. This pins that the multi-row-group layout keeps giving it such
-    /// row groups, and that `i32`, holding the same values beside nulls, gets none.
-    @Test
-    void theMultiLayoutHoldsRowGroupsThatMatchInFull() throws IOException {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MULTI.path()), context)) {
-            assertThat(rowGroupDecisions(reader, FilterPredicate.lt("i32_req", 0)))
-                    .containsExactly(ALWAYS_MATCHES, ALWAYS_MATCHES, CANNOT_MATCH, CANNOT_MATCH);
-            assertThat(rowGroupDecisions(reader, FilterPredicate.lt("i32", 0)))
-                    .containsExactly(MIGHT_MATCH, MIGHT_MATCH, CANNOT_MATCH, CANNOT_MATCH);
-        }
-    }
-
-    private static List<FilterDecision> rowGroupDecisions(ParquetFileReader reader, FilterPredicate predicate)
-            throws IOException {
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(predicate, reader.getFileSchema());
-        List<FilterDecision> decisions = new ArrayList<>();
-        for (RowGroup rowGroup : reader.getFileMetaData().rowGroups()) {
-            decisions.add(RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null,
-                    new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP), BoundsReadability.ALL));
-        }
-        return decisions;
-    }
-
-    /// Every value the oracle reads is the value the fixture generator wrote, through the logical
-    /// and the physical accessor alike.
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("layouts")
-    void readsTheValuesTheFixtureHolds(Layout layout) {
-        Map<String, List<String[]>> written = writtenValues(layout);
-        List<String> differences = new ArrayList<>();
-        for (Map.Entry<String, List<String[]>> column : written.entrySet()) {
-            List<Object[]> read = values(layout, column.getKey());
-            assertThat(read).as("%s: rows of '%s'", layout, column.getKey()).hasSameSizeAs(column.getValue());
-            for (int row = 0; row < read.size(); row++) {
-                String[] expected = column.getValue().get(row);
-                String logical = rendered(read.get(row)[0]);
-                String physical = rendered(read.get(row)[1]);
-                if (!logical.equals(expected[0]) || !physical.equals(expected[1])) {
-                    differences.add("row " + row + ", " + column.getKey() + ": read " + logical + " / " + physical
-                            + ", written " + expected[0] + " / " + expected[1]);
-                }
-            }
-        }
-        assertThat(differences).as("%s", layout).isEmpty();
-    }
-
-    static Stream<Layout> layouts() {
-        return LAYOUTS.stream();
-    }
-
-    /// The values `tools/simple-datagen.py` wrote to the layout's corpus, by column, each as its
-    /// logical and physical rendering, indexed by row.
-    private static Map<String, List<String[]>> writtenValues(Layout layout) {
-        return WRITTEN.computeIfAbsent(corpus(layout), corpus -> {
-            try {
-                return writtenValues(corpus);
-            }
-            catch (IOException e) {
-                throw new IllegalStateException("Cannot read " + corpus + ".values.tsv.gz", e);
-            }
-        });
-    }
-
-    private static Map<String, List<String[]>> writtenValues(String corpus) throws IOException {
-        Map<String, List<String[]>> columns = new LinkedHashMap<>();
-        for (String line : writtenLines(RES.resolve(corpus + ".values.tsv.gz"))) {
-            if (line.startsWith("#")) {
-                continue;
-            }
-            String[] fields = line.split("\t", -1);
-            List<String[]> rows = columns.computeIfAbsent(fields[1], key -> new ArrayList<>());
-            if (Integer.parseInt(fields[0]) != rows.size()) {
-                throw new IllegalStateException(corpus + ".values.tsv.gz: row " + fields[0] + " of '" + fields[1]
-                        + "' out of order");
-            }
-            rows.add(new String[] { fields[2], fields[3] });
-        }
-        return columns;
-    }
-
-    private static String corpus(Layout layout) {
-        return layout.path().getFileName().toString().replaceFirst("_(single|multi|dict|bloom|pages)\\.parquet$", "");
-    }
-
-    private static List<String> writtenLines(Path sidecar) throws IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                new GZIPInputStream(Files.newInputStream(sidecar)), StandardCharsets.UTF_8))) {
-            return reader.lines().toList();
-        }
-    }
-
-    /// A value in the form `tools/simple-datagen.py` writes it: tagged with its type, and reduced to
-    /// integers, raw bits or hex without decoding anything.
-    private static String rendered(Object value) {
-        return switch (value) {
-            case null -> "null";
-            case Boolean v -> "boolean:" + v;
-            case Byte v -> "byte:" + v;
-            case Integer v -> "int:" + v;
-            case Long v -> "long:" + v;
-            case Float v -> "float:" + HexFormat.of().toHexDigits(Float.floatToRawIntBits(v));
-            case Double v -> "double:" + HexFormat.of().toHexDigits(Double.doubleToRawLongBits(v));
-            case byte[] v -> "bytes:" + HexFormat.of().formatHex(v);
-            case String v -> "string:" + HexFormat.of().formatHex(v.getBytes(StandardCharsets.UTF_8));
-            case LocalDate v -> "date:" + v.toEpochDay();
-            case LocalTime v -> "time:" + v.toNanoOfDay();
-            case Instant v -> "instant:" + v.getEpochSecond() + ":" + v.getNano();
-            case LocalDateTime v -> "datetime:" + v.toEpochSecond(ZoneOffset.UTC) + ":" + v.getNano();
-            case BigDecimal v -> "decimal:" + v.unscaledValue() + ":" + v.scale();
-            case UUID v -> "uuid:" + v;
-            case PqInterval v -> "interval:" + v.months() + ":" + v.days() + ":" + v.milliseconds();
-            default -> throw new IllegalArgumentException("No rendering for a " + value.getClass().getName());
-        };
+    static Stream<Layout> flatLayouts() {
+        return Stream.of(SINGLE, MULTI, DICTIONARY, BLOOM);
     }
 
     // ==================== Reading ====================
 
-    private static List<Long> read(Layout layout, FilterPredicate predicate, ReadPath path) throws IOException {
-        FilterPredicate filter = path.forceRecordPath ? FilterPredicate.or(predicate, NEVER) : predicate;
-        ReaderConfig config = path.metadataFiltering ? ReaderConfig.defaults() : METADATA_FILTERING_OFF;
+    private List<Long> read(Layout layout, FilterPredicate predicate) throws IOException {
+        FilterPredicate filter = forceRecordPath ? FilterPredicate.or(predicate, NEVER) : predicate;
+        ReaderConfig config = metadataFiltering ? ReaderConfig.defaults() : METADATA_FILTERING_OFF;
         List<Long> rows = new ArrayList<>();
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context, config)) {
-            if (path.forceRecordPath) {
+            if (forceRecordPath) {
                 assertTakesRecordPath(filter, reader.getFileSchema());
             }
-            if (path.columnReader) {
+            if (columnReader) {
                 try (ColumnReader columns = reader.buildColumnReader("__row__").filter(filter).build()) {
                     while (columns.nextBatch()) {
                         long[] values = columns.getLongs();
@@ -1249,68 +1025,6 @@ class PredicatePathAgreementTest {
             }
         }
         return rows;
-    }
-
-    /// The values of `column`, which must be among those [#readsTheValuesTheFixtureHolds] checks.
-    private static List<Object[]> values(Layout layout, String column) {
-        if (!writtenValues(layout).containsKey(column)) {
-            throw new IllegalStateException(corpus(layout) + ".values.tsv.gz holds no values of '" + column
-                    + "'; add the column to the corpus's _pv_write call in tools/simple-datagen.py");
-        }
-        return VALUES.computeIfAbsent(layout.name() + "#" + column, key -> {
-            List<Object[]> values = new ArrayList<>();
-            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context,
-                    ReaderConfig.defaults());
-                 RowReader rows = reader.buildRowReader().build()) {
-                while (rows.hasNext()) {
-                    rows.next();
-                    values.add(valueOf(rows, column));
-                }
-            }
-            catch (IOException e) {
-                throw new IllegalStateException("Cannot read column '" + column + "' of " + layout.path(), e);
-            }
-            return values;
-        });
-    }
-
-    /// The logical and physical value of `column` in the row the reader stands on, or two nulls
-    /// where the leaf or an enclosing group is absent.
-    private static Object[] valueOf(RowReader rows, String column) {
-        int dot = column.indexOf('.');
-        if (dot < 0) {
-            return rows.isNull(column)
-                    ? new Object[2]
-                    : new Object[] { rows.getValue(column), rows.getRawValue(column) };
-        }
-        String group = column.substring(0, dot);
-        String field = column.substring(dot + 1);
-        if (rows.isNull(group) || !(rows.getValue(group) instanceof PqStruct struct) || struct.isNull(field)) {
-            return new Object[2];
-        }
-        return new Object[] { struct.getValue(field), struct.getRawValue(field) };
-    }
-
-    private static ColumnSchema schemaOf(Layout layout, String column) {
-        return schemaOf(layout).getColumn(column);
-    }
-
-    private static FileSchema schemaOf(Layout layout) {
-        return SCHEMAS.computeIfAbsent(layout.name(), key -> {
-            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context,
-                    ReaderConfig.defaults())) {
-                return reader.getFileSchema();
-            }
-            catch (IOException e) {
-                throw new IllegalStateException("Cannot open " + layout.path(), e);
-            }
-        });
-    }
-
-    private static List<String> columnsOf(Layout layout) {
-        return schemaOf(layout).getColumns().stream()
-                .map(c -> c.fieldPath().toString())
-                .toList();
     }
 
     /// Whether `name` denotes a group, which only the rejection cases name.

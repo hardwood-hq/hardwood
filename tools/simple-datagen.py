@@ -6840,8 +6840,8 @@ def _pred_bloom(table):
 # Every corpus below gets a `<corpus>.values.tsv.gz` beside its files: for each row and column, the
 # value its logical accessor and its physical accessor return in a reader that decodes correctly,
 # taken from what this script wrote rather than from reading the files back.
-# `PredicatePathAgreementTest` holds the reader to it, so its oracle, which reads values through the
-# reader, cannot share a decoding defect with the predicate it checks.
+# `PredicateCorpusTest` holds the reader to it, so the oracle of `PredicatePathAgreementTest`, which reads
+# values through the reader, cannot share a decoding defect with the predicate it checks.
 #
 # Each value is tagged with the Java type the accessor returns, in a form the test renders without
 # decoding anything: integers in decimal, floating point as raw bits, bytes and strings as hex (a

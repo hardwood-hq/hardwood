@@ -280,7 +280,7 @@ Two oracles of the rule check every read path, each independent of `FilterPredic
 | | `PredicatePathAgreementTest` | `tools/predicate-audit` |
 |---|---|---|
 | Runs | every unit-test build | PR build, on changes to the paths its README lists |
-| Stored values from | the reader, held first to `<corpus>.values.tsv.gz` from `tools/simple-datagen.py` | the fixture generator (`Columns.java`), never Hardwood's accessors |
+| Stored values from | the reader, held first to `<corpus>.values.tsv.gz` from `tools/simple-datagen.py` by `PredicateCorpusTest` | the fixture generator (`Columns.java`), never Hardwood's accessors |
 | Fixtures | PyArrow corpora: single, multi, dictionary, Bloom, page index, nested, `INT96` (also in `INT96_TIMESTAMP_ORDER`), 12-byte timestamps | parquet-java writes, plus footer rewrites (converted-type-only, dropped annotations, annotated 12-byte timestamps, `INT96` in `INT96_TIMESTAMP_ORDER`) |
 | Also checks | | resolver matrix, Bloom, dictionary and `INT96_TIMESTAMP_ORDER` consultation, accessor round-trip, parquet-java and DuckDB comparison |
 
