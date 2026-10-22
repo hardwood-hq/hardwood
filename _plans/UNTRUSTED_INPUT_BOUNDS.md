@@ -30,7 +30,9 @@ encodes a constant column) and covers the CLI as well as the library.
 The page limit bounds each allocation, not their sum: a page within it is decoded whole, and
 the allocations of many columns are live at once. A file whose pages exceed the limit, such as
 DuckDB's `42.parquet`, fails with a controlled error and is not read; no writer produces such
-pages, so the reader does not decode pages in windows to read them. Bounding the sum is stage 6.
+pages, so the reader does not decode pages in windows to read them. Bounding the sum is stage 6,
+whose budget supersedes the page limit: the limit is an interim bound, fitted to no heap, that
+also refuses legitimate pages larger than it, such as one holding a single large binary value.
 
 ## Fields
 
@@ -120,11 +122,25 @@ grows with the projection rather than the pool:
 
 Compression makes a declared size real: a dictionary page of 256 MiB of zeros takes a few KiB on
 disk, so a file of a thousand such columns asks for 256 GiB from kilobytes. Charge the
-file-sized allocations that outlive their task against a decode-memory budget and fail the read
-with `ParquetReadException` past it. Measure first: a many-column file of dictionary pages at
-the limit, and the heap a read of it reaches. The budget's home and default (per read or per
-context, a share of the heap) are open, and so is how it composes with the read-ahead budget of
-#1397. Tracked in #1644.
+allocations sized from file-declared values against a decode-memory budget, reserved before
+each is made and released when it is done. That covers the transient ones as well as those that
+outlive their task: the per-thread decompression output and level and dictionary-id scratch are
+bounded by the pool's threads only through the page limit, so a budget that leaves them out
+leaves threads × one large page unbounded once the limit goes. A single allocation larger than
+the whole budget fails the read with `ParquetReadException`; reservations that together exceed
+it wait for others to be released rather than fail, the way the read-ahead budget of #1397
+holds back fetches, so the outcome for a file depends on the heap only when one of its
+allocations alone exceeds the budget.
+
+Measure first: a many-column file of dictionary pages at the limit, and the heap a read of it
+reaches. The budget's home and default (per read or per context, a share of the heap) are open.
+
+When the budget lands, the page limit goes, or stays only as a check that a declared size fits
+a Java array. The writer's page cuts at the default limit (`PageLimit.DEFAULT_MAX_PAGE_VALUES`
+entries, a byte target clamped to half the limit) exist only to match it and are revisited with
+it; whether the writer caps its dictionary pages, as parquet-java, Arrow and parquet-go do at
+their dictionary page size limits, is a question of encoding selection, not of a reader bound.
+Tracked in #1644.
 
 ### Stage 7: #1630 fuzzing
 
