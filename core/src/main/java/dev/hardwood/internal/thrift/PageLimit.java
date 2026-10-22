@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.thrift;
 
-/// The largest page a read accepts, in uncompressed bytes.
+/// The largest page a read accepts, in uncompressed bytes and in values.
 ///
 /// A page header's sizes and counts are the first values of a page the reader sees, and the
 /// decode sizes buffers from them before any of the page's data is read: the decompression
@@ -17,6 +17,9 @@ package dev.hardwood.internal.thrift;
 final class PageLimit {
 
     static final String MAX_PAGE_BYTES_PROPERTY = "hardwood.internal.maxPageBytes";
+
+    /// How the error for a data page's `num_values` names its bound.
+    static final String MAX_PAGE_VALUES_BOUND = MAX_PAGE_BYTES_PROPERTY + " / " + Integer.BYTES;
 
     private static final int DEFAULT_MAX_PAGE_BYTES = 256 * 1024 * 1024;
 
@@ -51,5 +54,14 @@ final class PageLimit {
                     MAX_PAGE_BYTES_PROPERTY + " must be a positive byte count, but was: " + override);
         }
         return bytes;
+    }
+
+    /// The most values a data page may declare: [#maxPageBytes] at four bytes per value, the
+    /// size of one entry of the `int` arrays its levels and dictionary ids are decoded into.
+    ///
+    /// A dictionary page is not held to it: its entries are checked against the bytes of the
+    /// page as it is parsed, which [#maxPageBytes] bounds.
+    static int maxPageValues() {
+        return maxPageBytes() / Integer.BYTES;
     }
 }
