@@ -9,6 +9,7 @@ package dev.hardwood.internal.encoding;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
@@ -30,10 +31,11 @@ class DeltaBinaryPackedDecoderHeaderTest {
     }
 
     @Test
-    void refusesANegativeTotalValueCount() {
+    void refusesATotalValueCountPastTheIntRange() {
+        // -1 as an unsigned 32-bit ULEB128, which narrowed to an int would read as -1
         assertThatThrownBy(() -> decode(header(128, 4, -1, 100), 5))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Invalid total value count: -1");
+                .hasMessage("Invalid total value count: 4294967295 exceeds 2147483647");
     }
 
     @Test
@@ -44,13 +46,60 @@ class DeltaBinaryPackedDecoderHeaderTest {
     }
 
     @Test
-    void refusesANegativeMiniblockCount() {
-        // A ULEB128 wide enough to overflow the int reaches the header as a negative count, and a
-        // negative divisor divides evenly (128 % -1 == 0), so the divisibility check does not stop
-        // it either. Unrefused it reaches new int[-1].
+    void refusesAMiniblockCountPastTheIntRange() {
+        // Narrowed to an int this is -1, which divides 128 evenly and reaches new int[-1]
         assertThatThrownBy(() -> decode(header(128, -1, 5, 100), 5))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Invalid miniblock count: -1");
+                .hasMessage("Invalid miniblock count: 4294967295 exceeds 2147483647");
+    }
+
+    @Test
+    void refusesABlockSizeThatNarrowsToAValidOne() {
+        // 2^32 + 128 narrowed to an int is 128, a block size every check of the header accepts
+        ByteArrayOutputStream page = new ByteArrayOutputStream();
+        writeUleb128(page, (1L << 32) + 128);
+        page.writeBytes(header(4, 5, 100));
+
+        assertThatThrownBy(() -> decode(page.toByteArray(), 5))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid block size: 4294967424 exceeds 2147483647");
+    }
+
+    @Test
+    void refusesABlockSizeWithItsTopBitSet() {
+        // 2^63 + 128, a negative long, narrowed to an int is 128
+        ByteArrayOutputStream page = new ByteArrayOutputStream();
+        page.writeBytes(new byte[] { (byte) 0x80, (byte) 0x81, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01 });
+        page.writeBytes(header(4, 5, 100));
+
+        assertThatThrownBy(() -> decode(page.toByteArray(), 5))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid block size: 9223372036854775936 exceeds 2147483647");
+    }
+
+    @Test
+    void refusesAUleb128WhoseTenthByteFallsPastALong() {
+        // The tenth byte's 0x02 lands at bit 64, which a long does not have, leaving 128
+        ByteArrayOutputStream page = new ByteArrayOutputStream();
+        page.writeBytes(new byte[] { (byte) 0x80, (byte) 0x81, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x02 });
+        page.writeBytes(header(4, 5, 100));
+
+        assertThatThrownBy(() -> decode(page.toByteArray(), 5))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid ULEB128: longer than 64 bits");
+    }
+
+    @Test
+    void refusesAUleb128LongerThanALong() {
+        byte[] page = new byte[12];
+        Arrays.fill(page, 0, 10, (byte) 0x80);
+        page[10] = 0x01;
+
+        assertThatThrownBy(() -> decode(page, 5))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid ULEB128: longer than 64 bits");
     }
 
     @Test
@@ -153,8 +202,22 @@ class DeltaBinaryPackedDecoderHeaderTest {
         return out.toByteArray();
     }
 
+    /// The header's fields after the block size: miniblock count, total value count and first value.
+    private static byte[] header(int miniblockCount, int totalValueCount, long firstValue) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        writeUleb128(out, miniblockCount);
+        writeUleb128(out, totalValueCount);
+        out.writeBytes(zigzag(firstValue));
+        return out.toByteArray();
+    }
+
+    /// `value` as an unsigned 32-bit ULEB128, as a writer encodes an `int`.
     private static void writeUleb128(ByteArrayOutputStream out, int value) {
-        long remaining = value & 0xFFFFFFFFL;
+        writeUleb128(out, value & 0xFFFFFFFFL);
+    }
+
+    private static void writeUleb128(ByteArrayOutputStream out, long value) {
+        long remaining = value;
         do {
             int b = (int) (remaining & 0x7F);
             remaining >>>= 7;

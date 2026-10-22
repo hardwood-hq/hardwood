@@ -70,9 +70,9 @@ public class DeltaBinaryPackedDecoder {
                 throw new IllegalArgumentException(
                         "Block size " + blockSize + " exceeds the maximum of " + MAX_BLOCK_SIZE);
             }
-            // Negative counts reach here from a ULEB128 wide enough to overflow the int, and a
-            // negative divisor still divides evenly (128 % -1 == 0), so the divisibility check below
-            // does not catch them either. Left unchecked they surface as NegativeArraySizeException.
+            // The stream's counts arrive non-negative, but a negative divisor still divides evenly
+            // (128 % -1 == 0), so the divisibility check below would not catch one; left unchecked
+            // it surfaces as NegativeArraySizeException.
             if (miniblockCount <= 0) {
                 throw new IllegalArgumentException("Invalid miniblock count: " + miniblockCount);
             }
@@ -303,9 +303,9 @@ public class DeltaBinaryPackedDecoder {
     /// translated here, because to this class a header that does not add up is a malformed file and
     /// not a programming error.
     private Header readHeader() {
-        int blockSize = readUleb128();
-        int miniblockCount = readUleb128();
-        int totalValueCount = readUleb128();
+        int blockSize = readUleb128Int("block size");
+        int miniblockCount = readUleb128Int("miniblock count");
+        int totalValueCount = readUleb128Int("total value count");
         long firstValue = readZigzagUleb128();
         try {
             return Header.of(blockSize, miniblockCount, totalValueCount, firstValue);
@@ -454,19 +454,16 @@ public class DeltaBinaryPackedDecoder {
         return tailBytes;
     }
 
-    private int readUleb128() {
-        int result = 0;
-        int shift = 0;
-        int b;
-        do {
-            if (pos >= limit) {
-                throw new ParquetReadException("Unexpected EOF in ULEB128");
-            }
-            b = data[pos++] & 0xFF;
-            result |= (b & 0x7F) << shift;
-            shift += 7;
-        } while ((b & 0x80) != 0);
-        return result;
+    /// A header count, read whole and refused past the `int` range rather than narrowed: narrowed,
+    /// `2^32 + 128` would read as a block size of 128 and pass every check of [Header]. The varint
+    /// is unsigned, so a value with its top bit set is compared as one, not as a negative `long`.
+    private int readUleb128Int(String field) {
+        long value = readUleb128Long();
+        if (Long.compareUnsigned(value, Integer.MAX_VALUE) > 0) {
+            throw new ParquetReadException("Invalid " + field + ": " + Long.toUnsignedString(value)
+                    + " exceeds " + Integer.MAX_VALUE);
+        }
+        return (int) value;
     }
 
     private long readUleb128Long() {
@@ -478,6 +475,9 @@ public class DeltaBinaryPackedDecoder {
                 throw new ParquetReadException("Unexpected EOF in ULEB128");
             }
             b = data[pos++] & 0xFF;
+            if (Uleb128.overflowsLong(shift, b)) {
+                throw new ParquetReadException("Invalid ULEB128: longer than 64 bits");
+            }
             result |= (long) (b & 0x7F) << shift;
             shift += 7;
         } while ((b & 0x80) != 0);
