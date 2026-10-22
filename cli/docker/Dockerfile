@@ -10,7 +10,7 @@
 # Build context must be the cli/ module directory so that target/ is reachable.
 # Run: docker build -t ghcr.io/hardwood-hq/hardwood:local -f docker/Dockerfile .
 
-FROM quay.io/fedora/fedora-minimal:43
+FROM quay.io/fedora/fedora-minimal:44
 
 LABEL org.opencontainers.image.title="hardwood CLI"
 LABEL org.opencontainers.image.description="Hardwood native CLI (minimal Fedora base)"

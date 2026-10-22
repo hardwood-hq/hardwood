@@ -4,10 +4,10 @@
 
 ### Prerequisites
 
-A local GraalVM (Java 25+) is required to build a native binary for your own platform. Install via [SDKMAN](https://sdkman.io/):
+A local GraalVM (Java 25+) is required to build a native binary for your own platform. The release builds use the latest GraalVM CE 25 Innovation release; install it via [SDKMAN](https://sdkman.io/):
 
 ```bash
-sdk install java 25.0.2-graalce
+sdk install java 25.4.4.1+1-graalce
 ```
 
 The native build fails until the GraalVM's `lib/security/blocked.certs` lists every certificate in [cli/src/main/trust/blocked.certs](cli/src/main/trust/blocked.certs) (see [Blocked certificates](#blocked-certificates)). Add them once per GraalVM installation:

@@ -159,7 +159,7 @@ Every build without `-Dquick` sorts the imports as per the project's conventions
 The `hardwood` CLI compiles to a GraalVM native binary. Requires GraalVM (Java 25+) installed locally — install via [SDKMAN](https://sdkman.io/):
 
 ```shell
-sdk install java 25.0.2-graalce
+sdk install java 25.4.4.1+1-graalce
 ```
 
 Then add the certificates the binary must reject to that GraalVM's block list, and build the `cli` module and its dependencies:

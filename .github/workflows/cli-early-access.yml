@@ -57,7 +57,7 @@ jobs:
       - name: 'Set up Graal'
         uses: graalvm/setup-graalvm@27b360dbb857524eaf0b4c4cef364d38e5b4f173  # v1.6.7 — https://github.com/graalvm/setup-graalvm/releases/tag/v1.6.7
         with:
-          java-version: '25'
+          version: '25i-latest'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
