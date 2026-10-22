@@ -14,6 +14,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.CloseClaim;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.NestedBatch;
@@ -51,7 +52,9 @@ final class ColumnScan implements Closeable {
 
     private boolean hasBatch;
     private int recordCount;
-    private boolean closed;
+    /// Claimed by the thread that closes the scan; a closer on another thread, such as the
+    /// parent's, waits until that close has completed.
+    private final CloseClaim closeClaim = new CloseClaim();
 
     private ColumnScan(ColumnCursor[] cursors, int payloadCount, SelectionEngine engine,
                        RowGroupIterator rowGroupIterator) {
@@ -128,7 +131,7 @@ final class ColumnScan implements Closeable {
 
     /// @throws IllegalStateException if the scan is closed
     private void requireOpen() {
-        if (closed) {
+        if (closeClaim.isClaimed()) {
             throw new IllegalStateException("The column read is closed");
         }
     }
@@ -354,21 +357,24 @@ final class ColumnScan implements Closeable {
     }
 
     /// Stops every cursor's column, then releases the iterator, even when a
-    /// cursor's teardown fails. Idempotent.
+    /// cursor's teardown fails. Idempotent: a close on another thread while one runs, such as
+    /// the parent's, waits until that close has completed.
     @Override
     public void close() throws IOException {
-        if (closed) {
+        if (!closeClaim.claim()) {
             return;
         }
-        closed = true;
-        tally.close();
         // Released even when a cursor's teardown fails: this scan will not run its
         // close body again, so skipping the release would leave the work list
         // reachable for the parent reader's whole lifetime.
         try (rowGroupIterator) {
+            tally.close();
             for (ColumnCursor cursor : cursors) {
                 cursor.close();
             }
+        }
+        finally {
+            closeClaim.completed();
         }
     }
 }

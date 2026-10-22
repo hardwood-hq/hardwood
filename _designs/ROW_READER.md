@@ -102,7 +102,7 @@ A schema with no columns yields an empty relation: there is no column to take a 
 
 **File boundaries.** The batch plan closes a batch where the next row group comes from another file, and every column stamps the file name on its batches. No batch spans two files ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)). The reader takes the file name from the first column's batch; it prefixes exception messages, attributes `RecordFilterTally` counts, and answers `FileAwareRowReader.currentFileName()`, which `AvroRowReader` (avro module) uses to name the file in its own failures. The accessor state is built once from the reference schema; how a later file's columns are mapped onto it is in [READ_PIPELINE.md](READ_PIPELINE.md).
 
-**Close.** `close()` is idempotent. It closes the columns, recycles the held batches, drains every exchange and releases the iterator; the release runs even when teardown fails, with its own failure suppressed under the original. A reader closed early stops its columns without reading further.
+**Close.** `close()` is idempotent, and a close on another thread while one runs, such as the parent reader's, waits for it to finish. It closes the columns, recycles the held batches, drains every exchange and releases the iterator; the release runs even when teardown fails, with its own failure suppressed under the original. A reader closed early stops its columns without reading further.
 
 Tests: `PqRowApiTest`, `NoColumnsFileReadTest`, `IteratorTrackingTest`, `MultiFileRowReaderTest`.
 

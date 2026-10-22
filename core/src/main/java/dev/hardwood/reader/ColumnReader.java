@@ -444,7 +444,8 @@ public class ColumnReader implements Closeable {
     }
 
     /// Releases the resources held by this reader. Idempotent: calling it more than once has
-    /// no further effect. A reader obtained from a [ColumnReaders] holds no resources of its
+    /// no further effect, and a call on another thread while a close runs, such as the
+    /// [ParquetFileReader]'s, returns once that close has completed. A reader obtained from a [ColumnReaders] holds no resources of its
     /// own, and closing it has no effect; [ColumnReaders#close()] releases the group.
     @Override
     public void close() throws IOException {

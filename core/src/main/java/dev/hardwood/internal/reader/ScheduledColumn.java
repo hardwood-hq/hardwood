@@ -9,7 +9,6 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -119,10 +118,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     private volatile boolean fetchWanted;
     /// The thread that claimed the close and waits for the page tasks; the last task unparks it.
     private volatile Thread closingThread;
-    /// Claimed by the one thread that closes the column ([#close()]).
-    private final AtomicBoolean closeClaimed = new AtomicBoolean();
-    /// Released once the claiming thread has closed the column, for every other closer.
-    private final CountDownLatch closed = new CountDownLatch(1);
+    /// Claimed by the one thread that closes the column ([#close()]); every other closer waits
+    /// until that close has completed.
+    private final CloseClaim closeClaim = new CloseClaim();
 
     // === Fetch steps only ===
     private PageDecoder pageDecoder;
@@ -163,8 +161,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// nothing else runs the column's tasks; each returns at once on a stopped column.
     @Override
     public void close() {
-        if (!closeClaimed.compareAndSet(false, true)) {
-            awaitClosed();
+        if (!closeClaim.claim()) {
             return;
         }
         boolean interrupted = false;
@@ -184,25 +181,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             }
         }
         finally {
-            closed.countDown();
-        }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    /// Waits until the thread that claimed the close has completed it, carrying on through
-    /// interrupts and restoring them.
-    private void awaitClosed() {
-        boolean interrupted = false;
-        while (true) {
-            try {
-                closed.await();
-                break;
-            }
-            catch (InterruptedException e) {
-                interrupted = true;
-            }
+            closeClaim.completed();
         }
         if (interrupted) {
             Thread.currentThread().interrupt();

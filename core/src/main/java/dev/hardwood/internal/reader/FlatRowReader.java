@@ -119,7 +119,9 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// stays out of line in [#hasNextSlow] and [#nextSlow].
     private int plainLimit;
     private boolean exhausted;
-    private boolean closed;
+    /// Claimed by the thread that closes the reader; a closer on another thread, such as the
+    /// parent's, waits until that close has completed.
+    private final CloseClaim closeClaim = new CloseClaim();
 
     /// Owns the whole per-batch match merge — the plan, the evaluator and its
     /// scratch, the per-column bitmap slots and the combined buffer. Non-null is
@@ -1048,10 +1050,9 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     @Override
     public void close() throws IOException {
-        if (closed) {
+        if (!closeClaim.claim()) {
             return;
         }
-        closed = true;
         // The iterator is released even when tearing the pipeline down fails: this
         // reader will not run its close body again, so skipping the release would
         // leave the work list reachable for the parent reader's whole lifetime. A
@@ -1072,6 +1073,9 @@ public final class FlatRowReader implements FileAwareRowReader {
                 }
                 exchanges[i].drainReady();
             }
+        }
+        finally {
+            closeClaim.completed();
         }
     }
 

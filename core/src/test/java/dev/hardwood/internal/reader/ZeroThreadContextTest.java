@@ -305,6 +305,43 @@ class ZeroThreadContextTest {
         }
     }
 
+    /// The parent reader's close claims the read's close and waits for a held read; the columns'
+    /// own close, started on another thread after it, waits for that close instead of returning.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aCloseStartedAfterTheParentsWaitsForIt() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(0);
+             HeldRead read = HeldRead.start(context)) {
+            Thread readerCloser = Thread.ofPlatform().start(read::closeReader);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (readerCloser.getState() != Thread.State.WAITING) {
+                assertThat(System.nanoTime() - deadline).as("the parent's close waits for the held read").isNegative();
+                Thread.onSpinWait();
+            }
+            AtomicReference<Throwable> columnsCloseFailure = new AtomicReference<>();
+            Thread columnsCloser = Thread.ofPlatform().start(() -> {
+                try {
+                    read.columns.close();
+                }
+                catch (Throwable e) {
+                    columnsCloseFailure.set(e);
+                }
+            });
+
+            assertThat(columnsCloser.join(Duration.ofMillis(300)))
+                    .as("the columns' close returned while the parent's close waited for a held read")
+                    .isFalse();
+            read.release();
+            columnsCloser.join();
+            readerCloser.join();
+            read.consumer.join();
+
+            assertThat(columnsCloseFailure.get()).isNull();
+            assertThat(read.closeFailure).isNull();
+            read.assertFilesClosedOnce();
+        }
+    }
+
     /// A close interrupted while it waits for a held read goes on waiting, and returns with the
     /// interrupt restored once the read completes.
     @Test

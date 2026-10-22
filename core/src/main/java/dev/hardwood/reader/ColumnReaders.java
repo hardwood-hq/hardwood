@@ -177,7 +177,8 @@ public class ColumnReaders implements Closeable {
     }
 
     /// Releases the resources held by every reader of this group, after which [#nextBatch()]
-    /// throws [IllegalStateException]. Idempotent.
+    /// throws [IllegalStateException]. Idempotent: a call on another thread while a close runs,
+    /// such as the [ParquetFileReader]'s, returns once that close has completed.
     @Override
     public void close() throws IOException {
         scan.close();

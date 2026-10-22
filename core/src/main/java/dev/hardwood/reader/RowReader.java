@@ -70,7 +70,8 @@ public interface RowReader extends StructAccessor, Closeable {
     void next() throws IOException;
 
     /// Releases the resources held by this reader. Idempotent: calling it more
-    /// than once has no further effect.
+    /// than once has no further effect, and a call on another thread while a close runs, such
+    /// as the [ParquetFileReader]'s, returns once that close has completed.
     ///
     /// @throws IOException if a file this reader owns could not be closed
     @Override

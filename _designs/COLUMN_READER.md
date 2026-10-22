@@ -155,7 +155,7 @@ Tests: `LiveWorkItemTest`, `EmptyOffsetIndexTest`.
 
 Readers built separately, each from its own `buildColumnReader`, are separate scans with their own batch sizes; their nth batches cover different rows. Row-aligned multi-column access requires one `ColumnReaders`.
 
-**Closing.** Closing the owner closes the scan: it closes every cursor, then releases the iterator even when a cursor's teardown fails. Afterwards `nextBatch()` throws `IllegalStateException`. Closing a member has no effect. Close is idempotent.
+**Closing.** Closing the owner closes the scan: it closes every cursor, then releases the iterator even when a cursor's teardown fails. Afterwards `nextBatch()` throws `IllegalStateException`. Closing a member has no effect. Close is idempotent, and a close on another thread while one runs, such as the parent reader's, waits for it to finish.
 
 Tests: `ColumnReadersTest`, `IteratorTrackingTest`, `PrunedToEmptyReadTest`. The lockstep checks (early exhaustion, diverging record counts, a batch after the first cursor ended) are defensive guards. Untested.
 

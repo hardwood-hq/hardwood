@@ -92,7 +92,9 @@ public final class NestedRowReader implements FileAwareRowReader {
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
-    private boolean closed;
+    /// Claimed by the thread that closes the reader; a closer on another thread, such as the
+    /// parent's, waits until that close has completed.
+    private final CloseClaim closeClaim = new CloseClaim();
 
     NestedRowReader(BatchExchange<NestedBatch>[] exchanges, ColumnPipeline[] columnPipelines,
                     FileSchema fileSchema, ProjectedSchema payload, NestedBatchDataView dataView,
@@ -487,10 +489,9 @@ public final class NestedRowReader implements FileAwareRowReader {
 
     @Override
     public void close() throws IOException {
-        if (closed) {
+        if (!closeClaim.claim()) {
             return;
         }
-        closed = true;
         // The iterator is released even when tearing the pipeline down fails: this
         // reader will not run its close body again, so skipping the release would
         // leave the work list reachable for the parent reader's whole lifetime. A
@@ -511,6 +512,9 @@ public final class NestedRowReader implements FileAwareRowReader {
                 }
                 exchanges[i].drainReady();
             }
+        }
+        finally {
+            closeClaim.completed();
         }
     }
 
