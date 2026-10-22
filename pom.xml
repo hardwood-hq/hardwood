@@ -68,7 +68,7 @@
     <!-- Whether JReleaser marks the GitHub release as the latest; release.sh sets it per release. -->
     <jreleaser.makeLatest>TRUE</jreleaser.makeLatest>
     <error-prone.version>2.50.0</error-prone.version>
-    <hadoop.version>3.4.3</hadoop.version>
+    <hadoop.version>3.5.0</hadoop.version>
     <japicmp.newVersion>${project.version}</japicmp.newVersion>
     <java.version>21</java.version>
     <java.version.build>25</java.version.build>
