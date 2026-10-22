@@ -125,7 +125,9 @@ class WriterDictionaryProbeTest {
         try (ParquetFileReader reader = ParquetFileReader.open(
                 InputFile.of(out.buffer()))) {
             int[] read = readInts(reader, values.length);
-            assertThat(read).containsExactly(values);
+            assertThat(Arrays.mismatch(read, values))
+                    .as("first index where the read values differ from the written ones")
+                    .isEqualTo(-1);
         }
     }
 
@@ -229,7 +231,9 @@ class WriterDictionaryProbeTest {
                     written += column.getValueCount();
                 }
             }
-            assertThat(read).containsExactly(values);
+            assertThat(Arrays.mismatch(read, values))
+                    .as("first index where the read values differ from the written ones")
+                    .isEqualTo(-1);
         }
     }
 
