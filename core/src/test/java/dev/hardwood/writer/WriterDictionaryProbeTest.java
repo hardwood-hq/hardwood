@@ -7,6 +7,7 @@
  */
 package dev.hardwood.writer;
 
+import java.util.Arrays;
 import java.util.Random;
 
 import org.junit.jupiter.api.Test;
@@ -191,7 +192,11 @@ class WriterDictionaryProbeTest {
             RowGroup first = reader.getFileMetaData().rowGroups().get(0);
             assertThat(first.numRows()).isGreaterThan(SECOND_PROBE);
             assertThat(first.columns().get(0).metaData().statistics().distinctCount()).as("distinct_count").isNull();
-            assertThat(readInts(reader, values.length)).containsExactly(values);
+            // The first differing index rather than containsExactly, which takes seconds over
+            // 200,000 values, or isEqualTo, whose message shows neither the index nor the value.
+            assertThat(Arrays.mismatch(readInts(reader, values.length), values))
+                    .as("first index where the read values differ from the written ones")
+                    .isEqualTo(-1);
         }
     }
 
