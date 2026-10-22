@@ -74,6 +74,66 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void uncompressedPageSizeAboveLimitRejected() {
+        assertThatThrownBy(() -> PageHeaderReader.read(reader(pageHeader(256 * 1024 * 1024 + 1))))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("PageHeader.uncompressed_page_size — must not exceed 268435456 "
+                        + "(hardwood.internal.maxPageBytes) but was 268435457");
+    }
+
+    @Test
+    void uncompressedPageSizeAtLimitAccepted() {
+        PageHeader header = PageHeaderReader.read(reader(pageHeader(256 * 1024 * 1024)));
+        assertThat(header.uncompressedPageSize()).isEqualTo(256 * 1024 * 1024);
+    }
+
+    @Test
+    void uncompressedPageSizeLimitFollowsProperty() {
+        System.setProperty(PageLimit.MAX_PAGE_BYTES_PROPERTY, String.valueOf(Integer.MAX_VALUE));
+        try {
+            PageHeader header = PageHeaderReader.read(reader(pageHeader(Integer.MAX_VALUE)));
+            assertThat(header.uncompressedPageSize()).isEqualTo(Integer.MAX_VALUE);
+
+            System.setProperty(PageLimit.MAX_PAGE_BYTES_PROPERTY, "1024");
+            assertThatThrownBy(() -> PageHeaderReader.read(reader(pageHeader(1025))))
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("PageHeader.uncompressed_page_size — must not exceed 1024 "
+                            + "(hardwood.internal.maxPageBytes) but was 1025");
+        }
+        finally {
+            System.clearProperty(PageLimit.MAX_PAGE_BYTES_PROPERTY);
+        }
+    }
+
+    @Test
+    void unparseablePageLimitPropertyRejected() {
+        System.setProperty(PageLimit.MAX_PAGE_BYTES_PROPERTY, "256m");
+        try {
+            assertThatThrownBy(() -> PageHeaderReader.read(reader(pageHeader(10))))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("hardwood.internal.maxPageBytes must be a positive byte count, but was: 256m");
+
+            System.setProperty(PageLimit.MAX_PAGE_BYTES_PROPERTY, "0");
+            assertThatThrownBy(() -> PageHeaderReader.read(reader(pageHeader(10))))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("hardwood.internal.maxPageBytes must be a positive byte count, but was: 0");
+        }
+        finally {
+            System.clearProperty(PageLimit.MAX_PAGE_BYTES_PROPERTY);
+        }
+    }
+
+    /// A `DATA_PAGE` header declaring `uncompressedPageSize`, with a compressed size of 10 and no
+    /// sub-header.
+    private static byte[] pageHeader(int uncompressedPageSize) {
+        return new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(0)
+                .field(2, FieldType.I32).i32(uncompressedPageSize)
+                .field(3, FieldType.I32).i32(10)
+                .stop().build();
+    }
+
+    @Test
     void negativeDataPageOffsetRejected() {
         // ColumnMetaData: field9 data_page_offset (i64) = -1
         assertThatThrownBy(() -> ColumnMetaDataReader.read(

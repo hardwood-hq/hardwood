@@ -271,6 +271,18 @@ public class ThriftCompactReader {
         return value;
     }
 
+    /// Read an i32 that must be non-negative and at most `max`: a size or count that sizes an
+    /// allocation, which nothing else in the file bounds.
+    ///
+    /// @param bound what `max` is, named in the error so a reader of it can find the limit
+    public int readBoundedI32(int max, String bound) {
+        int value = readNonNegativeI32();
+        if (value > max) {
+            throw malformed("must not exceed " + max + " (" + bound + ") but was " + value);
+        }
+        return value;
+    }
+
     /// Read an i64 that must be non-negative — a size, count or file offset.
     /// See [#readNonNegativeI32] for rationale.
     public long readNonNegativeI64() {

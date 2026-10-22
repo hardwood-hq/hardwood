@@ -64,7 +64,8 @@ public class PageHeaderReader {
                 }
                 case 2: // uncompressed_page_size
                     reader.requireField(header, Codes.I32);
-                    uncompressedPageSize = reader.readNonNegativeI32();
+                    uncompressedPageSize = reader.readBoundedI32(PageLimit.maxPageBytes(),
+                            PageLimit.MAX_PAGE_BYTES_PROPERTY);
                     seen |= 1L << fieldId;
                     break;
                 case 3: // compressed_page_size
