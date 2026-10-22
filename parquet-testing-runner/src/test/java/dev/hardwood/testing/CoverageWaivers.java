@@ -26,7 +26,7 @@ import dev.hardwood.metadata.PhysicalType;
 /// is nonetheless observed fails the verdict just as an unwaived gap does. Without that a waiver
 /// outlives what justified it — a parquet-java release that gained the `BROTLI` codec would
 /// leave those cells waived by inertia, which is what the existing
-/// `WriterInteropTest.parquetJavaHasNoBrotliCodec` exists to prevent for one codec and what this
+/// `WriterCodecInteropTest.parquetJavaHasNoBrotliCodec` exists to prevent for one codec and what this
 /// generalizes to every cell.
 final class CoverageWaivers {
 
@@ -102,7 +102,7 @@ final class CoverageWaivers {
     /// would make the gate's result depend on the architecture it runs on.
     ///
     /// The codec is covered against DuckDB by `WriterDifferentialTest` instead, and
-    /// `WriterInteropTest.parquetJavaHasNoBrotliCodec` pins the reason so that a parquet-java
+    /// `WriterCodecInteropTest.parquetJavaHasNoBrotliCodec` pins the reason so that a parquet-java
     /// that gains the codec fails there and these waivers come off.
     private static void brotli(List<Waiver> waivers) {
         Set<Encoding> producible = EnumSet.noneOf(Encoding.class);
@@ -113,7 +113,7 @@ final class CoverageWaivers {
             waivers.add(new Waiver(Coverage.encodingCodec(encoding, CompressionCodec.BROTLI),
                     "parquet-java cannot resolve the BROTLI codec class; covered against DuckDB by"
                             + " WriterDifferentialTest, with the reason pinned by"
-                            + " WriterInteropTest.parquetJavaHasNoBrotliCodec"));
+                            + " WriterCodecInteropTest.parquetJavaHasNoBrotliCodec"));
         }
     }
 }

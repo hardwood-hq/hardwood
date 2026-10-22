@@ -8,28 +8,15 @@
 package dev.hardwood.testing;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
 import org.apache.parquet.column.Encoding;
-import org.apache.parquet.column.EncodingStats;
-import org.apache.parquet.column.statistics.Statistics;
 import org.apache.parquet.example.data.Group;
-import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
-import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.internal.column.columnindex.ColumnIndex;
-import org.apache.parquet.schema.LogicalTypeAnnotation;
-import org.apache.parquet.schema.PrimitiveComparator;
-import org.apache.parquet.schema.PrimitiveType;
-import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -37,18 +24,20 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.writer.EncodingSupport;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.testing.FlatInteropGate.Verified;
+import dev.hardwood.testing.FlatInteropGate.WritePath;
 import dev.hardwood.testing.InteropCase.Nullability;
-import dev.hardwood.testing.ParquetJavaReader.PageIndex;
-import dev.hardwood.testing.ParquetJavaReader.Pages;
 import dev.hardwood.writer.ColumnEncoding;
 import dev.hardwood.writer.ParquetFileWriter;
-import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
 
+import static dev.hardwood.testing.FlatInteropGate.COLUMN;
+import static dev.hardwood.testing.FlatInteropGate.FEW_ROWS;
+import static dev.hardwood.testing.FlatInteropGate.sweep;
+import static dev.hardwood.testing.FlatInteropGate.verify;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -57,26 +46,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// the values, the null counts and the column-chunk statistics are asserted against the data
 /// that was written.
 ///
-/// The matrix varies one axis at a time — repetition, encoding, codec, layout — against a
-/// representative base, and sweeps each axis across all seven writable physical types, since the
-/// value encoders are per type and that is where an encoding defect lives. Two cases are narrower:
-/// the optional encodings crossed with the codecs run each encoding on one type it accepts, and the
-/// fixed-length case varies the length of `FIXED_LEN_BYTE_ARRAY` alone. Its floor is a single-entry
+/// The matrix varies one axis at a time — repetition, encoding, layout — against a representative
+/// base, and sweeps each axis across all seven writable physical types, since the value encoders
+/// are per type and that is where an encoding defect lives. The fixed-length case is narrower: it
+/// varies the length of `FIXED_LEN_BYTE_ARRAY` alone. Its floor is a single-entry
 /// dictionary per physical type, which `BOOLEAN`, never dictionary-encoded, writes `PLAIN`. That
 /// dictionary shape produced #901: an `RLE_DICTIONARY` index stream with no run header, which
 /// Hardwood's own reader and DuckDB both accept and parquet-java rejects.
 ///
-/// The nested shapes are in [WriterNestedInteropTest] and the logical-type annotations in
+/// The codec axis is in [WriterCodecInteropTest], which asserts through the same [FlatInteropGate];
+/// the nested shapes are in [WriterNestedInteropTest] and the logical-type annotations in
 /// [WriterLogicalTypeInteropTest].
 class WriterInteropTest {
-
-    private static final String COLUMN = "v";
 
     /// Enough rows that a case crosses a page and a row-group boundary at the small targets the
     /// layout axis configures, and small enough that the whole matrix stays quick.
     private static final int MANY_ROWS = 20_000;
-
-    private static final int FEW_ROWS = 2_000;
 
     // ==================== Axes ====================
 
@@ -126,36 +111,6 @@ class WriterInteropTest {
         return EncodingSupport.supports(encoding, type.physicalType());
     }
 
-    /// The codec axis crossed with the optional encodings, which [#optionalEncodings] leaves at
-    /// the default codec and [#codecs] leaves at the default encoding — so between them the four
-    /// encodings stage 19b added meet no codec but one.
-    ///
-    /// The pair is what matters here rather than the type: a codec compresses a page body, and
-    /// what these encodings change is the shape of that body. `BYTE_STREAM_SPLIT` is the case
-    /// that makes the point — it changes no page's size on its own, and exists entirely for what
-    /// the codec after it can then do — so each encoding is swept over the codecs on one type it
-    /// is legal for rather than over all of them.
-    ///
-    /// Nullability is swept as it is in [#optionalEncodings], since the shape of a page body is
-    /// what a codec sees: an `OPTIONAL_ALL_NULL` case hands the codec a body with no values in it
-    /// at all, and a `REQUIRED` one a body the definition levels are absent from.
-    static Stream<InteropCase> optionalEncodingCodecs() {
-        return Stream.of(
-                new EncodingCodecAxis(ColumnEncoding.DELTA_BINARY_PACKED, TypeFixture.INT64),
-                new EncodingCodecAxis(ColumnEncoding.DELTA_LENGTH_BYTE_ARRAY, TypeFixture.BYTE_ARRAY),
-                new EncodingCodecAxis(ColumnEncoding.DELTA_BYTE_ARRAY, TypeFixture.BYTE_ARRAY),
-                new EncodingCodecAxis(ColumnEncoding.BYTE_STREAM_SPLIT, TypeFixture.DOUBLE))
-                .flatMap(axis -> PARQUET_JAVA_CODECS.stream()
-                        .flatMap(codec -> Stream.of(Nullability.values())
-                                .map(nullability -> InteropCase.of(
-                                        axis.encoding() + " under " + codec, axis.type(),
-                                        nullability, 64, FEW_ROWS,
-                                        WriterConfig.builder()
-                                                .encoding(axis.encoding())
-                                                .codec(codec)
-                                                .build()))));
-    }
-
     /// The `FIXED_LEN_BYTE_ARRAY` lengths the writer has a reason to see, against every encoding
     /// legal for the type.
     ///
@@ -173,29 +128,6 @@ class WriterInteropTest {
                 new FixedLengthCase(typeLength, ColumnEncoding.BYTE_STREAM_SPLIT,
                         Encoding.BYTE_STREAM_SPLIT)));
     }
-
-    /// The codec axis, over every codec the writer produces. The two it does not — `LZ4`'s
-    /// deprecated Hadoop framing, and `LZO` — fail at writer creation, so they have no file for
-    /// this gate to read back; `WriterRoundTripTest` holds them to failing there.
-    ///
-    /// What the axis is really checking is framing. Each of these codecs has a raw block form and
-    /// a wrapped one, and the wrapped form round-trips perfectly against Hardwood's own reader
-    /// while being the wrong bytes for everyone else — which is what makes an independent reader,
-    /// rather than a round trip, the thing that settles it.
-    ///
-    /// `BROTLI` is the one codec the writer produces that is missing here, because the pinned
-    /// parquet-java cannot read it at all — see [#parquetJavaHasNoBrotliCodec()].
-    static Stream<InteropCase> codecs() {
-        return sweep(PARQUET_JAVA_CODECS,
-                (type, codec) -> InteropCase.of("codec " + codec, type, Nullability.OPTIONAL_SOME_NULL,
-                        64, FEW_ROWS, WriterConfig.builder().codec(codec).build()));
-    }
-
-    /// Every codec the writer produces that the pinned parquet-java can also read, which is all
-    /// of them but `BROTLI` — see [#parquetJavaHasNoBrotliCodec()].
-    private static final List<CompressionCodec> PARQUET_JAVA_CODECS = List.of(
-            CompressionCodec.UNCOMPRESSED, CompressionCodec.GZIP, CompressionCodec.SNAPPY,
-            CompressionCodec.ZSTD, CompressionCodec.LZ4_RAW);
 
     /// The layout axis: one page, several pages within one row group, and several row groups.
     ///
@@ -259,18 +191,6 @@ class WriterInteropTest {
         verify(testCase, dir);
     }
 
-    @ParameterizedTest(name = "{0}")
-    @MethodSource
-    void codecs(InteropCase testCase, @TempDir Path dir) throws IOException {
-        verify(testCase, dir);
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource
-    void optionalEncodingCodecs(InteropCase testCase, @TempDir Path dir) throws IOException {
-        verify(testCase, dir);
-    }
-
     /// A `FIXED_LEN_BYTE_ARRAY` column of one length under one encoding, read back through
     /// parquet-java and asserted value by value, with the encoding the pages declared held to the
     /// one the policy asked for — without which a length that quietly fell back to `PLAIN` would
@@ -323,33 +243,6 @@ class WriterInteropTest {
     @MethodSource
     void rowWritten(InteropCase testCase, @TempDir Path dir) throws IOException {
         verify(testCase, dir, WritePath.ROW);
-    }
-
-    // ==================== The gate ====================
-
-    /// Writes the case's file with Hardwood and asserts everything parquet-java can see about it:
-    /// that it reads at all, that every value and null matches what was written, and that the
-    /// footer's row count, statistics and encodings do too.
-    private Verified verify(InteropCase testCase, Path dir) throws IOException {
-        return verify(testCase, dir, WritePath.BATCH);
-    }
-
-    private Verified verify(InteropCase testCase, Path dir, WritePath writePath) throws IOException {
-        Path file = dir.resolve("written.parquet");
-        write(testCase, file, writePath);
-
-        assertValues(testCase, ParquetJavaReader.readGroups(file));
-
-        ParquetMetadata footer = ParquetJavaReader.readFooter(file);
-        Pages pages = ParquetJavaReader.readPages(file);
-        ParquetJavaReader.assertParseableCreatedBy(footer);
-        assertRowCount(testCase, footer);
-        assertStatistics(testCase, footer);
-        assertDistinctCounts(testCase, file);
-        assertEncodings(testCase, footer, pages);
-        assertEncodingStats(footer, pages);
-        assertPageIndex(testCase, file, footer, pages, ParquetJavaReader.readPageIndex(file));
-        return new Verified(footer, pages);
     }
 
     /// A page whose values all resolve to dictionary index 0 declares an index bit width of zero
@@ -432,30 +325,6 @@ class WriterInteropTest {
         }
     }
 
-    /// Why `BROTLI` is absent from the codec axis, asserted rather than left as a comment.
-    ///
-    /// parquet-java resolves the codec by name through Hadoop's `CompressionCodec` registry, and
-    /// for `BROTLI` the name is `org.apache.hadoop.io.compress.BrotliCodec` — a class that ships
-    /// in neither parquet-java 1.18.1 nor Hadoop, but in `com.github.rdblue:brotli-codec`, an
-    /// unmaintained third-party artifact whose bundled native binaries cover a few platforms
-    /// only. Putting it on this module's classpath would make the gate's result depend on the
-    /// architecture it runs on, which is the opposite of what a gate is for.
-    ///
-    /// So the codec is not unverified, only unverified *against this reader*:
-    /// `WriterDifferentialTest` reads Hardwood's `BROTLI` files back through DuckDB, which
-    /// decompresses them natively. The read direction has the same hole for the same reason —
-    /// `large_string_map.brotli.parquet` is the corpus's only `BROTLI` file and sits in
-    /// [Utils#SKIPPED_FILES] — so this is one gap in parquet-java, not a new one the write path
-    /// introduced.
-    ///
-    /// This test pins the reason, so a parquet-java that gains the codec fails here and `BROTLI`
-    /// rejoins the axis rather than staying out by inertia.
-    @Test
-    void parquetJavaHasNoBrotliCodec() {
-        assertThatThrownBy(() -> Class.forName("org.apache.hadoop.io.compress.BrotliCodec"))
-                .isInstanceOf(ClassNotFoundException.class);
-    }
-
     /// Why `ALP` is absent from the optional-encoding axes, asserted rather than left as a
     /// comment.
     ///
@@ -474,308 +343,7 @@ class WriterInteropTest {
                 .hasMessage("No enum constant org.apache.parquet.column.Encoding.ALP");
     }
 
-    /// Which of the two write APIs produces the file under test.
-    private enum WritePath { BATCH, ROW }
-
-    private void write(InteropCase testCase, Path file, WritePath writePath) throws IOException {
-        FileSchema schema = testCase.type()
-                .declare(FileSchema.builder("interop"), COLUMN, testCase.nullability().repetitionType())
-                .build();
-
-        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, testCase.config())) {
-            if (writePath == WritePath.BATCH) {
-                writer.columnWriter().writeBatch(batch -> testCase.type().set(batch, COLUMN, testCase));
-                return;
-            }
-            RowWriter rows = writer.rowWriter();
-            for (int r = 0; r < testCase.rows(); r++) {
-                int row = r;
-                if (testCase.isNull(row)) {
-                    rows.writeRow(record -> record.setNull(COLUMN));
-                }
-                else {
-                    rows.writeRow(record -> testCase.type().set(record, COLUMN, testCase.ordinal(row)));
-                }
-            }
-        }
-    }
-
-    /// Every row parquet-java produces carries the value that was written, and a null row is
-    /// absent from its group rather than carrying a stand-in value.
-    private void assertValues(InteropCase testCase, List<Group> rows) {
-        assertThat(rows).as("row count").hasSize(testCase.rows());
-        for (int r = 0; r < rows.size(); r++) {
-            Group row = rows.get(r);
-            int field = row.getType().getFieldIndex(COLUMN);
-            if (testCase.isNull(r)) {
-                assertThat(row.getFieldRepetitionCount(field)).as("row %d is null", r).isZero();
-            }
-            else {
-                assertThat(row.getFieldRepetitionCount(field)).as("row %d is present", r).isOne();
-                assertThat(testCase.type().read(row, field)).as("row %d value", r)
-                        .isEqualTo(testCase.type().value(testCase.ordinal(r)));
-            }
-        }
-    }
-
-    private void assertRowCount(InteropCase testCase, ParquetMetadata footer) {
-        long rows = footer.getBlocks().stream().mapToLong(BlockMetaData::getRowCount).sum();
-        assertThat(rows).as("footer row count").isEqualTo(testCase.rows());
-    }
-
-    /// The column-chunk statistics parquet-java exposes agree with the written data. It builds
-    /// them with its own comparator, derived from the column's type and the footer's
-    /// `column_orders`, so agreement here is a cross-implementation check on the sort order the
-    /// bounds were computed in — not merely on the bytes they were stored as.
-    ///
-    /// Bounds are folded over the row groups, so the assertion holds whatever layout the case
-    /// produced.
-    private void assertStatistics(InteropCase testCase, ParquetMetadata footer) {
-        long nulls = 0;
-        Comparable<Object> min = null;
-        Comparable<Object> max = null;
-        for (ColumnChunkMetaData chunk : chunks(footer)) {
-            Statistics<?> statistics = chunk.getStatistics();
-            nulls += statistics.getNumNulls();
-            if (!statistics.hasNonNullValue()) {
-                continue;
-            }
-            min = extreme(min, statistics.genericGetMin(), true);
-            max = extreme(max, statistics.genericGetMax(), false);
-        }
-
-        assertThat(nulls).as("null count").isEqualTo(testCase.nullCount());
-        assertThat(min).as("min").isEqualTo(testCase.type().expectedMin(testCase));
-        assertThat(max).as("max").isEqualTo(testCase.type().expectedMax(testCase));
-    }
-
-    /// `distinct_count` is written for a chunk that knows its cardinality exactly and left out
-    /// otherwise, read here from the footer's own Thrift rather than through parquet-java's
-    /// `Statistics`, which does not surface the field — so a wrong field id or type fails here
-    /// rather than round-tripping cleanly through the writer and reader that agree on it.
-    ///
-    /// A chunk knows the count while it still holds what it counted with, which is any chunk of a
-    /// dictionary-capable type with dictionary encoding enabled, whichever encoding the comparison
-    /// then chose, plus every `BOOLEAN` chunk. The exact value is only asserted for a single-chunk
-    /// file, since a chunk of a multi-row-group file counts its own values rather than the file's.
-    private void assertDistinctCounts(InteropCase testCase, Path file) throws IOException {
-        List<Long> counts = ParquetJavaReader.readDistinctCounts(file);
-        boolean known = testCase.type() == TypeFixture.BOOLEAN
-                || (testCase.config().defaultEncoding() == ColumnEncoding.AUTO
-                        && testCase.type().dictionaryCapable());
-        if (!known) {
-            assertThat(counts).as("distinct_count where the chunk cannot state it")
-                    .containsOnlyNulls();
-            return;
-        }
-        assertThat(counts).as("distinct_count where the chunk knows it").doesNotContainNull();
-        if (counts.size() == 1) {
-            assertThat(counts.get(0)).as("distinct_count").isEqualTo(expectedDistinctCount(testCase));
-        }
-    }
-
-    /// How many distinct values the case's present rows carry, counted the way the value
-    /// assertions count them so a type that maps many ordinals onto few values — `BOOLEAN` onto
-    /// two — is expected to report what it actually wrote.
-    private static long expectedDistinctCount(InteropCase testCase) {
-        Set<Object> distinct = new HashSet<>();
-        for (int row = 0; row < testCase.rows(); row++) {
-            if (!testCase.isNull(row)) {
-                Object value = testCase.type().value(testCase.ordinal(row));
-                // A binary fixture hands back byte[], which compares by identity — wrap it so
-                // this counts the values the writer counts rather than the arrays holding them.
-                distinct.add(value instanceof byte[] bytes ? ByteBuffer.wrap(bytes) : value);
-            }
-        }
-        return distinct.size();
-    }
-
-    /// The case actually produced the encoding it exists to cover, so a change in the writer's
-    /// encoding choice becomes a failure rather than a silent loss of coverage.
-    ///
-    /// Two things are asserted, because a chunk's encoding is chosen from the values that chunk
-    /// holds. **Within a chunk** the encoding never varies — that is the guarantee the row-group
-    /// wide decision provides, and the discriminating assertion is on the *page* value encodings,
-    /// not the chunk's `encodings` list, which always contains `PLAIN` because a dictionary page
-    /// body is itself `PLAIN`. **Across chunks** the case's intent is pinned on the first chunk,
-    /// which is a full one; a case whose values argue against a dictionary must not produce one
-    /// anywhere, while a case whose values argue for one may still write a short trailing chunk
-    /// `PLAIN`, where too few values are left for a dictionary to pay for itself.
-    private void assertEncodings(InteropCase testCase, ParquetMetadata footer, Pages pages) {
-        for (Set<Encoding> chunkEncodings : pages.chunkValueEncodings()) {
-            assertThat(chunkEncodings).as("page value encodings within one chunk").hasSize(1);
-        }
-        Encoding expected = testCase.expectsDictionary() ? Encoding.RLE_DICTIONARY
-                : valueEncodingOf(testCase.config().defaultEncoding());
-        assertThat(pages.chunkValueEncodings().get(0)).as("first chunk's page value encoding")
-                .containsExactly(expected);
-        if (!testCase.expectsDictionary()) {
-            for (ColumnChunkMetaData chunk : chunks(footer)) {
-                assertThat(chunk.getEncodings()).as("declared chunk encodings")
-                        .doesNotContain(Encoding.RLE_DICTIONARY);
-            }
-        }
-        else {
-            assertThat(chunks(footer).get(0).getEncodings()).as("first chunk's declared encodings")
-                    .contains(Encoding.RLE_DICTIONARY);
-        }
-    }
-
-    /// parquet-java reads every chunk's page index, and the page bounds agree with the written
-    /// data under parquet-java's own comparator: folded over every page they are the case's true
-    /// extremes, the same ones [#assertStatistics] holds the chunk statistics to, and a chunk whose
-    /// index claims an ascending or descending boundary order has page bounds that are.
-    ///
-    /// A chunk carries no `ColumnIndex` only where the format forbids one: a column without an
-    /// order, whose chunk statistics carry no bounds either, and a floating-point chunk with a page
-    /// of nothing but `NaN`, which its raw `nan_count` must show it holds.
-    @SuppressWarnings("unchecked")
-    private void assertPageIndex(InteropCase testCase, Path file, ParquetMetadata footer, Pages pages,
-                                 List<PageIndex> indexes) throws IOException {
-        ParquetJavaReader.assertPageIndexStructure(footer, pages, indexes);
-        ParquetJavaReader.assertSizeStatistics(file, pages, indexes);
-        List<ColumnChunkMetaData> chunks = chunks(footer);
-        List<Long> nanCounts = ParquetJavaReader.readNanCounts(file);
-        Comparable<Object> min = null;
-        Comparable<Object> max = null;
-        boolean everyChunkIndexed = true;
-        for (int i = 0; i < chunks.size(); i++) {
-            ColumnChunkMetaData chunk = chunks.get(i);
-            PrimitiveType type = chunk.getPrimitiveType();
-            ColumnIndex columnIndex = indexes.get(i).columnIndex();
-            if (columnIndex == null) {
-                boolean unordered = !chunk.getStatistics().hasNonNullValue()
-                        && chunk.getStatistics().getNumNulls() < chunk.getValueCount();
-                boolean allNaNPagePossible = isFloatingPoint(type) && nanCounts.get(i) > 0;
-                assertThat(unordered || allNaNPagePossible)
-                        .as("chunk %d has no column index although its column has an order", i).isTrue();
-                everyChunkIndexed = false;
-                continue;
-            }
-            PrimitiveComparator<Object> comparator = (PrimitiveComparator<Object>) type.comparator();
-            Object previousMin = null;
-            Object previousMax = null;
-            boolean ascending = true;
-            boolean descending = true;
-            for (int p = 0; p < columnIndex.getNullPages().size(); p++) {
-                if (columnIndex.getNullPages().get(p)) {
-                    continue;
-                }
-                Statistics<?> bounds = Statistics.getBuilderForReading(type)
-                        .withMin(bytes(columnIndex.getMinValues().get(p)))
-                        .withMax(bytes(columnIndex.getMaxValues().get(p)))
-                        .withNumNulls(0)
-                        .build();
-                Object pageMin = bounds.genericGetMin();
-                Object pageMax = bounds.genericGetMax();
-                assertThat(comparator.compare(pageMin, pageMax)).as("page %d of chunk %d has min <= max", p, i)
-                        .isLessThanOrEqualTo(0);
-                if (previousMin != null) {
-                    ascending &= comparator.compare(previousMin, pageMin) <= 0
-                            && comparator.compare(previousMax, pageMax) <= 0;
-                    descending &= comparator.compare(previousMin, pageMin) >= 0
-                            && comparator.compare(previousMax, pageMax) >= 0;
-                }
-                previousMin = pageMin;
-                previousMax = pageMax;
-                min = extreme(min, bounds.genericGetMin(), true);
-                max = extreme(max, bounds.genericGetMax(), false);
-            }
-            switch (columnIndex.getBoundaryOrder()) {
-                case ASCENDING -> assertThat(ascending).as("chunk %d's pages ascend", i).isTrue();
-                case DESCENDING -> assertThat(descending).as("chunk %d's pages descend", i).isTrue();
-                case UNORDERED -> {
-                }
-            }
-        }
-        if (everyChunkIndexed) {
-            assertThat(min).as("page index min").isEqualTo(testCase.type().expectedMin(testCase));
-            assertThat(max).as("page index max").isEqualTo(testCase.type().expectedMax(testCase));
-        }
-    }
-
-    private static boolean isFloatingPoint(PrimitiveType type) {
-        return type.getPrimitiveTypeName() == PrimitiveTypeName.FLOAT
-                || type.getPrimitiveTypeName() == PrimitiveTypeName.DOUBLE
-                || type.getLogicalTypeAnnotation() instanceof LogicalTypeAnnotation.Float16LogicalTypeAnnotation;
-    }
-
-    private static byte[] bytes(ByteBuffer buffer) {
-        byte[] bytes = new byte[buffer.remaining()];
-        buffer.duplicate().get(bytes);
-        return bytes;
-    }
-
-    /// parquet-java's decoding of each chunk's `encoding_stats` agrees with the pages it walked:
-    /// the same data-page encodings, a dictionary entry exactly where the chunk has a dictionary
-    /// page, and data-page counts that add up to the pages in the file. These complete stats provide
-    /// the metadata needed for dictionary-based row-group pruning when a reader applies that filter.
-    private void assertEncodingStats(ParquetMetadata footer, Pages pages) {
-        List<ColumnChunkMetaData> chunks = chunks(footer);
-        int dataPages = 0;
-        for (int i = 0; i < chunks.size(); i++) {
-            ColumnChunkMetaData chunk = chunks.get(i);
-            EncodingStats stats = chunk.getEncodingStats();
-            assertThat(stats).as("encoding_stats of chunk %d", i).isNotNull();
-            assertThat(stats.getDataEncodings()).as("data-page encodings of chunk %d", i)
-                    .containsExactlyInAnyOrderElementsOf(pages.chunkValueEncodings().get(i));
-            assertThat(stats.hasDictionaryPages()).as("dictionary page entry of chunk %d", i)
-                    .isEqualTo(chunk.hasDictionaryPage());
-            if (stats.hasDictionaryPages()) {
-                assertThat(stats.getDictionaryEncodings()).as("dictionary encodings of chunk %d", i)
-                        .containsExactly(Encoding.PLAIN);
-                assertThat(stats.getNumDictionaryPagesEncodedAs(Encoding.PLAIN)).isOne();
-                assertThat(stats.hasNonDictionaryEncodedPages())
-                        .as("chunk %d has a data page outside its dictionary", i).isFalse();
-            }
-            for (Encoding encoding : stats.getDataEncodings()) {
-                dataPages += stats.getNumDataPagesEncodedAs(encoding);
-            }
-        }
-        assertThat(dataPages).as("data pages counted by encoding_stats").isEqualTo(pages.dataPageCount());
-    }
-
-    /// parquet-java's name for the page encoding a file-wide policy produces. `AUTO` reaches
-    /// here only for a case whose values argued against a dictionary, which is `PLAIN`.
-    private static Encoding valueEncodingOf(ColumnEncoding encoding) {
-        return switch (encoding) {
-            case AUTO, PLAIN -> Encoding.PLAIN;
-            case DELTA_BINARY_PACKED -> Encoding.DELTA_BINARY_PACKED;
-            case DELTA_LENGTH_BYTE_ARRAY -> Encoding.DELTA_LENGTH_BYTE_ARRAY;
-            case DELTA_BYTE_ARRAY -> Encoding.DELTA_BYTE_ARRAY;
-            case BYTE_STREAM_SPLIT -> Encoding.BYTE_STREAM_SPLIT;
-            case ALP -> throw new IllegalArgumentException(
-                    "parquet-java has no ALP encoding; see parquetJavaHasNoAlpEncoding");
-        };
-    }
-
-    private static List<ColumnChunkMetaData> chunks(ParquetMetadata footer) {
-        List<ColumnChunkMetaData> chunks = new ArrayList<>();
-        for (BlockMetaData block : footer.getBlocks()) {
-            chunks.addAll(block.getColumns());
-        }
-        return chunks;
-    }
-
-    /// Folds one row group's bound into the running one, in parquet-java's own comparison order
-    /// for the type.
-    @SuppressWarnings("unchecked")
-    private static Comparable<Object> extreme(Comparable<Object> current, Comparable<?> candidate, boolean min) {
-        Comparable<Object> other = (Comparable<Object>) candidate;
-        if (current == null) {
-            return other;
-        }
-        int order = other.compareTo(current);
-        return (min ? order < 0 : order > 0) ? other : current;
-    }
-
     // ==================== Matrix plumbing ====================
-
-    /// The cross product of every physical type with one axis's values.
-    private static <A, C> Stream<C> sweep(List<A> axis, BiFunction<TypeFixture, A, C> factory) {
-        return Stream.of(TypeFixture.values())
-                .flatMap(type -> axis.stream().map(value -> factory.apply(type, value)));
-    }
 
     private record EncodingAxis(String name, int distinct, WriterConfig config, boolean plainOnly) {
     }
@@ -797,9 +365,6 @@ class WriterInteropTest {
         public String toString() {
             return base.toString();
         }
-    }
-
-    private record EncodingCodecAxis(ColumnEncoding encoding, TypeFixture type) {
     }
 
     /// One `FIXED_LEN_BYTE_ARRAY` length written under one encoding policy, with the page
@@ -833,8 +398,5 @@ class WriterInteropTest {
         public String toString() {
             return "FIXED_LEN_BYTE_ARRAY(" + typeLength + ") / " + policy;
         }
-    }
-
-    private record Verified(ParquetMetadata footer, Pages pages) {
     }
 }

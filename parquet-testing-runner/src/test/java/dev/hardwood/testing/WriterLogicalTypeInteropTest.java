@@ -58,7 +58,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// only the values that come back. The ends of each annotation's declared range, and the refusal
 /// of a value outside it, live there rather than here.
 ///
-/// The flat matrix is in [WriterInteropTest] and the nested shapes in [WriterNestedInteropTest].
+/// The flat matrix is in [WriterInteropTest] and [WriterCodecInteropTest], and the nested shapes in
+/// [WriterNestedInteropTest].
 class WriterLogicalTypeInteropTest {
 
     private static final String COLUMN = "v";

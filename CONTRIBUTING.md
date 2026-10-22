@@ -57,7 +57,7 @@ direction you are adding. Paths are relative to `core/src/main/java/dev/hardwood
 | `internal/encoding/<Name>Encoder.java` | Implement the inverse of the decoder | Produces one page's value section |
 | `internal/writer/<Type>ValueEncoder.java` | Add the case to `encode`, in each type that may carry it | Each physical type encodes from its own value store |
 | `internal/writer/ColumnChunkBuffer.java` | Map the policy in `valueEncoding` | Names the encoding in the page header and `ColumnMetaData.encodings` |
-| `WriterEncodingPolicyTest`, `CoverageDomain`, `WriterInteropTest` | Restate the policy in each switch, and add it to the interop axis | Sweeps it over every legal type, the coverage domain, and the parquet-java interop axis |
+| `WriterEncodingPolicyTest`, `CoverageDomain`, `WriterInteropTest`, `WriterCodecInteropTest` | Restate the policy in each switch, and add it to the interop axes | Sweeps it over every legal type, the coverage domain, and the parquet-java interop axes, alone and under each codec |
 
 Both paths are guarded by exhaustive switches, so the compiler names most of the rows above; the
 Thrift table is the one row caught by a test rather than by the compiler. What nothing checks is

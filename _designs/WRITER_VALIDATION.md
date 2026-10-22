@@ -80,7 +80,7 @@ The three axes whose defect lives in the value encoder — the single-entry floo
 
 One enumerated case sits beside the sweep: a page whose values all resolve to dictionary index 0 inside a multi-entry dictionary, which declares a zero index bit width that no swept case produces.
 
-`BROTLI` is the one codec the writer produces that the gate omits. parquet-java resolves a codec by a Hadoop class name, and for `BROTLI` that class ships in neither parquet-java nor Hadoop, but in an unmaintained third-party artifact whose native binaries cover a few platforms only; putting it on the classpath would make the gate's result depend on the architecture it runs on. `BROTLI` output is covered against DuckDB by `WriterDifferentialTest`, and `WriterInteropTest.parquetJavaHasNoBrotliCodec` pins the reason, so a parquet-java that gains the codec fails there and `BROTLI` rejoins the axis.
+`BROTLI` is the one codec the writer produces that the gate omits. parquet-java resolves a codec by a Hadoop class name, and for `BROTLI` that class ships in neither parquet-java nor Hadoop, but in an unmaintained third-party artifact whose native binaries cover a few platforms only; putting it on the classpath would make the gate's result depend on the architecture it runs on. `BROTLI` output is covered against DuckDB by `WriterDifferentialTest`, and `WriterCodecInteropTest.parquetJavaHasNoBrotliCodec` pins the reason, so a parquet-java that gains the codec fails there and `BROTLI` rejoins the axis.
 
 ### Enumerated groups
 
@@ -93,7 +93,7 @@ The row-oriented layer's logical-type conversion (`PhysicalValueConverter`) has 
 
 `WriterAnnotationCoverageTest` covers the annotations at the points the hand-written table leaves out, generated from the coverage domain (below): each annotation in both storage forms, with the page encoding held to the form the case is for, and each annotation at the ends of its declared range and at a point inside it, read back value by value through parquet-java. The ends of a range are where the statistics comparator is fragile: an unsigned `INT(32)` maximum is stored as `-1` and must compare unsigned, a binary `DECIMAL` bound needs sign extension, and a `BYTE_ARRAY` maximum of all-`0xff` bytes past the truncation length must truncate and increment.
 
-Tests: `WriterInteropTest`, `WriterNestedInteropTest`, `WriterLogicalTypeInteropTest`, `RowWriterLogicalTypeInteropTest`, `WriterFooterMetadataInteropTest`, `WriterAnnotationCoverageTest` (all `parquet-testing-runner`).
+Tests: `WriterInteropTest`, `WriterCodecInteropTest`, `WriterNestedInteropTest`, `WriterLogicalTypeInteropTest`, `RowWriterLogicalTypeInteropTest`, `WriterFooterMetadataInteropTest`, `WriterAnnotationCoverageTest` (all `parquet-testing-runner`).
 
 ## DuckDB differential
 
@@ -185,7 +185,7 @@ A cell that cannot be covered is waived in `CoverageWaivers` as a (cell, reason)
 
 | Waived cells | Reason |
 |---|---|
-| every page encoding × `BROTLI` | parquet-java cannot resolve the codec class; covered against DuckDB by `WriterDifferentialTest`, reason pinned by `WriterInteropTest.parquetJavaHasNoBrotliCodec` |
+| every page encoding × `BROTLI` | parquet-java cannot resolve the codec class; covered against DuckDB by `WriterDifferentialTest`, reason pinned by `WriterCodecInteropTest.parquetJavaHasNoBrotliCodec` |
 | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, both storage forms | the pinned parquet-java rejects the pairing while parsing the footer; covered by `WriterFlba12TimestampTest` (`core`) and `Flba12TimestampTest`, reason pinned by `Flba12TimestampTest.parquetJavaRejectsTheAnnotation` |
 
 A waiver is a claim about the world, so it is checked in both directions: **a waived cell that is nonetheless observed fails the verdict**. Without that, a waiver outlives its reason — a parquet-java release that gains the codec would leave `BROTLI` waived by inertia.

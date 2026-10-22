@@ -72,7 +72,7 @@
       </build>
     </profile>
     <!--
-      The comparison against parquet-java runs a second time at a batch capacity of 7, through
+      The comparisons against parquet-java run a second time at a batch capacity of 7, through
       the internal `hardwood.internal.batchSize` property that replaces the auto batch size, so
       pages span many batches and batches many pages. Activated on the absence of `test` for the
       reason given above.
@@ -99,6 +99,7 @@
                 <configuration>
                   <includes>
                     <include>**/ParquetComparisonTest.java</include>
+                    <include>**/ParquetColumnComparisonTest.java</include>
                   </includes>
                   <systemPropertyVariables>
                     <hardwood.internal.batchSize>7</hardwood.internal.batchSize>

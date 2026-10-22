@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// a definition level — are exactly what a level-stream defect erases, and none of them is
 /// visible from the values alone.
 ///
-/// The flat matrix is in [WriterInteropTest].
+/// The flat matrix is in [WriterInteropTest] and [WriterCodecInteropTest].
 class WriterNestedInteropTest {
 
     // ==================== Structs ====================

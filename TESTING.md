@@ -91,7 +91,7 @@ The suites that compare the values a read returns run a second time with the int
 |--------|----------|-------|
 | `core` | 7 | the differential, nested, fixed-size-list, filter, dictionary and multi-file read suites, and `EncodingRoundTripTest`, every in-place encoding over flat, repeated and struct leaves |
 | `core` | 1 | the nested and `V1` subset of them, including `NestedV1MidRecordPagesTest`, whose pages begin inside a record, and `EncodingRoundTripTest` |
-| `parquet-testing-runner` | 7 | `ParquetComparisonTest` |
+| `parquet-testing-runner` | 7 | `ParquetComparisonTest` and `ParquetColumnComparisonTest` |
 
 A test that asserts the shape of a batch, such as its record count or a value at a fixed index of its first batch, stays out of these lists. The profiles are inactive under `-Dtest=...`, which would otherwise run the selection once per execution.
 
@@ -168,7 +168,7 @@ A new differential case extends `tools/simple-datagen.py` with a fixture carryin
 
 ### Other reference readers
 
-The `parquet-testing-runner` module uses parquet-java as the reference instead of DuckDB: `ParquetComparisonTest` compares Hardwood's rows field by field against parquet-java for every file in the [apache/parquet-testing](https://github.com/apache/parquet-testing) repository (cloned on first use by `ParquetTestingRepoCloner`), and the writer interop tests (`WriterInteropTest` and its nested and logical-type siblings) read Hardwood-written files back through parquet-java.
+The `parquet-testing-runner` module uses parquet-java as the reference instead of DuckDB: `ParquetComparisonTest` compares Hardwood's rows field by field against parquet-java, and `ParquetColumnComparisonTest` its batch columns, for every file in the [apache/parquet-testing](https://github.com/apache/parquet-testing) repository (cloned on first use by `ParquetTestingRepoCloner`), and the writer interop tests (`WriterInteropTest` and its nested and logical-type siblings) read Hardwood-written files back through parquet-java.
 
 ## Manual S3 testing
 
