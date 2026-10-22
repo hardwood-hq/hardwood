@@ -18,7 +18,7 @@ holds:
 | --- | --- |
 | The bytes present: the Thrift buffer's remainder, the enclosing region, the file | every list count and binary length of the footer, page index and page headers; every offset and region length the footer declares |
 | The bytes decoded: a count is checked against the bytes that must back it | dictionary entries (`numValues × width ≤ length`; 4 bytes per `BYTE_ARRAY` entry) |
-| The page limit: `hardwood.internal.maxPageBytes`, default 256 MiB | a page's uncompressed size; a page's value count, at 4 bytes per value |
+| The page limit: `hardwood.internal.maxPageBytes`, default 256 MiB (until stage 6 replaces it with the working-set limit) | a page's uncompressed size; a page's value count, at 4 bytes per value |
 | The batch: `BatchSizing.MAX_BATCH` | rows and values per batch, whatever a row group or chunk declares |
 
 A file breaking a bound fails with `ParquetReadException` naming the field and the bound, before
@@ -31,7 +31,7 @@ The page limit bounds each allocation, not their sum: a page within it is decode
 the allocations of many columns are live at once. A file whose pages exceed the limit, such as
 DuckDB's `42.parquet`, fails with a controlled error and is not read; no writer produces such
 pages, so the reader does not decode pages in windows to read them. Bounding the sum is stage 6,
-whose budget supersedes the page limit: the limit is an interim bound, fitted to no heap, that
+whose working-set limit supersedes the page limit: the limit is an interim bound, fitted to no heap, that
 also refuses legitimate pages larger than it, such as one holding a single large binary value.
 
 ## Fields
@@ -109,38 +109,184 @@ together, which stage 3 does.
   requires those bytes. Pin the rejection of a truncated last miniblock with a test, and record
   the spec text on #571.
 
-### Stage 6: total decode memory
+### Stage 6: working-set limit and read-ahead buffer
 
-The page limit bounds each allocation; what a read holds at once is their sum, and part of it
-grows with the projection rather than the pool:
+#1644. The page limit bounds each allocation; what a read holds at once is their sum, and part of
+it grows with the projection rather than the pool. Measured on the container (JDK 25, G1,
+12 GiB heap) with `RleExpansionFile.buildWide`, INT64 columns whose GZIP dictionary pages
+declare 256 MiB of zeros in about 260 KB each:
 
-| Allocation | Bounded by | Grows with |
-| --- | --- | --- |
-| flat level and dictionary-id scratch, decompression output | the page limit | the pool's threads |
-| dictionaries | the page limit, through their bytes | projected columns × row groups read ahead |
-| nested page scratch and decompressed bytes held until a page's cells fill | the page limit | projected nested columns × pages in flight |
+| File | Threads | Live heap at peak | Held after the read, context open |
+| --- | --- | --- | --- |
+| 8 columns, 1 row group | 1 / 4 / 8 | 2.4 / 3.2 / 4.2 GiB | 0.26 / 1.0 / 2.1 GiB |
+| 16 columns, 1 row group | 8 | 6.4 GiB | 2.1 GiB |
+| 8 columns, 3 row groups | 8 | 6.4 GiB | 2.1 GiB |
+| 40 columns, 1 row group (10 MB) | 8 | `OutOfMemoryError` at 12 GiB | |
+| 8 columns, one data page of 64 Mi values each (1.1 KB) | 1 / 8 | 4.2 / 5.4 GiB | 0.26 / 2.1 GiB |
 
-Compression makes a declared size real: a dictionary page of 256 MiB of zeros takes a few KiB on
-disk, so a file of a thousand such columns asks for 256 GiB from kilobytes. Charge the
-allocations sized from file-declared values against a decode-memory budget, reserved before
-each is made and released when it is done. That covers the transient ones as well as those that
-outlive their task: the per-thread decompression output and level and dictionary-id scratch are
-bounded by the pool's threads only through the page limit, so a budget that leaves them out
-leaves threads × one large page unbounded once the limit goes. A single allocation larger than
-the whole budget fails the read with `ParquetReadException`; reservations that together exceed
-it wait for others to be released rather than fail, the way the read-ahead budget of #1397
-holds back fetches, so the outcome for a file depends on the heap only when one of its
-allocations alone exceeds the budget.
+A read holds a dictionary per projected column and chunk, the next row group's as well once its
+planning has run, and each thread that decoded keeps its largest decompression output and
+level and dictionary-id scratch until the context closes. A data page's task fills every batch
+the page covers, so a page of 64 Mi `INT64` values holds 512 MiB of batches until the consumer
+takes them, and the recycling exchange keeps the holders until the reader closes. Nested page
+scratch, up to `MAX_INFLIGHT_PAGES` per nested column, is not measured.
 
-Measure first: a many-column file of dictionary pages at the limit, and the heap a read of it
-reaches. The budget's home and default (per read or per context, a share of the heap) are open.
+#### Goals
 
-When the budget lands, the page limit goes, or stays only as a check that a declared size fits
-a Java array. The writer's page cuts at the default limit (`PageLimit.DEFAULT_MAX_PAGE_VALUES`
-entries, a byte target clamped to half the limit) exist only to match it and are revisited with
-it; whether the writer caps its dictionary pages, as parquet-java, Arrow and parquet-go do at
-their dictionary page size limits, is a question of encoding selection, not of a reader bound.
-Tracked in #1644.
+- **Safety.** No file makes a read allocate without bound: a file asking for more than a read
+  accepts fails with `ParquetReadException` before the allocation, never with an
+  `OutOfMemoryError`.
+- **Throughput.** A read works far enough ahead to hide the store's latency and keep the decode
+  threads busy, and no further: a slow consumer, `head(N)` or an early exit does not make it
+  hold or fetch more.
+- **Predictability.** Valid files read, and whether a read succeeds depends on the file and the
+  configuration, not on timing or on other reads.
+
+#### Two kinds of memory
+
+| Kind | What it holds | Decided by | Released when |
+| --- | --- | --- | --- |
+| Working set | per projected column: the entries of the dictionaries of every chunk the batch it fills has rows of, more than one where a batch spans row groups; the batches of the page holding the rows of the batch the column publishes next (`ReadScheduler`'s first submission rule), and for a nested column the page's decompressed bytes and levels; the fetched range that page is read from (a `RangeRead` of priority `DEMAND`). Once per read: the buffers of one task decoding a page, its decompressed bytes and level and dictionary-id scratch | the file's declared sizes | the consumer takes the page's last batch; the column moves past the chunk or the range; the task ends |
+| Read-ahead | everything else: speculative `RangeRead`s (the next chunk, region, row group and file), pages inside the scheduler's cap, the task buffers of pages decoded at once beyond the first, the next row group's dictionaries, dictionaries parsed only to prune | the reader | the read reaches it, which moves it into the working set, or abandons it |
+
+Safety is a bound on the working set, throughput a bound on read-ahead. The working set is not
+optional: short of decoding pages in pieces, a read cannot produce its next batch with less.
+Read-ahead is: skipping it costs speed, not results.
+
+Memory is counted where Hardwood allocates it, on the heap or off it: an S3 range arrives in a
+direct buffer, decoded values on the heap. A range of a mapped or in-memory file
+(`RangeRead.inMemory`) is a view of memory that exists already and counts nothing.
+
+#### Working-set limit
+
+A read's working set is held to a limit `W`, checked before each dictionary and data page is
+decompressed. Each column counts the most dictionary entries one of its batches holds and the
+largest page it has met in the read, and the read the largest task buffers once; `W` holds their
+sum. A batch holds the dictionary of every chunk it has rows of, as their pages decode with them,
+so a batch spanning row groups holds several: a column sums the dictionaries of the chunks whose
+rows end after the batch holding its current chunk's first row starts, from the read's batch
+plan. A dictionary pruning parsed counts when the column takes it. The sum bounds what the read must hold at
+any one time from above and does not depend on how far apart the columns run, so the outcome
+depends on the file and `W` alone, not on timing, the context's threads or other reads. A read
+whose working set would exceed `W` fails with `ParquetReadException` naming the column, the page,
+what it needs, the working set it would reach and `W`; a single page larger than `W` is the
+simplest case. The check holds nothing back and waits for nothing: it is a bound on the file, the
+page limit taken from one allocation to the sum of what a read must hold at once.
+
+Counting each column's task buffers, or the task buffers once per thread, would reject valid
+files that read today: the NYC taxi file of January 2016 (19 columns, one page per row group of
+5.4 M values in its widest columns) estimates more than twice as much that way as the 439 MB it
+estimates with the task buffers counted once, and reads on a heap of 512 MiB. The estimate errs
+high, so `W` defaults to the whole heap: a read whose estimate exceeds it could not run on that
+heap anyway. At 75 % of the heap it refused the taxi file on a heap of 512 MiB, which reads
+there. With the whole heap the taxi file reads from 512 MiB up with `W` as without it, and below
+that it runs out of memory either way, before its columns have charged enough to cross `W`. `W`
+fails what declares far more than the heap holds, such as the crafted files above, not reads
+near the heap's size.
+
+`W` is per read. Working-set memory is released only as a consumer reads, and Hardwood does not
+know in which order a caller reads its readers: a thread merging two readers blocks in one while
+the other holds the memory, and on a context of zero threads the thread that would release is the
+one waiting. A limit shared by a context's reads would either fail a valid read because of
+others or make reads wait for each other, which deadlocks in those cases.
+
+Read-ahead moves into the working set when the read reaches it (`RangeRead.raiseToDemand`, the
+first page of a column's next batch, the dictionary of the chunk the column enters), and is
+checked against `W` then, with the outcome a demand allocation would have had.
+
+A buffer kept for later pages (`DecodeBuffers` slots, the level scratch of a flat column's task
+and of a nested column's pool) is kept only up to a retention size (`DecodeBuffers.RETAINED_BYTES`)
+and dropped above it once its page is done. A context then keeps at most threads × retention size
+after a read, where it kept each thread's largest page. The exchange's free batch holders and a
+nested column's pool belong to the read and go with it.
+
+#### Read-ahead buffer
+
+A context's reads hold their read-ahead within one buffer `R`. Read-ahead starts only while it
+fits `R`; otherwise it is not started and is considered again on the next release, from the
+places that already re-run on one: the scheduler's `submit` after a task ends or a batch is
+published, and the walk that would have used the range. Nothing waits for `R`, so it can be
+shared by every read on the context without the deadlock a shared `W` would bring.
+
+Each read also stops at what its throughput needs, whether or not `R` has room: the scheduler's
+decode cap (`CAP_BUDGETS` batch byte budgets past the read's first unpublished row), and #1264's
+fetch target, which replaces the one-ahead rules of `ChunkHandle`, `SharedRegion`, the next row
+group and the next file. The fetch target is counted in bytes held, about the store's bandwidth
+× latency, because a unit of the file weighs whatever the file makes it: a row group of 1 GiB or
+of 1 KiB is one ahead alike. A slow consumer stops a read at its targets; `R` binds when many
+reads, or a file's large declared sizes, make the read-ahead within the targets large.
+
+A read whose consumer stalls keeps its share of `R` full, and the context's other reads read
+ahead less: they slow down but do not stop. A cap per read on its share of `R` would prevent that;
+it is not added until a shared-context measurement asks for it.
+
+#### What a process holds
+
+The sum of its reads' working sets, each at most `W`, plus one `R` per context. Valid files keep
+working sets of a few MiB per column, far below `W`. N concurrent reads of crafted files can
+still hold N × `W`: a bound across reads needs them to wait for each other, which the working set
+rules out.
+
+#### Defaults
+
+`W` defaults to `Runtime.maxMemory()` (see [Working-set limit](#working-set-limit)) and `R` to a
+share of it, which is also the JVM's default bound on direct memory; the share is fixed by PR 2's
+measurement. The internal properties
+`hardwood.internal.maxWorkingSetBytes` and `hardwood.internal.readAheadBytes` override them.
+Neither is a `ReaderConfig` option until a user needs one; the CLI reads with the defaults. The
+throughput targets are fixed thresholds, not settings.
+
+#### The page limit and the writer
+
+With `W`, the page limit goes, both its halves: `hardwood.internal.maxPageBytes` on a page's
+uncompressed size, and the `maxPageBytes / 4` (64 Mi by default) cap on a data page's
+`num_values`. A page is read when the working set it brings fits `W`, whatever its size or
+count. At header parse a check remains that a declared count fits a Java array of the widest
+type it sizes. The error for an oversized page names `W` instead of the page limit, and the
+`DeclaredValueCountTest` messages change with it.
+
+A page's task fills every batch the page covers, so its batches count in full: a page of
+64 Mi `INT64` values brings 512 MiB of working set, and reads where `W` allows that.
+
+The writer cuts pages at `PageLimit.DEFAULT_MAX_PAGE_VALUES` entries and clamps its byte target
+to half the page limit only to match the reader; both go with it. The byte target bounds a
+page's size, but not its value count where the values compress to almost nothing, such as a
+constant column RLE-encoded; whether the writer cuts such pages at a value count of its own is
+a question of its defaults, like whether it caps its dictionary pages.
+
+#### PRs
+
+1. **Working-set limit.** `WorkingSet` on the read's `RowGroupIterator`, charged by the fetch
+   plans' dictionaries and the columns' page decoders; code decoding outside a read charges a
+   working set of its own per column, and a read charges a dictionary pruning parsed once its
+   column takes it. Each column's dictionaries count per batch, from the batch plan. Retention
+   sizes. Tests on `RleExpansionFile.buildWide`: a read whose working set fits `W` passes, on row
+   groups in batches of their own too; row groups sharing a batch count each dictionary, pruned or
+   parsed; one past it fails with the
+   message, on a zero-thread context, whose order makes the crossing charge the same each run;
+   buffers above the retention size are not kept. A/B against main on the container and the N300:
+   the narrow, flat and 1BRC presets.
+2. **Read-ahead buffer, decoded side.** The context's account, charged with the task buffers of
+   a page or dictionary decoded while another of the read decodes; one that does not fit is
+   deferred to the next release. A read always has its one task of `W`, so deferring never
+   stalls it. Tests: a crafted file whose concurrent dictionary parses exceed `R` reads with
+   fewer at once and the same rows.
+
+   The scheduler's pages ahead and the dictionaries of chunks a column reaches early are not
+   charged. A first version charged them and measured no change: with `R` at 0, live peaks on
+   the crafted files stayed where they were (8 columns, 8 threads: 5.9 GiB on three row groups
+   in one batch, 3.9 GiB on 64 Mi-value pages, 2.1 GiB on one row group), as the excess over
+   `W` was the dictionaries of row groups sharing a batch, which PR 1 counts, and concurrent
+   parses. They are charged with #1264, which adds the fetched read-ahead they ride on, once a
+   measurement such as a slow consumer shows them to matter.
+3. **The page limit goes**, both halves, with the writer's matching cuts, and `VALUE_DECODE.md`, `READ_PIPELINE.md` and
+   `THREADING.md` describe both bounds.
+
+Fetched bytes are charged with #1264, demand ranges to `W` and speculative ones to `R`. #1264
+puts the fetched side in the same buffer: a speculative read starts while it is
+within the read's fetch target and fits `R`, and its context budget on bytes in flight is
+subsumed by `R` and `W`. #1264 keeps split requests, the cap on parts per request, and the
+context's requests in flight with demand ahead of speculative ones.
 
 ### Stage 7: #1630 fuzzing
 
