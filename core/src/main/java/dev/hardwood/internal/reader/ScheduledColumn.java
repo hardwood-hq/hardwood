@@ -26,8 +26,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// read's other scheduled columns, and whose page tasks decode straight into the column's batches.
 ///
 /// - The **fetcher** runs as fetch steps, tasks of the decode pool. A step pulls the column's
-///   pages from its [PageSource], whose walks need bytes the step issues reads for and yields on
-///   ([ByteNeed]), and queues them for the scheduler ([#queue]). It queues while fewer than [#FETCH_AHEAD] pages are queued and
+///   pages from its [PageSource] and queues them for the scheduler ([#queue]), yielding where
+///   the source's walk needs bytes not yet read or its next work item is still being planned
+///   ([Need]). It queues while fewer than [#FETCH_AHEAD] pages are queued and
 ///   returns once that many are; a change that makes room queues the column's next step
 ///   ([#scheduleFetch()]). At most one step of a column is queued or running, so the steps of a
 ///   column run one after another and see each other's state. The steps go to the head of the
@@ -304,12 +305,13 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     /// Runs fetch steps until the column has no room and no change arrived since the last one
-    /// looked, its fetch ends, or it needs bytes that are not present. A step that stops on bytes
-    /// issues their read as demand, keeps the column's claim and its count of tasks, and the
-    /// read's completion queues the next step ([#resumeFetch]): no step waits for I/O, and a close
-    /// waits for the read.
+    /// looked, its fetch ends, or it needs bytes or plans that are not ready. A step that stops on
+    /// bytes issues their read as demand; one that stops on a work item's planning leaves it to the
+    /// virtual thread that plans it. Either keeps the column's claim and its count of tasks, and
+    /// the need's completion queues the next step ([#resumeFetch]): no step waits for I/O, and a
+    /// close waits for the read and the planning.
     private void runFetchStep() {
-        ByteNeed pending = null;
+        Need pending = null;
         try {
             while (true) {
                 fetchWanted = false;
@@ -340,13 +342,13 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             else {
                 // Last: the completion may queue the next step at once, which another thread of
                 // the pool runs
-                pending.issue().whenDone(this::resumeFetch);
+                pending.whenMet(this::resumeFetch);
             }
         }
     }
 
-    /// Queues the step that a read under way stopped, once the read has completed, on the thread
-    /// that completed it. The step holds the column's claim and its count of tasks.
+    /// Queues the step that a need stopped, once the need is met, on the thread that met it. The
+    /// step holds the column's claim and its count of tasks.
     private void resumeFetch() {
         try {
             scheduler.executeFetch(this::runFetchStep);
@@ -364,7 +366,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         ENDED,
         /// The column's queue is full.
         NO_ROOM,
-        /// The next page needs bytes that are not present.
+        /// The next page needs bytes that are not present, or a work item that is not yet planned.
         PENDING
     }
 

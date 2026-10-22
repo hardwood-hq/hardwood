@@ -16,8 +16,11 @@ import java.util.function.Consumer;
 import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.CountingInputFile;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -182,8 +185,12 @@ class ReadFailurePositionTest {
     /// and a failure in there is on no page at all. The plan being walked when it happens
     /// belongs to the row group before it, so a reader that answered "which page" from it
     /// would name one that read cleanly.
-    @Test
-    void aFailureWhilePlanningNamesNoPage() throws Exception {
+    ///
+    /// A file not in memory plans its row groups on a virtual thread, whose failure the column
+    /// takes when it reaches the row group; it names the row group as planning on the column does.
+    @ParameterizedTest(name = "in memory: {0}")
+    @ValueSource(booleans = { true, false })
+    void aFailureWhilePlanningNamesNoPage(boolean inMemory) throws Exception {
         Path source = Path.of("src/test/resources/multi_row_group_page_index.parquet");
         byte[] bytes = Files.readAllBytes(source);
         long columnIndexOffset;
@@ -199,8 +206,9 @@ class ReadFailurePositionTest {
         bytes[Math.toIntExact(columnIndexOffset) + 1] = (byte) 0xFF;
 
         ByteBuffer corrupted = ByteBuffer.wrap(bytes);
+        InputFile file = inMemory ? InputFile.of(corrupted) : new CountingInputFile(InputFile.of(corrupted));
         assertThatThrownBy(() -> {
-            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted));
+            try (ParquetFileReader reader = ParquetFileReader.open(file);
                  // One value inside each row group, so statistics decide none of them and
                  // every row group's page index is evaluated.
                  ColumnReader column = reader.buildColumnReader("id")

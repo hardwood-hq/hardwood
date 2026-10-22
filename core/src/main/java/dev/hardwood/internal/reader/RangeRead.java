@@ -35,7 +35,7 @@ import dev.hardwood.internal.util.Lazy;
 /// A read has a priority. A read a step waits for is [Priority#DEMAND]; a read started ahead of
 /// need, such as a one-ahead prefetch, is [Priority#SPECULATIVE] until a step waits for it
 /// ([#raiseToDemand]).
-public final class RangeRead {
+public final class RangeRead implements PrefetchTasks.Untaken {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RangeRead.class.getName()));
 
@@ -111,14 +111,15 @@ public final class RangeRead {
             if (e instanceof Error err) {
                 // Before the completion, so a step that takes the failure finds it here to clear
                 untakenError = err;
-                tasks.recordFailedRead(this);
+                tasks.recordUntaken(this);
             }
             bytes.completeExceptionally(e);
         }
     }
 
     /// The `Error` the read failed with if no step has taken it, `null` otherwise.
-    Error untakenError() {
+    @Override
+    public Error untakenError() {
         return untakenError;
     }
 

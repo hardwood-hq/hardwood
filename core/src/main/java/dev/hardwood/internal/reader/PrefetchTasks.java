@@ -35,7 +35,10 @@ import dev.hardwood.reader.ParquetReadException;
 /// reaches the step waiting for it, and a speculative read's leaves its bytes to a demand read.
 /// Any other task's failure does not fail the read, since the demand path repeats the work and
 /// reports what fails there ([#report]). [#awaitAll()] rethrows an `Error` a task raised, and one
-/// a read failed with that no step took ([#recordFailedRead]).
+/// a read or a work item's planning failed with that no step took ([#recordUntaken]).
+///
+/// The tasks on the I/O executor include the planning of the work items of a read whose files are
+/// not in memory ([WorkItemPlanning]), which waits for the planning's reads.
 public final class PrefetchTasks {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(PrefetchTasks.class.getName()));
@@ -47,9 +50,17 @@ public final class PrefetchTasks {
     private volatile boolean closed;
     /// The first `Error` a task raised, the later ones suppressed beneath it. Guarded by `this`.
     private Error failure;
-    /// The reads that failed with an `Error`, raised by [#awaitAll()] unless a step took it.
+    /// The work that failed with an `Error`, raised by [#awaitAll()] unless a step took it.
     /// Guarded by `this`.
-    private final List<RangeRead> failedReads = new ArrayList<>();
+    private final List<Untaken> failedWork = new ArrayList<>();
+
+    /// Work whose failure a step takes, such as a read it yielded on: an `Error` it failed with
+    /// that no step took is raised by [#awaitAll()].
+    interface Untaken {
+
+        /// The `Error` the work failed with if no step has taken it, `null` otherwise.
+        Error untakenError();
+    }
 
     /// @param executor where the tasks run
     public PrefetchTasks(Executor executor) {
@@ -104,9 +115,9 @@ public final class PrefetchTasks {
         failure = report(e, failure);
     }
 
-    /// Records a read that failed with an `Error`, for [#awaitAll()] to raise if no step takes it.
-    synchronized void recordFailedRead(RangeRead read) {
-        failedReads.add(read);
+    /// Records work that failed with an `Error`, for [#awaitAll()] to raise if no step takes it.
+    synchronized void recordUntaken(Untaken work) {
+        failedWork.add(work);
     }
 
     /// Reports the failure of speculative work that no caller waits for: a failure of the file
@@ -137,8 +148,8 @@ public final class PrefetchTasks {
     /// started by then returns without doing its work. Does not give up on an interrupt, since
     /// returning early would let the caller close a file a task is still reading. Idempotent.
     ///
-    /// @throws Error the first `Error` a task raised or a read failed with that no step took, once
-    ///         every task has finished
+    /// @throws Error the first `Error` a task raised, or a read or a planning failed with that no
+    ///         step took, once every task has finished
     public void awaitAll() {
         List<CompletableFuture<Void>> started;
         synchronized (this) {
@@ -153,13 +164,13 @@ public final class PrefetchTasks {
         synchronized (this) {
             // The steps have ended by now (the caller closes the columns first), so an Error
             // still untaken is one no step will take
-            for (RangeRead read : failedReads) {
-                Error untaken = read.untakenError();
+            for (Untaken work : failedWork) {
+                Error untaken = work.untakenError();
                 if (untaken != null) {
                     failure = report(untaken, failure);
                 }
             }
-            failedReads.clear();
+            failedWork.clear();
             raised = failure;
             failure = null;
         }

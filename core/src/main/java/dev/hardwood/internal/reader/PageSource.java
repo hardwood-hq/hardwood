@@ -19,8 +19,9 @@ import dev.hardwood.internal.ExceptionContext;
 /// hidden behind the walk.
 ///
 /// This is the only interface a [ScheduledColumn]'s fetch step sees: [#next] returns the next
-/// page, or `null` with [#pending] naming the bytes it needs, or `null` at the end. A walk that
-/// stops on bytes keeps its place, so the next call resumes it.
+/// page, or `null` with [#pending] naming what it needs (bytes, or the planning of the next work
+/// item), or `null` at the end. A walk that stops on bytes keeps its place, and a column that
+/// stops on a planning keeps its cursor, so the next call resumes either.
 public class PageSource {
 
     private final RowGroupIterator rowGroupIterator;
@@ -34,8 +35,8 @@ public class PageSource {
     // Current row group's page walk
     private PageWalk currentPlan;
 
-    /// The bytes the last [#next] stopped on.
-    private ByteNeed pending;
+    /// What the last [#next] stopped on.
+    private Need pending;
 
     // Work item the current plan was built from. Tracked so that we can call
     // RowGroupIterator#releaseWorkItem when this column advances past it,
@@ -97,8 +98,9 @@ public class PageSource {
         return rowGroupIterator.footersSupplied();
     }
 
-    /// The next page, or `null` when there is none to return: the column's pages have ended,
-    /// or the next page needs bytes that are not present, which [#pending] then returns.
+    /// The next page, or `null` when there is none to return: the column's pages have ended, or
+    /// the next page needs bytes that are not present or a work item that is not yet planned,
+    /// which [#pending] then returns.
     public PageInfo next() throws IOException {
         pending = null;
         while (true) {
@@ -122,16 +124,26 @@ public class PageSource {
                 currentBatches = null;
             }
 
-            RowGroupIterator.WorkItem workItem = rowGroupIterator.workItemAt(workItemCursor);
+            WorkItemPlanning planning = rowGroupIterator.planning(workItemCursor);
+            if (!planning.isDone()) {
+                pending = planning;
+                return null;
+            }
+            if (planning.failed()) {
+                // A failure planning the row group is reported against its work item, one planning
+                // the file against none. Taken from the planning: asking the iterator would take
+                // the planning lock on the pool, which a planning holds while it waits for the pool
+                currentWorkItem = planning.failedWorkItem();
+                currentPlan = null;
+            }
+            RowGroupIterator.WorkItem workItem = planning.workItem();
             if (workItem == null) {
                 return null;
             }
             workItemCursor++;
-            // Recorded before it is planned. Planning reads — the page index, the
-            // dictionary, the chunk they sit in — and the fetcher can only report a
-            // failure in there against a work item it knows about. The old plan goes with
-            // it: leaving it in place would answer "which page" with the last page of the
-            // row group before this one.
+            // The planning computed the work item's plans, so taking this column's reads
+            // nothing. The old plan goes: left in place, it would answer "which page" with the
+            // last page of the row group before this one.
             currentWorkItem = workItem;
             currentPlan = null;
             FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
@@ -140,8 +152,9 @@ public class PageSource {
         }
     }
 
-    /// The bytes the last [#next] stopped on, or `null` when it returned a page or ended.
-    public ByteNeed pending() {
+    /// What the last [#next] stopped on, bytes or a work item's planning, or `null` when it
+    /// returned a page or ended.
+    public Need pending() {
         return pending;
     }
 }

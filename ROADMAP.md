@@ -256,7 +256,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Footers of later files, page indexes and dictionary checks parsed and scanned on the context's pool, so its size bounds a read's CPU (#1589; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
 - [x] A column's fetcher run as steps on the context's pool rather than a virtual thread per column (#1597; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
 - [x] A fetch step never waits for page bytes: a page's read runs on a virtual thread and the step yields on it, while a file in memory is sliced in place (#1598; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
-- [ ] Row-group planning (index windows, Bloom filters, dictionaries, the next file's footer) never waits on I/O on the pool (#1598)
+- [x] Row-group planning (the next file's footer, index windows, Bloom filters, dictionaries) runs on a virtual thread, and a fetch step yields on it rather than waiting on the pool (#1598; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
 - [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md))
 - [x] Footers supplied across readers through a `MetadataSource` on the context, checked against each file before use (#837; see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md#supplied-footers))
 

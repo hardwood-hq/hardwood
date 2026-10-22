@@ -139,9 +139,10 @@ it when it repeats the work, any other `RuntimeException` at WARNING, as a defec
 `Error` is thrown by the close that waits for the work, the iterator's for a prefetch task and
 the `FileMetadataCache`'s for a footer load no read asked for, once the files are closed
 ([READ_PIPELINE.md](READ_PIPELINE.md#thread-inventory)). A demand read's failure reaches the
-step that waits for it. An `Error` a read fails with reaches the caller once: through the step
-that takes it, or through the iterator's close when no step did, as when the read's column
-stopped while it waited.
+step that waits for it, and a work item's planning's failure every column that reaches the work
+item. An `Error` a read or a planning fails with reaches the caller once: through a step that
+takes it, or through the iterator's close when no step did, as when the column stopped while it
+waited.
 
 ## An annotation the reader cannot use is dropped, not raised
 
