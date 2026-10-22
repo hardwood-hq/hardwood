@@ -11,7 +11,9 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.stream.Stream;
@@ -29,6 +31,40 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LogicalTypeConverterTest {
+
+    @Test
+    void timeReadsTheLastInstantOfTheDay() {
+        assertThat(LogicalTypeConverter.longToTime(86_399_999L, LogicalType.TimeUnit.MILLIS))
+                .isEqualTo(LocalTime.of(23, 59, 59, 999_000_000));
+        assertThat(LogicalTypeConverter.longToTime(86_399_999_999L, LogicalType.TimeUnit.MICROS))
+                .isEqualTo(LocalTime.of(23, 59, 59, 999_999_000));
+        assertThat(LogicalTypeConverter.longToTime(86_399_999_999_999L, LogicalType.TimeUnit.NANOS))
+                .isEqualTo(LocalTime.MAX);
+    }
+
+    @Test
+    void timeMicrosWhoseNanosOverflowIsRefused() {
+        // Times 1000, this wraps past a long to 3_200_000_000_616 ns, a time of day of 00:53:20
+        long wrapping = Long.MIN_VALUE / 500 + 3_200_000_000L;
+        assertThatThrownBy(() -> LogicalTypeConverter.longToTime(wrapping, LogicalType.TimeUnit.MICROS))
+                .isInstanceOf(DateTimeException.class)
+                .hasMessage("The TIME(MICROS) value " + wrapping
+                        + " lies outside a day, which holds 0 to 86399999999");
+    }
+
+    @Test
+    void timePastTheDayIsRefused() {
+        assertThatThrownBy(() -> LogicalTypeConverter.longToTime(86_400_000L, LogicalType.TimeUnit.MILLIS))
+                .isInstanceOf(DateTimeException.class)
+                .hasMessage("The TIME(MILLIS) value 86400000 lies outside a day, which holds 0 to 86399999");
+    }
+
+    @Test
+    void negativeTimeIsRefused() {
+        assertThatThrownBy(() -> LogicalTypeConverter.longToTime(-1L, LogicalType.TimeUnit.NANOS))
+                .isInstanceOf(DateTimeException.class)
+                .hasMessage("The TIME(NANOS) value -1 lies outside a day, which holds 0 to 86399999999999");
+    }
 
     static Stream<Arguments> int96Cases() {
         return Stream.of(

@@ -12,6 +12,7 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -32,6 +33,8 @@ import dev.hardwood.row.PqInterval;
 
 /// Converts physical values to their logical type representations.
 public final class LogicalTypeConverter {
+
+    private static final long NANOS_PER_DAY = 86_400_000_000_000L;
 
     /// Whether a column is the legacy `INT96` timestamp: an `INT96` with no annotation, whose
     /// twelve bytes are nanoseconds of the day and a Julian day. Every reader of such a column
@@ -186,12 +189,24 @@ public final class LogicalTypeConverter {
     }
 
     /// The time of day a `TIME` column's value in `unit` stands for.
+    ///
+    /// A stored value outside the day is refused before it is scaled to nanoseconds: scaled, a
+    /// `MICROS` value can wrap past a `long` to a nanosecond count inside the day, and read as a
+    /// time it does not stand for.
+    ///
+    /// @throws DateTimeException if `rawValue` is negative or not less than a day in `unit`
     public static LocalTime longToTime(long rawValue, LogicalType.TimeUnit unit) {
-        return LocalTime.ofNanoOfDay(switch (unit) {
-            case MILLIS -> rawValue * 1_000_000L;
-            case MICROS -> rawValue * 1_000L;
-            case NANOS -> rawValue;
-        });
+        long nanosPerUnit = switch (unit) {
+            case MILLIS -> 1_000_000L;
+            case MICROS -> 1_000L;
+            case NANOS -> 1L;
+        };
+        long unitsPerDay = NANOS_PER_DAY / nanosPerUnit;
+        if (rawValue < 0 || rawValue >= unitsPerDay) {
+            throw new DateTimeException("The TIME(" + unit + ") value " + rawValue
+                    + " lies outside a day, which holds 0 to " + (unitsPerDay - 1));
+        }
+        return LocalTime.ofNanoOfDay(rawValue * nanosPerUnit);
     }
 
     /// The instant a UTC-adjusted `TIMESTAMP` column's offset in `unit` stands for.

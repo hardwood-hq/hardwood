@@ -62,7 +62,7 @@ Tests: `FileSchemaConvertedTypeTest`, `LegacyConvertedTypesReadTest`, `LogicalTy
 | `STRING`, `ENUM`, `JSON` | `BYTE_ARRAY` | `getString` → `String` | UTF-8 decode; `ENUM` decodes exactly like a string, as the format tells readers without a native enum type to do |
 | `BSON` | `BYTE_ARRAY` | `getBinary` → `byte[]` | not text; the generic route returns the bytes |
 | `DATE` | `INT32` | `getDate` → `LocalDate` | days since the epoch |
-| `TIME` | `INT32` (`MILLIS`), `INT64` (`MICROS`, `NANOS`) | `getTime` → `LocalTime` | `isAdjustedToUTC` is informational: `LocalTime` has no zone |
+| `TIME` | `INT32` (`MILLIS`), `INT64` (`MICROS`, `NANOS`) | `getTime` → `LocalTime` | `isAdjustedToUTC` is informational: `LocalTime` has no zone. A stored value outside `[0, one day)` in its unit raises `DateTimeException` naming the value; `getRawValue` still returns it |
 | `TIMESTAMP` | `INT64`, `FIXED_LEN_BYTE_ARRAY(12)` | `getTimestamp` → `Instant`, `getLocalTimestamp` → `LocalDateTime` | see [Timestamps](#timestamps) |
 | `DECIMAL` | `INT32`, `INT64`, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `getDecimal` → `BigDecimal` | the stored unscaled value at the annotation's scale; byte payloads are big-endian two's complement and an empty payload is zero |
 | `INT(8 / 16, signed)` | `INT32` | `getInt` | the generic route narrows to `Byte` / `Short` |
