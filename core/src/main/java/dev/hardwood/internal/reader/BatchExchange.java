@@ -105,6 +105,9 @@ public class BatchExchange<B> {
     /// Run on the consumer's thread after it takes a batch, for a column whose [#tryPublish]
     /// found no room; `null` for none.
     private volatile Runnable roomListener;
+    /// The read's queue on a context without a pool, which [#poll()] runs; `null` where the
+    /// context's pool runs the read.
+    private ReadQueue queue;
 
     private BatchExchange(String columnName, BlockingQueue<Object> readyQueue,
                           BlockingQueue<B> freeQueue, Supplier<B> batchFactory,
@@ -218,15 +221,22 @@ public class BatchExchange<B> {
     /// @return whether the batch was queued; if not, the [#setRoomListener] listener runs once
     ///         the consumer has taken a batch
     boolean tryPublish(B batch) {
+        boolean published;
         if (batchRows == null) {
-            return readyQueue.offer(batch);
+            published = readyQueue.offer(batch);
         }
-        long rows = rowsOf(batch);
-        long queued = readyRows.get();
-        if (queued > 0 && queued + rows > readyRowLimit) {
-            return false;
+        else {
+            long rows = rowsOf(batch);
+            long queued = readyRows.get();
+            if (queued > 0 && queued + rows > readyRowLimit) {
+                return false;
+            }
+            published = queue(batch, rows);
         }
-        return queue(batch, rows);
+        if (published) {
+            signalQueue();
+        }
+        return published;
     }
 
     /// A batch for the column to fill and publish ([#tryPublish]): a returned
@@ -243,10 +253,23 @@ public class BatchExchange<B> {
         this.roomListener = listener;
     }
 
+    /// Makes [#poll()] run the read's queue whenever it finds no batch, rather than wait for one,
+    /// and the column's publishes signal the queue. Called before the read starts.
+    void setQueue(ReadQueue queue) {
+        this.queue = queue;
+    }
+
     private boolean queue(B batch, long rows) {
         readyRows.addAndGet(rows);
         readyQueue.offer(batch);
         return true;
+    }
+
+    /// Wakes the threads parked on the read's queue, after the ready queue changed.
+    private void signalQueue() {
+        if (queue != null) {
+            queue.signal();
+        }
     }
 
     /// Accounts for a batch the consumer has taken, and runs the room listener. The sentinel and
@@ -289,6 +312,7 @@ public class BatchExchange<B> {
     public void finish() {
         finished = true;
         readyQueue.offer(END_OF_STREAM);
+        signalQueue();
     }
 
     public boolean isFinished() {
@@ -342,6 +366,9 @@ public class BatchExchange<B> {
         if (finished) {
             return (B) drop(taken(readyQueue.poll()));
         }
+        if (queue != null) {
+            return drive();
+        }
         // Past this point the consumer is stalled on the pipeline: the ready
         // queue is empty and the column has not finished. The event's duration
         // is the stall, so it spans every exit from the wait.
@@ -358,6 +385,53 @@ public class BatchExchange<B> {
         finally {
             event.column = columnName;
             event.commit();
+        }
+    }
+
+    /// Runs the read's queue on the consumer's thread until a batch is published or the stream
+    /// ends, parking while nothing is queued; [BatchWaitEvent] spans the parks, which wait for
+    /// reads in flight. An interrupt ends the wait before the next item runs, as it ends a pooled
+    /// read's wait: an item may read a file, whose channel an interrupted thread would close.
+    ///
+    /// @throws IllegalStateException if no work is outstanding on the read's queue and no batch
+    ///         is ready: nothing could publish one any more
+    @SuppressWarnings("unchecked")
+    private B drive() throws InterruptedException, IOException {
+        while (true) {
+            long seen = queue.signals();
+            Object batch = taken(readyQueue.poll());
+            if (batch == END_OF_STREAM) {
+                checkError();
+                return null;
+            }
+            if (batch != null) {
+                return (B) batch;
+            }
+            if (finished) {
+                return (B) drop(taken(readyQueue.poll()));
+            }
+            if (Thread.interrupted()) {
+                throw new InterruptedException();
+            }
+            if (queue.runOne()) {
+                continue;
+            }
+            if (queue.idle()) {
+                // Looked at again: work that ended before the queue was idle published before
+                if (readyQueue.isEmpty() && !finished) {
+                    throw new IllegalStateException("The read of column '" + columnName
+                            + "' stalled: no batch is ready, and no task is queued or running and no read in flight");
+                }
+                continue;
+            }
+            BatchWaitEvent event = new BatchWaitEvent();
+            event.begin();
+            queue.park(seen);
+            event.column = columnName;
+            event.commit();
+            if (Thread.interrupted()) {
+                throw new InterruptedException();
+            }
         }
     }
 

@@ -44,6 +44,9 @@ public final class PrefetchTasks {
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(PrefetchTasks.class.getName()));
 
     private final Executor executor;
+    /// The read's queue the tasks run on, which [#awaitAll()] runs while it waits; `null` for an
+    /// executor with threads of its own.
+    private final ReadQueue queue;
     private final Set<CompletableFuture<Void>> running = ConcurrentHashMap.newKeySet();
     /// Written under `this`, so no task is admitted after [#awaitAll()] has taken its snapshot;
     /// read by each task as it starts.
@@ -65,6 +68,16 @@ public final class PrefetchTasks {
     /// @param executor where the tasks run
     public PrefetchTasks(Executor executor) {
         this.executor = executor;
+        this.queue = null;
+    }
+
+    /// Tasks at the tail of a read's queue, on a context without a pool.
+    ///
+    /// @param queue the read's queue, which runs the tasks and which [#awaitAll()] runs while it
+    ///        waits for them
+    PrefetchTasks(ReadQueue queue) {
+        this.executor = queue::addLast;
+        this.queue = queue;
     }
 
     /// Runs `task` on the executor, carrying the caller's [FetchReason], unless
@@ -157,6 +170,10 @@ public final class PrefetchTasks {
             started = List.copyOf(running);
         }
         for (CompletableFuture<Void> future : started) {
+            if (queue != null) {
+                // Nothing else may run the read's queue: the task runs here, dropping its work
+                queue.runUntil(future::isDone);
+            }
             // A task catches its own failures, so the join returns normally.
             future.join();
         }

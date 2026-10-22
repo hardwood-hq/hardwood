@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Predicate;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -221,6 +222,7 @@ class ParentCloseTest {
     /// is, and then wait for it. The close waits for the columns before it waits for the
     /// prefetches. Two threads, so that a held fetch step leaves one for the row group's
     /// planning, which starts the prefetch.
+    @Tag("pool")
     @Test
     void closeWaitsForAStartedPrefetchBeforeClosingTheFile() throws Exception {
         GatedInputFile file = new GatedInputFile(Files.readAllBytes(INDEXED_FILE));

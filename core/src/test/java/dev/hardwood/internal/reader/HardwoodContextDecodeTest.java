@@ -19,6 +19,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// [HardwoodContextImpl#decode] runs its work on the context's pool, with a set of the context's
 /// decode buffers, and hands back the work's result or its failure as thrown.
+@Tag("pool")
 class HardwoodContextDecodeTest {
 
     /// A Snappy dictionary page in a file of one row group; the filter's probe reads it.

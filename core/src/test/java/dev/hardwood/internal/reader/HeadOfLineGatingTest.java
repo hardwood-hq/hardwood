@@ -22,6 +22,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -62,6 +63,7 @@ import static org.assertj.core.api.Assertions.fail;
 /// Every page submitted past a lower waiting page is checked to be submitted while that page is
 /// past the cap the choice was made against. Each read then takes every batch, which a read that
 /// is not live never ends.
+@Tag("pool")
 class HeadOfLineGatingTest {
 
     private static final int THREADS = 4;
@@ -104,7 +106,7 @@ class HeadOfLineGatingTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(THREADS);
              RowGroupIterator iterator = iterator(context, file)) {
             iterator.planBatches(BATCH, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, BATCH, BUDGET_ROWS);
+            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), BATCH, BUDGET_ROWS);
             BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
             BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
             BatchExchange<BatchExchange.Batch> aheadExchange = BatchExchange.detachingFlat("ahead", BATCH);
@@ -172,7 +174,7 @@ class HeadOfLineGatingTest {
         try (HardwoodContextImpl context = executor.context(1);
              RowGroupIterator iterator = iterator(context, file)) {
             iterator.planBatches(BATCH, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, BATCH, BUDGET_ROWS);
+            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), BATCH, BUDGET_ROWS);
             BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
             BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
             PageSource smallSource = new PageSource(iterator, 0) {

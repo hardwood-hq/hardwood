@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -286,6 +287,7 @@ class FetchStepYieldTest {
 
     /// While a column's read is held, its step holds no thread of the pool: the pool's one thread
     /// runs other work. A close waits for the held read, and returns once it completes.
+    @Tag("pool")
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aStepWaitingForAReadHoldsNoThreadAndItsCloseWaitsForTheRead() throws Exception {

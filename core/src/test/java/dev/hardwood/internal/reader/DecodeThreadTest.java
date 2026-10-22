@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -51,6 +52,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// below 1500 and `1` from there, dictionary-encoded, so `bucket = 0` is decided by the
 /// dictionaries. `id < 1000` proves the first row group matches in full, so a read of `amount`
 /// filtered on it reads no `id` there: the column's fetch step places a boundary marker.
+@Tag("pool")
 class DecodeThreadTest {
 
     /// A Snappy dictionary page in a file of one row group, which the filter's probe reads.

@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -101,6 +102,7 @@ class FileMetadataCacheTest {
     /// A thread of the pool that waits for a load a thread off the pool registered runs the load's
     /// parse in place: the waiting thread is the pool's only one, so a parse handed to the pool
     /// would never run.
+    @Tag("pool")
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aPoolThreadWaitingForALoadRegisteredOffThePoolRunsItsParse() throws Exception {

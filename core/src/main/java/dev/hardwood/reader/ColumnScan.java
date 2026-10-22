@@ -81,7 +81,7 @@ final class ColumnScan implements Closeable {
         int columnCount = decoded.getProjectedColumnCount();
         // Every cursor's column closes its batches where the read's batch plan does.
         rowGroupIterator.planBatches(batchSize, 0);
-        ReadScheduler scheduler = new ReadScheduler(context, batchSize, budgetRows);
+        ReadScheduler scheduler = new ReadScheduler(context, rowGroupIterator.readQueue(), batchSize, budgetRows);
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
             ColumnSchema column = schema.getColumn(decoded.toOriginalIndex(i));

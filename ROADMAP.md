@@ -257,6 +257,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] A column's fetcher run as steps on the context's pool rather than a virtual thread per column (#1597; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
 - [x] A fetch step never waits for page bytes: a page's read runs on a virtual thread and the step yields on it, while a file in memory is sliced in place (#1598; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
 - [x] Row-group planning (the next file's footer, index windows, Bloom filters, dictionaries) runs on a virtual thread, and a fetch step yields on it rather than waiting on the pool (#1598; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#thread-inventory))
+- [x] A context of zero threads, `HardwoodContext.create(0)`, whose reads and writes run on the threads calling them (#1022; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#a-context-of-zero-threads))
 - [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md))
 - [x] Footers supplied across readers through a `MetadataSource` on the context, checked against each file before use (#837; see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md#supplied-footers))
 

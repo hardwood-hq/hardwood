@@ -77,7 +77,7 @@ class ParquetFileReaderOpenFailureTest {
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage(BAD_MAGIC_MESSAGE);
 
-        assertThat(context.executor().isShutdown()).isTrue();
+        assertThat(context.isClosed()).isTrue();
     }
 
     @Test
@@ -88,7 +88,7 @@ class ParquetFileReaderOpenFailureTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("At least one file must be provided");
 
-        assertThat(context.executor().isShutdown()).isTrue();
+        assertThat(context.isClosed()).isTrue();
     }
 
     @Test
@@ -100,7 +100,7 @@ class ParquetFileReaderOpenFailureTest {
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage(BAD_MAGIC_MESSAGE);
 
-            assertThat(context.executor().isShutdown()).isFalse();
+            assertThat(context.isClosed()).isFalse();
             assertThat(first.closed).isTrue();
         }
     }

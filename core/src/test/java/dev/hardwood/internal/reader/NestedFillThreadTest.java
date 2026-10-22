@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -36,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// the open cell it seals at its failure between two work items, once the page tasks have placed
 /// every page. It queues a [SealedFillTask] only for cells its fetch steps seal, none for the cells
 /// its page tasks seal.
+@Tag("pool")
 class NestedFillThreadTest {
 
     private static final Path FILE = Path.of("src/test/resources/nested_v1_no_index.parquet");
@@ -149,7 +151,7 @@ class NestedFillThreadTest {
                     return page;
                 }
             };
-            ReadScheduler scheduler = new ReadScheduler(context, batchSize, batchSize);
+            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), batchSize, batchSize);
             ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, pageSource, exchange, column,
                     batchSize, context.decompressorFactory(), layers, NestedIndexMode.ALL_ITEMS, true);
             scheduledColumn.set(scheduled);

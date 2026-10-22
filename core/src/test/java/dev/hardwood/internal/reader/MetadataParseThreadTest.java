@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// plans are built from, and scanning a dictionary for a filter's literal, runs on the context's pool
 /// ([HardwoodContextImpl#compute]), so that the pool's size bounds it, rather than on the read's
 /// virtual threads.
+@Tag("pool")
 class MetadataParseThreadTest {
 
     /// Four row groups of 50 rows, with a page index.

@@ -297,13 +297,13 @@ class MetadataSourceTest {
     }
 
     @Test
-    void theBuilderRefusesANullSourceAndTooFewThreads() {
+    void theBuilderRefusesANullSourceAndANegativeThreadCount() {
         assertThatThrownBy(() -> HardwoodContext.builder().metadataSource(null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("source");
-        assertThatThrownBy(() -> HardwoodContext.builder().threads(0))
+        assertThatThrownBy(() -> HardwoodContext.builder().threads(-1))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("threads must be at least 1, but was 0");
+                .hasMessage("threads must not be negative, but was -1");
     }
 
     private void assertStale(InputFile file, ParsedFooter footer, Check check, String message) throws Exception {

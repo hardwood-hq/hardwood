@@ -39,6 +39,15 @@ Options are string-keyed and keys are matched case-sensitively; boolean option v
 | `hardwood.fixed-list-fast-path` | `false` | Set to `"true"` to decode fixed-size `LIST` columns (e.g. embedding vectors, where every row holds the same number of non-null elements) without reconstructing per-row definition and repetition levels. |
 | `hardwood.metadata-filtering` | `true` | Set to `"false"` to disable metadata-based filtering: no row groups or pages are skipped from min/max statistics, bloom filters, dictionary pages, or page indexes, and filter predicates are instead evaluated against every decoded row. Filtered results then depend only on the data pages, for files whose footer or page-index metadata is unreliable. |
 
+## Context Threads
+
+| Call | Threads |
+|---|---|
+| `HardwoodContext.create()` | A pool of one thread per available processor |
+| `HardwoodContext.create(n)`, `HardwoodContext.builder().threads(n)` | A pool of `n` threads; `n = 0` creates a context without a pool, whose reads run on the threads calling the readers. A negative `n` fails with an `IllegalArgumentException` |
+
+On a context of zero threads, `executor()` throws an `UnsupportedOperationException`, and the reads of files not in memory fetch bytes ahead on virtual threads. See [A context of zero threads](../concepts/concurrency-model.md#a-context-of-zero-threads).
+
 ## Limits
 
 A column chunk read without an OffsetIndex must be at most 2 GB of *compressed* data; a chunk with an OffsetIndex is read in page groups and has no such limit. Files larger than 2 GB are read both locally and from S3, except by the in-memory (`ByteBuffer`) backend and by an S3 file opened with [`RangeBacking.SPARSE_TEMPFILE`](s3.md#range-backing), which the `dive` TUI uses for every file; both are limited to 2 GB per file. For datasets that don't fit a single supported file, split the data into multiple files at write time and read them as one; see [Read Multiple Files as One Dataset](../how-to/multi-file.md).

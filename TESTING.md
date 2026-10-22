@@ -95,6 +95,10 @@ The suites that compare the values a read returns run a second time with the int
 
 A test that asserts the shape of a batch, such as its record count or a value at a fixed index of its first batch, stays out of these lists. The profiles are inactive under `-Dtest=...`, which would otherwise run the selection once per execution.
 
+## Zero-thread contexts
+
+`./mvnw verify -pl core -Pzero-threads` runs the core suite a second time with the internal system property `hardwood.internal.zeroThreads`, which makes every context created by `HardwoodContext.create` or its builder one of zero threads, whose reads run on the threads calling the readers ([READ_PIPELINE.md](_designs/READ_PIPELINE.md#a-context-of-zero-threads)). Tests that pin how work spreads over a pool's threads, or that rely on a read's work running while no thread drives the read, are tagged `pool` and stay out. The profile runs on demand, for a change to how a read or a write is driven; `ZeroThreadContextTest` covers the mode in every build.
+
 ## Task orders
 
 A scheduled read's correctness depends on the order its page tasks run in: which task measures, sizes, places, fills and completes a cell, and which segment parks ([READ_PIPELINE.md](_designs/READ_PIPELINE.md#scheduled-columns)). The decode pool runs them in whatever order its threads take, which on a machine with few cores is close to submission order. `TaskOrderExecutor` (core tests) replaces the pool through `HardwoodContextImpl.create(ExecutorService, int)` and runs a read's tasks one at a time, each time picking at random, from a seed, among those submitted, so the tasks of a column run in any order. Its listener sees each task before and after it runs, with its page, on the one thread that runs tasks, where a test can read the page's segments and cells without racing them. A test's failure names the seed; since the fetchers run on threads of their own, a seed reproduces its order most of the time, not always.

@@ -30,6 +30,7 @@ import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -169,6 +170,7 @@ class PrefetchTasksTest {
     /// The first row group's plans start the prefetch of the second, whose read raises an
     /// `Error`; nothing reads the second row group, and the iterator's close throws the `Error`
     /// once it has closed the file it owns.
+    @Tag("pool")
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void errorOfARowGroupPrefetchIsThrownByTheIteratorsCloseAfterClosingTheFile() throws Exception {

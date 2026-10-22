@@ -21,12 +21,14 @@ import java.util.function.Function;
 
 /// Runs decode work as tasks of a `HardwoodContext`'s pool, each with a set of [DecodeBuffers]
 /// it takes when it starts and gives back when it ends. It is the only holder of the sets outside
-/// tests, so decode code, which takes them as a parameter, runs only on the pool.
+/// tests, so decode code, which takes them as a parameter, runs only on the pool, or, on a context
+/// without one, on the thread driving the read ([#runInPlace]).
 ///
 /// At most as many tasks run at once as the pool has threads, so the executor keeps that many
 /// sets: each grows to the largest page a task decoded with it and lives as long as the context.
 /// A task that finds none free, which more tasks than threads running at once would need, gets a
-/// new set, dropped when it is given back.
+/// new set, dropped when it is given back. A context without a pool keeps a set per processor,
+/// for the threads driving its reads at once.
 ///
 /// A decode a thread waits for ([#decode]) and a column's fetch step ([#executeFirst]) run ahead
 /// of the tasks already queued on a pool built on [#newWorkQueue()]: the waiting thread is a read
@@ -40,18 +42,20 @@ public final class DecodeExecutor {
     private final ExecutorService executor;
     private final ArrayBlockingQueue<DecodeBuffers> idle;
 
-    /// @param executor the pool the tasks run on
-    /// @param threads the pool's threads, the sets the executor keeps
-    public DecodeExecutor(ExecutorService executor, int threads) {
+    /// @param executor the pool the tasks run on, `null` for a context without one, whose work runs
+    ///        in place only
+    /// @param sets the sets the executor keeps: the pool's threads, or the threads expected to
+    ///        drive reads at once on a context without a pool
+    public DecodeExecutor(ExecutorService executor, int sets) {
         this.executor = executor;
-        this.idle = new ArrayBlockingQueue<>(threads);
+        this.idle = new ArrayBlockingQueue<>(sets);
     }
 
     /// Runs `task` on the pool with a set of buffers.
     ///
     /// @throws RejectedExecutionException if the pool is shut down
     public void execute(Consumer<DecodeBuffers> task) {
-        executor.execute(() -> {
+        pool().execute(() -> {
             DecodeBuffers buffers = take();
             try {
                 task.accept(buffers);
@@ -67,7 +71,7 @@ public final class DecodeExecutor {
     ///
     /// @throws RejectedExecutionException if the pool is shut down
     public void executeFirst(Runnable task) {
-        executor.execute(new First(task));
+        pool().execute(new First(task));
     }
 
     /// Runs `task` on the pool without a set of buffers, at the tail of the queue: speculative
@@ -75,10 +79,23 @@ public final class DecodeExecutor {
     ///
     /// @throws RejectedExecutionException if the pool is shut down
     public void executeLast(Runnable task) {
-        executor.execute(task);
+        pool().execute(task);
     }
 
-    /// Runs `work` on the calling thread, a thread of the pool, with a set of buffers.
+    /// Runs `task` on the calling thread with a set of buffers: a page task of a read on a context
+    /// without a pool, run by the thread driving the read.
+    public void runInPlace(Consumer<DecodeBuffers> task) {
+        DecodeBuffers buffers = take();
+        try {
+            task.accept(buffers);
+        }
+        finally {
+            idle.offer(buffers);
+        }
+    }
+
+    /// Runs `work` on the calling thread, a thread of the pool or one driving a read on a context
+    /// without a pool, with a set of buffers.
     public <T> T decodeInPlace(Function<DecodeBuffers, T> work) {
         DecodeBuffers buffers = take();
         try {
@@ -95,7 +112,7 @@ public final class DecodeExecutor {
     ///
     /// @throws RejectedExecutionException if the pool is shut down
     public <T> T awaitFirst(FutureTask<T> task) {
-        executor.execute(new First(task));
+        pool().execute(new First(task));
         return await(task);
     }
 
@@ -115,7 +132,7 @@ public final class DecodeExecutor {
                 idle.offer(buffers);
             }
         });
-        executor.execute(result);
+        pool().execute(result);
         return await(result);
     }
 
@@ -148,6 +165,17 @@ public final class DecodeExecutor {
         public boolean offer(Runnable task) {
             return task instanceof Awaited<?> || task instanceof First ? offerFirst(task) : offerLast(task);
         }
+    }
+
+    /// The pool.
+    ///
+    /// @throws IllegalStateException if the context has none: its reads queue their tasks on
+    ///         their own queues and run every decode in place
+    private ExecutorService pool() {
+        if (executor == null) {
+            throw new IllegalStateException("The HardwoodContext has no pool to run the task on");
+        }
+        return executor;
     }
 
     private DecodeBuffers take() {

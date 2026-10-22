@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.CountingInputFile;
@@ -248,6 +249,7 @@ class MultiFileRowReaderTest {
         }
     }
 
+    @Tag("pool")
     @Test
     void testSuppliedContextSizesPoolAndIsNotClosed() throws Exception {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");

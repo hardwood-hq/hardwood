@@ -205,7 +205,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         // NestedBatch.filterAlwaysMatches (see #1107).
         rowGroupIterator.planBatches(batchSize, maxRows);
         ColumnPipeline[] pipelines = new ColumnPipeline[projectedColumnCount];
-        ReadScheduler scheduler = new ReadScheduler(context, batchSize, budgetRows);
+        ReadScheduler scheduler = new ReadScheduler(context, rowGroupIterator.readQueue(), batchSize, budgetRows);
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
 

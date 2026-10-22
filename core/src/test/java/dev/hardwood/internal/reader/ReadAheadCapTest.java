@@ -18,6 +18,7 @@ import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -52,6 +53,7 @@ import static org.assertj.core.api.Assertions.fail;
 /// runs until the column has published the two batches its exchange holds and, for the flat
 /// column, has submitted its pages up to the expected lead, and then until no page is submitted
 /// for a moment; it then takes every batch, which a read that is not live never ends.
+@Tag("pool")
 class ReadAheadCapTest {
 
     private static final int BATCH = 64;
@@ -128,7 +130,7 @@ class ReadAheadCapTest {
             iterator.planBatches(BATCH, 0);
             ColumnSchema column = iterator.referenceSchema().getColumn(0);
             PageSource source = new PageSource(iterator, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, BATCH, budgetRows);
+            ReadScheduler scheduler = new ReadScheduler(context, iterator.readQueue(), BATCH, budgetRows);
             if (repeated) {
                 BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), BATCH);
                 try (ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, source, exchange,

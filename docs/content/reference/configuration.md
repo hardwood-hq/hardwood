@@ -91,7 +91,7 @@ Or attach dynamically via `jcmd <pid> JFR.start`.
 | `dev.hardwood.RowGroupByteRangeFilter` | Filter | Row groups selected by a byte-range split predicate (split-aware reading). Fields: file, totalRowGroups, rowGroupsKept, rowGroupsSkipped |
 | `dev.hardwood.PageFilter` | Filter | Pages filtered by Column Index predicate pushdown within a kept row group, one event per column chunk the Column Index narrowed; a chunk without a Column Index has its pages dropped from page-header statistics, which no event reports. Fields: file, rowGroupIndex, column, totalPages, pagesKept, pagesSkipped |
 | `dev.hardwood.RecordFilter` | Filter | Records filtered by record-level predicate evaluation, one event per file read. Fields: file, totalRecords, recordsKept, recordsSkipped |
-| `dev.hardwood.BatchWait` | Pipeline | Consumer blocked waiting for the assembly pipeline; the event's duration is the stall. Fields: column |
+| `dev.hardwood.BatchWait` | Pipeline | Consumer blocked waiting for the assembly pipeline; the event's duration is the stall. On a context of zero threads, the consumer waiting for a page's bytes in flight; the reads that plan a row group, which run on the consumer's thread, are not recorded. Fields: column |
 
 Events appear under the **Hardwood** category in JDK Mission Control (JMC) or any JFR analysis tool. Use them to identify:
 

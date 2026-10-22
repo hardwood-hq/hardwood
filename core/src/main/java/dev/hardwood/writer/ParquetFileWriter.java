@@ -713,14 +713,14 @@ public final class ParquetFileWriter implements Closeable {
         requireOpenContext();
         // The calling thread encodes too. A pool thread per column beyond the first is the most
         // that can be busy with chunks; where workers take the pages of the chunks still being
-        // encoded, the whole pool can be.
+        // encoded, the whole pool can be. A context without a pool leaves it to the caller.
         int flushHelpers = handsOffPages ? Integer.MAX_VALUE : schema.getColumnCount() - 1;
+        HardwoodContextImpl pool = flushHelpers == 0 ? null : encodingContext();
         RowGroupBuffer.FlushedRowGroup rowGroup;
-        if (flushHelpers == 0) {
+        if (pool == null || !pool.hasPool()) {
             rowGroup = current.flushTo(out, null, 0, false);
         }
         else {
-            HardwoodContextImpl pool = encodingContext();
             rowGroup = current.flushTo(out, pool.executor(), Math.min(pool.threads(), flushHelpers), handsOffPages);
         }
         rowGroups.add(rowGroup);
@@ -729,7 +729,7 @@ public final class ParquetFileWriter implements Closeable {
     }
 
     /// The workers that append each slice of a batch beside the caller, or `null` where the caller
-    /// appends alone ([#appendsInParallel]).
+    /// appends alone ([#appendsInParallel]), as it does on a context without a pool.
     private ParallelAppend parallelAppend() {
         if (!appendsInParallel) {
             return null;
@@ -737,6 +737,9 @@ public final class ParquetFileWriter implements Closeable {
         requireOpenContext();
         if (parallelAppend == null) {
             HardwoodContextImpl pool = encodingContext();
+            if (!pool.hasPool()) {
+                return null;
+            }
             // The calling thread appends a column too, so a pool thread per column beyond the
             // first is the most that can be busy.
             parallelAppend = new ParallelAppend(schema.getColumnCount(), pool.executor(),
@@ -746,7 +749,7 @@ public final class ParquetFileWriter implements Closeable {
     }
 
     private void requireOpenContext() {
-        if (context != null && context.executor().isShutdown()) {
+        if (context != null && context.isClosed()) {
             throw new IllegalStateException(
                     "The HardwoodContext this writer encodes on is closed; close the writer before its context");
         }

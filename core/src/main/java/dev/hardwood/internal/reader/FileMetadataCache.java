@@ -100,7 +100,7 @@ public final class FileMetadataCache {
         if (registration.isNew()) {
             load(fileIndex, load);
         }
-        else if (context.isOnPool()) {
+        else if (context.runsInPlace()) {
             load.runHandedOffParse();
         }
         try {
@@ -122,8 +122,14 @@ public final class FileMetadataCache {
     }
 
     /// Starts reading the footer of `fileIndex` on the I/O executor, unless a load or a read is
-    /// registered, the index is past the last file, or the cache is closed.
+    /// registered, the index is past the last file, the cache is closed, or the context has no
+    /// pool and the file's bytes are in memory.
     void prefetch(int fileIndex) {
+        if (!context.hasPool() && fileIndex >= 0 && fileIndex < inputFiles.size()
+                && RangeRead.inMemory(inputFiles.get(fileIndex))) {
+            // Its read waits for nothing, so the load on the thread driving the read reads it
+            return;
+        }
         CompletableFuture<OpenedFooter> read = new CompletableFuture<>();
         synchronized (lifecycleLock) {
             if (closeStarted || fileIndex < 0 || fileIndex >= inputFiles.size()
@@ -322,10 +328,10 @@ public final class FileMetadataCache {
         }
     }
 
-    /// Parses `read` on the context's pool: in place on a thread of the pool, and otherwise as a
-    /// task `load` hands over ([Load]).
+    /// Parses `read` on the context's pool: in place on a thread of the pool or on a context
+    /// without one, and otherwise as a task `load` hands over ([Load]).
     private FileFooter parse(FooterRead read, Load load) {
-        if (read.supplied() != null || context.isOnPool()) {
+        if (read.supplied() != null || context.runsInPlace()) {
             return read.parse(context);
         }
         FutureTask<FileFooter> parse = new FutureTask<>(() -> read.parse(context));

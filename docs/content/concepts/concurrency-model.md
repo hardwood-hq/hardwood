@@ -60,6 +60,14 @@ A writer copies a batch's values into the open row group in parallel: the pool t
 
 A schema of many columns spreads both the copying and the flush across all the threads. A schema of a few columns is bounded by its most expensive column while values are copied, since a column is copied by one thread. At flush, a chunk is encoded by one thread, but under a compressing codec such as `ZSTD` a pool thread with no chunk left compresses pages of the chunks still being encoded, so a schema of a few columns, or of one, spreads its flush across the threads too, and those threads stay with the flush until its last chunk is encoded; uncompressed, the flush of a few columns is bounded by its most expensive column chunk. Between two batches, the pool threads that copied values wait for the next batch for at most a millisecond before returning to the pool, and they return at once when a row group is flushed or the writer is closed. While batches keep arriving, each such thread goes to the back of the pool's queue every millisecond, so other work queued on a shared context runs in between.
 
+## A context of zero threads
+
+`HardwoodContext.create(0)` creates a context without a pool. A read on it runs on the thread that calls the reader: when `hasNext()` or `nextBatch()` finds no batch ready, that call walks the page headers, decompresses and decodes pages until the batch is complete, and returns it. Nothing decodes while your loop works on a batch, so a read uses one core, the one your loop runs on.
+
+This suits a process that runs one pipeline per core: N readers, each driven by its own thread, use N cores, with no worker threads competing with them for the cores, caches and memory bandwidth. It also suits an environment that cannot start threads. One context of zero threads serves readers on several threads at once, each read running on the thread that drives it.
+
+A read of local files, or of files in memory, starts no thread. A read of other files, such as files on S3, fetches bytes ahead of the read on virtual threads, which wait for the requests and do no other work. These virtual threads run on the carrier threads of the JVM's virtual-thread scheduler, which the whole process shares and the context does not bound: the CPU a request takes inside the `InputFile`, such as decrypting TLS or copying the response, runs on those carriers. While a page's bytes are in flight, the read's thread waits for them in `hasNext()` or `nextBatch()`, which a `BatchWait` event records. The reads that plan a row group (the next file's footer, its page index, Bloom filters and dictionaries) run on the read's thread, and no `BatchWait` event records them. Drive such a read from a platform thread: a virtual thread holds its carrier for the length of each decode. A writer on such a context copies, encodes and compresses on the thread that calls it.
+
 ## Guidelines for your code
 
 - **Drive one reader from one thread.** A `RowReader` / `ColumnReader` / `ColumnReaders` instance
@@ -88,9 +96,10 @@ A schema of many columns spreads both the copying and the flush across all the t
   threads than on the default. Measure the read at a few values of `n` to find its best. Every page a read
   decodes, dictionary pages included, is decoded on these `n` threads. The same threads walk each
   column's pages, parse the footer of every file after the first and the page indexes of each row
-  group, and scan a row group's dictionaries for a filter's values. Bytes fetched ahead of the read
-  are fetched on the JVM's virtual threads; a fetch the read waits for runs on one of the `n`
-  threads. The first file's footer is parsed on the thread that opens the reader.
+  group, and scan a row group's dictionaries for a filter's values. The bytes of a file not in
+  memory are fetched on the JVM's virtual threads. The first file's footer is parsed on the thread
+  that opens the reader. With `n = 0`, all of that work runs on your loop's thread instead
+  ([A context of zero threads](#a-context-of-zero-threads)).
 
 ## Further reading
 

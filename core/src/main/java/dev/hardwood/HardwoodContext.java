@@ -19,6 +19,10 @@ import dev.hardwood.writer.ParquetFileWriter;
 /// decompressor pool for native GZIP decompression, the decompressor factory,
 /// and the [MetadataSource] installed through [#builder()], if any.
 ///
+/// A context of zero threads ([#create(int)] with `0`) has no pool: a read on it decodes on the
+/// thread calling the reader, as that thread asks for each batch, and a writer encodes on the
+/// thread calling it. A read of files not in memory still fetches bytes ahead on virtual threads.
+///
 /// The context lifecycle is tied to either:
 ///
 /// - [Hardwood] instance (for multi-file usage)
@@ -37,6 +41,7 @@ public interface HardwoodContext extends AutoCloseable {
     /// context cannot be built in a task running on it: building one there fails with an
     /// [IllegalStateException].
     ///
+    /// @throws UnsupportedOperationException if the context has zero threads, and so no pool
     /// @deprecated The executor is not meant to run the caller's tasks, and this method has no
     ///             replacement; it will be removed in the next major release.
     @Deprecated(since = "1.1", forRemoval = true)
@@ -52,7 +57,10 @@ public interface HardwoodContext extends AutoCloseable {
         return HardwoodContextImpl.create();
     }
 
-    /// Create a new context with a thread pool of the specified size.
+    /// Create a new context with a thread pool of the specified size. With zero threads, the
+    /// context has no pool, and its reads and writes run on the threads calling them.
+    ///
+    /// @throws IllegalArgumentException if `threads` is negative
     static HardwoodContext create(int threads) {
         return HardwoodContextImpl.create(threads);
     }
@@ -79,9 +87,10 @@ public interface HardwoodContext extends AutoCloseable {
         /// Sets the number of platform threads the context uses to decompress and decode pages, to
         /// parse the footers and page indexes a read reads as it goes and scan dictionaries for a
         /// filter's values, and to encode and compress the column chunks of a writer's row groups.
-        /// Defaults to [Runtime#availableProcessors()].
+        /// Defaults to [Runtime#availableProcessors()]. With zero threads, the context has no pool:
+        /// that work runs on the threads calling the readers and writers.
         ///
-        /// @throws IllegalArgumentException if `threads` is less than 1
+        /// @throws IllegalArgumentException if `threads` is negative
         Builder threads(int threads);
 
         /// Installs a [MetadataSource] that supplies the footer of every file a reader opened

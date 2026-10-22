@@ -81,14 +81,14 @@ when the read reaches the row group, waiting for its requests there.
 | 2 | Parsing and scans on the pool | #1589 | done |
 | 3 | Fetchers as steps on the pool | #1597 | done |
 | 4 | Steps never wait on I/O | #1598 | done |
-| 5 | Single-threaded mode: `threads(0)` | #1022 | see below |
+| 5 | Single-threaded mode: `threads(0)` | #1022 | done |
 | 6 | Request budgets, read-ahead depth and split requests | #1264 | see below |
 
 | # | What it changes | What it buys |
 | --- | --- | --- |
 | 3 | The per-column fetcher threads go: fetch steps run on the pool at the head of its queue; the speculative tasks split into a read on a virtual thread and CPU work on the pool; a column closes without joining a thread | Less cost per read (measured: 200 small files −19 to −24 %, open and first row −19 to −27 % on one thread) and less CPU (−6 to −40 %); no hand-off of parsing on the fetch path; no parking and waking of fetchers, and with them most of the wake and pinning rules; one way of driving a read, which stages 5 and 6 build on |
 | 4 | The walks over a column's pages become state machines that return the bytes they need instead of reading them; a row group's planning runs on a virtual thread; a step whose bytes or plans are not ready yields, and the completion queues it again | A thread of the pool does CPU work only; a request can wait for stage 6's budget without holding a thread; the pool stays free for the other reads of a shared context. No throughput change on the S3 scans alone, which are bound by I/O |
-| 5 | `threads(0)`: the consumer's poll runs the read's queue; the writer takes its path without helpers; `executor()` throws on such a context | #1022: a pipeline on one core with no background CPU, so N pipelines scale with N cores (prototype, one core: −28 to −41 % on small reads, −13 % on a 32 MB scan); reads in an environment without threads, such as the browser build of `dive` |
+| 5 | `threads(0)`: the consumer's poll runs the read's queue; the writer takes its path without helpers; `executor()` throws on such a context | #1022: a pipeline on one core with no background CPU, so N pipelines scale with N cores (one core: −16 to −18 % on small reads, even on large ones); reads in an environment without threads, such as the browser build of `dive` |
 | 6 | The request entry holds a context's requests and bytes in flight within budgets; a read-ahead depth replaces the one-ahead rules of chunks, regions, row groups and files; a large range is fetched as parallel requests | Remote throughput within a memory budget; parallel transfer of large ranges; the budget that reading further ahead (#1395, #1396) and concurrent index-window ranges (#1394) build on |
 
 Stage 4 lands before stage 6: a request that waits for its budget must not hold a thread of the
@@ -205,19 +205,38 @@ planning stays on the fetch step as in 4a, so 4b changes nothing they run.
 
 ### Stage 5: single-threaded mode
 
-**Changes.** #1022. `HardwoodContext.create(0)` and `builder().threads(0)` create a context without a pool:
-the work a pool thread would run runs on the thread that drives the read, which is the thread
-calling the reader. The builder rejects 0 today, so no caller changes meaning. When the poll
-finds no batch, it runs the read's oldest queued step or task, else waits for a request in
-flight. The writer takes its path without helpers for every schema. `HardwoodContext.executor()`
-throws `UnsupportedOperationException` on such a context. One such context serves reads on
-several threads at once, each driven by its own caller.
+Done (#1022). `HardwoodContext.create(0)` and `builder().threads(0)` create a context without a
+pool. Each read keeps its fetch steps, page tasks and planning in a queue of its own
+(`ReadQueue`), in the pool's order, and the threads using the read run it: a poll that finds no
+batch runs the item at the head, else parks until a request in flight completes; a close runs it
+while it waits. The read plans each work item on the step that reaches it, so no virtual thread
+computes; a read of files in memory starts no thread and does no speculative work, and a read of
+other files keeps its prefetches on virtual threads. A poll that finds no batch and no work
+outstanding fails rather than parks. The writer appends and encodes on the caller for every
+schema, and `executor()` throws `UnsupportedOperationException`. The design is in
+[READ_PIPELINE.md](../_designs/READ_PIPELINE.md#a-context-of-zero-threads).
 
-**Buys.** What #1022 asks for: N independent pipelines, each on one core with no background CPU, scale with N cores. The prototype on branch `1022-single-threaded-mode` measured, on one core, −41 % to open a small file and read its first row, −29 % on 200 small files and −13 % on a 32 MB scan. A read also runs where no thread can be started, such as the browser build of `dive`.
+Gate: the core suite passes on zero-thread contexts minus the tests tagged `pool` (the opt-in
+`zero-threads` profile); `ZeroThreadContextTest` checks that every parse and decode of a read stays
+on the consumer's thread and that a local read starts no thread. The flat taxi scan pinned to one
+core, `threads(1)` against `threads(0)` on one core of the N300 at 1.50 GHz, warmed up, 15 interleaved
+rounds (a plain timing harness, interquartile ranges within 2 %): open a 1,000-row file and read
+its first row 253 → 209 µs (−18 %), all its rows −16 %, 200 such files 52.9 → 44.7 ms (−16 %), on
+15 to 23 % less CPU; reads of 100,000 rows flat or nested and a 10-million-row column scan within
+−1 to −2 %. The gain is a fixed cost per read, about 40 µs, which stage 3 had already cut from the
+prototype's 130 µs. The taxi flat scan pinned to one core, two interleaved rounds against the
+default pool: columnar −14 %, row reader −5 to −9 % on the N300 (JMH iterations of one operation
+each, so not warmed as the harness is), −1 to −3 % on the container, within its noise.
 
-**Gate.** The core suite passes on a zero-thread context, minus the tests that name a pool; a
-test that no parse or decode of a local read leaves the consumer's thread; writer suites on a
-zero-thread context; user docs (`concepts/concurrency-model.md`, `reference/`).
+N pipelines, each a thread reading files of its own, on the N300 at 1.50 GHz: on one shared
+`threads(0)` context, 8 pipelines reach 5.2× the throughput of one on 200 small files and 5.7× on
+a 100,000-row file, as many as with a `threads(1)` context per pipeline (5.3×, 6.2×), on 15 to
+20 % less CPU per small read; one shared pool of 8 threads reaches 4.0× on the small files. CPU
+per read rises by the same 25 to 35 % in every setup, which the box's shared caches and single
+memory channel account for. On the container the 100,000-row read reaches 7.1× in every setup.
+On the S3 preset (30 ms latency), `threads(0)` is within 2 % of `threads(1)` on six of eight
+contenders, 7 and 11 % faster on the two that share a context with another read, and 1.3 %
+slower on the multi-file scan, whose planning reads block the consumer.
 
 ### Stage 6: request budgets, read-ahead depth and split requests
 

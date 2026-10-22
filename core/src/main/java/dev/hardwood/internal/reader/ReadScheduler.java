@@ -30,6 +30,10 @@ import dev.hardwood.internal.DecodeExecutor;
 /// page of the first column past it whose page holds rows of the batch that column publishes
 /// next, such as a filter-only column that has published far ahead of the read.
 ///
+/// On a context without a pool, the fetch steps and page tasks go to the read's own queue
+/// ([ReadQueue]) in the order the pool's queue gives them, and the threads using the read run them;
+/// the scheduler counts the thread driving the read as the one decode thread.
+///
 /// The scheduler has no thread of its own and does no I/O and no decoding: it runs on whichever
 /// thread changes what may be submitted (a fetch step queuing a page, a page task ending, a column
 /// publishing a batch or ending), one thread at a time, and a call made while another thread
@@ -82,6 +86,10 @@ public final class ReadScheduler {
     }
 
     private final HardwoodContextImpl context;
+    /// The read's queue on a context without a pool, `null` where the pool runs the read's work.
+    private final ReadQueue queue;
+    /// The threads that decode the read's pages: the pool's, or the one driving the read.
+    private final int decodeThreads;
     private final int pagesInFlight;
     private final int batchCapacity;
     private final long capRows;
@@ -111,11 +119,18 @@ public final class ReadScheduler {
     private final AtomicBoolean stopped = new AtomicBoolean();
 
     /// @param context the context whose decode pool runs the page tasks
+    /// @param queue the read's queue ([RowGroupIterator#readQueue()]), `null` where the context
+    ///        has a pool
     /// @param batchCapacity the read's batch capacity
     /// @param budgetRows the rows of the read's batch byte budget ([BatchSizing#readAheadBudgetRows])
-    public ReadScheduler(HardwoodContextImpl context, int batchCapacity, long budgetRows) {
+    public ReadScheduler(HardwoodContextImpl context, ReadQueue queue, int batchCapacity, long budgetRows) {
+        if ((queue == null) != context.hasPool()) {
+            throw new IllegalArgumentException("A read has a queue of its own exactly where its context has no pool");
+        }
         this.context = context;
-        this.pagesInFlight = PAGES_PER_THREAD * context.threads();
+        this.queue = queue;
+        this.decodeThreads = Math.max(1, context.threads());
+        this.pagesInFlight = PAGES_PER_THREAD * decodeThreads;
         this.batchCapacity = batchCapacity;
         this.capRows = CAP_BUDGETS * budgetRows;
     }
@@ -165,11 +180,21 @@ public final class ReadScheduler {
         }
     }
 
-    /// Runs a column's fetch step on the context's pool, at the head of its queue.
+    /// The read's queue on a context without a pool, `null` where the pool runs the read's work.
+    ReadQueue queue() {
+        return queue;
+    }
+
+    /// Runs a column's fetch step on the context's pool, or the read's queue, at the head.
     ///
     /// @throws RejectedExecutionException if the context is closed
     void executeFetch(Runnable step) {
-        context.executeStep(step);
+        if (queue != null) {
+            queue.addFirst(step);
+        }
+        else {
+            context.executeStep(step);
+        }
     }
 
     /// Submits every page that may be submitted now, after `column`'s state changed. Every change
@@ -227,7 +252,12 @@ public final class ReadScheduler {
             }
             ScheduledColumn<?> column = next;
             try {
-                context.execute(buffers -> column.runPage(page, buffers));
+                if (queue != null) {
+                    queue.addLast(() -> context.runInPlace(buffers -> column.runPage(page, buffers)));
+                }
+                else {
+                    context.execute(buffers -> column.runPage(page, buffers));
+                }
             }
             catch (RejectedExecutionException e) {
                 column.rejected(e);
@@ -268,7 +298,7 @@ public final class ReadScheduler {
         // leaves idle. The search stops at a page a column with nothing queued may yet start
         // below, and passes at most as many columns as the pool has threads, so that it does not
         // grow with the column count.
-        int threads = context.threads();
+        int threads = decodeThreads;
         if (submitted.get() >= threads) {
             return null;
         }

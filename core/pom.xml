@@ -301,5 +301,42 @@
         </plugins>
       </build>
     </profile>
+    <!--
+      The core suite runs a second time on contexts of zero threads, through the internal
+      `hardwood.internal.zeroThreads` property that makes every context created by `create` or the
+      builder one without a pool, whose reads run on the threads calling the readers. Tests that
+      pin how work spreads over a pool's threads, or that rely on a read's work running while no
+      thread drives the read, are tagged `pool` and stay out.
+
+      Run on demand with `-Pzero-threads`, for changes to how a read or a write is driven;
+      `ZeroThreadContextTest` covers the mode in every build.
+    -->
+    <profile>
+      <id>zero-threads</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>zero-threads</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>test</goal>
+                </goals>
+                <configuration>
+                  <reportsDirectory>${project.build.directory}/surefire-reports-zero-threads</reportsDirectory>
+                  <excludedGroups>pool</excludedGroups>
+                  <systemPropertyVariables>
+                    <hardwood.internal.zeroThreads>true</hardwood.internal.zeroThreads>
+                  </systemPropertyVariables>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 </project>

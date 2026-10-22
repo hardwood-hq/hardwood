@@ -35,9 +35,17 @@ import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 /// Holds the thread pool every decode of a read runs on ([DecodeExecutor]), the executor its
 /// speculative reads run on ([#ioExecutor()]), the libdeflate decompressor pool for native GZIP
 /// decompression, and the decompressor factory.
+///
+/// A context of zero threads has no pool ([#hasPool()]): each read keeps its steps and tasks in a
+/// queue of its own ([ReadQueue]), which the threads calling the reader run, and `compute` and
+/// `decode` run in place on the calling thread.
 public class HardwoodContextImpl implements HardwoodContext {
 
     private static final String USE_LIBDEFLATE_PROPERTY = "hardwood.uselibdeflate";
+
+    /// Makes [#create()], [#create(int)] and the builder create contexts without a pool, whatever
+    /// thread count they are given; for running the test suites on such contexts.
+    private static final String ZERO_THREADS_PROPERTY = "hardwood.internal.zeroThreads";
 
     /// Starts each task on a virtual thread of its own.
     private static final Executor IO_EXECUTOR = task -> Thread.ofVirtual().name("hardwood-io").start(task);
@@ -67,6 +75,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         void computing(String what, Thread caller);
     }
 
+    /// The pool, `null` on a context of zero threads.
     private final ExecutorService executor;
     private final Executor ioExecutor;
     private final DecodeExecutor decodeExecutor;
@@ -76,12 +85,16 @@ public class HardwoodContextImpl implements HardwoodContext {
     private final LibdeflatePool libdeflatePool;
     private final DecompressorFactory decompressorFactory;
     private final MetadataSource metadataSource;
+    /// Set by [#close()] on a context without a pool, whose closing the pool's shutdown cannot
+    /// record.
+    private volatile boolean closed;
 
     private HardwoodContextImpl(ExecutorService executor, int threads, Set<Thread> poolThreads,
                                 Executor ioExecutor, LibdeflatePool libdeflatePool, MetadataSource metadataSource) {
         this.executor = executor;
         this.ioExecutor = ioExecutor;
-        this.decodeExecutor = new DecodeExecutor(executor, threads);
+        this.decodeExecutor = new DecodeExecutor(executor,
+                executor != null ? threads : Runtime.getRuntime().availableProcessors());
         this.threads = threads;
         this.poolThreads = poolThreads;
         this.libdeflatePool = libdeflatePool;
@@ -94,9 +107,19 @@ public class HardwoodContextImpl implements HardwoodContext {
         return create(Runtime.getRuntime().availableProcessors());
     }
 
-    /// Create a new context with a thread pool of the specified size.
+    /// Create a new context with a thread pool of the specified size; with zero threads, a context
+    /// without a pool, whose reads run on the threads calling the readers.
+    ///
+    /// @throws IllegalArgumentException if `threads` is negative
     public static HardwoodContextImpl create(int threads) {
-        return create(threads, ParquetMetadataReader.FROM_FILE, IO_EXECUTOR);
+        return create(checkThreads(threads), ParquetMetadataReader.FROM_FILE, IO_EXECUTOR);
+    }
+
+    private static int checkThreads(int threads) {
+        if (threads < 0) {
+            throw new IllegalArgumentException("threads must not be negative, but was " + threads);
+        }
+        return Boolean.getBoolean(ZERO_THREADS_PROPERTY) ? 0 : threads;
     }
 
     /// Create a context whose page tasks and fetch steps run on `executor`, which the context
@@ -107,13 +130,17 @@ public class HardwoodContextImpl implements HardwoodContext {
                 ParquetMetadataReader.FROM_FILE);
     }
 
-    /// Create a context with a pool of `threads` threads whose speculative work runs on
-    /// `ioExecutor`; for tests that wait for that work.
+    /// Create a context with a pool of `threads` threads, or without a pool for zero, whose
+    /// speculative work runs on `ioExecutor`; for tests that wait for or count that work.
     static HardwoodContextImpl withIoExecutor(int threads, Executor ioExecutor) {
         return create(threads, ParquetMetadataReader.FROM_FILE, ioExecutor);
     }
 
     private static HardwoodContextImpl create(int threads, MetadataSource metadataSource, Executor ioExecutor) {
+        LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
+        if (threads == 0) {
+            return new HardwoodContextImpl(null, 0, Set.of(), ioExecutor, libdeflatePool, metadataSource);
+        }
         AtomicInteger threadCounter = new AtomicInteger(0);
         Set<Thread> poolThreads = ConcurrentHashMap.newKeySet();
         ThreadFactory threadFactory = r -> {
@@ -127,7 +154,6 @@ public class HardwoodContextImpl implements HardwoodContext {
         // A read's first decode, often its dictionary probe on the calling thread, would otherwise
         // wait for the pool's first thread to start; it starts here, while the footer is read
         executor.prestartCoreThread();
-        LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
         return new HardwoodContextImpl(executor, threads, poolThreads, ioExecutor, libdeflatePool, metadataSource);
     }
 
@@ -154,10 +180,26 @@ public class HardwoodContextImpl implements HardwoodContext {
 
     /// The pool that decodes pages and encodes column chunks. Stays as the internal accessor once
     /// [HardwoodContext#executor()] is removed.
+    ///
+    /// @throws UnsupportedOperationException if the context has no pool ([#hasPool()])
     @SuppressWarnings("removal")
     @Override
     public ExecutorService executor() {
+        if (executor == null) {
+            throw new UnsupportedOperationException("A HardwoodContext of zero threads has no executor");
+        }
         return executor;
+    }
+
+    /// Whether the context has a pool: `false` for a context of zero threads, whose reads run on
+    /// the threads calling the readers and whose writers encode on the threads calling them.
+    public boolean hasPool() {
+        return executor != null;
+    }
+
+    /// Whether the context is closed.
+    public boolean isClosed() {
+        return executor != null ? executor.isShutdown() : closed;
     }
 
     /// The executor a read's speculative work runs on: prefetches and footer loads, which spend
@@ -175,6 +217,12 @@ public class HardwoodContextImpl implements HardwoodContext {
         decodeExecutor.execute(task);
     }
 
+    /// Runs `task` on the calling thread, with a set of the context's decode buffers: a page task
+    /// a read on a context without a pool runs on the thread driving it ([ReadQueue]).
+    void runInPlace(Consumer<DecodeBuffers> task) {
+        decodeExecutor.runInPlace(task);
+    }
+
     /// Runs a column's fetch step on the context's pool, at the head of its queue.
     ///
     /// @throws RejectedExecutionException if the context is closed
@@ -190,13 +238,13 @@ public class HardwoodContextImpl implements HardwoodContext {
     }
 
     /// Runs `work` on the context's pool, with a set of its decode buffers, and waits for its
-    /// result; on a thread of the pool, such as a column's fetch step, it runs in place. A
-    /// failure of `work` is thrown as it was thrown.
+    /// result; on a thread of the pool, such as a column's fetch step, and on a context without a
+    /// pool, it runs in place. A failure of `work` is thrown as it was thrown.
     ///
     /// @throws IllegalStateException if the context is closed
     public <T> T decode(Function<DecodeBuffers, T> work) {
         Thread caller = Thread.currentThread();
-        if (poolThreads.contains(caller)) {
+        if (runsInPlace()) {
             return decodeExecutor.decodeInPlace(buffers -> {
                 DecodeObserver observer = decodeObserver;
                 if (observer != null) {
@@ -221,15 +269,15 @@ public class HardwoodContextImpl implements HardwoodContext {
 
     /// Runs `work`, CPU work a thread off the pool needs, such as parsing a footer or a page
     /// index, on the context's pool and waits for its result, so that it runs on the threads the
-    /// context bounds rather than on the caller's. On a thread of the pool it runs in place. Like
-    /// [#decode], it runs ahead of the tasks already queued. A failure of `work` is thrown as it
-    /// was thrown.
+    /// context bounds rather than on the caller's. On a thread of the pool, and on a context
+    /// without a pool, it runs in place. Like [#decode], it runs ahead of the tasks already
+    /// queued. A failure of `work` is thrown as it was thrown.
     ///
     /// @param what names the work, for [#computeObserver]
     /// @throws IllegalStateException if the context is closed
     public <T> T compute(String what, Supplier<T> work) {
         Thread caller = Thread.currentThread();
-        if (poolThreads.contains(caller)) {
+        if (runsInPlace()) {
             ComputeObserver observer = computeObserver;
             if (observer != null) {
                 observer.computing(what, caller);
@@ -250,9 +298,10 @@ public class HardwoodContextImpl implements HardwoodContext {
         }
     }
 
-    /// Whether the calling thread is one of the context's pool.
-    boolean isOnPool() {
-        return poolThreads.contains(Thread.currentThread());
+    /// Whether [#compute] and [#decode] run in place on the calling thread: it is one of the
+    /// context's pool, or the context has none.
+    boolean runsInPlace() {
+        return executor == null || poolThreads.contains(Thread.currentThread());
     }
 
     /// Runs `task`, work a thread off the pool waits for and another thread may run as well, on
@@ -279,7 +328,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         }
     }
 
-    /// The number of threads in [#executor()].
+    /// The number of threads in [#executor()], zero for a context without a pool.
     public int threads() {
         return threads;
     }
@@ -294,6 +343,11 @@ public class HardwoodContextImpl implements HardwoodContext {
     /// the rejection of its next submission has ended its read.
     @Override
     public void close() {
+        closed = true;
+        if (executor == null) {
+            clearLibdeflatePool();
+            return;
+        }
         executor.shutdown();
         try {
             executor.awaitTermination(5, TimeUnit.SECONDS);
@@ -301,6 +355,10 @@ public class HardwoodContextImpl implements HardwoodContext {
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        clearLibdeflatePool();
+    }
+
+    private void clearLibdeflatePool() {
         if (libdeflatePool != null) {
             libdeflatePool.clear();
         }
@@ -314,8 +372,8 @@ public class HardwoodContextImpl implements HardwoodContext {
 
         @Override
         public HardwoodContext.Builder threads(int threads) {
-            if (threads < 1) {
-                throw new IllegalArgumentException("threads must be at least 1, but was " + threads);
+            if (threads < 0) {
+                throw new IllegalArgumentException("threads must not be negative, but was " + threads);
             }
             this.threads = threads;
             return this;
@@ -329,7 +387,7 @@ public class HardwoodContextImpl implements HardwoodContext {
 
         @Override
         public HardwoodContext build() {
-            return create(threads, metadataSource, IO_EXECUTOR);
+            return create(checkThreads(threads), metadataSource, IO_EXECUTOR);
         }
     }
 }

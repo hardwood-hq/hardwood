@@ -349,7 +349,7 @@ Each batch's values are copied into the row group's column chunks in parallel, a
 | Factory | Threads |
 |---|---|
 | `create(out, schema)`, `create(out, schema, config)` | The writer creates a context with one thread per available processor when it first needs one: on its first write of more than one column with more than one available processor, otherwise on its first flush of more than one column, or of one column under a codec other than `UNCOMPRESSED` with more than one available processor. It closes the context on `close()` or `abort()` |
-| `create(out, schema, config, context)` | The threads of `context`. The caller closes `context` after the writer; one context can serve several writers and readers |
+| `create(out, schema, config, context)` | The threads of `context`, and on a context of zero threads (`HardwoodContext.create(0)`) the calling thread alone. The caller closes `context` after the writer; one context can serve several writers and readers |
 
 A schema of one column is copied on the calling thread alone, and encoded on it alone under `UNCOMPRESSED` or with one available processor. With one available processor, values are copied on the calling thread alone. A `ParquetFileWriter` is still driven from one thread at a time.
 

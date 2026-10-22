@@ -55,7 +55,7 @@ Avoid object access and boxing as much as possible. Always prefer primitive acce
 Before writing new code, search for existing patterns in the same class/package that accomplish the same thing (e.g., the DRY principle). Extract repeated logic into helper methods within the same class rather than duplicating it. When a pattern appears multiple times, consider consolidating it into a single well-named method with overloads if needed.
 Be conservative with base class refactoring. Do not pull implementation details up into abstract base classes unless the logic is truly identical across all subclasses with no foreseeable divergence. Shared helpers are better than shared template methods when subclasses may need different control flow.
 Never use `var` syntax. Enforced by the `NoVar` Error Prone check in `error-prone-checks/`.
-Never keep state in a `ThreadLocal` in main sources: it stays on whichever thread reaches it, the application's included. A buffer a decode reuses belongs in a `DecodeBuffers` slot, whose sets only the tasks of a `HardwoodContext`'s pool are handed. Enforced by the `NoThreadLocal` Error Prone check.
+Never keep state in a `ThreadLocal` in main sources: it stays on whichever thread reaches it, the application's included. A buffer a decode reuses belongs in a `DecodeBuffers` slot, whose sets only the tasks of a `HardwoodContext`'s pool, or on a context of zero threads the thread driving a read, are handed. Enforced by the `NoThreadLocal` Error Prone check.
 GitHub Actions should always referenced by SHA.
 
 # Documentation
