@@ -18,12 +18,16 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import org.apache.parquet.column.Encoding;
+import org.apache.parquet.column.statistics.Statistics;
 import org.apache.parquet.example.data.Group;
+import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.PrimitiveComparator;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.writer.LogicalTypeValueRange;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -51,7 +55,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// - **The ends of the declared range.** An annotation narrows what its physical type may hold,
 ///   and [LogicalTypeValueRange] computes by how much. The ends are where the comparator is
 ///   fragile — an unsigned maximum is spelled as a negative, a binary `DECIMAL` bound needs sign
-///   extension, a `BYTE_ARRAY` maximum past the truncation length must truncate *and* increment.
+///   extension, a `FLOAT16` orders its infinities around its values rather than its bit patterns,
+///   and a `BYTE_ARRAY` bound past the truncation length is cut, its maximum incremented where
+///   it can be.
 ///
 /// What it deliberately does not cover is the refusal of a value *outside* that range. A refused
 /// value produces no bytes, so parquet-java has nothing to say about it and this module adds
@@ -72,9 +78,14 @@ class WriterAnnotationCoverageTest {
 
     private static final int STORAGE_DISTINCT = 4;
 
-    /// The length of the `BYTE_ARRAY` maximum, past the default statistics truncation length of
-    /// 64 bytes so that the bound written for it is a truncated one.
+    /// The length of the long `BYTE_ARRAY` values, past the default statistics truncation length of
+    /// 64 bytes so that the bounds written for them are truncated ones.
     private static final int LONG_BINARY_LENGTH = 100;
+
+    /// `-Infinity` and `+Infinity` as the little-endian IEEE halves a `FLOAT16` column stores, the
+    /// ends of its order.
+    private static final byte[] NEGATIVE_HALF_INFINITY = { 0x00, (byte) 0xfc };
+    private static final byte[] POSITIVE_HALF_INFINITY = { 0x00, 0x7c };
 
     static Stream<Annotation> annotations() {
         return CoverageDomain.annotations().stream().filter(CoverageDomain::readByParquetJava);
@@ -82,9 +93,9 @@ class WriterAnnotationCoverageTest {
 
     // ==================== Tests ====================
 
-    /// Each annotation written in every storage form it has, read back through parquet-java, with
-    /// the page encoding held to the form the case is for — without which a dictionary that
-    /// quietly resolved to `PLAIN` would pass as having covered both.
+    /// Each annotation written in every storage form it has, read back through parquet-java value by
+    /// value and with the chunk's bounds, with the page encoding held to the form the case is for —
+    /// without which a dictionary that quietly resolved to `PLAIN` would pass as having covered both.
     @ParameterizedTest(name = "{0}")
     @MethodSource("annotations")
     void storageForms(Annotation annotation, @TempDir Path dir) throws IOException {
@@ -94,6 +105,7 @@ class WriterAnnotationCoverageTest {
             write(annotation, file, configFor(form), values, holdsNoValue(annotation));
 
             assertValues(annotation, file, values);
+            assertBounds(annotation, file, values);
             if (!holdsNoValue(annotation)) {
                 assertPageEncoding(file, form == StorageForm.DICTIONARY
                         ? Encoding.RLE_DICTIONARY
@@ -103,12 +115,13 @@ class WriterAnnotationCoverageTest {
     }
 
     /// Each annotation written at the ends of the range it declares and at a point inside it,
-    /// read back through parquet-java value by value.
+    /// read back through parquet-java value by value and with the chunk's bounds.
     ///
     /// An annotation that narrows nothing takes the extremes of the order it puts on its physical
     /// type — which for an unsigned integer is not the type's own, the maximum being the all-ones
-    /// pattern the signed storage spells `-1`. That value and a `BYTE_ARRAY` maximum past the
-    /// truncation length are the two that have to survive the trip intact.
+    /// pattern the signed storage spells `-1`. A `BYTE_ARRAY` maximum, a run of `0xFF` past the
+    /// truncation length, has no shorter upper bound, so the chunk carries none;
+    /// [#boundsPastTheTruncationLength] covers the bounds that are truncated.
     @ParameterizedTest(name = "{0}")
     @MethodSource("annotations")
     void boundaryValues(Annotation annotation, @TempDir Path dir) throws IOException {
@@ -121,6 +134,28 @@ class WriterAnnotationCoverageTest {
 
         write(annotation, file, WriterConfig.defaults(), values, holdsNoValue(annotation));
         assertValues(annotation, file, values);
+        assertBounds(annotation, file, values);
+    }
+
+    /// Each ordered `BYTE_ARRAY` annotation that narrows nothing, written with two values past the
+    /// truncation length that both have a shorter bound: the minimum is cut to the truncation
+    /// length, and the maximum is cut and its last byte incremented, so it still bounds the column.
+    /// The values are ASCII, where a text column's cut at a code-point boundary and the byte cut agree.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("truncatedAnnotations")
+    void boundsPastTheTruncationLength(Annotation annotation, @TempDir Path dir) throws IOException {
+        Path file = dir.resolve("long.parquet");
+        List<Object> values = List.of(filled(LONG_BINARY_LENGTH, (byte) 'a'), filled(LONG_BINARY_LENGTH, (byte) 'm'));
+
+        write(annotation, file, WriterConfig.defaults(), values, false);
+        assertValues(annotation, file, values);
+        assertBounds(annotation, file, values);
+    }
+
+    static Stream<Annotation> truncatedAnnotations() {
+        return annotations().filter(annotation -> annotation.carrier() == PhysicalType.BYTE_ARRAY
+                && !CoverageDomain.rangeOf(annotation).isBounded()
+                && AnnotationKind.namesAnOrder(annotation.logicalType()));
     }
 
     // ==================== The values ====================
@@ -198,9 +233,9 @@ class WriterAnnotationCoverageTest {
     /// A binary `DECIMAL` is the one annotation that narrows such a column, and it narrows it by
     /// magnitude: its values are big-endian two's complement unscaled values, so the ends are the
     /// declared bound and its negation, sign-extended to the column's length where it has one. Every other annotation over a binary carrier narrows
-    /// nothing, and takes the extremes of the unsigned order the format compares those columns in
-    /// — for a `BYTE_ARRAY` the empty value and a long run of `0xff`, whose bound is past the
-    /// truncation length and so has to be truncated upwards to still bound the column.
+    /// nothing, and takes the extremes of the order the format compares it in: for a `FLOAT16`
+    /// the two infinities, and otherwise the unsigned order, for a `BYTE_ARRAY` the empty value and
+    /// a long run of `0xff`, which past the truncation length has no shorter upper bound.
     private static byte[] binaryValue(Annotation annotation, Boundary boundary) {
         LogicalTypeValueRange range = CoverageDomain.rangeOf(annotation);
         if (range.isBounded()) {
@@ -211,6 +246,13 @@ class WriterAnnotationCoverageTest {
                 case INTERIOR, NULLS_ONLY -> BigInteger.ZERO;
             };
             return unscaled(value, annotation.typeLength());
+        }
+        if (annotation.logicalType() instanceof LogicalType.Float16Type) {
+            return switch (boundary) {
+                case MIN -> NEGATIVE_HALF_INFINITY.clone();
+                case MAX -> POSITIVE_HALF_INFINITY.clone();
+                case INTERIOR, NULLS_ONLY -> new byte[2];
+            };
         }
         if (annotation.typeLength() != null) {
             return switch (boundary) {
@@ -361,6 +403,86 @@ class WriterAnnotationCoverageTest {
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> row.getBinary(field, 0).getBytes();
             default -> throw new IllegalStateException("No carrier reader for " + annotation.carrier());
         };
+    }
+
+    /// The chunk's bounds, as parquet-java reads them, are the extremes of the written values in
+    /// the order parquet-java's own comparator for the column defines, as parquet-format bounds them:
+    ///
+    /// - a column holding no value, or whose annotation names no order, carries no bounds;
+    /// - a `BYTE_ARRAY` bound past the truncation length is cut to it, and the cut maximum has its
+    ///   last byte below `0xFF` incremented and what follows dropped; a maximum whose kept bytes are
+    ///   all `0xFF` has no shorter upper bound, so it is omitted and parquet-java reads no bounds.
+    private static void assertBounds(Annotation annotation, Path file, List<Object> values) throws IOException {
+        Statistics<?> statistics = ParquetJavaReader.readFooter(file).getBlocks().get(0).getColumns().get(0)
+                .getStatistics();
+        if (holdsNoValue(annotation) || !AnnotationKind.namesAnOrder(annotation.logicalType())) {
+            assertThat(statistics.hasNonNullValue()).as("no bounds for a column without an order").isFalse();
+            return;
+        }
+        List<Comparable<?>> physical = new ArrayList<>();
+        for (Object value : values) {
+            physical.add(physical(annotation, value));
+        }
+        Object min = extreme(physical, statistics.comparator(), true);
+        Object max = extreme(physical, statistics.comparator(), false);
+        if (annotation.carrier() == PhysicalType.BYTE_ARRAY) {
+            byte[] truncatedMax = truncatedMax(((Binary) max).getBytes());
+            if (truncatedMax == null) {
+                assertThat(statistics.hasNonNullValue()).as("no bounds without an upper bound").isFalse();
+                return;
+            }
+            min = Binary.fromConstantByteArray(truncatedMin(((Binary) min).getBytes()));
+            max = Binary.fromConstantByteArray(truncatedMax);
+        }
+        assertThat(statistics.hasNonNullValue()).as("bounds are written").isTrue();
+        assertThat(statistics.genericGetMin()).as("min").isEqualTo(min);
+        assertThat(statistics.genericGetMax()).as("max").isEqualTo(max);
+    }
+
+    /// A written value as parquet-java's statistics hold it for the column's physical type.
+    private static Comparable<?> physical(Annotation annotation, Object value) {
+        return switch (annotation.carrier()) {
+            case INT32 -> Math.toIntExact((long) value);
+            case INT64 -> (Long) value;
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> Binary.fromConstantByteArray((byte[]) value);
+            default -> throw new IllegalStateException("No carrier statistics for " + annotation.carrier());
+        };
+    }
+
+    /// A minimum cut to the truncation length: a prefix is no greater than the value.
+    private static byte[] truncatedMin(byte[] min) {
+        int kept = WriterConfig.DEFAULT_STATISTICS_TRUNCATION_LENGTH;
+        return min.length <= kept ? min : Arrays.copyOf(min, kept);
+    }
+
+    /// A maximum cut to the truncation length, its last byte below `0xFF` incremented and what
+    /// follows dropped, which is the shortest value no smaller than it; `null` where every kept byte
+    /// is `0xFF` and none exists.
+    private static byte[] truncatedMax(byte[] max) {
+        int kept = WriterConfig.DEFAULT_STATISTICS_TRUNCATION_LENGTH;
+        if (max.length <= kept) {
+            return max;
+        }
+        for (int i = kept - 1; i >= 0; i--) {
+            if (max[i] != (byte) 0xff) {
+                byte[] bound = Arrays.copyOf(max, i + 1);
+                bound[i]++;
+                return bound;
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static Object extreme(List<Comparable<?>> values, PrimitiveComparator comparator, boolean min) {
+        Object best = values.get(0);
+        for (Object value : values) {
+            int order = comparator.compare(value, best);
+            if (min ? order < 0 : order > 0) {
+                best = value;
+            }
+        }
+        return best;
     }
 
     private void assertPageEncoding(Path file, Encoding expected) throws IOException {
