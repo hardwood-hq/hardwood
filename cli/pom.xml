@@ -19,8 +19,8 @@
       <demo.parquetFile>${maven.multiModuleProjectDirectory}/performance-testing/test-data-setup/target/overture-maps-data/overture_places.zstd.parquet</demo.parquetFile>
       <demo.tapeFile>${maven.multiModuleProjectDirectory}/docs/screenshots/dive-demo.tape</demo.tapeFile>
       <demo.castFile>${maven.multiModuleProjectDirectory}/docs/content/assets/cli/dive-demo.cast</demo.castFile>
-      <aesh.version>3.16.6</aesh.version>
-      <aesh-readline.version>3.16.2</aesh-readline.version>
+      <aesh.version>3.18.5</aesh.version>
+      <aesh-readline.version>3.18.6</aesh-readline.version>
       <!-- Both test phases run CLI code in the test JVM — the S3 ITs drive the same
            commands the unit tests do, only against a bucket — so both need the same
            JVM configuration. Kept in one property so the two cannot drift apart. -->
@@ -85,7 +85,7 @@
       <dependency>
         <groupId>com.github.freva</groupId>
         <artifactId>ascii-table</artifactId>
-        <version>1.8.0</version>
+        <version>1.13.0</version>
       </dependency>
 
       <!-- TamboUI (TUI library for the `dive` subcommand; the upstream tamboui-bom
@@ -93,22 +93,22 @@
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-core</artifactId>
-        <version>0.2.0</version>
+        <version>0.6.0</version>
       </dependency>
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-widgets</artifactId>
-        <version>0.2.0</version>
+        <version>0.6.0</version>
       </dependency>
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-tui</artifactId>
-        <version>0.2.0</version>
+        <version>0.6.0</version>
       </dependency>
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-jline3-backend</artifactId>
-        <version>0.2.0</version>
+        <version>0.6.0</version>
       </dependency>
 
       <!-- JLine — sub-modules (not the fat bundle) so native-image doesn't try to
