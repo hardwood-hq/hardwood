@@ -128,13 +128,19 @@ final class S3Fetcher implements InputFile {
         int status = response.statusCode();
         if (status != 206) {
             // A 200 carries the whole object from byte 0: the endpoint ignored the Range header
-            try (InputStream body = response.body()) {
-                String detail = status == 200
-                        ? ", expected 206; the endpoint ignored the Range header"
-                        : " " + new String(body.readAllBytes()) + unsignedHint(status);
-                throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
-                        + ") from " + name() + ": HTTP " + status + detail);
+            InputStream body = response.body();
+            String detail;
+            if (status == 200) {
+                S3Api.discard(body);
+                detail = ", expected 206; the endpoint ignored the Range header";
             }
+            else {
+                try (body) {
+                    detail = " " + new String(body.readAllBytes()) + unsignedHint(status);
+                }
+            }
+            throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
+                    + ") from " + name() + ": HTTP " + status + detail);
         }
         try (InputStream stream = response.body()) {
             ByteBuffer buf = ByteBuffer.allocateDirect(length);
@@ -150,6 +156,13 @@ final class S3Fetcher implements InputFile {
             if (buf.position() != length) {
                 throw new IOException("Short read from " + name() + ": expected " + length
                         + " bytes but received " + buf.position());
+            }
+            // Read to the end of the response before closing it. Closed earlier, the response is
+            // cancelled, and the client closes its connection, even after handing it back to the
+            // pool for another request.
+            if (stream.read() != -1) {
+                throw new IOException("Long read from " + name() + ": expected " + length
+                        + " bytes but received more");
             }
             buf.flip();
             return buf;

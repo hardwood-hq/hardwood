@@ -103,9 +103,11 @@ The tail bytes are held in a direct buffer for as long as the file is open, so s
 
 ### Range reads
 
-Outside the tail, every `readRange(offset, length)` is one signed `GET` with `Range: bytes={offset}-{offset+length-1}`, streamed into a freshly allocated direct buffer of exactly `length` bytes. A body shorter than `length` raises `IOException` ("Short read"). A zero-length read issues no request. The fetcher does not split, merge or cache ranges; request shape is decided above it by fetch planning ([FETCH_PLANNING.md](FETCH_PLANNING.md)).
+Outside the tail, every `readRange(offset, length)` is one signed `GET` with `Range: bytes={offset}-{offset+length-1}`, streamed into a freshly allocated direct buffer of exactly `length` bytes. A body shorter than `length` raises `IOException` ("Short read"), and so does a longer one ("Long read"): the fetcher reads every response to its end before closing it. `HttpClient` hands an HTTP/1.1 connection back to its pool once a body's last byte arrives, before the body stream reports its end, and closing a stream that has not reported its end cancels the exchange and closes the connection, which by then may carry another range request. A body the fetcher does not use, that of a `200` answering a range request, is released by `S3Api.discard`: read to its end if it is at most 64 KiB, and closed after 64 KiB otherwise; a body still arriving has not handed back its connection, so that close ends only its own exchange. A zero-length read issues no request. The fetcher does not split, merge or cache ranges; request shape is decided above it by fetch planning ([FETCH_PLANNING.md](FETCH_PLANNING.md)).
 
 Under `RangeBacking.NONE` an S3 object of any size is readable within the limits of [INPUT_FILES.md](INPUT_FILES.md#size-and-offset-limits).
+
+`S3FetcherResponseLengthTest` covers the response length and connection reuse across concurrent range reads.
 
 ### Network counters
 
@@ -189,10 +191,11 @@ Every failure from the network path is an `IOException`, the checked type the `I
 | `readRange()` | `200`, from a server that ignored `Range` | `IOException` naming the range, the object and the status, saying the endpoint ignored the `Range` header |
 | `readRange()` | any other status except `206` | `IOException` naming the range, the object, the status and the body, plus the unsigned-request note for a `401`/`403` on an anonymous source |
 | `readRange()` | body ends before `length` bytes | `IOException` "Short read" |
+| `readRange()` | body longer than `length` bytes | `IOException` "Long read" |
 | any request | interrupt | `IOException` with the interrupt flag restored |
 | `S3Source.Builder.build()` | neither credentials nor anonymous, both, missing region without endpoint, unusable `tempDir` | `IllegalStateException` |
 
-`S3Api.sendWithRetry` retries a request up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; the body of a response it retries past is closed, so a retry does not hold a connection. Each attempt is signed afresh (unless the source is anonymous), so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
+`S3Api.sendWithRetry` retries a request up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; the body of a response it retries past is released by `S3Api.discard` ([Range reads](#range-reads)), so a retry does not hold a connection and, for a short error body, reuses it. Reading that body to its end is untested: the retry closes it after the body has ended in every run of `S3ApiRetryTest`. Each attempt is signed afresh (unless the source is anonymous), so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
 
 The retry boundary is `send()`. For the open-time tail the body is read inside `send()`, so a failure mid-body is retried; for `readRange` the body is streamed after `send()` returns, so a connection lost mid-body surfaces as an `IOException` from the stream without a retry. A write sends its body from a byte array, so each attempt sends the same bytes.
 

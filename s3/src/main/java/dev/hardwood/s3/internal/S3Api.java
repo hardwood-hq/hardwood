@@ -32,6 +32,9 @@ import dev.hardwood.s3.S3CredentialsProvider;
 /// [dev.hardwood.s3.S3OutputFile] for uploads, and by test infrastructure.
 public final class S3Api {
 
+    /// The most bytes `discard` reads of a body before closing it.
+    private static final int DISCARD_LIMIT = 64 * 1024;
+
     private static final int HTTP_INTERNAL_SERVER_ERROR = 500;
     private static final int HTTP_SERVICE_UNAVAILABLE = 503;
 
@@ -137,7 +140,20 @@ public final class S3Api {
     /// A byte-array body is already fully read and needs no release.
     private static void discardBody(HttpResponse<?> response) throws IOException {
         if (response.body() instanceof InputStream body) {
-            body.close();
+            discard(body);
+        }
+    }
+
+    /// Releases a response body the caller does not need. A body of up to
+    /// 64 KiB, such as an error document, is read to its end, so
+    /// its HTTP/1.1 connection goes back to the pool: closed before its end, the
+    /// response is cancelled and the connection closed, even after the client has
+    /// handed it to another request. A longer body is closed after 64 KiB; while
+    /// it is still arriving, its connection has not reached the pool, and the
+    /// close ends only its own exchange.
+    public static void discard(InputStream body) throws IOException {
+        try (body) {
+            body.readNBytes(DISCARD_LIMIT);
         }
     }
 
