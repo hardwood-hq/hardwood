@@ -65,11 +65,8 @@ engine	int8.past-annotation	1 [598]	1 [598]	0 []
 # Design row 14: a byte[] of another width on a fixed-width DECIMAL is refused; parquet-java's dictionary and Bloom filter drop the row.
 engine	dec_flba.eq-one-byte	THROW IllegalArgumentException: Column 'dec_flba' holds a byte string of 9 bytes; the equality literal 14 (1 bytes) is not a value it can hold	single: 1 [310] / multi: 1 [310] / dict: 0 [] / bloom: 0 [] / 	n/a
 
-# DuckDB cannot read a DELTA_BYTE_ARRAY DECIMAL (dictionary layout); not a predicate difference, so not in the design.
-engine	dec_ba.eq-value	1 [301]	n/a	single: 1 [301] / multi: 1 [301] / dict: THROW SQLException: Invalid Error: Delta Byte Array encoding is only supported for string/blob data / bloom: 1 [301] /
-
-# Design row 15, and DuckDB's DELTA_BYTE_ARRAY read failure.
-engine	dec_ba.eq-zero	1 [300]	single: 1 [300] / multi: 1 [300] / dict: 1 [300] / bloom: 0 [] / 	single: 1 [300] / multi: 1 [300] / dict: THROW SQLException: Invalid Error: Delta Byte Array encoding is only supported for string/blob data / bloom: 1 [300] /
+# Design row 15.
+engine	dec_ba.eq-zero	1 [300]	single: 1 [300] / multi: 1 [300] / dict: 1 [300] / bloom: 0 [] / 	1 [300]
 
 # Design row 16: DuckDB reads parquet-java's INTERVAL as INTEGER.
 engine	interval.parquet-java-encoding	1 [310]	1 [310]	0 []
