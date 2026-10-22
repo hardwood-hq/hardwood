@@ -247,6 +247,10 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             throw err;
         }
         finally {
+            PageDecoder.LevelScratch scratch = buffers.get(SCRATCH);
+            if (scratch != null) {
+                scratch.trim();
+            }
             taskEnded();
         }
     }
@@ -273,7 +277,8 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
         }
     }
 
-    private static PageDecoder.LevelScratch scratch(DecodeBuffers buffers) {
+    /// The task's scratch in `buffers`.
+    static PageDecoder.LevelScratch scratch(DecodeBuffers buffers) {
         PageDecoder.LevelScratch scratch = buffers.get(SCRATCH);
         if (scratch == null) {
             scratch = new PageDecoder.LevelScratch();

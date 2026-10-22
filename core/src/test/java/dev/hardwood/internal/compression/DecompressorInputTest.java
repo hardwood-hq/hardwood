@@ -17,6 +17,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.metadata.CompressionCodec;
 
@@ -48,6 +49,24 @@ class DecompressorInputTest {
     private static byte[] compress(CompressionCodec codec, byte[] body) {
         CompressionCodec writeCodec = codec == CompressionCodec.LZ4 ? CompressionCodec.LZ4_RAW : codec;
         return new CompressorFactory().getCompressor(writeCodec).compress(body, 0, body.length);
+    }
+
+    /// A Snappy page above what a set of buffers keeps decompresses heap to heap, whichever kind
+    /// of buffer holds it.
+    @ParameterizedTest
+    @EnumSource(PageBuffer.class)
+    void snappyPageAboveTheRetainedSizeDecompresses(PageBuffer buffer) {
+        byte[] body = new byte[DecodeBuffers.RETAINED_BYTES + 1];
+        Random random = new Random(13);
+        for (int i = 0; i < body.length; i++) {
+            body[i] = (byte) (random.nextInt(16) + 'a');
+        }
+        ByteBuffer compressed = buffer.wrap(compress(CompressionCodec.SNAPPY, body));
+
+        byte[] result = new DecompressorFactory(null).getDecompressor(CompressionCodec.SNAPPY)
+                .decompress(compressed, body.length, new byte[body.length], TestDecodeBuffers.create());
+
+        assertThat(result).as("%s", buffer).isEqualTo(body);
     }
 
     @ParameterizedTest

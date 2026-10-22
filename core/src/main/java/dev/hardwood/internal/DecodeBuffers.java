@@ -18,6 +18,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 /// time; a decode keeps no reference to its values past its call.
 public final class DecodeBuffers {
 
+    /// The largest buffer a set keeps for later tasks. The code that owns a slot allocates a larger
+    /// buffer for the task that needs it and does not set it, so that a context does not keep each
+    /// thread's largest page for its lifetime.
+    public static final int RETAINED_BYTES = 16 * 1024 * 1024;
+
     private static final AtomicInteger SLOTS = new AtomicInteger();
 
     private Object[] values = new Object[0];

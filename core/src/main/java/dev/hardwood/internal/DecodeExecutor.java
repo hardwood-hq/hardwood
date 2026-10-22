@@ -25,7 +25,8 @@ import java.util.function.Function;
 /// without one, on the thread driving the read ([#runInPlace]).
 ///
 /// At most as many tasks run at once as the pool has threads, so the executor keeps that many
-/// sets: each grows to the largest page a task decoded with it and lives as long as the context.
+/// sets, which live as long as the context; their buffers grow with the pages decoded with them up
+/// to [DecodeBuffers#RETAINED_BYTES] each.
 /// A task that finds none free, which more tasks than threads running at once would need, gets a
 /// new set, dropped when it is given back. A context without a pool keeps a set per processor,
 /// for the threads driving its reads at once.

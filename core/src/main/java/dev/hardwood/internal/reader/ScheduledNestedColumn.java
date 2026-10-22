@@ -393,6 +393,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     private void releaseScratch(NestedPageTask page) {
         page.inPlace = null;
         page.measure = null;
+        page.scratch.trim();
         scratchPool.offer(page.scratch);
     }
 

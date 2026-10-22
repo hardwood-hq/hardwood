@@ -38,6 +38,11 @@ public final class LibdeflateDecompressor implements Decompressor {
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
         LibdeflatePool.DecompressorHandle decompressor = pool.acquire();
+        // A page above what a set of buffers keeps gets native memory of its own, freed when the
+        // page is done rather than when a collection finds it
+        Arena pageArena = Math.max(compressed.remaining(), uncompressedSize) > DecodeBuffers.RETAINED_BYTES
+                ? Arena.ofConfined()
+                : null;
         try {
             LibdeflateBindings bindings = LibdeflateBindings.get();
 
@@ -50,11 +55,11 @@ public final class LibdeflateDecompressor implements Decompressor {
             // native scratch segment first.
             MemorySegment input = MemorySegment.ofBuffer(compressed);
             if (!compressed.isDirect()) {
-                MemorySegment scratch = borrowNative(buffers, NATIVE_INPUT, compressedSize);
+                MemorySegment scratch = borrowNative(buffers, NATIVE_INPUT, compressedSize, pageArena);
                 MemorySegment.copy(input, 0, scratch, 0, compressedSize);
                 input = scratch;
             }
-            MemorySegment output = borrowNative(buffers, NATIVE_OUTPUT, uncompressedSize);
+            MemorySegment output = borrowNative(buffers, NATIVE_OUTPUT, uncompressedSize, pageArena);
             MemorySegment actualInSizePtr = borrowSizePtr(buffers, IN_SIZE_PTR);
             MemorySegment actualOutSizePtr = borrowSizePtr(buffers, OUT_SIZE_PTR);
 
@@ -106,11 +111,19 @@ public final class LibdeflateDecompressor implements Decompressor {
         }
         finally {
             pool.release(decompressor);
+            if (pageArena != null) {
+                pageArena.close();
+            }
         }
     }
 
+    /// The set's native buffer of `slot`'s kind, grown to at least `minSize` bytes, or one of
+    /// `pageArena` above [DecodeBuffers#RETAINED_BYTES].
     private static MemorySegment borrowNative(DecodeBuffers buffers, DecodeBuffers.Slot<MemorySegment> slot,
-                                              int minSize) {
+                                              int minSize, Arena pageArena) {
+        if (minSize > DecodeBuffers.RETAINED_BYTES) {
+            return pageArena.allocate(minSize);
+        }
         MemorySegment seg = buffers.get(slot);
         if (seg == null || seg.byteSize() < minSize) {
             seg = Arena.ofAuto().allocate(minSize);
