@@ -1,7 +1,7 @@
 # Plan: the threading model of a read
 
 Tracking issue: #1587. Stage issues: #1560, #1589, #1597, #1598, #1022,
-#1264, #1564, #1590. Related: #1397 (remote read scheduling), #500 (late materialization),
+#1264 (with #260, #1394). Related: #1397 (remote read scheduling), #500 (late materialization),
 #1573 (decode concurrency for a consumer-bound read).
 
 A read uses two resources of its context: CPU time on the context's pool, and requests in
@@ -26,7 +26,7 @@ a step that reaches the row group before its plans are ready yields on them.
 | Resource | Carrier | Bound | Owner |
 | --- | --- | --- | --- |
 | CPU, control steps included | the context's pool of n platform threads; with `threads(0)`, the thread driving the read | `threads(n)` | this plan |
-| I/O | a virtual thread per request, which does nothing but the request | requests and bytes in flight per context | #1397 (#1264) |
+| I/O | a virtual thread per request, which does nothing but the request | requests and bytes in flight per context | #1264 |
 | Planning a row group | a virtual thread per row group, which waits for the planning's requests | one row group ahead of the read | this plan |
 | The read loop | the caller's thread | the caller | the caller |
 
@@ -46,18 +46,17 @@ Invariants of the end state:
   request and yields, and a step whose row group is not yet planned yields on its planning.
 - A virtual thread runs a request, or code that waits for requests (a row group's planning), and
   no work that grows with the data: that runs on the pool (`compute`), where the read needs it.
-- Every read of an `InputFile` goes through the context's I/O scheduler, the reads a caller
-  waits for on its own thread included; a check fails the build on a read issued past it.
-- The reads sharing a context share its pool fairly: no read's read-ahead queues ahead of
-  another read's head-of-line page.
-- Within a read, control steps and work a reader waits for run before read-ahead, and
-  read-ahead before speculative work.
+- Every read of an `InputFile` goes through the request entry (`RangeRead.start`), which holds
+  the context's budgets, the reads a caller waits for on its own thread included.
+- A context's pool runs its tasks in arrival order, apart from the control steps and the CPU
+  work a thread waits for, which run ahead of the queued tasks. Reads that need a latency of
+  their own beside other reads use a context of their own: the operating system shares the cores
+  between the contexts' pools, so no read's read-ahead queues ahead of another read's pages.
 
 Single-threaded mode is a configuration of this model: with `threads(0)` the consumer's poll
 runs the read's queued steps and tasks, and the I/O carrier stays virtual threads, so a remote
 read keeps its prefetches. Without a pool, a row group's planning runs on the consumer's thread
-when the read reaches the row group, waiting for its requests there, as it does today for a file
-whose bytes are in memory.
+when the read reaches the row group, waiting for its requests there.
 
 ## Today
 
@@ -68,10 +67,10 @@ whose bytes are in memory.
 | Fetch steps (#1597): page headers, page filters, demand fetches | pool, head of the queue; a page's bytes not yet read are read on a virtual thread, which the step yields on (4a) | none |
 | Demand-path planning: the next file's footer, index windows, Bloom filters, dictionaries, mask probes | a virtual thread per work item (4b), its CPU work on the pool; for a read whose files are all in memory, the fetch step that reaches the work item | none |
 | Next row group's index window, Bloom filters and first chunk, next chunk, next region, later files' footer reads | a virtual thread per request, which only reads | none |
-| Next row group's planning | the virtual thread of its prefetch, its CPU work at the head of the pool's queue; for a read whose files are all in memory, a task at the tail | #1590 |
-| A planning prefetch's parsing and dictionary decode | pool, ahead of read-ahead pages | #1590 |
-| Page tasks of reads sharing a context | pool, one FIFO across all reads | #1564 |
-| Writer copy, encode and compression | pool and the caller, submitted to the raw `ExecutorService` | #1564 |
+| Next row group's planning | the virtual thread of its prefetch, its CPU work at the head of the pool's queue; for a read whose files are all in memory, a task at the tail | none, accepted |
+| A planning prefetch's parsing and dictionary decode | pool, ahead of read-ahead pages | none, accepted |
+| Page tasks of reads sharing a context | pool, one FIFO across all reads | none: separate contexts |
+| Writer copy, encode and compression | pool and the caller, submitted to the raw `ExecutorService` | none |
 | S3 part uploads | virtual | none |
 
 ## Stages
@@ -83,20 +82,18 @@ whose bytes are in memory.
 | 3 | Fetchers as steps on the pool | #1597 | done |
 | 4 | Steps never wait on I/O | #1598 | done |
 | 5 | Single-threaded mode: `threads(0)` | #1022 | see below |
-| 6 | One I/O scheduler per context | #1264 | see below |
-| 7 | The pool's queue: fairness across reads, priority within a read | #1564, #1590 | see below |
+| 6 | Request budgets, read-ahead depth and split requests | #1264 | see below |
 
 | # | What it changes | What it buys |
 | --- | --- | --- |
 | 3 | The per-column fetcher threads go: fetch steps run on the pool at the head of its queue; the speculative tasks split into a read on a virtual thread and CPU work on the pool; a column closes without joining a thread | Less cost per read (measured: 200 small files −19 to −24 %, open and first row −19 to −27 % on one thread) and less CPU (−6 to −40 %); no hand-off of parsing on the fetch path; no parking and waking of fetchers, and with them most of the wake and pinning rules; one way of driving a read, which stages 5 and 6 build on |
 | 4 | The walks over a column's pages become state machines that return the bytes they need instead of reading them; a row group's planning runs on a virtual thread; a step whose bytes or plans are not ready yields, and the completion queues it again | A thread of the pool does CPU work only; a request can wait for stage 6's budget without holding a thread; the pool stays free for the other reads of a shared context. No throughput change on the S3 scans alone, which are bound by I/O |
 | 5 | `threads(0)`: the consumer's poll runs the read's queue; the writer takes its path without helpers; `executor()` throws on such a context | #1022: a pipeline on one core with no background CPU, so N pipelines scale with N cores (prototype, one core: −28 to −41 % on small reads, −13 % on a 32 MB scan); reads in an environment without threads, such as the browser build of `dive` |
-| 6 | One scheduler issues every request of a context, within request and byte budgets; a read-ahead depth replaces the one-ahead rules of chunks, regions, row groups and files | Remote throughput within a memory budget; requests merged, split and skipped by #1397's cost model |
-| 7 | Each read keeps its own queue, dispatched round-robin; four classes order a read's work; the writer reaches the pool through the context | A small read beside a full scan keeps close to its idle latency (up to 15× it today); speculative work never delays work a reader waits for; the writer shares the pool fairly |
+| 6 | The request entry holds a context's requests and bytes in flight within budgets; a read-ahead depth replaces the one-ahead rules of chunks, regions, row groups and files; a large range is fetched as parallel requests | Remote throughput within a memory budget; parallel transfer of large ranges; the budget that reading further ahead (#1395, #1396) and concurrent index-window ranges (#1394) build on |
 
-Stage 4 lands before stage 6: a request that waits for the scheduler's budget must not hold a
-thread of the pool, and only a step that yields lets it wait without one. Stage 7 lands before
-#1395 and #1396 read further ahead, since those put more speculative work on the pool.
+Stage 4 lands before stage 6: a request that waits for its budget must not hold a thread of the
+pool, and only a step that yields lets it wait without one. Stage 6 lands before #1395 and #1396
+read further ahead, since the byte budget is what bounds the memory reading ahead takes.
 
 ### Stage 1: off the common pool
 
@@ -142,8 +139,8 @@ stage 6 replaces them with its read-ahead depth. Every request of a walk goes th
 `ByteBufferInputFile`) a completed one, read in place, and otherwise one a virtual thread
 completes. A need whose future is complete is met at once, so a local read never yields; a step
 whose need is not met registers a resume on the future and returns, and the completion queues
-the step again. A step that yields on a request marks it as demand, the priority #1397's
-scheduler gives a range a reader waits for. A thread off the pool, such as the caller's before
+the step again. A step that yields on a request marks it as demand, the priority stage 6's
+budgets serve first. A thread off the pool, such as the caller's before
 the read starts, waits for the future.
 
 | Machine | States | Needs |
@@ -176,7 +173,7 @@ thread test, which holds only once 4b is in.
 
 **Buys.** At 235 ms latency the S3 scans show no cost of pool threads waiting on I/O: the reads are bound
 by I/O, and no decode waits for the thread. The stage is structural: it is what lets stage 6 hold
-a request back for its budget and see a read's needs before they are issued, it frees the pool
+a request back for its budget, it frees the pool
 for the other reads of a shared context, it leaves a thread of the pool doing CPU work only, and
 it gives stage 5 a read the consumer's poll can drive.
 
@@ -222,49 +219,66 @@ several threads at once, each driven by its own caller.
 test that no parse or decode of a local read leaves the consumer's thread; writer suites on a
 zero-thread context; user docs (`concepts/concurrency-model.md`, `reference/`).
 
-### Stage 6: one I/O scheduler per context
+### Stage 6: request budgets, read-ahead depth and split requests
 
-**Changes.** #1264, designed in #1397's plan. The requests come from the steps' yields and the speculative
-tasks' reads, the places stages 3 and 4 leave, so the scheduler replaces `ioExecutor()` and the
-one-ahead rules of `ChunkHandle`, `SharedRegion`, the next row group and the next file with its
-read-ahead depth. The reads a caller makes on its own thread (the first footer, the initial
-planning probes) become requests to the scheduler too, whose completion the caller waits for, so
-they count against the context's budgets. Once every read goes through the scheduler, it is the
-only code that calls `InputFile.readRange`; a check enforces that at build time, such as an
-Error Prone check like `NoThreadLocal`, since a test sees only the reads its fixtures reach.
+**Changes.** #1264, narrowed from #1397's plan. Every request a walk yields on goes through one
+entry (`RangeRead.start`, stage 4); the reads of planning (footers, index windows, Bloom filters,
+dictionaries, the mask probe) still call `InputFile.readRange` directly, on a planning's virtual
+thread or the caller. The stage routes them through the entry too, so that the budgets bound
+every read, and puts three rules there:
 
-**Buys.** Remote throughput within a memory budget, and one place where requests are merged, split and skipped by #1397's cost model.
+- **Budgets.** A context holds its requests and bytes in flight within a budget each. A request
+  over budget waits on its virtual thread, which holds no thread of the pool; a demand request,
+  which a step yields on, goes ahead of the read-ahead and speculative ones waiting. The reads a
+  caller makes on its own thread (the first footer, the initial planning probes) count too.
+- **Read-ahead depth.** One depth, in bytes, replaces the one-ahead rules of `ChunkHandle`,
+  `SharedRegion`, the next row group and the next file: a read starts the requests of its next
+  chunks, row groups and files while their bytes fit the depth.
+- **Split requests (#260).** A range above a fixed size is fetched as parallel requests of that size,
+  each on a virtual thread of its own, and completes when all have; an object store serves one
+  connection at a fraction of what several reach.
 
-**Gate.** The build-time check that only the scheduler calls `InputFile.readRange`; the
-benchmarks of #1397's plan.
+Coalescing stays the fixed gap policy of [FETCH_PLANNING.md](../_designs/FETCH_PLANNING.md).
+The index window's ranges are issued as concurrent requests (#1394). The cost model of #1397,
+which would merge, split and skip requests by the latency and bandwidth measured, is left out:
+fixed thresholds serve the stores the reader targets, and nothing measured asks for more.
 
-### Stage 7: the pool's queue
+**Buys.** Remote throughput within a memory budget; parallel transfer of a large chunk, which
+one request caps at the bandwidth of a connection.
 
-**Across reads (#1564).** Each read keeps a queue of its steps and tasks. Work reaches the pool
-as dispatch tokens, and a token, when it runs, picks the next read round-robin among those with
-queued work and runs that read's oldest item. The gate is `SharedContextLatencyBenchmarkTest`
-on the taxi files at 4 and 8 threads, and the narrow, flat and 1BRC regression contenders on the
-container and the N300.
+**Gate.** Splitting is measured before it is designed further: a prototype that splits ranges
+above a threshold, timed on the S3 scans against the emulated store, which caps each connection
+as an object store does. Measured on the container at 30 ms latency and 80 MB/s per connection,
+splitting every range above 1 MB into 1 MB requests: the projected taxi scan −22.5 %, the
+filtered scan −10 %, the twelve-file scan −1.6 %, which already has many requests in flight. No
+request of the S3 scans exceeds 2.6 MB (mean 1.2 MB), so an 8 MB threshold changed nothing. The
+part size is swept (512 KB to 4 MB) at 30 ms and 235 ms latency and on the N300 before it is
+fixed; each split adds requests, which an object store bills. Then the S3 scans at 30 ms and
+235 ms latency against stage 5; a test that the bytes in flight stay within the budget on a read
+that reads ahead; a test that a demand request goes ahead of the read-ahead requests waiting for
+the budget; and a check that only the entry calls `InputFile.readRange` (an Error Prone check, as
+`NoThreadLocal` is, since a test sees only the reads its fixtures reach).
 
-**Within a read (#1590).** Four classes: control steps, work a reader waits for, read-ahead,
-speculative. Stage 3 uses the first and the last (fetch steps at the head, planning
-ahead at the tail); the dictionary decodes of a speculative planning task run as speculative.
+### Fairness across reads: not planned
 
-**The writer** submits its append and flush tasks through the context and takes its share of
-the dispatch as one more user of the pool. After that, the raw pool is touched only by the
-context's `close()` and the deprecated `HardwoodContext.executor()` (#1581).
+A context's pool runs one queue for every read on it, so a small read beside a full scan waits
+behind the scan's read-ahead (up to 15× its idle latency, measured). Per-read queues and priority
+classes inside the pool (#1564, #1590) would fix that inside Hardwood, but no use case needs
+reads of different latency on one context: such reads use separate contexts, whose pools the
+operating system shares, an engine that reads splits in parallel owns its threads and uses
+`threads(0)` (stage 5), and one read over many files is one reader. Within a read, the head of
+the queue serves the control steps and the CPU work a thread waits for, that of a planning on a
+virtual thread included, the next row group's among them, and everything else runs in arrival
+order.
 
-**Buys.** Fairness between the reads of a context, which today measures a small read beside a full scan at up to 15× its idle latency; a read's speculative work never delays the work its reader waits for.
-
-**A caller-supplied executor** stays unsupported until a design for a pool Hardwood does not
-own is chosen: a read waits for pool work, so on a caller's bounded executor reads issued from
-its tasks starve.
+A caller-supplied executor stays unsupported: a read waits for pool work, so on a caller's
+bounded executor reads issued from its tasks starve.
 
 ## Boundary with #1397 and #500
 
 #1397 decides which ranges a read fetches, when, how far ahead and how many at once, within the
-memory budget; its three request priorities (demand, read-ahead, speculative) mirror the
-classes of stage 7. This plan decides which threads run which work and bounds CPU parallelism.
+memory budget; stage 6 takes its budgets, read-ahead depth and request splitting, with fixed
+thresholds where #1397 planned a cost model. This plan decides which threads run which work and bounds CPU parallelism.
 Under steps, a reader waiting on a range is a step that yielded on it, which settles how its
 demand is raised.
 
@@ -277,10 +291,7 @@ that makes a page runnable, or lets its range go unfetched.
 - Whether the end state goes into the "Components and threading" section of
   `READ_PIPELINE.md` or into a design document of its own, since the writer follows the same
   rules.
-- Whether stage 6 needs a row group's planning requests ahead of time, as a list it can merge
-  and order, where the blocking planning issues them one after another as it reaches them. They
-  are few per row group and mostly depend on each other (the footer before the filters, the
-  filters before the dictionaries a filter leaves undecided).
+- The split size and the request budget's default, which stage 6's prototype measures.
 - The default n and the decode concurrency within it, which is #1573's question and stays
   there. On the N300 a pool of 6 is level with or faster than 8 on every regression contender
   (up to 10 %), and a local scan beside a remote one is fastest at about 4; the container is
@@ -288,5 +299,5 @@ that makes a page runnable, or lets its range go unfetched.
 
 ## End state
 
-The PR that completes stage 7 folds the target model and its invariants into the design
+The PR that completes stage 6 folds the target model and its invariants into the design
 documents and deletes this plan.
