@@ -13,6 +13,7 @@ import java.util.BitSet;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -35,26 +36,33 @@ import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/// Builds the fetch plans of a row group's decoded columns: selects each column's pages by the
-/// row group's matching rows and row limit, coalesces them into page groups, and coalesces the
-/// first reads of the columns across columns ([#columnPlans]).
+/// Builds the fetch plans of a row group's decoded columns ([#columnPlans]): selects each column's
+/// pages by the row group's matching rows and row limit, and coalesces the needed ranges of every
+/// column at once, under the gap G and the span S ([CoalescingPolicy]), into the row group's
+/// entries of the read's [FetchSequence]. Each plan then takes its pages' bytes from the entries
+/// that overlap its column chunk, located by offset.
+///
+/// A row group whose rows are all read and that no Bloom filter or dictionary can drop has its
+/// entries built from its chunks' extents in the footer ([#chunkSpans]), before its page index is
+/// read, so they can start ahead of it; its plans then locate their pages in those entries.
 public final class FetchPlanBuilder {
 
     private final ReadProjection projection;
     private final HardwoodContextImpl context;
-    private final PrefetchTasks prefetchTasks;
     private final WorkingSet workingSet;
+    /// S, the largest request, fixed for the read.
+    private final int maxSpan;
 
     /// AND-necessary leaves per column index, derived once from the read's filter.
     /// Feeds [SequentialFetchPlan]'s inline-stats page-drop check.
     private final Map<Integer, List<ResolvedPredicate>> dropLeavesByColumn;
 
     FetchPlanBuilder(ReadProjection projection, ResolvedPredicate filter, boolean metadataFilteringEnabled,
-                     HardwoodContextImpl context, PrefetchTasks prefetchTasks, WorkingSet workingSet) {
+                     HardwoodContextImpl context, WorkingSet workingSet, int maxSpan) {
         this.projection = projection;
         this.context = context;
-        this.prefetchTasks = prefetchTasks;
         this.workingSet = workingSet;
+        this.maxSpan = maxSpan;
         this.dropLeavesByColumn = filter != null && metadataFilteringEnabled
                 ? PageDropPredicates.byColumn(filter) : Map.of();
     }
@@ -74,14 +82,27 @@ public final class FetchPlanBuilder {
         return columns;
     }
 
+    /// The fetch plans of a row group's decoded columns, and the [PageFilterEvent]s their page
+    /// selection reports, which the read commits once it reaches the row group.
+    record Plans(FetchPlan[] columns, List<PageFilterEvent> pageFilterEvents) {
+    }
+
     /// Builds the fetch plan of every decoded column of `workItem`'s row group from its offset
-    /// indexes, then coalesces them across columns. Reads nothing: the plans fetch lazily.
-    FetchPlan[] columnPlans(WorkItem workItem, SharedRowGroupMetadata shared, RowRanges matchingRows,
-                                    boolean pageFilterApplied, long perRgMaxRows) {
+    /// indexes, inserting the row group's entries into `sequence` unless [#chunkSpans] did. Reads
+    /// nothing: the entries start by the sequence's rules.
+    ///
+    /// @param fileLength the length of the work item's file, which every needed range lies within
+    /// @throws ParquetReadException if a needed range lies outside its column chunk or the file, or
+    ///         two column chunks the read reads overlap
+    Plans columnPlans(WorkItem workItem, SharedRowGroupMetadata shared, RowRanges matchingRows,
+                      boolean pageFilterApplied, long perRgMaxRows, FetchSequence sequence, long fileLength) {
         int projectedCount = projection.decoded().getProjectedColumnCount();
         RowGroup rowGroup = workItem.rowGroup();
         InputFile inputFile = workItem.inputFile();
         FetchPlan[] plans = new FetchPlan[projectedCount];
+        List<PageFilterEvent> events = new ArrayList<>();
+        ColumnRead[] reads = new ColumnRead[projectedCount];
+        List<Range> ranges = new ArrayList<>();
 
         for (int projCol = 0; projCol < projectedCount; projCol++) {
             int originalIndex = projection.decoded().toOriginalIndex(projCol);
@@ -105,24 +126,9 @@ public final class FetchPlanBuilder {
                     plans[projCol] = FetchPlan.EMPTY;
                     continue;
                 }
-                // No OffsetIndex — sequential lazy fetching. Per-page drops via
-                // inline DataPageHeader.statistics and per-page row masks both
-                // happen inside SequentialFetchPlan. Inline page statistics are bounds
-                // like any other, so a column whose bounds this file records in an order
-                // this reader cannot read hands over no leaves to drop pages with (#1179).
-                // The leaves are in the reference file's ordinals, so the column's order
-                // travels with them rather than as the file's readability.
-                BoundsReadability readability = workItem.columnOrdinals().boundsReadability();
-                List<ResolvedPredicate> leaves = readability.readable(fileOrdinal)
-                        ? dropLeavesByColumn.getOrDefault(originalIndex, List.of())
-                        : List.of();
-                plans[projCol] = SequentialFetchPlan.build(
-                        inputFile, columnSchema, columnChunk,
-                        context, workItem.rowGroupIndex(), inputFile.name(),
-                        perRgMaxRows, leaves, BoundsReadability.ofOneColumn(readability.int96TimestampOrder(fileOrdinal)),
-                        matchingRows, rowGroup.numRows(), preloadedDictionary,
+                reads[projCol] = sequentialRead(workItem, projCol, columnSchema, columnChunk, preloadedDictionary,
                         shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal),
-                        prefetchTasks, workingSet.column(projCol, columnSchema));
+                        perRgMaxRows, ranges);
                 continue;
             }
 
@@ -141,8 +147,10 @@ public final class FetchPlanBuilder {
                 // so a `head(N)` cap is not counted as pages the predicate skipped,
                 // and before the empty-plan shortcut below, so the fully-pruned
                 // column — the most effective case — is reported too.
-                emitPageFilterEvent(inputFile.name(), workItem.rowGroupIndex(), columnSchema.name(),
-                        pageFilterApplied, allPages.size(), neededPages.size());
+                if (pageFilterApplied) {
+                    events.add(pageFilterEvent(inputFile.name(), workItem.rowGroupIndex(), columnSchema.name(),
+                            allPages.size(), neededPages.size()));
+                }
 
                 if (neededPages.isEmpty()) {
                     plans[projCol] = FetchPlan.EMPTY;
@@ -151,46 +159,19 @@ public final class FetchPlanBuilder {
 
                 neededPages = truncateToMaxRows(neededPages, perRgMaxRows);
 
-                // Coalesce needed pages within this column into page groups,
-                // bridging small gaps but splitting on large ones.
-                // The dictionary page is fetched with the first page group when coalescing
-                // would merge the two, and on its own otherwise. A dictionary pruning has
-                // read is not fetched at all.
+                // The dictionary page is needed unless pruning has read it.
                 long firstDataPageOffset = allPages.get(0).offset();
                 long dictStart = preloadedDictionary == null
                         ? DictionaryParser.dictionaryPageStart(columnChunk, firstDataPageOffset) : 0;
-                boolean foldDictionary = dictStart > 0
-                        && foldsDictionary(dictStart, firstDataPageOffset, neededPages.get(0).location());
-                List<PageGroup> groups = coalescePages(neededPages, foldDictionary ? dictStart : 0);
-
-                // Create ChunkHandles for each page group, linked for pre-fetch
-                List<ChunkHandle> handles = new ArrayList<>(groups.size());
-                int groupCount = groups.size();
-                for (int g = 0; g < groupCount; g++) {
-                    PageGroup group = groups.get(g);
-                    String purpose = "rg=" + workItem.rowGroupIndex()
-                            + " col=" + originalIndex
-                            + " pageGroup=" + (g + 1) + "/" + groupCount;
-                    handles.add(new ChunkHandle(inputFile, group.offset, group.length, purpose, prefetchTasks));
+                if (dictStart > 0) {
+                    ranges.add(new Range(projCol, dictStart, firstDataPageOffset));
                 }
-                for (int i = 0; i < handles.size() - 1; i++) {
-                    handles.get(i).setNextChunk(handles.get(i + 1));
+                for (NeededPage page : neededPages) {
+                    ranges.add(new Range(projCol, page.location().offset(),
+                            page.location().offset() + page.location().compressedPageSize()));
                 }
-                ChunkHandle dictionaryHandle = null;
-                if (dictStart > 0 && !foldDictionary) {
-                    dictionaryHandle = new ChunkHandle(inputFile, dictStart,
-                            Math.toIntExact(firstDataPageOffset - dictStart),
-                            "rg=" + workItem.rowGroupIndex() + " col=" + originalIndex + " dictionary",
-                            prefetchTasks);
-                    dictionaryHandle.setNextChunk(handles.get(0));
-                }
-
-                plans[projCol] = IndexedFetchPlan.build(
-                        neededPages, groups, handles, dictionaryHandle, dictStart,
-                        firstDataPageOffset,
-                        columnSchema, columnChunk,
-                        context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary,
-                        workingSet.column(projCol, columnSchema));
+                reads[projCol] = new ColumnRead(projCol, columnSchema, columnChunk, neededPages, dictStart,
+                        firstDataPageOffset, preloadedDictionary, 0, 0, false);
             }
             catch (ParquetReadException e) {
                 throw new ParquetReadException(ExceptionContext.readPrefix(inputFile.name(),
@@ -199,8 +180,255 @@ public final class FetchPlanBuilder {
             }
         }
 
-        coalesceAcrossColumns(plans, inputFile, workItem);
-        return plans;
+        Extent[] extents = extents(workItem, reads, fileLength);
+        checkWithinExtents(workItem, ranges, reads);
+        List<FetchSequence.Entry> entries = sequence.entries(workItem.workItemIndex());
+        if (entries == null) {
+            ranges.sort(Comparator.comparingLong(Range::start));
+            entries = sequence.insert(workItem.workItemIndex(), inputFile,
+                    coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan));
+        }
+        for (Extent extent : extents) {
+            ColumnRead read = reads[extent.column()];
+            List<FetchSequence.Entry> overlapping = overlapping(entries, extent.start(), extent.end());
+            plans[extent.column()] = read.neededPages() != null
+                    ? new IndexedFetchPlan(read.neededPages(), overlapping, read.dictionaryStart(),
+                            read.firstDataPageOffset(), read.schema(), read.chunk(), context,
+                            workItem.rowGroupIndex(), inputFile.name(), read.preloadedDictionary(),
+                            workingSet.column(extent.column(), read.schema()))
+                    : sequentialPlan(workItem, read, overlapping, matchingRows, perRgMaxRows, sequence);
+        }
+        return new Plans(plans, events);
+    }
+
+    /// The needs of a column without an OffsetIndex: its chunk from its first data page on, whole,
+    /// or under a row limit the first part [SequentialFetchPlan#computeChunkSize] sizes, which it
+    /// adds to `ranges` in pieces of at most S.
+    private ColumnRead sequentialRead(WorkItem workItem, int projCol, ColumnSchema columnSchema,
+                                      ColumnChunk columnChunk, Dictionary preloadedDictionary, long preloadedEnd,
+                                      long perRgMaxRows, List<Range> ranges) {
+        long start = columnChunk.chunkStartOffset();
+        int length = SequentialFetchPlan.chunkLength(columnChunk, workItem.rowGroupIndex(),
+                workItem.inputFile().name(), columnSchema);
+        if (preloadedDictionary != null) {
+            // The data pages start where the dictionary page ends, which pruning has read.
+            Objects.checkFromToIndex(start, preloadedEnd, start + length);
+            length -= Math.toIntExact(preloadedEnd - start);
+            start = preloadedEnd;
+        }
+        int firstPart = Math.min(length, SequentialFetchPlan.computeChunkSize(length, columnChunk.metaData(),
+                perRgMaxRows, maxSpan));
+        for (long piece = start; piece < start + firstPart; piece += maxSpan) {
+            ranges.add(new Range(projCol, piece, Math.min(start + firstPart, piece + maxSpan)));
+        }
+        return new ColumnRead(projCol, columnSchema, columnChunk, null, 0, 0, preloadedDictionary, start,
+                length, firstPart < length);
+    }
+
+    /// The plan of a column without an OffsetIndex over `entries`, inserting the rest of its chunk
+    /// on demand where a row limit left it out.
+    private SequentialFetchPlan sequentialPlan(WorkItem workItem, ColumnRead read, List<FetchSequence.Entry> entries,
+                                               RowRanges matchingRows, long perRgMaxRows, FetchSequence sequence) {
+        int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(read.column()));
+        // Inline page statistics are bounds like any other, so a column whose bounds this file
+        // records in an order this reader cannot read hands over no leaves to drop pages with
+        // (#1179). The leaves are in the reference file's ordinals, so the column's order travels
+        // with them rather than as the file's readability.
+        BoundsReadability readability = workItem.columnOrdinals().boundsReadability();
+        List<ResolvedPredicate> leaves = readability.readable(fileOrdinal)
+                ? dropLeavesByColumn.getOrDefault(projection.decoded().toOriginalIndex(read.column()), List.of())
+                : List.of();
+        String name = read.schema().name();
+        EntryCursor.Rest rest = !read.restLeftOut() ? null
+                : rest(sequence, workItem.workItemIndex(), workItem.inputFile(), read.start() + read.length(),
+                        "rg=" + workItem.rowGroupIndex() + " col=" + name, maxSpan);
+        return new SequentialFetchPlan(read.start(), read.length(), read.schema(), read.chunk(), context,
+                perRgMaxRows, workItem.rowGroupIndex(), workItem.inputFile().name(), leaves,
+                BoundsReadability.ofOneColumn(readability.int96TimestampOrder(fileOrdinal)),
+                matchingRows, workItem.rowGroup().numRows(), read.preloadedDictionary(),
+                workingSet.column(read.column(), read.schema()), entries, rest);
+    }
+
+    /// Inserts, as a demanded entry, the part of a column chunk ending at `chunkEnd` that a walk
+    /// reaches past its entries: from where it reads to the next entry or the chunk's end, at most
+    /// `maxSpan` bytes.
+    static EntryCursor.Rest rest(FetchSequence sequence, int workItemIndex, InputFile inputFile, long chunkEnd,
+                                 String reason, int maxSpan) {
+        return (start, limit) -> {
+            long end = Math.min(Math.min(limit, chunkEnd), start + maxSpan);
+            if (end <= start) {
+                throw new IllegalStateException("No byte of the column chunk ending at " + chunkEnd
+                        + " is left to read at offset " + start);
+            }
+            return sequence.insertDemanded(workItemIndex, inputFile, start, Math.toIntExact(end - start), reason);
+        };
+    }
+
+    /// The entries of a row group whose rows are all read and that no Bloom filter or dictionary
+    /// can drop, from its chunks' extents in the footer: every decoded column the row group reads,
+    /// whole, cut into pieces of at most S and coalesced under G and S. Its plans locate their
+    /// pages in them once its page index is read.
+    ///
+    /// @param fileLength the length of the work item's file
+    /// @throws ParquetReadException if a column chunk lies outside the file or two overlap
+    List<FetchSequence.Span> chunkSpans(WorkItem workItem, long fileLength) {
+        int projectedCount = projection.decoded().getProjectedColumnCount();
+        ColumnRead[] reads = new ColumnRead[projectedCount];
+        List<Range> ranges = new ArrayList<>();
+        for (int projCol = 0; projCol < projectedCount; projCol++) {
+            if (skipsColumn(workItem, projCol)) {
+                continue;
+            }
+            int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(projCol));
+            ColumnChunk chunk = workItem.rowGroup().columns().get(fileOrdinal);
+            ColumnSchema schema = workItem.fileSchema().getColumn(fileOrdinal);
+            reads[projCol] = new ColumnRead(projCol, schema, chunk, null, 0, 0, null, 0, 0, false);
+        }
+        Extent[] extents = extents(workItem, reads, fileLength);
+        for (Extent extent : extents) {
+            for (long piece = extent.start(); piece < extent.end(); piece += maxSpan) {
+                ranges.add(new Range(extent.column(), piece, Math.min(extent.end(), piece + maxSpan)));
+            }
+        }
+        return coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan);
+    }
+
+    /// What one decoded column of a row group reads: an indexed column its needed pages and
+    /// dictionary page, one without an OffsetIndex its chunk from `start` on, `length` bytes, of
+    /// which a row limit may leave the rest out (`restLeftOut`).
+    private record ColumnRead(int column, ColumnSchema schema, ColumnChunk chunk, List<NeededPage> neededPages,
+                              long dictionaryStart, long firstDataPageOffset, Dictionary preloadedDictionary,
+                              long start, int length, boolean restLeftOut) {
+    }
+
+    /// A range of the file one decoded column needs.
+    record Range(int column, long start, long end) {
+    }
+
+    /// The bytes of a decoded column's chunk, `[start, end)`.
+    record Extent(int column, String name, long start, long end) {
+    }
+
+    /// The extents of the columns that `reads` holds, in offset order.
+    ///
+    /// @throws ParquetReadException if one lies outside the file or two overlap
+    private static Extent[] extents(WorkItem workItem, ColumnRead[] reads, long fileLength) {
+        List<Extent> extents = new ArrayList<>();
+        for (ColumnRead read : reads) {
+            if (read != null) {
+                long start = read.chunk().chunkStartOffset();
+                extents.add(new Extent(read.column(), read.schema().fieldPath().toString(), start,
+                        start + read.chunk().metaData().totalCompressedSize()));
+            }
+        }
+        extents.sort(Comparator.comparingLong(Extent::start));
+        Extent previous = null;
+        for (Extent extent : extents) {
+            if (extent.start() < 0 || extent.end() > fileLength || extent.end() < extent.start()) {
+                throw new ParquetReadException(ExceptionContext.readPrefix(workItem.inputFile().name(),
+                        workItem.rowGroupIndex(), extent.name()) + "The column chunk [" + extent.start() + ", "
+                        + extent.end() + ") lies outside the file of " + fileLength + " bytes");
+            }
+            if (extent.end() > extent.start()) {
+                if (previous != null && previous.end() > extent.start()) {
+                    throw new ParquetReadException(ExceptionContext.readPrefix(workItem.inputFile().name(),
+                            workItem.rowGroupIndex(), extent.name()) + "The column chunk [" + extent.start() + ", "
+                            + extent.end() + ") overlaps the column chunk of '" + previous.name() + "' ["
+                            + previous.start() + ", " + previous.end() + ")");
+                }
+                previous = extent;
+            }
+        }
+        return extents.toArray(new Extent[0]);
+    }
+
+    /// Checks that every needed range lies within its column's chunk.
+    ///
+    /// @throws ParquetReadException naming the column of the first range that does not
+    private static void checkWithinExtents(WorkItem workItem, List<Range> ranges, ColumnRead[] reads) {
+        for (Range range : ranges) {
+            ColumnChunk chunk = reads[range.column()].chunk();
+            long start = chunk.chunkStartOffset();
+            long end = start + chunk.metaData().totalCompressedSize();
+            if (range.start() < start || range.end() > end || range.end() < range.start()) {
+                throw new ParquetReadException(ExceptionContext.readPrefix(workItem.inputFile().name(),
+                        workItem.rowGroupIndex(), reads[range.column()].schema().fieldPath().toString())
+                        + "The range [" + range.start() + ", " + range.end() + ") lies outside the column chunk ["
+                        + start + ", " + end + ")");
+            }
+        }
+    }
+
+    /// Coalesces `ranges`, in offset order, into the spans of a row group's entries: a range joins
+    /// the span before it when [CoalescingPolicy#merges] allows, so a span bridges gaps of at most
+    /// G and is at most S long unless one range alone is longer. Each span is held by every column
+    /// whose extent overlaps it, and its reason names every column whose range it holds.
+    static List<FetchSequence.Span> coalesce(List<Range> ranges, Extent[] extents, String[] names,
+                                             int rowGroupIndex, int maxSpan) {
+        List<FetchSequence.Span> spans = new ArrayList<>();
+        int firstExtent = 0;
+        long start = -1;
+        long end = -1;
+        boolean[] served = new boolean[names.length];
+        List<Integer> servedOrder = new ArrayList<>();
+        for (int i = 0; i <= ranges.size(); i++) {
+            Range range = i < ranges.size() ? ranges.get(i) : null;
+            if (range != null && start >= 0 && CoalescingPolicy.merges(start, end, range.start(), range.end(), maxSpan)) {
+                end = Math.max(end, range.end());
+            }
+            else {
+                if (start >= 0) {
+                    while (firstExtent < extents.length && extents[firstExtent].end() <= start) {
+                        firstExtent++;
+                    }
+                    int holders = 0;
+                    for (int e = firstExtent; e < extents.length && extents[e].start() < end; e++) {
+                        if (extents[e].end() > start) {
+                            holders++;
+                        }
+                    }
+                    StringBuilder reason = new StringBuilder("rg=").append(rowGroupIndex);
+                    for (int column : servedOrder) {
+                        reason.append(" col=").append(names[column]);
+                        served[column] = false;
+                    }
+                    servedOrder.clear();
+                    spans.add(new FetchSequence.Span(start, Math.toIntExact(end - start), reason.toString(), holders));
+                }
+                if (range == null) {
+                    break;
+                }
+                start = range.start();
+                end = range.end();
+            }
+            if (!served[range.column()]) {
+                served[range.column()] = true;
+                servedOrder.add(range.column());
+            }
+        }
+        return spans;
+    }
+
+    /// The names of the columns `reads` holds, by decoded column.
+    private static String[] names(ColumnRead[] reads) {
+        String[] names = new String[reads.length];
+        for (ColumnRead read : reads) {
+            if (read != null) {
+                names[read.column()] = read.schema().name();
+            }
+        }
+        return names;
+    }
+
+    /// The entries of `entries`, in offset order, that overlap `[start, end)`.
+    private static List<FetchSequence.Entry> overlapping(List<FetchSequence.Entry> entries, long start, long end) {
+        List<FetchSequence.Entry> overlapping = new ArrayList<>();
+        for (FetchSequence.Entry entry : entries) {
+            if (entry.offset() < end && entry.end() > start) {
+                overlapping.add(entry);
+            }
+        }
+        return overlapping;
     }
 
     /// Whether the column at `projCol` is not read in `workItem`'s row group: the predicate
@@ -215,142 +443,6 @@ public final class FetchPlanBuilder {
         return workItem.filterAlwaysMatches() && projection.isFilterOnly(projCol);
     }
 
-    /// Coalesces the *first* read of multiple columns within this row group
-    /// into a smaller number of larger ranged GETs. See #374.
-    ///
-    /// Conservative scope: only coalesces plans that report
-    /// [CoalescableFirstChunk#isCoalesceSafe] as true, i.e. those whose
-    /// first chunk represents the entire byte range the column will read.
-    /// Plans with page drops keep their per-column reads — coalescing
-    /// across an intra-column drop would over-fetch the dropped bytes
-    /// into the shared region *and* later re-fetch the column's
-    /// non-first page groups via the per-column chain (double-fetch).
-    /// IndexedFetchPlans with a single page group qualify;
-    /// SequentialFetchPlans qualify when their chunk size covers the
-    /// entire column chunk (`head(N)` truncation may shrink it below).
-    private void coalesceAcrossColumns(FetchPlan[] plans, InputFile inputFile, WorkItem workItem) {
-        // Collect (offset, length, plan-index) for each plan's first read.
-        record Entry(int planIndex, long offset, int length) {}
-        // What each plan left out fetches on its own. A region must not bridge a gap holding
-        // any of it, or those bytes would be fetched twice: once in the region, once by the
-        // plan's own handles.
-        record Extent(long start, long end) {}
-        List<Entry> entries = new ArrayList<>(plans.length);
-        List<Extent> fetchedAlone = new ArrayList<>();
-        for (int i = 0; i < plans.length; i++) {
-            FetchPlan plan = plans[i];
-            if (plan instanceof CoalescableFirstChunk c) {
-                if (c.isCoalesceSafe()) {
-                    entries.add(new Entry(i, c.firstChunkOffset(), c.firstChunkLength()));
-                }
-                else if (c.readEnd() > c.readStart()) {
-                    fetchedAlone.add(new Extent(c.readStart(), c.readEnd()));
-                }
-            }
-        }
-        if (entries.size() < 2) {
-            return;
-        }
-        entries.sort(Comparator.comparingLong(Entry::offset));
-
-        // Greedy walk: accumulate entries into a region while the coalescing
-        // policy merges each into it and the gap holds nothing fetched alone.
-        List<List<Entry>> regionEntries = new ArrayList<>();
-        List<Entry> current = new ArrayList<>();
-        long currentEnd = -1;
-        long currentStart = -1;
-        for (Entry e : entries) {
-            long gapEnd = e.offset();
-            long gapStart = currentEnd;
-            if (current.isEmpty()
-                    || (CoalescingPolicy.merges(currentStart, currentEnd, e.offset(), e.offset() + e.length())
-                            && fetchedAlone.stream().noneMatch(x -> x.start() < gapEnd && gapStart < x.end()))) {
-                if (current.isEmpty()) {
-                    currentStart = e.offset();
-                }
-                current.add(e);
-                currentEnd = e.offset() + e.length();
-            }
-            else {
-                regionEntries.add(current);
-                current = new ArrayList<>();
-                current.add(e);
-                currentStart = e.offset();
-                currentEnd = e.offset() + e.length();
-            }
-        }
-        if (!current.isEmpty()) {
-            regionEntries.add(current);
-        }
-
-        // Skip the rewrite if every "region" is just one column — coalescing
-        // would buy nothing.
-        boolean anyMerged = regionEntries.stream().anyMatch(g -> g.size() > 1);
-        if (!anyMerged) {
-            return;
-        }
-
-        // Build SharedRegions and rewrite each merged plan's first ChunkHandle
-        // to slice from the region. Single-entry "regions" are left alone.
-        SharedRegion[] regionsByPlan = new SharedRegion[plans.length];
-        SharedRegion previous = null;
-        for (List<Entry> group : regionEntries) {
-            if (group.size() == 1) {
-                continue;
-            }
-            long regionOffset = group.get(0).offset();
-            long regionEnd = group.get(group.size() - 1).offset()
-                    + group.get(group.size() - 1).length();
-            int regionLength = Math.toIntExact(regionEnd - regionOffset);
-            String purpose = "rg=" + workItem.rowGroupIndex()
-                    + " region=" + group.get(0).planIndex() + ".." + group.get(group.size() - 1).planIndex();
-            SharedRegion region = new SharedRegion(inputFile, regionOffset, regionLength, purpose, prefetchTasks);
-            if (previous != null) {
-                previous.setNextRegion(region);
-            }
-            previous = region;
-            for (Entry e : group) {
-                regionsByPlan[e.planIndex()] = region;
-            }
-        }
-
-        for (int i = 0; i < plans.length; i++) {
-            SharedRegion region = regionsByPlan[i];
-            if (region == null) {
-                continue;
-            }
-            ((CoalescableFirstChunk) plans[i]).attachSharedRegion(region, workItem.rowGroupIndex());
-        }
-    }
-
-    /// Plans that expose their first read's byte range and accept a
-    /// region-backed [ChunkHandle] for it.
-    interface CoalescableFirstChunk {
-        long firstChunkOffset();
-        int firstChunkLength();
-
-        /// Returns true when the plan's first chunk is the only chunk
-        /// (i.e. no later page groups will be fetched per-column).
-        /// When false, cross-column coalescing skips this plan: bridging
-        /// to a neighbour column would over-fetch the bytes between this
-        /// plan's first chunk and its later chunks (e.g. dropped pages)
-        /// into the shared region, *and* the per-column chain would later
-        /// re-fetch those same later chunks.
-        boolean isCoalesceSafe();
-
-        /// First byte of everything the plan may fetch.
-        long readStart();
-
-        /// End, exclusive, of everything the plan may fetch; [#readStart] when it fetches
-        /// nothing.
-        long readEnd();
-
-        void attachSharedRegion(SharedRegion region, int rowGroupIndex);
-    }
-
-    /// A contiguous byte range covering one or more pages within a column.
-    record PageGroup(long offset, int length, int firstPageIndex, int pageCount) {}
-
     /// A page needed for the current read paired with the [PageRowMask] selecting
     /// which records within the page the column keeps. The mask is
     /// [PageRowMask#ALL] when no filter is active or when the page falls
@@ -362,55 +454,6 @@ public final class FetchPlanBuilder {
     ///
     /// `rows` is the page's row span in the offset index, before the mask.
     record NeededPage(PageLocation location, PageRowMask mask, int pageIndex, int rows) {}
-
-    /// Whether the dictionary page, `[dictStart, firstDataPageOffset)`, is fetched with the first
-    /// needed page rather than on its own.
-    static boolean foldsDictionary(long dictStart, long firstDataPageOffset, PageLocation firstNeeded) {
-        return CoalescingPolicy.merges(dictStart, firstDataPageOffset,
-                firstNeeded.offset(), firstNeeded.offset() + firstNeeded.compressedPageSize());
-    }
-
-    /// Coalesces needed pages within a column into page groups under [CoalescingPolicy].
-    /// The first group is extended back to `dictStart` to take in the dictionary
-    /// page, unless `dictStart` is `0`.
-    static List<PageGroup> coalescePages(List<NeededPage> neededPages, long dictStart) {
-        List<PageGroup> groups = new ArrayList<>();
-        PageLocation firstPage = neededPages.get(0).location();
-        long groupStart = firstPage.offset();
-        long groupEnd = groupStart + firstPage.compressedPageSize();
-        int groupFirstPage = 0;
-        int groupPageCount = 1;
-
-        // Extend first group backwards to include dictionary prefix
-        if (dictStart > 0 && dictStart < groupStart) {
-            groupStart = dictStart;
-        }
-
-        for (int i = 1; i < neededPages.size(); i++) {
-            PageLocation page = neededPages.get(i).location();
-
-            if (CoalescingPolicy.merges(groupStart, groupEnd, page.offset(),
-                    page.offset() + page.compressedPageSize())) {
-                groupEnd = page.offset() + page.compressedPageSize();
-                groupPageCount++;
-            }
-            else {
-                groups.add(new PageGroup(groupStart,
-                        Math.toIntExact(groupEnd - groupStart),
-                        groupFirstPage, groupPageCount));
-                groupStart = page.offset();
-                groupEnd = groupStart + page.compressedPageSize();
-                groupFirstPage = i;
-                groupPageCount = 1;
-            }
-        }
-
-        groups.add(new PageGroup(groupStart,
-                Math.toIntExact(groupEnd - groupStart),
-                groupFirstPage, groupPageCount));
-
-        return groups;
-    }
 
     /// Determines which pages are needed based on the filter's matching row ranges,
     /// pairing each kept page with the [PageRowMask] that selects which of its
@@ -447,20 +490,17 @@ public final class FetchPlanBuilder {
         return Math.toIntExact(pageLastRow - allPages.get(i).firstRowIndex());
     }
 
-    /// Emits a [PageFilterEvent] for one column chunk whose pages were narrowed by
-    /// Column Index push-down.
+    /// A [PageFilterEvent] for one column chunk whose pages were narrowed by Column Index
+    /// push-down, for the read to commit once it reaches the row group.
     ///
-    /// Nothing is emitted unless a predicate actually narrowed this row group's pages:
+    /// Nothing is reported unless a predicate actually narrowed this row group's pages:
     /// a read with no filter, a `tail(N)` whose synthesized range is the only thing
     /// narrowing the pages, and a row group whose mask gate is closed all skip nothing
     /// by push-down and so report nothing. The absence of the event is therefore the
     /// signal that no page was a candidate for skipping, and a `pagesSkipped` of 0
     /// means the filter ran and kept everything.
-    private static void emitPageFilterEvent(String fileName, int rowGroupIndex, String column,
-                                            boolean pageFilterApplied, int totalPages, int pagesKept) {
-        if (!pageFilterApplied) {
-            return;
-        }
+    private static PageFilterEvent pageFilterEvent(String fileName, int rowGroupIndex, String column,
+                                                   int totalPages, int pagesKept) {
         PageFilterEvent event = new PageFilterEvent();
         event.file = fileName;
         event.rowGroupIndex = rowGroupIndex;
@@ -468,7 +508,7 @@ public final class FetchPlanBuilder {
         event.totalPages = totalPages;
         event.pagesKept = pagesKept;
         event.pagesSkipped = totalPages - pagesKept;
-        event.commit();
+        return event;
     }
 
     /// Whether per-page row masks may be applied by the plans of this row

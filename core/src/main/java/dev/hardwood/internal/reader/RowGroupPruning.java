@@ -26,6 +26,7 @@ import dev.hardwood.jfr.RowGroupBloomFilterEvent;
 import dev.hardwood.jfr.RowGroupDictionaryFilterEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.RowGroup;
+import jdk.jfr.Event;
 
 /// The pruning of a read's row groups by metadata: by statistics when a file is planned
 /// ([#filterRowGroups]), by Bloom filters and dictionaries once the read reaches a row group
@@ -63,8 +64,7 @@ final class RowGroupPruning {
         if (!workItem.bloomFilterColumns().isEmpty()) {
             RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
             if (refineWithBloomFilters(workItem, refined) == FilterDecision.CANNOT_MATCH) {
-                emitBloomFilterDropEvent(workItem);
-                return Arrival.DROPPED;
+                return new Arrival(true, null, bloomFilterDropEvent(workItem));
             }
             leafDecisions = refined;
         }
@@ -76,10 +76,9 @@ final class RowGroupPruning {
                     workItem.columnOrdinals().filter(), workItem.rowGroup(), leafDecisions, dictionaries);
         }
         if (decision == FilterDecision.CANNOT_MATCH) {
-            emitDictionaryDropEvent(workItem);
-            return Arrival.DROPPED;
+            return new Arrival(true, null, dictionaryDropEvent(workItem));
         }
-        return new Arrival(false, dictionaries);
+        return new Arrival(false, dictionaries, null);
     }
 
     /// What a row group's bloom filters and dictionaries decided once the read reached it.
@@ -87,10 +86,11 @@ final class RowGroupPruning {
     /// @param dropped whether they proved the row group holds no match
     /// @param dictionaries the dictionaries the probe read, for the fetch plans to decode with, or
     ///        `null` when it read none
-    record Arrival(boolean dropped, RowGroupDictionaryFilterSource dictionaries) {
+    /// @param dropEvent the event reporting the drop, for the read to commit once it reaches the
+    ///        row group; `null` when they kept it
+    record Arrival(boolean dropped, RowGroupDictionaryFilterSource dictionaries, Event dropEvent) {
 
-        static final Arrival KEPT = new Arrival(false, null);
-        static final Arrival DROPPED = new Arrival(true, null);
+        static final Arrival KEPT = new Arrival(false, null, null);
     }
 
     /// Whether the read narrows `workItem`'s rows by the ColumnIndex: under a filter with metadata
@@ -124,20 +124,20 @@ final class RowGroupPruning {
         }
     }
 
-    /// Reports a row group its bloom filters dropped once the read reached it.
-    private static void emitBloomFilterDropEvent(WorkItem workItem) {
+    /// The report of a row group its bloom filters dropped.
+    private static Event bloomFilterDropEvent(WorkItem workItem) {
         RowGroupBloomFilterEvent event = new RowGroupBloomFilterEvent();
         event.file = workItem.inputFile().name();
         event.rowGroupIndex = workItem.rowGroupIndex();
-        event.commit();
+        return event;
     }
 
-    /// Reports a row group its dictionaries dropped once the read reached it.
-    private static void emitDictionaryDropEvent(WorkItem workItem) {
+    /// The report of a row group its dictionaries dropped.
+    private static Event dictionaryDropEvent(WorkItem workItem) {
         RowGroupDictionaryFilterEvent event = new RowGroupDictionaryFilterEvent();
         event.file = workItem.inputFile().name();
         event.rowGroupIndex = workItem.rowGroupIndex();
-        event.commit();
+        return event;
     }
 
     /// A row group surviving predicate push-down, and whether its statistics prove
@@ -149,8 +149,14 @@ final class RowGroupPruning {
             int fileRowGroupIndex, RowGroupFilterEvaluator.LeafDecisions leafDecisions,
             BitSet bloomFilterColumns) {}
 
-    List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
-                                                   FileColumnOrdinals columnOrdinals) throws IOException {
+    /// The row groups of a file that pruning by statistics keeps, and the [RowGroupFilterEvent]
+    /// reporting it, for the read to commit once it reaches the file; `null` when the read does not
+    /// prune by metadata.
+    record FilteredRowGroups(List<FilteredRowGroup> rowGroups, Event event) {
+    }
+
+    FilteredRowGroups filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
+                                      FileColumnOrdinals columnOrdinals) throws IOException {
         // The metadata-filtering opt-out (#797) disables every metadata-driven prune,
         // dictionary membership included — with it off, no row group is dropped without
         // reading rows.
@@ -160,7 +166,7 @@ final class RowGroupPruning {
                 unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex, null,
                         new BitSet()));
             }
-            return unpruned;
+            return new FilteredRowGroups(unpruned, null);
         }
         List<FilteredRowGroup> filtered = new ArrayList<>(rowGroups.size());
         int fullyMatching = 0;
@@ -194,8 +200,6 @@ final class RowGroupPruning {
         event.rowGroupsKept = filtered.size();
         event.rowGroupsSkipped = rowGroups.size() - filtered.size();
         event.rowGroupsFullyMatching = fullyMatching;
-        event.commit();
-
-        return filtered;
+        return new FilteredRowGroups(filtered, event);
     }
 }

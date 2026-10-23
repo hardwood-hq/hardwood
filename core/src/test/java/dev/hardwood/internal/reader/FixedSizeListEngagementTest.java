@@ -102,7 +102,7 @@ class FixedSizeListEngagementTest {
             for (RowGroup rowGroup : reader.getFileMetaData().rowGroups()) {
                 SequentialFetchPlan plan = SequentialFetchPlan.build(
                         inputFile, columnSchema, rowGroup.columns().get(leaf), context, 0, inputFile.name(), 0);
-                PageIterator pages = plan.pages();
+                PageWalks.Pages pages = PageWalks.of(plan);
                 while (pages.hasNext()) {
                     PageInfo pageInfo = pages.next();
                     PageDecoder decoder = new PageDecoder(
@@ -149,7 +149,7 @@ class FixedSizeListEngagementTest {
             ColumnSchema columnSchema = schema.getColumn(leaf);
             SequentialFetchPlan plan = SequentialFetchPlan.build(
                     inputFile, columnSchema, chunk, context, 0, inputFile.name(), 0);
-            PageIterator pages = plan.pages();
+            PageWalks.Pages pages = PageWalks.of(plan);
             PageInfo pageInfo = pages.next();
             PageDecoder decoder = new PageDecoder(
                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
@@ -179,7 +179,7 @@ class FixedSizeListEngagementTest {
                 ColumnChunk chunk = rowGroup.columns().get(leaf);
                 SequentialFetchPlan plan = SequentialFetchPlan.build(
                         inputFile, columnSchema, chunk, context, 0, inputFile.name(), 0);
-                PageIterator pages = plan.pages();
+                PageWalks.Pages pages = PageWalks.of(plan);
                 while (pages.hasNext()) {
                     PageInfo pageInfo = pages.next();
                     PageDecoder decoder = new PageDecoder(

@@ -11,9 +11,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.metadata.PageLocation;
-
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /// The coalescing rule, and the merges within a column that apply it. The merge across columns is
 /// covered end to end by [CrossColumnCoalesceTest].
@@ -29,28 +28,38 @@ class CoalescingPolicyTest {
 
     @Test
     void aSpanUpToTheLimitIsMerged() {
-        long max = CoalescingPolicy.MAX_SPAN_BYTES;
+        long max = CoalescingPolicy.maxSpanBytes();
         assertThat(CoalescingPolicy.merges(0, max - 100, max - 50, max)).isTrue();
         assertThat(CoalescingPolicy.merges(0, max - 100, max - 50, max + 1)).isFalse();
     }
 
     @Test
-    void pagesWithinAColumnFollowTheRule() {
-        assertThat(FetchPlanBuilder.coalescePages(pagesWithGap(GAP), 0)).hasSize(1);
-        assertThat(FetchPlanBuilder.coalescePages(pagesWithGap(GAP + 1), 0)).hasSize(2);
+    void neededRangesFollowTheRuleAcrossColumns() {
+        // Column 0's two pages, `gap` apart, then column 1's page right after: the gap decides
+        // whether column 0 takes one request, and column 1 joins the second either way.
+        assertThat(spans(GAP)).extracting(FetchSequence.Span::start, FetchSequence.Span::length)
+                .containsExactly(tuple(4L, 300 + GAP));
+        assertThat(spans(GAP + 1)).extracting(FetchSequence.Span::start, FetchSequence.Span::length)
+                .containsExactly(tuple(4L, 100), tuple(105L + GAP, 200));
     }
 
     @Test
-    void theDictionaryPageFollowsTheRule() {
-        // Dictionary page [4, 1004), first data page at 1004.
-        assertThat(FetchPlanBuilder.foldsDictionary(4, 1004, new PageLocation(1004 + GAP, 100, 0))).isTrue();
-        assertThat(FetchPlanBuilder.foldsDictionary(4, 1004, new PageLocation(1004 + GAP + 1, 100, 0))).isFalse();
+    void aSpanNamesTheColumnsItServesAndCountsTheColumnsOverlappingIt() {
+        assertThat(spans(GAP + 1)).extracting(FetchSequence.Span::reason, FetchSequence.Span::holders)
+                .containsExactly(tuple("rg=7 col=a", 1), tuple("rg=7 col=a col=b", 2));
     }
 
-    /// Two 100-byte pages, `gap` bytes apart.
-    private static List<FetchPlanBuilder.NeededPage> pagesWithGap(int gap) {
-        return List.of(
-                new FetchPlanBuilder.NeededPage(new PageLocation(4, 100, 0), PageRowMask.ALL, 0, 10),
-                new FetchPlanBuilder.NeededPage(new PageLocation(104 + gap, 100, 10), PageRowMask.ALL, 1, 10));
+    /// The spans of column `a`'s pages `[4, 104)` and `[104 + gap, 204 + gap)` and column `b`'s
+    /// page right after them.
+    private static List<FetchSequence.Span> spans(int gap) {
+        long aEnd = 204L + gap;
+        List<FetchPlanBuilder.Range> ranges = List.of(
+                new FetchPlanBuilder.Range(0, 4, 104),
+                new FetchPlanBuilder.Range(0, 104L + gap, aEnd),
+                new FetchPlanBuilder.Range(1, aEnd, aEnd + 100));
+        FetchPlanBuilder.Extent[] extents = {
+                new FetchPlanBuilder.Extent(0, "a", 4, aEnd),
+                new FetchPlanBuilder.Extent(1, "b", aEnd, aEnd + 100) };
+        return FetchPlanBuilder.coalesce(ranges, extents, new String[] { "a", "b" }, 7, CoalescingPolicy.maxSpanBytes());
     }
 }

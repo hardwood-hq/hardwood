@@ -44,9 +44,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The byte-comparison tests therefore use `page_index_test.parquet`
 /// (170 KB, larger than the tail cache) to ensure the differences are observable.
 ///
-/// The lazy fetch tests override `hardwood.internal.sequentialChunkSize` to a small value
-/// so that the generated test files stay small while still exercising multi-chunk
-/// behaviour.
+/// The lazy fetch tests override the largest request, `hardwood.internal.maxCoalescedBytes`, to
+/// a small value so that the generated test files stay small while still exercising reads of a
+/// column chunk in several requests.
 public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
 
     private static final System.Logger LOG = System.getLogger(S3SelectiveReadJfrIT.class.getName());
@@ -128,10 +128,10 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         bucket.create();
         pageIndexFileSize = Files.size(TEST_RESOURCES.resolve(PAGE_INDEX_FILE));
 
-        // Override sequential chunk size for this test class. Every assertion below
+        // Override the largest request for this test class. Every assertion below
         // is calibrated against it, so it has to hold for this class regardless of
         // what else has already run in this JVM.
-        System.setProperty("hardwood.internal.sequentialChunkSize", String.valueOf(TEST_CHUNK_SIZE));
+        System.setProperty("hardwood.internal.maxCoalescedBytes", String.valueOf(TEST_CHUNK_SIZE));
 
         source = S3Source.builder()
                 .endpoint(bucket.endpoint())
@@ -142,7 +142,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
 
     @AfterAll
     static void tearDown() {
-        System.clearProperty("hardwood.internal.sequentialChunkSize");
+        System.clearProperty("hardwood.internal.maxCoalescedBytes");
         source.close();
         bucket.delete();
     }

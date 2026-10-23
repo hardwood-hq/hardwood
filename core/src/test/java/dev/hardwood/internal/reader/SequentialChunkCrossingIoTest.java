@@ -38,13 +38,13 @@ class SequentialChunkCrossingIoTest {
 
     @AfterEach
     void clearPieceSize() {
-        System.clearProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY);
+        System.clearProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
     }
 
     @ParameterizedTest
     @ValueSource(ints = { 300, 4 * 1024 })
     void fullReadFetchesEachByteOnce(int pieceSize) throws Exception {
-        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, String.valueOf(pieceSize));
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(pieceSize));
         CountingInputFile file = new CountingInputFile(InputFile.of(FLAT_FILE));
         file.open();
 
@@ -59,7 +59,7 @@ class SequentialChunkCrossingIoTest {
     @ParameterizedTest
     @ValueSource(ints = { 300, 4 * 1024 })
     void dictionaryEncodedReadFetchesEachByteOnce(int pieceSize) throws Exception {
-        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, String.valueOf(pieceSize));
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(pieceSize));
         CountingInputFile file = new CountingInputFile(InputFile.of(DICT_FILE));
         file.open();
 
@@ -72,7 +72,7 @@ class SequentialChunkCrossingIoTest {
     @ParameterizedTest
     @ValueSource(ints = { 300, 4 * 1024 })
     void maskedNestedReadFetchesEachByteOnce(int pieceSize) throws Exception {
-        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, String.valueOf(pieceSize));
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(pieceSize));
         CountingInputFile file = new CountingInputFile(InputFile.of(NESTED_V2_FILE));
         file.open();
 
@@ -82,7 +82,7 @@ class SequentialChunkCrossingIoTest {
         // Not IoBudget: the mask gate's page-format probe reads the chunk's first page header on
         // its own, ahead of the plan, which MaskProbeIoTest pins. Only the plan's reads are checked.
         List<CountingInputFile.Read> pieces = file.reads().stream()
-                .filter(read -> read.reason().contains("seqChunk"))
+                .filter(read -> read.reason().contains(" col="))
                 .sorted(Comparator.comparingLong(CountingInputFile.Read::offset))
                 .toList();
         assertThat(pieces).hasSizeGreaterThan(1);

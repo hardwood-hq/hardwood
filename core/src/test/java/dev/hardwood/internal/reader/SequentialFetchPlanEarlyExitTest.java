@@ -72,14 +72,14 @@ class SequentialFetchPlanEarlyExitTest {
                     fileForAll, columnSchema, columnChunk, context,
                     ROW_GROUP, fileForAll.name(), 0L,
                     List.of(), RowRanges.ALL, TOTAL_ROWS);
-            drain(allPlan.pages());
+            drain(PageWalks.of(allPlan));
             allPages = allPlan.scannedPages();
 
             SequentialFetchPlan boundedPlan = SequentialFetchPlan.build(
                     fileForBounded, columnSchema, columnChunk, context,
                     ROW_GROUP, fileForBounded.name(), 0L,
                     List.of(), RowRanges.range(0, BOUNDED_END), TOTAL_ROWS);
-            drain(boundedPlan.pages());
+            drain(PageWalks.of(boundedPlan));
             boundedPages = boundedPlan.scannedPages();
         }
 
@@ -101,7 +101,7 @@ class SequentialFetchPlanEarlyExitTest {
                 .isLessThan(allPages / 4);
     }
 
-    private static void drain(PageIterator iterator) throws IOException {
+    private static void drain(PageWalks.Pages iterator) throws IOException {
         while (iterator.hasNext()) {
             iterator.next();
         }

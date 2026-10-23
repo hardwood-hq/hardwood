@@ -168,7 +168,7 @@ class PrefetchTasksTest {
         assertThat(queued).isEmpty();
     }
 
-    /// The first row group's plans start the prefetch of the second, whose read raises an
+    /// The first row group's plans make the second the read's next unit, whose data read raises an
     /// `Error`; nothing reads the second row group, and the iterator's close throws the `Error`
     /// once it has closed the file it owns.
     @Tag("pool")
@@ -181,7 +181,7 @@ class PrefetchTasksTest {
             metaData = reader.getFileMetaData();
             schema = reader.getFileSchema();
         }
-        PrefetchFailingInputFile file = new PrefetchFailingInputFile(InputFile.of(FOUR_ROW_GROUPS), "prefetch rg=1 |");
+        PrefetchFailingInputFile file = new PrefetchFailingInputFile(InputFile.of(FOUR_ROW_GROUPS), "rg=1 col=");
         file.open();
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
             RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);

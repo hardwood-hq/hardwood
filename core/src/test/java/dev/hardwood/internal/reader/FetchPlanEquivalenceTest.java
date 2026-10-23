@@ -72,8 +72,8 @@ public class FetchPlanEquivalenceTest {
                         context, 0, inputFile.name(), 0);
 
                 // Collect pages from both plans
-                List<PageInfo> indexedPages = collectPages(indexedPlan.pages());
-                List<PageInfo> sequentialPages = collectPages(sequentialPlan.pages());
+                List<PageInfo> indexedPages = collectPages(PageWalks.of(indexedPlan));
+                List<PageInfo> sequentialPages = collectPages(PageWalks.of(sequentialPlan));
 
                 assertThat(indexedPages).as("Page count for column '%s'", columnSchema.name())
                         .hasSameSizeAs(sequentialPages);
@@ -136,7 +136,7 @@ public class FetchPlanEquivalenceTest {
                     inputFile, columnSchema, columnChunk,
                     context, 0, inputFile.name(), 0);
 
-            List<PageInfo> pages = collectPages(plan.pages());
+            List<PageInfo> pages = collectPages(PageWalks.of(plan));
             assertThat(pages).isNotEmpty();
         }
     }
@@ -162,14 +162,14 @@ public class FetchPlanEquivalenceTest {
 
             assertThat(columnChunk.offsetIndexOffset()).isNull();
 
-            List<PageInfo> fullPages = collectPages(SequentialFetchPlan.build(
+            List<PageInfo> fullPages = collectPages(PageWalks.of(SequentialFetchPlan.build(
                     inputFile, columnSchema, columnChunk,
-                    context, 0, inputFile.name(), 0).pages());
+                    context, 0, inputFile.name(), 0)));
 
             // Requesting a single row must not scan past the first data page.
-            List<PageInfo> limitedPages = collectPages(SequentialFetchPlan.build(
+            List<PageInfo> limitedPages = collectPages(PageWalks.of(SequentialFetchPlan.build(
                     inputFile, columnSchema, columnChunk,
-                    context, 0, inputFile.name(), 1).pages());
+                    context, 0, inputFile.name(), 1)));
 
             assertThat(limitedPages).hasSize(1);
             assertThat(limitedPages.size()).isLessThanOrEqualTo(fullPages.size());
@@ -186,7 +186,7 @@ public class FetchPlanEquivalenceTest {
         return iterator;
     }
 
-    private static List<PageInfo> collectPages(PageIterator iter) throws IOException {
+    private static List<PageInfo> collectPages(PageWalks.Pages iter) throws IOException {
         List<PageInfo> pages = new ArrayList<>();
         while (iter.hasNext()) {
             pages.add(iter.next());

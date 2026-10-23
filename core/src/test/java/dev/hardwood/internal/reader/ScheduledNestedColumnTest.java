@@ -183,8 +183,8 @@ class ScheduledNestedColumnTest {
             FileMetaData meta = ParquetMetadataReader.readMetadata(inputFile);
             FileSchema schema = FileSchema.fromSchemaElements(meta.schema());
             ColumnSchema tags = schema.getColumn("tags.list.element");
-            PageIterator pages = SequentialFetchPlan.build(inputFile, tags,
-                    meta.rowGroups().get(0).columns().get(tags.columnIndex()), context, 0, inputFile.name(), 0).pages();
+            PageWalks.Pages pages = PageWalks.of(SequentialFetchPlan.build(inputFile, tags,
+                    meta.rowGroups().get(0).columns().get(tags.columnIndex()), context, 0, inputFile.name(), 0));
             while (pages.hasNext()) {
                 PageInfo page = pages.next();
                 int[] repetitionLevels = new ReferencePageDecoder(tags, page.columnMetaData().codec(),
@@ -249,8 +249,8 @@ class ScheduledNestedColumnTest {
             ColumnSchema column = schema.getColumn(columnIndex);
             for (int g = 0; g < meta.rowGroups().size(); g++) {
                 RowGroup rowGroup = meta.rowGroups().get(g);
-                PageIterator pages = SequentialFetchPlan.build(inputFile, column, rowGroup.columns().get(columnIndex),
-                        context, g, inputFile.name(), 0).pages();
+                PageWalks.Pages pages = PageWalks.of(SequentialFetchPlan.build(inputFile, column, rowGroup.columns().get(columnIndex),
+                        context, g, inputFile.name(), 0));
                 ReferenceChunk chunk = new ReferenceChunk(column);
                 while (pages.hasNext()) {
                     PageInfo page = pages.next();

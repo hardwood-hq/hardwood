@@ -22,6 +22,11 @@ final class RowGroupIterators {
     /// An iterator over `inputFiles` with no row limit. Its close closes the files' metadata
     /// and the files, as the parent reader of a read does.
     static RowGroupIterator standalone(List<InputFile> inputFiles, HardwoodContextImpl context) {
+        return standalone(inputFiles, context, 0);
+    }
+
+    /// As [#standalone(List, HardwoodContextImpl)], with a row limit of `maxRows`.
+    static RowGroupIterator standalone(List<InputFile> inputFiles, HardwoodContextImpl context, long maxRows) {
         FileMetadataCache metadata = new FileMetadataCache(inputFiles, context);
         return new RowGroupIterator(metadata, iterator -> {
             try {
@@ -31,6 +36,6 @@ final class RowGroupIterators {
             catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
-        }, context, 0, 0, 0);
+        }, context, maxRows, 0, 0);
     }
 }

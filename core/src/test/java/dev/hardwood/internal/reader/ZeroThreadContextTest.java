@@ -34,6 +34,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -495,15 +496,23 @@ class ZeroThreadContextTest {
         volatile Object outcome;
         volatile Throwable closeFailure;
 
-        /// Opens the read, takes its first batch, arms the hold and starts the consumer, and
-        /// returns once a read is held and the consumer waits for it.
+        /// Opens the read with F = 0, takes its first batch, arms the hold and starts the consumer,
+        /// and returns once a data read is held and the consumer waits for it.
         static HeldRead start(HardwoodContextImpl context) throws Exception {
             HeldRead read = new HeldRead();
             for (Path path : files) {
                 read.inputs.add(new HeldInputFile(InputFile.of(path), read));
             }
             read.reader = ParquetFileReader.openAll(List.copyOf(read.inputs), context);
-            read.columns = read.reader.buildColumnReaders(ColumnProjection.columns("v")).batchSize(100).build();
+            // Without read-ahead past the next unit, so a data read is left to hold once armed: the
+            // fixtures are small enough to be fetched whole before the first batch otherwise
+            System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
+            try {
+                read.columns = read.reader.buildColumnReaders(ColumnProjection.columns("v")).batchSize(100).build();
+            }
+            finally {
+                System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
+            }
             assertThat(read.columns.nextBatch()).isTrue();
             read.armed.set(true);
             read.consumer = Thread.ofPlatform().start(() -> {
@@ -552,9 +561,10 @@ class ZeroThreadContextTest {
         }
     }
 
-    /// A file not in memory whose reads on a virtual thread, once its [HeldRead] is armed, wait
-    /// until it is released. A read the consumer makes on its own thread, planning a work item,
-    /// goes through: held, it would leave the consumer waiting inside the read rather than for it.
+    /// A file not in memory whose data reads on a virtual thread, once its [HeldRead] is armed, wait
+    /// until it is released. A planning read goes through, whether the consumer makes it on its
+    /// own thread or waits for it, such as a footer read ahead of the file it plans: held, it
+    /// would leave the consumer waiting inside the planning rather than for the read.
     private static final class HeldInputFile extends CountingInputFile {
 
         private final HeldRead read;
@@ -566,7 +576,8 @@ class ZeroThreadContextTest {
 
         @Override
         public ByteBuffer readRange(long offset, int length) throws IOException {
-            if (read.armed.get() && Thread.currentThread().isVirtual()) {
+            if (read.armed.get() && Thread.currentThread().isVirtual()
+                    && FetchReason.current().contains(" col=")) {
                 read.held.countDown();
                 boolean interrupted = false;
                 while (true) {

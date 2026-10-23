@@ -39,8 +39,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// Adjacent column chunks within a row group are typically stored
 /// back-to-back on disk, so a single ranged GET can cover many columns
-/// at once. The pipeline coalesces such reads into [SharedRegion]s in
-/// `FetchPlanBuilder.coalesceAcrossColumns`. These tests assert the
+/// at once. Planning coalesces every column's needed ranges of a row group into its
+/// [FetchSequence] entries (`FetchPlanBuilder.coalesce`). These tests assert the
 /// observable effect: the underlying `readRange` count drops compared to
 /// what a per-column-per-chunk fetch path would produce.
 class CrossColumnCoalesceTest {
@@ -121,7 +121,7 @@ class CrossColumnCoalesceTest {
         // A region from `a` to `c` would take in all of `b`, which `b` then fetches again.
         Path file = dir.resolve("abc.parquet");
         Files.write(file, writeOuterAndInnerColumns(100_000));
-        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, String.valueOf(64 * 1024));
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(64 * 1024));
         try {
             CountingInputFile counter = new CountingInputFile(InputFile.of(file));
             counter.open();
@@ -136,7 +136,7 @@ class CrossColumnCoalesceTest {
             IoBudget.of(file, List.of("a", "b", "c"), 0, 100_000).assertWithin(counter);
         }
         finally {
-            System.clearProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY);
+            System.clearProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
         }
     }
 

@@ -35,8 +35,20 @@ class NextRowGroupPrefetchTest {
     private static final Path FILE = Path.of("src/test/resources/differential/diff_order_multi.parquet");
     private static final int ROW_GROUPS = 4;
 
+    /// With no room for speculative data (F of zero), entering each row group still starts the
+    /// first data entry of the next one, the read's next unit, and nothing past it.
     @Test
-    void everyRowGroupAfterTheFirstIsPrefetched() throws Exception {
+    void theNextUnitStartsWithoutFetchAheadRoom() throws Exception {
+        System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
+        try {
+            readRowGroupByRowGroup();
+        }
+        finally {
+            System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
+        }
+    }
+
+    private static void readRowGroupByRowGroup() throws Exception {
         FileMetaData metaData;
         FileSchema schema;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
@@ -56,13 +68,14 @@ class NextRowGroupPrefetchTest {
                 iterator.initialize(ReadProjection.of(
                         ProjectedSchema.create(schema, ColumnProjection.columns("__row__"))), null, true);
 
-                // The demand accesses come one row group at a time, each only once the
-                // previous one's prefetch has issued its read, so a row group is always
-                // planned by the prefetch before the demand path reaches it.
+                // The demand accesses come one row group at a time, each only once the next unit
+                // of the previous one has issued its read, so a row group is always planned ahead
+                // before the demand path reaches it. No column walks a plan, so every data read
+                // is a next unit's.
                 for (int rg = 0; rg < ROW_GROUPS - 1; rg++) {
                     iterator.getColumnPlan(iterator.workItemAt(rg), 0);
                     assertThat(signals.awaitPrefetch(rg + 1))
-                            .as("prefetch of row group %d after the demand access to row group %d", rg + 1, rg)
+                            .as("next unit, row group %d, after the demand access to row group %d", rg + 1, rg)
                             .isTrue();
                     assertNoDataReadPast(file, speculative, rg + 1);
                 }
@@ -74,14 +87,16 @@ class NextRowGroupPrefetchTest {
 
         List<CountingInputFile.Read> reads = file.reads();
         for (int rg = 1; rg < ROW_GROUPS; rg++) {
-            assertThat(firstDataRead(reads, rg).reason())
-                    .as("first data read of row group %d", rg)
-                    .startsWith("prefetch rg=" + rg + " | rg=" + rg + " ");
+            int rowGroup = rg;
+            assertThat(reads).filteredOn(read -> isDataRead(read.reason(), rowGroup))
+                    .as("data reads of row group %d", rg)
+                    .singleElement()
+                    .satisfies(read -> assertThat(read.reason()).isEqualTo("rg=" + rowGroup + " col=__row__"));
         }
     }
 
-    /// Asserts, once the prefetch tasks have run, that no row group past `rowGroup` has had a
-    /// data read: the prefetch of a row group does not cascade into the one after it.
+    /// Asserts, once the speculative tasks have run, that no row group past `rowGroup` has had a
+    /// data read: with no room for speculative data, the read starts nothing past its next unit.
     private static void assertNoDataReadPast(CountingInputFile file, QuiescentExecutor speculative, int rowGroup)
             throws InterruptedException {
         assertThat(speculative.awaitQuiescence(5, TimeUnit.SECONDS)).isTrue();
@@ -93,21 +108,12 @@ class NextRowGroupPrefetchTest {
         }
     }
 
-    private static CountingInputFile.Read firstDataRead(List<CountingInputFile.Read> reads, int rowGroup) {
-        return reads.stream()
-                .filter(read -> isDataRead(read.reason(), rowGroup))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("No data read of row group " + rowGroup + " in " + reads));
-    }
-
-    /// Whether `reason` is a read of a column chunk (dictionary, page group or shared region) of
-    /// `rowGroup`, whether issued on demand or by a prefetch.
+    /// Whether `reason` is a data read of `rowGroup`.
     private static boolean isDataRead(String reason, int rowGroup) {
-        String purpose = reason.substring(reason.lastIndexOf('|') + 1).strip();
-        return purpose.startsWith("rg=" + rowGroup + " col=") || purpose.startsWith("rg=" + rowGroup + " region=");
+        return reason.startsWith("rg=" + rowGroup + " col=");
     }
 
-    /// Signals, per row group, the first data read a prefetch issues for it.
+    /// Signals, per row group, its first data read.
     private static final class PrefetchSignals implements InputFile {
 
         private final InputFile delegate;
@@ -120,7 +126,7 @@ class NextRowGroupPrefetchTest {
             }
         }
 
-        /// Waits at most five seconds for a prefetch of `rowGroup` to issue a data read.
+        /// Waits at most five seconds for a data read of `rowGroup`.
         boolean awaitPrefetch(int rowGroup) throws InterruptedException {
             return prefetched[rowGroup].await(5, TimeUnit.SECONDS);
         }
@@ -134,7 +140,7 @@ class NextRowGroupPrefetchTest {
         public ByteBuffer readRange(long offset, int length) throws IOException {
             String reason = FetchReason.current();
             for (int rg = 0; rg < ROW_GROUPS; rg++) {
-                if (reason.startsWith("prefetch rg=" + rg + " |") && isDataRead(reason, rg)) {
+                if (isDataRead(reason, rg)) {
                     prefetched[rg].countDown();
                 }
             }

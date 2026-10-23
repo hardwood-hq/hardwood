@@ -18,22 +18,20 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.util.Lazy;
 
-/// One read of a byte range of an input file, and the future of its bytes.
+/// One read of a byte range of a file not in memory, the request of a [FetchSequence] entry, and
+/// the future of its bytes.
 ///
-/// A file whose bytes are in memory ([#inMemory]) is read in place, and the read is complete when
-/// [#start] returns. Any other file is read on a task of the read's [PrefetchTasks], a virtual
-/// thread of the context's I/O executor, which completes the read; the read's owner waits for
-/// those tasks before it closes the file. A step of the pool never waits for a read: it yields on
-/// it ([#whenDone]), and the completion queues the step again.
+/// The read runs on a task of the read's [PrefetchTasks], a virtual thread of the context's I/O
+/// executor, which completes it; the read's owner waits for those tasks before it closes the file.
+/// A step of the pool never waits for a read: it yields on it ([#whenDone]), and the completion
+/// queues the step again. The read is created and then submitted ([#submit]), so that its entry
+/// holds it before any thread can complete it.
 ///
 /// A read that fails completes with its failure and throws nothing. An `Error` it fails with is
 /// thrown by the close of its [PrefetchTasks] ([PrefetchTasks#awaitAll()]) unless a step has
 /// taken it from the read ([#bytes]): a speculative read's always, since no step takes the
 /// failure of a read started ahead of need, and a demand read's when its step stopped before it
 /// took it. An `Error` therefore reaches the caller once, through the step or through the close.
-///
-/// A range that a read's [FetchedAhead] holds is not read again: [#start] serves it from the bytes
-/// fetched ahead ([#servedBy]).
 public final class RangeRead implements PrefetchTasks.Untaken {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RangeRead.class.getName()));
@@ -41,81 +39,29 @@ public final class RangeRead implements PrefetchTasks.Untaken {
     private final InputFile inputFile;
     private final long offset;
     private final int length;
+    /// The [FetchReason] the read runs under, its entry's own rather than the submitting thread's.
+    private final String reason;
     private final boolean startedSpeculative;
     private final PrefetchTasks tasks;
     private final CompletableFuture<ByteBuffer> bytes = new CompletableFuture<>();
     /// The `Error` the read failed with, until a step takes it ([#bytes]).
     private volatile Error untakenError;
 
-    private RangeRead(InputFile inputFile, long offset, int length, boolean speculative, PrefetchTasks tasks) {
+    /// A read of `length` bytes at `offset` of `inputFile` under `reason`, to run on a task of
+    /// `tasks` once submitted.
+    RangeRead(InputFile inputFile, long offset, int length, String reason, boolean speculative, PrefetchTasks tasks) {
         this.inputFile = inputFile;
         this.offset = offset;
         this.length = length;
+        this.reason = reason;
         this.startedSpeculative = speculative;
-        this.tasks = tasks;
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
     }
 
-    /// Starts the read of `length` bytes at `offset` of `inputFile`: in place for a file whose
-    /// bytes are in memory, from the bytes `tasks`' [FetchedAhead] holds when they cover the range,
-    /// and on a task of `tasks` otherwise. The read carries `reason`, composed with the caller's
-    /// [FetchReason]. A read `tasks` no longer admits, as once its owner closes, fails.
-    static RangeRead start(InputFile inputFile, long offset, int length, String reason, boolean speculative,
-                           PrefetchTasks tasks) {
-        Objects.requireNonNull(tasks, "tasks");
-        String composed = composed(reason);
-        if (inMemory(inputFile)) {
-            RangeRead read = new RangeRead(inputFile, offset, length, speculative, tasks);
-            read.run(composed);
-            return read;
-        }
-        FetchedAhead fetchedAhead = tasks.fetchedAhead();
-        RangeRead served = fetchedAhead == null ? null
-                : fetchedAhead.serve(inputFile, offset, length, composed, speculative, tasks);
-        if (served != null) {
-            return served;
-        }
-        RangeRead read = new RangeRead(inputFile, offset, length, speculative, tasks);
-        read.submit(composed);
-        return read;
-    }
-
-    /// A read of `length` bytes at `offset` of `inputFile` that `span`, a read started ahead of
-    /// need whose range covers it, serves: it completes with a slice of the span's bytes once the
-    /// span completes, and, when the span fails, reads its range itself on a task of `tasks`, as
-    /// [#start] does.
-    static RangeRead servedBy(RangeRead span, InputFile inputFile, long offset, int length, String composedReason,
-                              boolean speculative, PrefetchTasks tasks) {
-        if (offset < span.offset || offset + length > span.offset + span.length) {
-            throw new IllegalArgumentException("Range at offset " + offset + " (length " + length
-                    + ") lies outside the read at offset " + span.offset + " (length " + span.length + ")");
-        }
-        RangeRead read = new RangeRead(inputFile, offset, length, speculative, tasks);
-        span.bytes.whenComplete((buffer, failure) -> {
-            if (failure != null) {
-                read.submit(composedReason);
-                return;
-            }
-            try {
-                read.bytes.complete(buffer.slice(Math.toIntExact(offset - span.offset), length));
-            }
-            catch (RuntimeException e) {
-                // A buffer shorter than its range: the read fails as a read of it would, never
-                // leaving the step waiting
-                read.bytes.completeExceptionally(e);
-            }
-        });
-        return read;
-    }
-
-    /// `reason` composed with the caller's [FetchReason].
-    private static String composed(String reason) {
-        String outer = FetchReason.current();
-        return "unattributed".equals(outer) ? reason : outer + " | " + reason;
-    }
-
-    /// Runs this read on a task of its [PrefetchTasks], or fails it if they no longer admit it.
-    private void submit(String composedReason) {
-        tasks.submit(() -> run(composedReason), () -> bytes.completeExceptionally(
+    /// Runs this read on a task of its [PrefetchTasks], or fails it if they no longer admit it, as
+    /// once its owner closes.
+    void submit() {
+        tasks.submit(this::run, () -> bytes.completeExceptionally(
                 new IOException(ExceptionContext.filePrefix(inputFile.name())
                         + "The read was closed before the range at offset " + offset + " (length " + length
                         + ") was fetched")));
@@ -126,7 +72,7 @@ public final class RangeRead implements PrefetchTasks.Untaken {
         return inputFile instanceof MappedInputFile || inputFile instanceof ByteBufferInputFile;
     }
 
-    private void run(String reason) {
+    private void run() {
         try (FetchReason.Scope ignored = FetchReason.set(reason)) {
             bytes.complete(inputFile.readRange(offset, length));
         }
@@ -169,11 +115,9 @@ public final class RangeRead implements PrefetchTasks.Untaken {
 
     /// The bytes of a completed read.
     ///
-    /// @param what names what was read in the failure's message, such as `chunk`; the message is
-    ///        built only on failure, as this runs for every page a walk takes
-    /// @throws IOException the read's failure, as "Failed to fetch `what` at offset … (length …)"
+    /// @throws IOException the read's failure, as "Failed to fetch data at offset … (length …)"
     /// @throws IllegalStateException if the read has not completed
-    ByteBuffer bytes(String what) throws IOException {
+    ByteBuffer bytes() throws IOException {
         if (!bytes.isDone()) {
             throw new IllegalStateException("Read at offset " + offset + " of " + inputFile.name()
                     + " has not completed");
@@ -192,7 +136,7 @@ public final class RangeRead implements PrefetchTasks.Untaken {
             }
             // An IOException, or a checked exception the InputFile threw undeclared
             throw new IOException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Failed to fetch " + what + " at offset " + offset + " (length " + length + ")", cause);
+                    + "Failed to fetch data at offset " + offset + " (length " + length + ")", cause);
         }
     }
 
@@ -210,13 +154,5 @@ public final class RangeRead implements PrefetchTasks.Untaken {
     /// the caller's when it already has.
     void whenDone(Runnable action) {
         bytes.whenComplete((ignored, failure) -> action.run());
-    }
-
-    long offset() {
-        return offset;
-    }
-
-    int length() {
-        return length;
     }
 }

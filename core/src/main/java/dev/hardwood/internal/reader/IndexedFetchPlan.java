@@ -24,18 +24,14 @@ import dev.hardwood.schema.ColumnSchema;
 /// [FetchPlan] for columns with an OffsetIndex.
 ///
 /// Pages are pre-computed at plan time from the OffsetIndex (with filter and
-/// maxRows already applied). Byte data and dictionary parsing are deferred
-/// until the walk is first advanced — no I/O happens at plan time.
-final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableFirstChunk {
-
+/// maxRows already applied). The bytes come from the row group's [FetchSequence] entries that
+/// overlap the chunk, located by offset; dictionary parsing is deferred until the walk is first
+/// advanced. No I/O happens at plan time.
+final class IndexedFetchPlan implements FetchPlan {
 
     private final List<FetchPlanBuilder.NeededPage> neededPages;
-    private final List<FetchPlanBuilder.PageGroup> pageGroups;
-    private List<ChunkHandle> chunkHandles;
-    /// The dictionary page's own handle when it is too far ahead of the first needed page to be
-    /// fetched with it, or `null` when the first page group holds it or the plan needs no fetch
-    /// of it.
-    private final ChunkHandle dictionaryHandle;
+    /// The entries overlapping the column chunk, in offset order.
+    private final List<FetchSequence.Entry> entries;
     /// Where the dictionary page starts, or `0` when the plan reads none: the chunk has no
     /// dictionary page, or pruning has read it.
     private final long dictionaryStart;
@@ -50,20 +46,26 @@ final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableF
     /// Where the plan charges the dictionary it parses.
     private final WorkingSet.Column workingSet;
 
-    private IndexedFetchPlan(List<FetchPlanBuilder.NeededPage> neededPages,
-                              List<FetchPlanBuilder.PageGroup> pageGroups,
-                              List<ChunkHandle> chunkHandles,
-                              ChunkHandle dictionaryHandle,
-                              long dictionaryStart,
-                              long firstDataPageOffset,
-                              ColumnSchema columnSchema, ColumnChunk columnChunk,
-                              HardwoodContextImpl context,
-                              int rowGroupIndex, String fileName,
-                              Dictionary preloadedDictionary, WorkingSet.Column workingSet) {
+    /// Builds an [IndexedFetchPlan]. No I/O occurs — the plan is pure metadata.
+    ///
+    /// @param neededPages needed pages paired with their per-page row masks
+    ///        (filter + maxRows applied)
+    /// @param entries the entries overlapping the column chunk, in offset order, which hold every
+    ///        needed page and the dictionary page
+    /// @param dictionaryStart where the dictionary page starts, or `0` when the plan reads none;
+    ///        see [DictionaryParser#dictionaryPageStart]
+    /// @param firstDataPageOffset absolute offset of the first data page in the
+    ///        OffsetIndex (may differ from `neededPages.get(0)` when filtering)
+    /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
+    ///        the plan reads no dictionary page; `null` otherwise
+    /// @param workingSet where the plan charges the dictionary it parses
+    IndexedFetchPlan(List<FetchPlanBuilder.NeededPage> neededPages, List<FetchSequence.Entry> entries,
+                     long dictionaryStart, long firstDataPageOffset,
+                     ColumnSchema columnSchema, ColumnChunk columnChunk,
+                     HardwoodContextImpl context, int rowGroupIndex, String fileName,
+                     Dictionary preloadedDictionary, WorkingSet.Column workingSet) {
         this.neededPages = neededPages;
-        this.pageGroups = pageGroups;
-        this.chunkHandles = chunkHandles;
-        this.dictionaryHandle = dictionaryHandle;
+        this.entries = entries;
         this.dictionaryStart = dictionaryStart;
         this.firstDataPageOffset = firstDataPageOffset;
         this.columnSchema = columnSchema;
@@ -80,129 +82,23 @@ final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableF
         return neededPages.isEmpty();
     }
 
-    /// Fetches the first chunk on the calling thread, which is the speculative task that
-    /// planned this row group, so waiting for that task covers this read. A failure leaves the
-    /// handle to the demand path, which reads it again and reports the failure to a caller
-    /// that is waiting for it.
-    @Override
-    public void prefetch() {
-        if (!chunkHandles.isEmpty()) {
-            // The dictionary is read first, and its handle prefetches the first page group.
-            ChunkHandle first = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
-            first.prefetch();
-        }
-    }
-
     @Override
     public PageWalk walk() {
         return new IndexedPageWalk();
     }
 
-    @Override
-    public long firstChunkOffset() {
-        return chunkHandles.isEmpty() ? 0 : chunkHandles.get(0).fileOffset();
-    }
-
-    @Override
-    public int firstChunkLength() {
-        return chunkHandles.isEmpty() ? 0 : chunkHandles.get(0).length();
-    }
-
-    /// Coalesce-safe iff the column has a single page group holding
-    /// everything it reads. Multiple groups, or a dictionary page fetched on
-    /// its own, mean a filter dropped pages, leaving intra-column gaps —
-    /// bridging to neighbour columns would pull dropped bytes into the
-    /// shared region and double-fetch the later page groups.
-    @Override
-    public boolean isCoalesceSafe() {
-        return chunkHandles.size() == 1 && dictionaryHandle == null;
-    }
-
-    @Override
-    public long readStart() {
-        if (dictionaryHandle != null) {
-            return dictionaryHandle.fileOffset();
-        }
-        return chunkHandles.isEmpty() ? 0 : chunkHandles.get(0).fileOffset();
-    }
-
-    @Override
-    public long readEnd() {
-        if (chunkHandles.isEmpty()) {
-            return readStart();
-        }
-        ChunkHandle last = chunkHandles.get(chunkHandles.size() - 1);
-        return last.fileOffset() + last.length();
-    }
-
-    /// Replaces the *first* chunk handle with a region-backed view.
-    /// Subsequent page-group handles (when filter / maxRows / large
-    /// chunks produced multiple groups) keep their per-column reads —
-    /// cross-column coalescing only spans the first read of each column.
-    @Override
-    public void attachSharedRegion(SharedRegion region, int rowGroupIndex) {
-        if (chunkHandles.isEmpty()) {
-            return;
-        }
-        ChunkHandle original = chunkHandles.get(0);
-        ChunkHandle replacement = new ChunkHandle(region,
-                original.fileOffset(), original.length(),
-                "rg=" + rowGroupIndex + " col='" + columnSchema.name()
-                        + "' pageGroup=1 (region-backed)");
-        if (chunkHandles.size() > 1) {
-            replacement.setNextChunk(chunkHandles.get(1));
-        }
-        // Rebuild the immutable list with the replacement at index 0.
-        List<ChunkHandle> rebuilt = new java.util.ArrayList<>(chunkHandles.size());
-        rebuilt.add(replacement);
-        for (int i = 1; i < chunkHandles.size(); i++) {
-            rebuilt.add(chunkHandles.get(i));
-        }
-        this.chunkHandles = rebuilt;
-    }
-
-    /// Builds an [IndexedFetchPlan]. No I/O occurs — the plan is pure metadata.
-    ///
-    /// @param neededPages needed pages paired with their per-page row masks
-    ///        (filter + maxRows applied)
-    /// @param pageGroups coalesced page groups within this column
-    /// @param chunkHandles one ChunkHandle per page group, linked for pre-fetch
-    /// @param dictionaryHandle the dictionary page's own handle, linked to the first page
-    ///        group's, or `null` when the first page group holds the dictionary page
-    /// @param dictionaryStart where the dictionary page starts, or `0` when the plan reads none;
-    ///        see [DictionaryParser#dictionaryPageStart]
-    /// @param firstDataPageOffset absolute offset of the first data page in the
-    ///        OffsetIndex (may differ from `neededPages.get(0)` when filtering)
-    /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
-    ///        the page groups leave the dictionary page out; `null` otherwise
-    /// @param workingSet where the plan charges the dictionary it parses
-    static IndexedFetchPlan build(List<FetchPlanBuilder.NeededPage> neededPages,
-                                   List<FetchPlanBuilder.PageGroup> pageGroups,
-                                   List<ChunkHandle> chunkHandles,
-                                   ChunkHandle dictionaryHandle,
-                                   long dictionaryStart,
-                                   long firstDataPageOffset,
-                                   ColumnSchema columnSchema, ColumnChunk columnChunk,
-                                   HardwoodContextImpl context,
-                                   int rowGroupIndex, String fileName,
-                                   Dictionary preloadedDictionary, WorkingSet.Column workingSet) {
-        return new IndexedFetchPlan(neededPages, pageGroups, chunkHandles, dictionaryHandle, dictionaryStart,
-                firstDataPageOffset, columnSchema, columnChunk, context,
-                rowGroupIndex, fileName, preloadedDictionary, workingSet);
-    }
-
     /// Walk that parses the dictionary on first access and yields [PageInfo] objects whose bytes
-    /// it takes from the page groups' [ChunkHandle]s. Its needs are known from the offset index:
-    /// the dictionary's handle, then each page's group.
+    /// it slices from the entries that hold them. Its needs are known from the offset index: the
+    /// dictionary page's entry, then each page's.
     private class IndexedPageWalk implements PageWalk {
 
+        private final EntryCursor cursor = new EntryCursor(entries, null);
         private Dictionary dictionary;
         private boolean dictionaryParsed;
         /// Which page this walk is on, for a failure to name.
         private int currentPage = ExceptionContext.UNKNOWN_PAGE;
         private boolean eventEmitted;
         private int index;
-        private int currentGroupIndex;
         /// What the last advance stopped on: bytes, or a task of the read ending.
         private Need pending;
 
@@ -220,20 +116,23 @@ final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableF
         public PageInfo advance() throws IOException {
             pending = null;
             if (index >= neededPages.size()) {
+                cursor.releaseAll();
                 return null;
             }
 
             if (!dictionaryParsed) {
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
-                ByteBuffer dictRegion = dictionaryRegion();
-                if (pending != null) {
-                    return null;
-                }
-                if (dictRegion == null) {
+                if (preloadedDictionary != null || dictionaryStart == 0) {
                     dictionaryParsed = true;
                     dictionary = preloadedDictionary();
                 }
                 else {
+                    ByteBuffer dictRegion = cursor.read(dictionaryStart,
+                            Math.toIntExact(firstDataPageOffset - dictionaryStart));
+                    if (dictRegion == null) {
+                        pending = cursor.pending();
+                        return null;
+                    }
                     ThriftCompactReader headerReader = new ThriftCompactReader(dictRegion, 0);
                     PageHeader header = PageHeaderReader.read(headerReader);
                     int headerSize = headerReader.getBytesRead();
@@ -262,28 +161,16 @@ final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableF
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 
-            // Advance to next page group if needed
-            while (currentGroupIndex < pageGroups.size() - 1) {
-                FetchPlanBuilder.PageGroup nextGroup = pageGroups.get(currentGroupIndex + 1);
-                if (index >= nextGroup.firstPageIndex()) {
-                    currentGroupIndex++;
-                }
-                else {
-                    break;
-                }
-            }
-
             FetchPlanBuilder.NeededPage needed = neededPages.get(index);
             currentPage = needed.pageIndex();
             PageLocation loc = needed.location();
-            ChunkHandle handle = chunkHandles.get(currentGroupIndex);
-            ByteBuffer groupBytes = handle.poll();
-            if (groupBytes == null) {
-                pending = handle;
+            cursor.releaseBefore(loc.offset());
+            ByteBuffer pageData = cursor.read(loc.offset(), loc.compressedPageSize());
+            if (pageData == null) {
+                pending = cursor.pending();
                 return null;
             }
             index++;
-            ByteBuffer pageData = handle.slice(groupBytes, loc.offset(), loc.compressedPageSize());
             // The header gives the buffers decoding the page takes, which the read admits before
             // it submits the page
             PageHeader header = PageHeaderReader.read(new ThriftCompactReader(pageData, 0));
@@ -297,22 +184,6 @@ final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableF
             return page;
         }
 
-        /// The bytes of the dictionary page and whatever lies between it and the first data page,
-        /// `null` when the plan parses none or they are not present, which then is [#pending].
-        private ByteBuffer dictionaryRegion() throws IOException {
-            if (preloadedDictionary != null || dictionaryStart == 0) {
-                return null;
-            }
-            int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictionaryStart);
-            ChunkHandle holder = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
-            ByteBuffer holderBytes = holder.poll();
-            if (holderBytes == null) {
-                pending = holder;
-                return null;
-            }
-            return holder.slice(holderBytes, dictionaryStart, dictRegionSize);
-        }
-
         /// The records `needed` contributes after its mask, for [PageInfo#records()]: its row span
         /// in the offset index for a column without repetition, whose records are its values; a
         /// column with repetition counts its records from its repetition levels once decoded.
@@ -322,7 +193,6 @@ final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableF
             }
             return needed.mask().isAll() ? needed.rows() : needed.mask().totalRecords();
         }
-
 
         /// The dictionary pruning parsed for the chunk, charged to the column as it takes it; `null`
         /// where pruning parsed none and the chunk has no dictionary page.

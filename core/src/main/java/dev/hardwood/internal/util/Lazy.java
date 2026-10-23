@@ -17,7 +17,7 @@ import java.util.function.Supplier;
 ///
 /// ```java
 /// private static final Lazy<System.Logger> LOG =
-///         Lazy.of(() -> System.getLogger(ChunkHandle.class.getName()));
+///         Lazy.of(() -> System.getLogger(RangeRead.class.getName()));
 ///
 /// LOG.get().log(Level.DEBUG, () -> "...");
 /// ```

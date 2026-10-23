@@ -12,15 +12,17 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
-/// The memory a context's reads hold by choice rather than because a file forces it: the buffers
-/// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admitTask]), and
-/// what a multi-file read fetches for the files it opens past the next one ([FileOpenAhead]).
+/// The memory a context's reads hold by choice rather than because a file forces it, R: the buffers
+/// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admitTask]), the
+/// speculative entries of a read's [FetchSequence], and the footers a multi-file read reads for the
+/// files past the next one ([FileOpenAhead]).
 ///
-/// Such a task, footer read or span starts only while it fits; one that does not fit is not started
-/// and is considered again on a later release. Nothing waits for the buffer, so the reads of a
-/// context can share it: a read's own task and its next file are never charged here, and every
-/// charge is released by a task ending, a file being planned, a span being taken over, or the read
-/// closing, none of which depends on a read whose work was deferred.
+/// Such a task, entry or footer read starts only while it fits; one that does not fit is not started
+/// and is considered again on a later release, whose waiters run in registration order. Nothing
+/// waits for the buffer, so the reads of a context can share it: a read's own task, its demanded
+/// entries, its next unit and its next file are never charged here, and every charge is released by
+/// a task ending, an entry every column has passed, a file being planned, or the read closing, none
+/// of which depends on a read whose work was deferred.
 public final class ReadAheadBuffer {
 
     static final String READ_AHEAD_BYTES_PROPERTY = "hardwood.internal.readAheadBytes";

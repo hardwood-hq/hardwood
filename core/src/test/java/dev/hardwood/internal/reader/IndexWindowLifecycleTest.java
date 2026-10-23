@@ -47,8 +47,20 @@ class IndexWindowLifecycleTest {
     private static final long DEFAULT_BUDGET = 16L * 1024 * 1024;
     private static final long ONE_ROW_GROUP_PER_WINDOW = 1;
 
+    /// With no room for speculative data (F of zero), planning goes no further than the next unit,
+    /// so a read that stops in its first row group fetches the next one's window and no other.
     @Test
     void aReadThatStopsAfterTheFirstRowGroupFetchesNoWindowBeyondThePrefetchedOne() throws Exception {
+        System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
+        try {
+            readFirstRowGroupOnly();
+        }
+        finally {
+            System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
+        }
+    }
+
+    private static void readFirstRowGroupOnly() throws Exception {
         CountDownLatch prefetched = new CountDownLatch(1);
         CountingInputFile file = countingFile(new FailingInputFile(InputFile.of(FIXTURE)) {
             @Override
@@ -92,8 +104,20 @@ class IndexWindowLifecycleTest {
         assertThat(indexReasons(file)).containsExactly("rg=0-11 indexes");
     }
 
+    /// With no room for speculative data (F of zero), so that planning goes no further than the next
+    /// unit and the windows read are those the test names.
     @Test
     void aWindowWhosePrefetchFailedIsFetchedByTheDemandPath() throws Exception {
+        System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
+        try {
+            fetchAWindowWhosePrefetchFailed();
+        }
+        finally {
+            System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
+        }
+    }
+
+    private static void fetchAWindowWhosePrefetchFailed() throws Exception {
         CountDownLatch prefetchFailed = new CountDownLatch(1);
         CountDownLatch nextPrefetched = new CountDownLatch(1);
         AtomicBoolean failed = new AtomicBoolean();

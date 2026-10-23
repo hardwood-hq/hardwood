@@ -28,9 +28,8 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The first chunk of a [SequentialFetchPlan] in the next row group, which that row group's
-/// prefetch fetches (#1324), is read once, whether the prefetch or the read of the row group gets
-/// to it first.
+/// The first entry of the next row group, which the read starts as its next unit (#1324), is read
+/// once, whether the next unit or the read of the row group gets to it first.
 class SequentialNextRowGroupPrefetchTest {
 
     private static final int ROWS_PER_ROW_GROUP = 1_000;
@@ -41,13 +40,13 @@ class SequentialNextRowGroupPrefetchTest {
         CountingInputFile file = read(write("a"));
 
         assertThat(file.reads())
-                .filteredOn(read -> read.reason().contains("rg=1 col='a' seqChunk@0"))
+                .filteredOn(read -> read.reason().equals("rg=1 col=a"))
                 .hasSize(1);
     }
 
     @Test
-    void theNextRowGroupsFirstSharedRegionIsReadOnce() throws Exception {
-        // Two back-to-back columns: their first chunks are coalesced into one shared region.
+    void theNextRowGroupsSharedEntryIsReadOnce() throws Exception {
+        // Two back-to-back columns: their chunks are coalesced into one entry.
         CountingInputFile file = read(write("a", "b"));
 
         assertThat(file.reads())

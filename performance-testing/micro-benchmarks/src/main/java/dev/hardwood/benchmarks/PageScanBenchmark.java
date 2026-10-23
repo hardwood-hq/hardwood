@@ -30,7 +30,8 @@ import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.PageIterator;
+import dev.hardwood.internal.reader.PageInfo;
+import dev.hardwood.internal.reader.PageWalk;
 import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -116,9 +117,11 @@ public class PageScanBenchmark {
             SequentialFetchPlan plan = SequentialFetchPlan.build(
                     inputFile, target.columnSchema, target.columnChunk,
                     context, target.rowGroupIndex, inputFile.name(), 0);
-            PageIterator iter = plan.pages();
-            while (iter.hasNext()) {
-                blackhole.consume(iter.next());
+            // A file in memory: the walk never stops for bytes
+            PageWalk walk = plan.walk();
+            PageInfo page;
+            while ((page = walk.advance()) != null) {
+                blackhole.consume(page);
             }
         }
     }

@@ -80,8 +80,8 @@ naming the variant, rather than a type of its own.
 
 **A method declares `IOException` only if it can reach a file.** Parsing a buffer and decoding
 a page cannot, so no `catch (IOException)` around them can turn a corrupt file into a failed
-read. Advancing a column's pages declares it (`PageWalk.advance`, and `PageIterator`, which is
-not a `java.util.Iterator` for that reason): a walk raises the failure of a read it needs.
+read. Advancing a column's pages declares it (`PageWalk.advance`, which is not a
+`java.util.Iterator` for that reason): a walk raises the failure of a read it needs.
 
 ## Error messages
 

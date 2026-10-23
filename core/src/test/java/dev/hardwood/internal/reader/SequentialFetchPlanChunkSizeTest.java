@@ -30,7 +30,7 @@ class SequentialFetchPlanChunkSizeTest {
 
     private static final int ONE_MIB = 1024 * 1024;
 
-    private static final String CHUNK_SIZE_PROPERTY = SequentialFetchPlan.CHUNK_SIZE_PROPERTY;
+    private static final String MAX_SPAN_PROPERTY = CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY;
 
     @Test
     void smallColumnUnderHeadFetchesEntireChunk() {
@@ -39,7 +39,7 @@ class SequentialFetchPlanChunkSizeTest {
         // full column length so the column is coalesce-safe.
         int columnLength = 2 * ONE_MIB;
         int chunk = SequentialFetchPlan.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 30);
+                columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(columnLength);
     }
@@ -49,7 +49,7 @@ class SequentialFetchPlanChunkSizeTest {
         // Exactly 4 MB sits at the threshold — included.
         int columnLength = 4 * ONE_MIB;
         int chunk = SequentialFetchPlan.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 30);
+                columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(columnLength);
     }
@@ -61,7 +61,7 @@ class SequentialFetchPlanChunkSizeTest {
         // pulling its full bytes for a 30-row preview.
         int columnLength = 5 * ONE_MIB;
         int chunk = SequentialFetchPlan.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 30);
+                columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(ONE_MIB);
     }
@@ -77,7 +77,7 @@ class SequentialFetchPlanChunkSizeTest {
         // is observable.
         int columnLength = 50 * ONE_MIB;
         int chunk = SequentialFetchPlan.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100), 10);
+                columnLength, fakeMetaData(columnLength, 100), 10, 128 * ONE_MIB);
 
         assertThat(chunk)
                 .as("dynamic estimate should land between floor and ceiling")
@@ -91,7 +91,7 @@ class SequentialFetchPlanChunkSizeTest {
         // the configured ceiling.
         int columnLength = 50 * ONE_MIB;
         int chunk = SequentialFetchPlan.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 0);
+                columnLength, fakeMetaData(columnLength, 100_000), 0, 128 * ONE_MIB);
 
         // computeChunkSize returns the ceiling; the build() caller
         // applies `Math.min(columnChunkLength, ceiling)`.
@@ -99,7 +99,7 @@ class SequentialFetchPlanChunkSizeTest {
     }
 
     @Test
-    void chunkSizeOverrideAppliesAfterTheClassIsAlreadyInUse() {
+    void spanOverrideAppliesAfterTheClassIsAlreadyInUse() {
         // Put the class into use before touching the property, so this holds
         // whatever order the methods run in.
         assertThat(chunkSizeWithoutRowLimit())
@@ -110,14 +110,14 @@ class SequentialFetchPlanChunkSizeTest {
         // earlier read path already used this class. Reading the property once
         // at class-initialisation broke exactly that: the override was silently
         // dropped and callers kept the 128 MB default.
-        System.setProperty(CHUNK_SIZE_PROPERTY, String.valueOf(ONE_MIB));
+        System.setProperty(MAX_SPAN_PROPERTY, String.valueOf(ONE_MIB));
         try {
             assertThat(chunkSizeWithoutRowLimit())
                     .as("override set after the class is already in use")
                     .isEqualTo(ONE_MIB);
         }
         finally {
-            System.clearProperty(CHUNK_SIZE_PROPERTY);
+            System.clearProperty(MAX_SPAN_PROPERTY);
         }
 
         assertThat(chunkSizeWithoutRowLimit())
@@ -126,16 +126,15 @@ class SequentialFetchPlanChunkSizeTest {
     }
 
     @Test
-    void unparseableChunkSizeOverrideIsRejected() {
-        System.setProperty(CHUNK_SIZE_PROPERTY, "128k");
+    void unparseableSpanOverrideIsRejected() {
+        System.setProperty(MAX_SPAN_PROPERTY, "128k");
         try {
             assertThatThrownBy(SequentialFetchPlanChunkSizeTest::chunkSizeWithoutRowLimit)
                     .isInstanceOf(IllegalArgumentException.class)
-                    
-                    .hasMessage(CHUNK_SIZE_PROPERTY + " must be a byte count, but was: 128k");
+                    .hasMessage(MAX_SPAN_PROPERTY + " must be a positive byte count, but was: 128k");
         }
         finally {
-            System.clearProperty(CHUNK_SIZE_PROPERTY);
+            System.clearProperty(MAX_SPAN_PROPERTY);
         }
     }
 
@@ -158,9 +157,12 @@ class SequentialFetchPlanChunkSizeTest {
         }
     }
 
+    /// The size of the first part a read without a row limit fetches of a 64 MiB chunk, capped at
+    /// the span limit in effect, as a plan caps it.
     private static int chunkSizeWithoutRowLimit() {
-        return SequentialFetchPlan.computeChunkSize(
-                64 * ONE_MIB, fakeMetaData(64 * ONE_MIB, 1_000_000), 0);
+        int maxSpan = CoalescingPolicy.maxSpanBytes();
+        return Math.min(maxSpan, SequentialFetchPlan.computeChunkSize(
+                64 * ONE_MIB, fakeMetaData(64 * ONE_MIB, 1_000_000), 0, maxSpan));
     }
 
     private static ColumnMetaData fakeMetaData(long totalCompressedSize, long numValues) {

@@ -57,7 +57,7 @@ class FetchStepYieldTest {
 
     @AfterEach
     void clearPieceSize() {
-        System.clearProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY);
+        System.clearProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
     }
 
     @Test
@@ -74,7 +74,7 @@ class FetchStepYieldTest {
     @ParameterizedTest
     @ValueSource(ints = { 300, 4 * 1024 })
     void sequentialColumnReadsRunOnVirtualThreads(int pieceSize) throws Exception {
-        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, String.valueOf(pieceSize));
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(pieceSize));
         ThreadRecordingInputFile file = new ThreadRecordingInputFile(InputFile.of(SEQUENTIAL_FILE));
         long rows = readAllRows(file);
 
@@ -95,7 +95,7 @@ class FetchStepYieldTest {
     /// the pages a walk over the file in memory yields, reading every byte once.
     @Test
     void walkResumesWhereItStoppedAndReadsEachByteOnce() throws Exception {
-        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, "300");
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, "300");
         InputFile local = InputFile.of(DICTIONARY_FILE);
         local.open();
         CountingInputFile remote = new CountingInputFile(InputFile.of(DICTIONARY_FILE));
@@ -107,8 +107,8 @@ class FetchStepYieldTest {
             RowGroup rowGroup = meta.rowGroups().get(0);
 
             List<Integer> expected = new ArrayList<>();
-            PageIterator inMemory = SequentialFetchPlan.build(local, column,
-                    rowGroup.columns().get(column.columnIndex()), context, 0, local.name(), 0).pages();
+            PageWalks.Pages inMemory = PageWalks.of(SequentialFetchPlan.build(local, column,
+                    rowGroup.columns().get(column.columnIndex()), context, 0, local.name(), 0));
             while (inMemory.hasNext()) {
                 expected.add(inMemory.next().pageData().remaining());
             }
@@ -142,40 +142,38 @@ class FetchStepYieldTest {
         }
     }
 
-    /// A walk issues no read: polling a handle of a file not in memory starts nothing, and the read
-    /// the step issues joins a prefetch under way rather than starting another.
+    /// A walk issues no read: polling an entry of a file not in memory starts nothing, and the read
+    /// the step issues joins a speculative read under way rather than starting another.
     @Test
-    void pollIssuesNoReadAndIssueJoinsAPrefetch() throws Exception {
+    void pollIssuesNoReadAndIssueJoinsASpeculativeRead() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(100));
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        ChunkHandle handle = new ChunkHandle(file, 0, 10, "chunk", tasks);
+        FetchSequence.Entry entry = entry(sequence(tasks, false), file, 0);
 
-        assertThat(handle.poll()).isNull();
+        assertThat(entry.poll()).isNull();
         assertThat(file.readCount()).isZero();
 
-        handle.issue();
-        assertThat(handle.poll()).isNotNull();
+        entry.issue();
+        assertThat(entry.poll()).isNotNull();
         assertThat(file.readCount()).isEqualTo(1);
 
-        ChunkHandle prefetched = new ChunkHandle(file, 10, 10, "next", tasks);
-        prefetched.startSpeculative();
+        FetchSequence.Entry speculative = entry(sequence(tasks, true), file, 10);
         assertThat(file.readCount()).isEqualTo(2);
-        RangeRead joined = prefetched.issue();
-        assertThat(prefetched.issue()).isSameAs(joined);
-        assertThat(prefetched.poll()).isNotNull();
-        assertThat(file.readCount()).as("no read issued past the prefetch").isEqualTo(2);
+        RangeRead joined = speculative.issue();
+        assertThat(speculative.issue()).isSameAs(joined);
+        assertThat(speculative.poll()).isNotNull();
+        assertThat(file.readCount()).as("no read issued past the speculative one").isEqualTo(2);
     }
 
-    /// A prefetch that failed leaves the bytes not present, and the read the step issues for them
-    /// reads them again.
+    /// A speculative read that failed leaves the bytes not present, and the read the step issues
+    /// for them reads them again.
     @Test
-    void aFailedPrefetchIsReadAgainOnDemand() throws Exception {
+    void aFailedSpeculativeReadIsReadAgainOnDemand() throws Exception {
         FailingInputFile file = new FailingInputFile(1, new IOException("connection reset"));
-        ChunkHandle handle = new ChunkHandle(file, 0, 10, "chunk", new PrefetchTasks(Runnable::run));
+        FetchSequence.Entry entry = entry(sequence(new PrefetchTasks(Runnable::run), true), file, 0);
 
-        handle.startSpeculative();
-        assertThat(handle.poll()).isNull();
-        assertThat(handle.ensureFetched().remaining()).isEqualTo(10);
+        assertThat(entry.poll()).isNull();
+        assertThat(fetch(entry).remaining()).isEqualTo(10);
         assertThat(file.reads).isEqualTo(2);
     }
 
@@ -183,11 +181,11 @@ class FetchStepYieldTest {
     @Test
     void aFailedDemandReadIsRaised() {
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, new IOException("connection reset"));
-        ChunkHandle handle = new ChunkHandle(file, 20, 10, "chunk", new PrefetchTasks(Runnable::run));
+        FetchSequence.Entry entry = entry(sequence(new PrefetchTasks(Runnable::run), false), file, 20);
 
-        assertThatThrownBy(handle::ensureFetched)
+        assertThatThrownBy(() -> fetch(entry))
                 .isInstanceOf(IOException.class)
-                .hasMessage("[failing] Failed to fetch chunk at offset 20 (length 10)")
+                .hasMessage("[failing] Failed to fetch data at offset 20 (length 10)")
                 .cause()
                 .hasMessage("connection reset");
     }
@@ -197,7 +195,7 @@ class FetchStepYieldTest {
     /// windows, and the rows read match those of the same read over the file in memory.
     @Test
     void maskedSequentialWalkResumesWhereItStopped() throws Exception {
-        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, "300");
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, "300");
         FilterPredicate filter = FilterPredicate.and(
                 FilterPredicate.gtEq("narrow", 400),
                 FilterPredicate.lt("narrow", 1600));
@@ -225,18 +223,17 @@ class FetchStepYieldTest {
         assertColumnReadsOnVirtualThreads(remote);
     }
 
-    /// An `Error` a prefetch fails with is thrown by the close of its tasks, not by the thread
-    /// that started the prefetch, and the step reads the bytes again on demand.
+    /// An `Error` a speculative read fails with is thrown by the close of its tasks, not by the
+    /// thread that started it, and the step reads the bytes again on demand.
     @Test
-    void anErrorOfAPrefetchIsThrownByTheClose() throws Exception {
+    void anErrorOfASpeculativeReadIsThrownByTheClose() throws Exception {
         AssertionError error = new AssertionError("prefetch broke");
         FailingInputFile file = new FailingInputFile(1, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        ChunkHandle handle = new ChunkHandle(file, 0, 10, "chunk", tasks);
+        FetchSequence.Entry entry = entry(sequence(tasks, true), file, 0);
 
-        handle.startSpeculative();
-        assertThat(handle.poll()).isNull();
-        assertThat(handle.ensureFetched().remaining()).isEqualTo(10);
+        assertThat(entry.poll()).isNull();
+        assertThat(fetch(entry).remaining()).isEqualTo(10);
         assertThatThrownBy(tasks::awaitAll).isSameAs(error);
     }
 
@@ -247,9 +244,9 @@ class FetchStepYieldTest {
         AssertionError error = new AssertionError("read broke");
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        ChunkHandle handle = new ChunkHandle(file, 0, 10, "chunk", tasks);
+        FetchSequence.Entry entry = entry(sequence(tasks, false), file, 0);
 
-        assertThatThrownBy(handle::ensureFetched).isSameAs(error);
+        assertThatThrownBy(() -> fetch(entry)).isSameAs(error);
         tasks.awaitAll();
     }
 
@@ -260,9 +257,9 @@ class FetchStepYieldTest {
         AssertionError error = new AssertionError("read broke");
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        ChunkHandle handle = new ChunkHandle(file, 0, 10, "chunk", tasks);
+        FetchSequence.Entry entry = entry(sequence(tasks, false), file, 0);
 
-        handle.issue();
+        entry.issue();
         assertThatThrownBy(tasks::awaitAll).isSameAs(error);
     }
 
@@ -272,15 +269,37 @@ class FetchStepYieldTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aCheckedExceptionThrownUndeclaredCompletesTheRead() {
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, new TimeoutException("too slow"));
-        ChunkHandle handle = new ChunkHandle(file, 0, 10, "chunk",
-                new PrefetchTasks(task -> Thread.ofVirtual().start(task)));
+        FetchSequence.Entry entry = entry(sequence(new PrefetchTasks(task -> Thread.ofVirtual().start(task)), false),
+                file, 0);
 
-        assertThatThrownBy(handle::ensureFetched)
+        assertThatThrownBy(() -> fetch(entry))
                 .isInstanceOf(IOException.class)
-                .hasMessage("[failing] Failed to fetch chunk at offset 0 (length 10)")
+                .hasMessage("[failing] Failed to fetch data at offset 0 (length 10)")
                 .cause()
                 .isInstanceOf(TimeoutException.class)
                 .hasMessage("too slow");
+    }
+
+    /// A sequence of one read's entries on `tasks`, with room for any entry, whose entries start
+    /// speculatively when `speculates`, and on demand only otherwise.
+    private static FetchSequence sequence(PrefetchTasks tasks, boolean speculates) {
+        return new FetchSequence(tasks, new ReadAheadBuffer(1 << 20), 1 << 20, speculates, () -> {});
+    }
+
+    /// The entry of ten bytes at `offset` of `file` in `sequence`, held by one column.
+    private static FetchSequence.Entry entry(FetchSequence sequence, InputFile file, long offset) {
+        return sequence.insert(0, file, List.of(new FetchSequence.Span(offset, 10, "chunk", 1))).getFirst();
+    }
+
+    /// `entry`'s bytes, demanding them and waiting for them as a thread off the pool does.
+    private static ByteBuffer fetch(FetchSequence.Entry entry) throws IOException {
+        while (true) {
+            ByteBuffer bytes = entry.poll();
+            if (bytes != null) {
+                return bytes;
+            }
+            entry.issue().await();
+        }
     }
 
     /// While a column's read is held, its step holds no thread of the pool: the pool's one thread
@@ -405,9 +424,7 @@ class FetchStepYieldTest {
     /// Every read of a column's pages ran on a virtual thread.
     private static void assertColumnReadsOnVirtualThreads(ThreadRecordingInputFile file) {
         List<ThreadRecordingInputFile.Read> columnReads = file.reads.stream()
-                .filter(read -> read.reason().contains("pageGroup")
-                        || read.reason().contains("seqChunk")
-                        || read.reason().contains("region="))
+                .filter(read -> read.reason().contains(" col="))
                 .toList();
         assertThat(columnReads).isNotEmpty();
         assertThat(columnReads).allSatisfy(read -> assertThat(read.virtual())
@@ -480,7 +497,7 @@ class FetchStepYieldTest {
         @Override
         public ByteBuffer readRange(long offset, int length) throws IOException {
             String reason = FetchReason.current();
-            if (reason.contains("pageGroup") || reason.contains("seqChunk") || reason.contains("region=")) {
+            if (reason.contains(" col=")) {
                 entered.countDown();
                 try {
                     release.await();

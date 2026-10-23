@@ -41,7 +41,7 @@ decode pages in windows to read a page larger than that.
 | --- | --- | --- | --- |
 | every `list<…>` count, every `binary` length | collection pre-size, `byte[]` | bytes remaining in the Thrift buffer (#894) | done; #860 test in stage 1 |
 | footer length | footer buffer | file size | done |
-| `ColumnMetaData.total_compressed_size`, `data_page_offset`, `dictionary_page_offset` | chunk fetch | file size (`ChunkHandle`, `SharedRegion`) | done |
+| `ColumnMetaData.total_compressed_size`, `data_page_offset`, `dictionary_page_offset` | chunk fetch | file size, and no overlap with another chunk the read reads (`FetchPlanBuilder`) | done |
 | `ColumnChunk.offset_index_offset/length`, `column_index_offset/length` | index region fetch | file size | done |
 | `ColumnMetaData.bloom_filter_offset/length`, `BloomFilterHeader.numBytes` | bloom filter fetch | file size (message: #1135) | done |
 | `PageHeader.compressed_page_size`, `PageLocation.compressed_page_size` | page slice | the fetched chunk | done |

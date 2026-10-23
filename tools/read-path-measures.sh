@@ -30,7 +30,7 @@ CLASSES=(
   reader/DictionaryParser predicate/RowGroupBloomFilterSource reader/PageFormatProbe
   reader/RowGroupIndexBuffers reader/ReadAheadBuffer reader/ReadExecutor DecodeExecutor
   reader/HardwoodContextImpl reader/SchemaCompatibility reader/RowGroupPruning reader/FetchPlanBuilder
-  reader/ReadTasks
+  reader/ReadTasks reader/FetchSequence reader/EntryCursor
 )
 
 REF=${1:-}

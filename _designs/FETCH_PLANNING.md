@@ -1,6 +1,6 @@
 # Fetch planning
 
-Describes which bytes a read requests from its `InputFile`, and in which requests: the fetch sequence per file and per row group, the gap policy every merge applies, the fetch plans that locate a column's pages, chunk handles and their prefetch, the files a multi-file read opens ahead, cross-column coalescing, per-page row masks and the gate that allows them, row limits on the fetch side, and the I/O budget tests hold reads to.
+Describes which bytes a read requests from its `InputFile`, and in which requests: the order of a read's requests per file and per row group, the gap policy every merge applies, the fetch plans that locate a column's pages in the read's entries, the read's `FetchSequence` and the rules by which its entries start and are released, planning ahead and the files a multi-file read opens ahead, per-page row masks and the gate that allows them, row limits on the fetch side, and the I/O budget tests hold reads to.
 
 Related documents:
 
@@ -13,7 +13,7 @@ Related documents:
 
 ## Fetch sequence
 
-On a local file up to 2 GB a `readRange` is a zero-copy slice of the whole-file mapping, so a fetch is a slice and a prefetch costs nothing; above 2 GB it is one `FileChannel.map` call ([INPUT_FILES.md](INPUT_FILES.md#local-files-memory-mapping)). On a remote file each `readRange` that is not served locally is a round trip. The sequence below is the same for both; only its cost differs.
+On a local file up to 2 GB a `readRange` is a zero-copy slice of the whole-file mapping, so a fetch is a slice and reading ahead costs nothing; above 2 GB it is one `FileChannel.map` call ([INPUT_FILES.md](INPUT_FILES.md#local-files-memory-mapping)). On a remote file each `readRange` that is not served locally is a round trip. The order below is the same for both; only its cost differs.
 
 ### Per file
 
@@ -22,11 +22,11 @@ On a local file up to 2 GB a `readRange` is a zero-copy slice of the whole-file 
 | Footer | `ParquetMetadataReader.read` | Two reads: the trailing length and magic, then the footer body; the leading magic is not read ([FILE_METADATA.md](FILE_METADATA.md#footer-read)). A footer a `MetadataSource` supplies costs the first read only ([FILE_METADATA.md](FILE_METADATA.md#supplied-footers)). On S3 the suffix read `S3InputFile.open` issues serves both when the footer lies inside it ([S3_STORAGE.md](S3_STORAGE.md)) |
 | Row-group pruning on footer statistics | `RowGroupPruning.filterRowGroups` | None. Records, per kept row group, the columns whose bloom filter a leaf would probe |
 
-A file is planned when the first column enters the previous file's last row group, one row group ahead of the read ([READ_PIPELINE.md](READ_PIPELINE.md#incremental-planning)), or earlier when the read opens it ahead ([Opening files ahead](#opening-files-ahead)). Planning reads no bloom filter; which leaves are probed is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
+A file is planned when the read's next unit reaches it, as the first column enters the previous file's last row group ([READ_PIPELINE.md](READ_PIPELINE.md#incremental-planning)), or earlier when planning runs ahead of the read and the file's footer has been read ([Planning ahead](#planning-ahead)). Planning reads no bloom filter; which leaves are probed is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
 ### Per row group
 
-A row group's reads happen when the first decoded column reaches it, or earlier when the previous row group prefetches it ([next row group](#next-row-group-prefetch)). `computeFetchPlans` builds every decoded column's plans for a work item at once; caching and eviction are in [READ_PIPELINE.md](READ_PIPELINE.md#the-work-list). Planning reads metadata only; data pages are read later, on demand. A fast `tail` runs steps 1 to 4 before any column reaches a row group: `canFastSkipAllRowGroups` requests each kept row group's shared metadata on the thread building the reader, row group by row group until one closes the [mask gate](#the-mask-capability-gate).
+A row group's reads happen when the first decoded column reaches it, or earlier when planning runs ahead of the read ([Planning ahead](#planning-ahead)). `computeFetchPlans` builds every decoded column's plans for a work item at once; caching and eviction are in [READ_PIPELINE.md](READ_PIPELINE.md#the-work-list). Planning reads metadata only; it inserts the row group's data entries, which start by the sequence's rules ([Entries](#entries)). A fast `tail` runs steps 1 to 4 before any column reaches a row group: `canFastSkipAllRowGroups` requests each kept row group's shared metadata on the thread building the reader, row group by row group until one closes the [mask gate](#the-mask-capability-gate).
 
 | # | Step | Where | Requests |
 |---|---|---|---|
@@ -35,7 +35,7 @@ A row group's reads happen when the first decoded column reaches it, or earlier 
 | 3 | Page index | `IndexWindow.buffersFor` | The OffsetIndex of every decoded column the row group reads and, under page filtering, the ColumnIndex and OffsetIndex of every filter column. Fetched for the row group's [index window](#page-index-windows) by the first of its members to ask: at most one request per structure when the window's slices lie within the gap limit of each other, none when an earlier member fetched the window, none for a structure no needed chunk has |
 | 4 | Mask-capability probe | `PageFormatProbe` | At most one page-header probe per decoded nested column without an OffsetIndex (re-read with a larger window while the header is truncated, up to a bound that marks the file corrupt), none after the first column that closes the gate, and only when the row group's ranges are not all rows or a fast `tail` asks ([page masking](#page-masking)) |
 | 5 | Fetch plans | `computeFetchPlans` | None |
-| 6 | Data | the plans' `ChunkHandle`s and `SharedRegion`s | As few as the [gap policy](#gap-policy) and the plan shapes allow, issued as the column's fetcher advances |
+| 6 | Data | the row group's entries in the read's `FetchSequence` | Every needed range of every decoded column coalesced at once under the [gap policy](#gap-policy) ([Coalescing a row group](#coalescing-a-row-group)), started by the sequence's rules ([Entries](#entries)) |
 
 A row group its bloom filters drop reads no dictionary. A row group its bloom filters or dictionaries drop gets `FetchPlan.EMPTY` for every column, and steps 4 to 6 read nothing for it; step 3 reads nothing for it unless another member of its window asks. The dictionaries read in step 2 stay in the row group's `SharedRowGroupMetadata` until every column has released the row group, and the fetch plans decode with them, so a dictionary page pruning read is not fetched again. How the bloom filters and dictionaries refine the decisions planning recorded is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
@@ -47,117 +47,121 @@ Planning a file splits its work items into windows of consecutive row groups (`I
 
 Writers commonly lay the page index out by structure, then row group, then column: all ColumnIndexes, then all OffsetIndexes. A window merges the slices of each structure with each other under the [gap policy](#gap-policy), never one structure's with another's: the gap between a window's last ColumnIndex slice and its first OffsetIndex slice holds the ColumnIndexes of every later row group, which the following windows fetch themselves. Writers commonly place the bloom filters of all row groups together too, row group by row group, so a window's filters of one column are strided by the other columns' filters and merge within the gap limit. Consecutive windows therefore fetch disjoint bytes, and a read fetches no byte of the page index twice. Within a structure one column's slices are strided by the columns the read does not use, and a gap wider than the gap limit splits the request.
 
-A window fetches under one lock: the first member to ask fetches, the others wait for it, and a failed fetch stores nothing, so the next member to ask fetches again. The fetches run inside the shared-metadata computation, the bloom filters first and the page index after the dictionaries, which holds no lock, so they take no lock but the window's. A window drops its bytes once every column has released all its members, and every window drops them when the iterator closes. The windows holding bytes therefore run from the one the slowest column is in to the one the fastest column's next-row-group prefetch opened.
+A window fetches under one lock: the first member to ask fetches, the others wait for it, and a failed fetch stores nothing, so the next member to ask fetches again. The fetches run inside the shared-metadata computation, the bloom filters first and the page index after the dictionaries, which holds no lock, so they take no lock but the window's. A window drops its bytes once every column has released all its members, and every window drops them when the iterator closes. The windows holding bytes therefore run from the one the slowest column is in to the one of the last row group planning has planned ahead ([Planning ahead](#planning-ahead)).
 
-**Data coalescing never crosses a row group.** Every merge of data ranges is computed in step 5 from one row group's plans, so the data bytes a row group holds are released with its plans and do not keep a neighbour's alive. Untested. Page-index windows cross row groups and hold their bytes until their last member is released.
+**Data coalescing never crosses a row group.** Every merge of data ranges is computed from one row group's columns, so the entries of a row group are released with it and do not keep a neighbour's alive. Untested. Page-index windows cross row groups and hold their bytes until their last member is released.
 
 Tests: `RowGroupIndexBuffersTest`, `IndexWindowTest`, `IndexWindowIoTest`, `IndexWindowLifecycleTest`, `BloomFilterWindowIoTest`, `DictionaryPushDownIoTest`, `PageFormatProbeTest`, `S3SelectiveReadJfrIT` (s3).
 
 ## Gap policy
 
-Two byte ranges are fetched as one request when the gap between them is at most `CoalescingPolicy.GAP_BYTES` and the merged span at most `CoalescingPolicy.MAX_SPAN_BYTES`. `CoalescingPolicy.merges` holds the rule, and every merge on the data path calls it:
+Two byte ranges are fetched as one request when the gap between them is at most G (`CoalescingPolicy.GAP_BYTES`) and the merged span at most S (`CoalescingPolicy.maxSpanBytes`). `CoalescingPolicy.merges` holds the rule, and every merge calls it:
 
 | Merge | Where |
 |---|---|
-| Needed pages within a column into page groups | `FetchPlanBuilder.coalescePages` |
-| The dictionary page into the first page group | `FetchPlanBuilder.foldsDictionary` |
-| First reads of different columns into a shared region | `FetchPlanBuilder.coalesceAcrossColumns` |
+| A row group's needed data ranges, of every column at once, into its entries | `FetchPlanBuilder.coalesce` |
 | Page-index and bloom-filter slices of one structure | `CoalescedRanges` |
 
 A merge bridges the gap between two needed ranges. It never extends a request before the first needed byte or past the last one. A range longer than the span limit is a request of its own.
 
-The gap limit is the serial break-even of a remote request: the bytes that take as long to transfer as one round trip (latency × bandwidth), so fetching a gap costs no more than issuing a second request. The span limit keeps each `readRange` bounded, which lets prefetch overlap decode and lets a read that stops early leave the rest unfetched. The best gap depends on the storage and on how many requests run in parallel; the rule lives in one class so that a storage-dependent value replaces one constant. The span limit has a tuning override (`hardwood.internal.maxCoalescedBytes`), which is not a public option.
+The gap limit is the serial break-even of a remote request: the bytes that take as long to transfer as one round trip (latency × bandwidth), so fetching a gap costs no more than issuing a second request. The span limit keeps each `readRange` bounded, which lets read-ahead overlap decode and lets a read that stops early leave the rest unfetched. The best gap depends on the storage and on how many requests run in parallel; the rule lives in one class so that a storage-dependent value replaces one constant. The span limit has a tuning override (`hardwood.internal.maxCoalescedBytes`), read once per read, which is not a public option; a value that is not a positive byte count is rejected with `IllegalArgumentException`.
 
 Tests: `CoalescingPolicyTest`, `CoalescedRangesTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`.
 
 ## Fetch plans
 
-A `FetchPlan` is one decoded column's view of one row group: `isEmpty()`, a `PageWalk` over `PageInfo`s in file order, and `prefetch()`. `PageSource` drains whichever plan it is given without knowing its type, and the only choice between the two page-reading plans is whether the column chunk has an OffsetIndex.
+A `FetchPlan` is one decoded column's view of one row group: `isEmpty()` and a `PageWalk` over `PageInfo`s in file order. `PageSource` drains whichever plan it is given without knowing its type, and the only choice between the two page-reading plans is whether the column chunk has an OffsetIndex. A plan reads its bytes from the row group's entries that overlap its column chunk, a list fixed when the row group is planned, through an `EntryCursor` per walk.
 
-**A walk never waits for I/O.** A `PageWalk` is a state machine over the bytes its chunk handles hold: `advance()` returns the next page, or `null` with `pending()` naming the bytes the next page needs while they are not present, or `null` at the end. The walk issues no read. The walk keeps the state it reached, a sequential walk's parsed page header included, so the next `advance()` resumes there, parses nothing twice and reads no byte twice. A column's fetch step drives the walk, issues the read of the pending bytes and yields on it ([THREADING.md](THREADING.md#invariants)); a thread off the pool walks through `PageIterator`, which issues each read and waits for it. Tests: `FetchStepYieldTest`.
+**A walk never waits for I/O.** A `PageWalk` is a state machine over the bytes its entries hold: `advance()` returns the next page, or `null` with `pending()` naming the entry the next page needs while its bytes are not present, or `null` at the end. The walk issues no read. The walk keeps the state it reached, a sequential walk's parsed page header included, so the next `advance()` resumes there, parses nothing twice and reads no byte twice. A column's fetch step drives the walk, demands the pending entry and yields on its read ([THREADING.md](THREADING.md#invariants)). A walk over a file whose bytes are in memory never stops for bytes. Tests: `FetchStepYieldTest`.
+
+**A walk reads forward.** A range that lies in one entry is a zero-copy slice of it. A range that straddles the cut between two entries, a page or a header peek, is copied from every entry holding a byte of it into one direct buffer, once all of them are present, so a copy is never left part done; this happens at most once per cut. No read starts before the header of the page being read, so the walk passes every entry that ends at or before it, and every entry it holds once it ends ([Release](#release-failure-and-close)).
 
 | Plan | Chosen when | Pages | I/O at plan time |
 |---|---|---|---|
 | `IndexedFetchPlan` | the chunk has an OffsetIndex | Listed from the OffsetIndex at plan time, filtered and truncated | None |
-| `SequentialFetchPlan` | the chunk has no OffsetIndex | Discovered by walking page headers from fixed-size chunk handles | None |
+| `SequentialFetchPlan` | the chunk has no OffsetIndex | Discovered by walking page headers through the entries that hold the chunk | None |
 | `FetchPlan.EMPTY` | the filter's row ranges touch no page of an indexed column, the row ranges are empty, or the row group's dictionaries dropped it | None | None |
 | `SkippedColumnFetchPlan` | a filter-only column in a row group statistics proved to match in full ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)) | One boundary marker | None |
 
-**A `PageInfo` carries resolved bytes.** The plan's walk resolves a page's bytes before it hands out the `PageInfo`, so a page task does no I/O. A `PageInfo` holds no chunk handle. Its page slice keeps the fetched buffer alive after the plan is evicted, until the page task and every fill that reads the page's [stored values](VALUE_DECODE.md#page-decode) in place are done with it. Untested.
+**A `PageInfo` carries resolved bytes.** The plan's walk resolves a page's bytes before it hands out the `PageInfo`, so a page task does no I/O. A `PageInfo` holds no entry. Its page slice keeps the entry's buffer alive after every column has passed the entry, until the page task and every fill that reads the page's [stored values](VALUE_DECODE.md#page-decode) in place are done with it. Untested.
 
 **Empty row ranges read no page.** When no row of the row group survives page filtering (a leaf's column index rules out every page, or an `AND` intersects disjoint ranges), its `RowRanges` are empty (`RowRanges.isEmpty()`), and every decoded column gets `FetchPlan.EMPTY`: an indexed column through its needed pages, after reporting its skipped pages, and a column without an OffsetIndex directly, without a sequential walk. The mask gate is not probed, because no plan applies a mask.
 
 ### Indexed plans
 
-`computeFetchPlans` builds an indexed plan in four steps:
+`FetchPlanBuilder.columnPlans` builds an indexed plan in three steps:
 
 1. **Needed pages.** Every page, each with `PageRowMask.ALL`, when the row ranges are all rows. Otherwise the pages whose rows `[firstRowIndex, next page's firstRowIndex)` overlap the matching `RowRanges`, each paired with the mask `RowRanges.maskForPage` gives it. No needed page yields `FetchPlan.EMPTY`, and nothing is fetched for the column. An OffsetIndex listing no page for a chunk with values is rejected at parse ([FILE_METADATA.md](FILE_METADATA.md#page-index)), so `FetchPlan.EMPTY` means only that the filter or the dictionaries left no needed page.
-2. **Row limit.** On an unfiltered read the list is truncated to the pages starting before the row group's share of `maxRows` ([row limits](#row-limits-and-chunk-sizing)).
-3. **Page groups.** The needed pages are merged under the gap policy into page groups, one `ChunkHandle` per group, each chained to the next.
-4. **Dictionary.** The dictionary page spans from the chunk's first page to the first data page the OffsetIndex lists. It joins the first page group when the gap policy would merge the two (`foldsDictionary`); otherwise it gets its own handle, chained to the first group's, so reading the dictionary prefetches the first group. A dictionary pruning has read is not fetched at all.
+2. **Row limit.** On an unfiltered read the list is truncated to the pages starting before the row group's share of `maxRows` ([row limits](#row-limits-and-first-parts)).
+3. **Dictionary.** The dictionary page spans from the chunk's first page to the first data page the OffsetIndex lists, and is a needed range of its own unless pruning has read the dictionary.
 
-An OffsetIndex page location's size includes the page header, so a page's slice is its header and body and the indexed path parses no header to find pages. The chunk's first page is at `dictionary_page_offset`, or at `data_page_offset` when the file declares none, as parquet-mr 1.12 does; a dictionary page declared after the first data page is rejected as malformed (`DictionaryParser.firstPageOffset`).
+The needed pages and the dictionary page are the column's needed ranges, which the row group coalesces with every other column's ([Coalescing a row group](#coalescing-a-row-group)). An OffsetIndex page location's size includes the page header, so a page's slice is its header and body and the indexed path parses no header to find pages. The chunk's first page is at `dictionary_page_offset`, or at `data_page_offset` when the file declares none, as parquet-mr 1.12 does; a dictionary page declared after the first data page is rejected as malformed (`DictionaryParser.firstPageOffset`).
 
-The plan parses its dictionary on the first advance of its walk, from the dictionary handle or the first group, and then slices each page from its group's handle. Its walk needs the dictionary's handle first, then each page's group.
+The plan parses its dictionary on the first advance of its walk, and then takes each page from the entry that holds it.
 
 ### Sequential plans
 
-A sequential plan knows the chunk's byte range, and discovers its pages as its walk reads the headers. The range starts at the chunk's first page, or where a dictionary pruning has read ends. Its bytes come through chunk handles of a fixed size (the [chunk size](#row-limits-and-chunk-sizing)): entering a chunk creates the next chunk's handle and chains it for one-ahead prefetch, and a page that straddles two chunks is assembled from both into one direct buffer (`assembleFromChunks`), once every chunk holding a byte of it is present. A header peek, or the repetition-level read of a masked nested page, can run one or more chunks past the page's start before the page itself is read from there. No read starts before the header of the page being read, so the walk holds every handle from that header onward until it passes them, and no byte of the chunk is fetched twice. Beyond the current handle and its prefetched successor, the handles held are those between the current page's header and where its header peek or repetition-level read ended. A header is read with a bounded peek that grows while the header is truncated, up to a limit that marks the file corrupt. The page under way (its parsed header, its peek, its record count under masks and its inline-statistics decision) is held in fields until the walk moves past it, and the counters below move only then, so a walk that stops on a read in the middle of a page resumes it.
+A sequential plan knows the chunk's byte range, and discovers its pages as its walk reads the headers. The range starts at the chunk's first page, or where a dictionary pruning has read ends. Its needed range is the whole chunk, cut into pieces of at most S, or under a row limit the chunk's first part ([row limits](#row-limits-and-first-parts)); a walk that reads past the first part inserts the rest of the chunk, from where it reads to the next entry or the chunk's end and at most S at a time, as a demanded entry of the sequence (`EntryCursor.Rest`), so a read the limit covers fetches nothing more and a range an entry holds is never requested again. A header is read with a bounded peek that grows while the header is truncated, up to a limit that marks the file corrupt. The page under way (its parsed header, its peek, its record count under masks and its inline-statistics decision) is held in fields until the walk moves past it, and the counters below move only then, so a walk that stops on a read in the middle of a page resumes it.
 
-The walk skips non-data pages. For each data page it decides, in order: drop the page when its row mask is empty, without reading its body; emit a null placeholder when inline page statistics prove no row matches ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#inline-page-statistics)); otherwise emit the page with its mask. It stops when the row limit is covered ([row limits](#row-limits-and-chunk-sizing)) or the cursor has passed the last matching row.
+The walk skips non-data pages. For each data page it decides, in order: drop the page when its row mask is empty, without reading its body; emit a null placeholder when inline page statistics prove no row matches ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#inline-page-statistics)); otherwise emit the page with its mask. It stops when the row limit is covered ([row limits](#row-limits-and-first-parts)) or the cursor has passed the last matching row.
 
 **Counters.** `valuesRead` accumulates every data page's `num_values` and, under masks, `recordsRead` every data page's record count, whether the page was kept, dropped or replaced. A walk that reaches the end of the chunk checks `valuesRead` against the chunk's `num_values` and, under masks, `recordsRead` against the row group's row count, and raises `ParquetReadException` on a mismatch. A walk that stops early at the row limit or past the last matching row skips both checks.
 
-Tests: `PageRangeIoTest`, `DictionaryPrefixFetchTest`, `SequentialFetchPlanEarlyExitTest`, `SequentialChunkCrossingIoTest`, `S3SelectiveReadJfrIT` (s3).
+Tests: `PageRangeIoTest`, `DictionaryPrefixFetchTest`, `SequentialFetchPlanEarlyExitTest`, `SequentialChunkCrossingIoTest`, `EntryCursorTest`, `FetchSequenceReadTest`, `S3SelectiveReadJfrIT` (s3).
 
-## Chunk handles and prefetch
+### Coalescing a row group
 
-A `ChunkHandle` is a handle on one contiguous byte range, read by one `RangeRead` at a time. A walk asks for its bytes with `poll()`, which never waits and issues no read: it returns the bytes, or `null` while they are not present, and the walk then returns the handle as the `ByteNeed` the step issues (`ByteNeed.issue()`), which starts the read or joins the one under way. A thread off the pool issues the read and waits for it (`ensureFetched()`). A file whose bytes are in memory (`MappedInputFile`, `ByteBufferInputFile`) is sliced in place by `poll()`, so a local walk stops only to read again bytes whose prefetch failed; any other file is read on a virtual thread of the context's I/O executor, as a task of the iterator's `PrefetchTasks`, which its close awaits ([READ_PIPELINE.md](READ_PIPELINE.md#cancellation-and-close)). The first `poll()` that finds the bytes present while a next handle is chained starts the next handle's read, whether this handle was read on demand or by a prefetch. The prefetch reads only its own handle and starts none, so prefetch stays one handle ahead of the walk and never cascades down the chain. A handle backed by a `SharedRegion` slices the region instead of reading, and leaves prefetch to the region's own chain (`SharedRegion.nextRegion`), which follows the same rule one region ahead.
+A row group's entries are built from every decoded column's needed ranges at once (`FetchPlanBuilder.coalesce`): page groups, the dictionary page, a column without an OffsetIndex whole or its first part. Sorted by offset, a range joins the entry before it when the gap policy merges it, so one request may serve the pages of several columns across a gap of at most G, and is at most S long unless one range alone is longer. Each entry is held by every column whose chunk extent overlaps it, and its fetch reason names every column whose range it holds ([fetch reasons](#io-budget)).
 
-A failed prefetch leaves its failure in the read, which `poll()` takes as not present, and the step issues the handle's read again as demand ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#crossing-a-thread-boundary)). A demand read that fails raises an `IOException` naming the file, offset and length.
+A row group whose rows are all read and that no Bloom filter or dictionary can drop (`RowGroupIterator.readsAllRows`: no page filtering, no tail or row limit cutting it, its chunks in this file) has its entries built from its chunks' extents in the footer instead (`FetchPlanBuilder.chunkSpans`), cut into pieces of at most S and coalesced the same way, before its page index is read, so they start while it is read. Its plans then locate their pages in those entries; a page that straddles a cut is copied as above.
 
-Each column fetches independently, and no column waits for another's data, except that the first read of coalesce-safe plans may be shared through a `SharedRegion`.
+**Validation.** Before coalescing, each needed range is checked against its column chunk's extent and each chunk's extent against the file's length, and the extents of the columns the read reads must not overlap. A range or extent that fails is a `ParquetReadException` naming the column, so an entry two columns share never fails for a column whose ranges were valid.
 
-Tests: `ChunkPrefetchChainTest`, `FetchStepYieldTest` (issue joining a prefetch, a failed prefetch read again, a failed demand read, a step holding no thread while its read is held, its close and a closed context).
+A file whose bytes are in memory gets entries the sequence does not hold: they are coalesced the same way and sliced from the mapping in place on first use.
 
-### Next-row-group prefetch
+Tests: `CoalescingPolicyTest`, `CrossColumnCoalesceTest`, `FetchSequenceReadTest`.
 
-Which column triggers the next row group's prefetch, on which thread, and when the task plans nothing is in [READ_PIPELINE.md](READ_PIPELINE.md#row-group-and-file-transitions). On the fetch side, `prefetch()` runs on a speculative task and waits there for its read (`ChunkHandle.prefetch`), so the iterator's close, which awaits the task, also awaits that read. `IndexedFetchPlan.prefetch` fetches the dictionary handle when there is one and the first page group otherwise; as a demand read would, that read prefetches the handle chained after it (the first page group, the second one, or the next shared region). `SequentialFetchPlan.prefetch` fetches its first chunk handle, or the shared region that replaced it; the plan keeps that handle, so its walk starts on the prefetched bytes instead of fetching them again. Computing the plans ahead also performs that row group's planning reads (dictionaries, page index, and the mask probe where it is needed).
+## Entries
 
-Tests: `NextRowGroupPrefetchTest`, `SequentialNextRowGroupPrefetchTest`, `DictionaryPushDownIoTest`, `S3SelectiveReadJfrIT` (s3).
+A read's data requests are the entries of its `FetchSequence`, created when its `RowGroupIterator` is: each a range of the file, at a position by work item, then offset. The sequence starts each entry by one of three rules, runs it on a virtual thread of the context's I/O executor (`RangeRead`) and completes it:
+
+| Rule | An entry | F and R |
+|---|---|---|
+| Demand | a fetch step yields on, which starts at once | neither |
+| The next unit | the first, in position order, of the work item after the one the first column has entered, or of a work item a column asks to plan before any column has entered it | neither |
+| Speculative | every other one, in position order, while the read's started speculative bytes stay within F and R has room | both, until released |
+
+F (`hardwood.internal.fetchAheadBytes`, twice S by default) bounds the speculative bytes one read holds; R is the context's read-ahead buffer ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), which every read on the context shares. Nothing waits for R: an entry that does not fit starts on a later release, whose waiters run in registration order, decode tasks and entries alike. An idle read holds what it has started, at most F, until it is released or closed. A read with a row limit starts no speculative entry: it may need no row past its next unit.
+
+A read issues no other data request. A step asks for an entry's bytes without waiting (`Entry.poll`), and the entry is then the `ByteNeed` the step issues (`Entry.issue`), which starts it on demand or joins the read under way. One `ReentrantLock` guards the entries and their positions and is held across no I/O, no waiter and no completion; a walk polls without it.
+
+Tests: `FetchSequenceTest`, `NextRowGroupPrefetchTest`, `FetchSequenceReadTest`.
+
+### Release, failure and close
+
+An entry is released once every column whose chunk extent overlaps it has passed it; a column with no pages in the row group, or one skipped, does not hold it, and one that stops at its limit passes every entry it holds. Its charges then go back to F and R and its bytes are dropped, except as a page slice holds them; that remainder is uncharged and at most S per column. Once every column has released a work item, the sequence forgets its entries and inserts none for it again, so planning that runs late fetches nothing twice.
+
+A speculative or next-unit read that fails is dropped, its charges returned, and started again when demanded, and the demand read's failure goes to the step, as an `IOException` naming the file, offset and length ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#crossing-a-thread-boundary)). An `Error` no step took is thrown once, by the close of the read's `PrefetchTasks`.
+
+The iterator's close closes the sequence, which drops the entries not started and releases every charge, and then waits for the reads in flight without interrupting them ([READ_PIPELINE.md](READ_PIPELINE.md#cancellation-and-close)).
+
+Tests: `FetchSequenceTest`, `EntryCursorTest`, `FetchStepYieldTest` (a failed speculative read read again, a failed demand read, a step holding no thread while its read is held, its close and a closed context).
+
+### Planning ahead
+
+The iterator's planning chain plans work items ahead of the read, once each and in work-list order: it plans row group j only once j-1 has its plans, so a planning that waits for a read holds the chain behind it. It starts once a column first asks for a work item, plans the next unit whatever F holds, and further, for a read of files not all in memory and without a row limit, while the bytes of the entries planned and not started are below F and the work item is at most one past the last with a started entry (`FetchSequence.nextToPlan`), which bounds the dictionaries and index windows held for planned row groups. A read whose files are all in memory plans one row group ahead on a pool and none on a context of zero threads. Planning a work item ahead inserts its entries from its chunks' extents where it reads all rows, reads its index window and Bloom filters, and then computes its plans, which inserts its entries otherwise ([Per row group](#per-row-group)). It runs on a virtual thread of the read's prefetch tasks, or, on a context of zero threads, as a task at the tail of the read's queue, which reads the windows on a virtual thread first. A planning failure ahead is not raised: the read plans the work item again when it reaches it.
+
+When the first column enters row group k, the work item after it becomes the read's next unit: the column resolves it on its own thread, so the last row group of a file resolves the next file, and its entries and windows are read at once on a virtual thread of their own, whatever the chain is planning. The chain then plans it.
+
+Tests: `NextRowGroupPrefetchTest`, `SequentialNextRowGroupPrefetchTest`, `FetchSequenceReadTest`, `IndexWindowLifecycleTest`, `DictionaryPushDownIoTest`, `S3SelectiveReadJfrIT` (s3).
 
 ### Opening files ahead
 
-A multi-file read of files not all in memory, without a row limit, opens up to `FileOpenAhead.maxFilesAhead` files after the one it has reached: the last file whose planning the read itself asked for, through a column's walk or through the next-row-group prefetch, which plans the next file. Opening a file reads its footer and, once the file is planned, starts the first data request of its first row group statistics keep: a span. The read plans the files whose footers have been read in file order, as they arrive (`RowGroupIterator.planFilesAhead`), so a run of files statistics prune is planned while the footers of the files after it are in flight, and a file the read reaches has its footer and first data already fetched. On a context of zero threads that planning is an item at the tail of the read's queue ([THREADING.md](THREADING.md#a-context-of-zero-threads)), so its spans start once the thread driving the read reaches it, while the footers are read ahead on virtual threads in any case; the spans of a context of zero threads are untested.
-
-A span covers the column chunks of every column the row group's plans read, from the first chunk on, merged under the [gap policy](#gap-policy) as far as the gap and span limits allow, computed from the footer alone. The row group's Bloom filters, dictionaries and page index are read when the read reaches it, as for any row group. A read of a range the span covers, a chunk handle's or a shared region's, takes its bytes from the span (`FetchedAhead`, `RangeRead.start`) and issues no request. A page-filtered row group gets no span, since its plans may read less than whole chunks and a span would fetch the pages they drop.
-
-The next file, the one after the file reached, is opened as a read opens it in any case: its footer read and its next-row-group prefetch are not charged. Every file further ahead is opened only while what it fetches fits the context's read-ahead buffer ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)): its footer read is charged a fixed reservation, the size of the tail an S3 open fetches, until the file is planned, and its span its length until a read takes from it, when the span's bytes become the row group's, held by its plans as every read of the row group is. A footer or span that does not fit starts on a later release of the buffer if its file is still past the next one; nothing waits for the buffer. The count bounds the requests in flight for files the read has not reached, which the buffer does not: a file statistics prune holds no charge once planned. A span no read took is dropped, and its charge released, once every column has released its row group or the read closes. A planning failure stops the opening, since no file after the failed one is planned.
+A multi-file read of files not all in memory, without a row limit, reads the footers of up to `FileOpenAhead.maxFilesAhead` files after the one it has reached: the last file whose planning the read itself asked for. The next file's footer is not charged; every footer further ahead is read only while it fits R, charged a fixed reservation, the size of the tail an S3 open fetches, until its file is planned. A footer that does not fit starts on a later release of R if its file is still past the next one; nothing waits for R. The count bounds the requests in flight for files the read has not reached, which R does not: a file statistics prune holds no charge once planned. A footer that arrives runs the planning chain, which plans files only as far as their footers have been read, so it waits for no footer it plans ahead; a run of files statistics prune is planned while the footers of the files after it are in flight. A planning failure stops the opening, since no file after the failed one is planned.
 
 A read with a row limit opens only the next file: it may need no further file, and under a filter it learns only downstream that its limit is reached. `FileOpenAhead.maxFilesAhead` is an internal property (`hardwood.internal.maxFilesAhead`), read for each read; at `1` a read opens only the next file.
 
 Tests: `FileOpenAheadTest`, `MultiFilePlanningTest`.
-
-## Cross-column coalescing
-
-After building a row group's plans, `coalesceAcrossColumns` merges the first reads of several columns into `SharedRegion`s, one `readRange` each:
-
-1. Collect the first read (`firstChunkOffset`, `firstChunkLength`) of every plan that is coalesce-safe, and the whole byte extent of every plan that is not.
-2. Sort the first reads by offset and walk them greedily: a read joins the current region when the gap policy merges it and the gap it bridges holds no byte of an unsafe plan's extent; otherwise it starts a new region.
-3. Regions of one column are dropped; when none holds two, nothing changes. Each remaining region is chained to the next for one-ahead prefetch, and each member plan's first handle is replaced by one backed by the region.
-
-**The gate.** A plan is coalesce-safe only when its first chunk is everything it will read (`CoalescableFirstChunk.isCoalesceSafe`):
-
-| Plan | Safe when |
-|---|---|
-| `IndexedFetchPlan` | exactly one page group and no separate dictionary handle |
-| `SequentialFetchPlan` | its chunk size equals the chunk's length |
-
-A plan with more than one read has gaps of its own (pages a filter dropped, a dictionary fetched apart, chunks a row limit left for later). Bridging such a plan into a region would fetch its dropped bytes, and its later handles would then fetch bytes the region already holds. The rule that a region never bridges an unsafe plan's extent prevents the same double fetch from the other side.
-
-A region lives as long as any handle attached to it: evicting the row group's plans drops the handles, and the buffer goes with them. No reference count is kept.
-
-Tests: `CrossColumnCoalesceTest`.
 
 ## Page masking
 
@@ -181,24 +185,24 @@ With masks active, the sequential walk counts each data page's records (from `nu
 
 Tests: `MisalignedPageBoundariesTest`, `MisalignedPageBoundariesNoIndexTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `SequentialFetchPlanEarlyExitTest`, `EmptyPageRangesUnindexedColumnTest`, `PageFormatProbeTest`, `MaskProbeIoTest`.
 
-## Row limits and chunk sizing
+## Row limits and first parts
 
 `maxRows` narrows fetches only on an unfiltered read. With a filter, `head(n)` counts matching rows, which a scan may find anywhere, so every surviving page stays fetchable and the cap is enforced downstream ([READ_PIPELINE.md](READ_PIPELINE.md#row-limits)). Without one, each row group gets the remainder of the budget after the rows planned before it (`perRgMaxRows`, plus the skip residue on the first work item), since page row indices restart at 0 in every row group; earlier row groups are covered whole and only the last one is cut.
 
 | Plan | Effect of the row group's share `m` |
 |---|---|
-| `IndexedFetchPlan` | Keeps the needed pages whose first row is below `m`; the page groups cover only those |
-| `SequentialFetchPlan` | Sizes its chunks from `m`. A flat column stops yielding pages once their values cover `m` rows; a nested column, whose record count is inside the compressed page, yields its pages until the column's placement reaches the cap |
+| `IndexedFetchPlan` | Keeps the needed pages whose first row is below `m`; its needed ranges cover only those |
+| `SequentialFetchPlan` | Needs the chunk's first part, sized from `m`, and inserts the rest as its walk reaches it. A flat column stops yielding pages once their values cover `m` rows; a nested column, whose record count is inside the compressed page, yields its pages until the column's placement reaches the cap |
 
 A page is the smallest fetch and decode unit: a page that straddles the limit is fetched and decoded whole.
 
-**Sequential chunk size** (`SequentialFetchPlan.computeChunkSize`, capped at the chunk's length):
+**First part of a chunk without an OffsetIndex** (`SequentialFetchPlan.computeChunkSize`, capped at the chunk's length):
 
-| Case | Chunk size |
+| Case | First part |
 |---|---|
-| No row limit | a default ceiling large enough that most chunks are one fetch; overridable through `hardwood.internal.sequentialChunkSize`, whose unparseable value is rejected with `IllegalArgumentException` rather than ignored |
-| Row limit, small chunk (below a fixed threshold) | the whole chunk, which keeps the plan coalesce-safe |
-| Row limit, larger chunk | average compressed bytes per value × `m` × a safety factor, between a fixed floor and the ceiling |
+| No row limit | the whole chunk, in pieces of at most S |
+| Row limit, small chunk (below a fixed threshold) | the whole chunk |
+| Row limit, larger chunk | average compressed bytes per value × `m` × a safety factor, between a fixed floor and S |
 
 The estimate trades a possible second request for not fetching a large chunk whose head is all the read needs.
 
@@ -210,20 +214,16 @@ Tests: `SequentialFetchPlanChunkSizeTest`, `S3SelectiveReadJfrIT` (s3).
 
 `CountingInputFile` wraps an `InputFile` and records every `readRange` with its offset, length and the `FetchReason` in effect. A change to the fetch path asserts its effect against the budget.
 
-**Fetch reasons.** `FetchReason` is a per-thread tag each read runs under, for S3 fetch logs and for the budget. Chunk and plan prefetches carry the caller's tag across the thread hand-off (`FetchReason.bind`); the next-row-group task sets its own `prefetch rg=N`. A chunk handle composes its purpose under the tag in effect as `outer | purpose`, while planning reads replace the tag with their own.
+**Fetch reasons.** `FetchReason` is a per-thread tag each read runs under, for S3 fetch logs and for the budget. A data entry's read runs under the entry's own reason, whichever thread starts it; planning reads set their own, and the reads a planning ahead starts run under `prefetch rg=N`, which the window's reads replace with theirs.
 
 | Reason | Read |
 |---|---|
 | `footer-info`, `footer-body` | footer |
 | `rg=N pruning`, `rg=A-B pruning` | the bloom filters of a window over row groups `A` to `B`; a row group's dictionaries, and a bloom filter its window did not fetch |
 | `rg=N indexes`, `rg=A-B indexes` | a page-index window over row groups `A` to `B`, and the mask probe of row group `N` |
-| `rg=N col=C pageGroup=g/G`, `rg=N col=C dictionary` | indexed plan handles |
-| `rg=N col='name' seqChunk@K` | sequential plan handles |
-| `rg=N region=A..B` | a shared region whose first and last members in file order are plans `A` and `B` |
-| `prefetch rg=N` | outer tag of the next-row-group prefetch |
-| `open-ahead file=F \| rg=N span` | the span of row group `N` of file `F`, opened ahead |
+| `rg=N col=a col=b` | a data entry of row group `N`: one `col=` per column whose ranges it holds, by name, in file order |
 
-Tests: `CrossColumnCoalesceTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`.
+Tests: `CrossColumnCoalesceTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`, `FetchSequenceReadTest`.
 
 ## Boundaries
 

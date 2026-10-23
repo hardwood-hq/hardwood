@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.tuple;
 class CoalescedRangesTest {
 
     private static final int GAP = CoalescingPolicy.GAP_BYTES;
-    private static final long MAX = CoalescingPolicy.MAX_SPAN_BYTES;
+    private static final long MAX = CoalescingPolicy.maxSpanBytes();
 
     @Test
     void rangesWithinTheGapAreFetchedInOneRequest() throws IOException {

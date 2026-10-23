@@ -171,8 +171,21 @@ class ParentCloseTest {
         }
     }
 
+    /// Building a row reader takes its first batch, so the gate is armed afterwards; with no room
+    /// for speculative data (F of zero), the read has fetched no further than its next unit by then,
+    /// and the consumer's read of a later row group is the one held.
     @Test
     void closeStopsAnUnclosedRowReaderBeforeClosingTheFile() throws Exception {
+        System.setProperty("hardwood.internal.fetchAheadBytes", "0");
+        try {
+            closeAnUnclosedRowReaderWhileARowGroupIsHeld();
+        }
+        finally {
+            System.clearProperty("hardwood.internal.fetchAheadBytes");
+        }
+    }
+
+    private void closeAnUnclosedRowReaderWhileARowGroupIsHeld() throws Exception {
         GatedInputFile file = new GatedInputFile(fixedWidthFile());
         ParquetFileReader reader = ParquetFileReader.open(file);
         RowReader rows = reader.rowReader();

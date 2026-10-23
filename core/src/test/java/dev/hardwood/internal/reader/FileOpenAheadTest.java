@@ -100,100 +100,99 @@ class FileOpenAheadTest {
         }
     }
 
-    /// On a context of zero threads the held page-index read holds the read's only thread, which
-    /// plans the files ahead too.
-    @Tag("pool")
+    /// While the read waits for its first file's data, the files after it are planned ahead and each
+    /// is read in one data request.
     @Test
     void aFileOpenedAheadIsReadInOneDataRequest() throws Exception {
-        ReadGate firstIndex = new ReadGate(reason -> reason.endsWith(" indexes"));
-        List<CountingInputFile> files = smallFilesHoldingTheFirstIndex(firstIndex);
+        ReadGate firstData = new ReadGate(reason -> reason.startsWith("rg=0 col="));
+        List<CountingInputFile> files = smallFilesHoldingTheFirstData(firstData);
         try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
              ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
-            assertThat(readWhileOpeningAhead(reader, files, firstIndex)).isEqualTo(8L * ROWS);
+            assertThat(readWhileOpeningAhead(reader, files, firstData)).isEqualTo(8L * ROWS);
             assertThat(context.readAheadBuffer().held()).as("read-ahead held once read").isZero();
         }
-        // File 1 is the next file, read as before; every later one was opened ahead
-        for (int i = 2; i < files.size(); i++) {
+        // Every file after the first was planned ahead while the first was held, its data in one
+        // entry
+        for (int i = 1; i < files.size(); i++) {
             assertThat(dataReads(files.get(i)))
                     .as("data reads of file %d", i)
                     .singleElement()
-                    .satisfies(read -> assertThat(read.reason()).startsWith("open-ahead "));
+                    .satisfies(read -> assertThat(read.reason()).isEqualTo("rg=0 col=id col=v"));
         }
     }
 
     /// A second read through the same reader finds every footer loaded by the first, and opens the
-    /// files ahead all the same. On a context of zero threads the held page-index read holds the
-    /// read's only thread.
-    @Tag("pool")
+    /// files ahead all the same.
     @Test
     void aSecondReadOfTheSameFilesOpensThemAhead() throws Exception {
-        ReadGate firstIndex = new ReadGate(reason -> reason.endsWith(" indexes"));
-        List<CountingInputFile> files = smallFilesHoldingTheFirstIndex(firstIndex);
+        ReadGate firstData = new ReadGate(reason -> reason.startsWith("rg=0 col="));
+        List<CountingInputFile> files = smallFilesHoldingTheFirstData(firstData);
         try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
              ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
-            assertThat(readWhileOpeningAhead(reader, files, firstIndex)).isEqualTo(8L * ROWS);
-            assertThat(readWhileOpeningAhead(reader, files, firstIndex)).isEqualTo(8L * ROWS);
+            assertThat(readWhileOpeningAhead(reader, files, firstData)).isEqualTo(8L * ROWS);
+            assertThat(readWhileOpeningAhead(reader, files, firstData)).isEqualTo(8L * ROWS);
             assertThat(context.readAheadBuffer().held()).as("read-ahead held once read").isZero();
         }
-        for (int i = 2; i < files.size(); i++) {
+        for (int i = 1; i < files.size(); i++) {
             assertThat(dataReads(files.get(i)))
                     .as("data reads of file %d", i)
                     .hasSize(2)
-                    .allSatisfy(read -> assertThat(read.reason()).startsWith("open-ahead "));
+                    .allSatisfy(read -> assertThat(read.reason()).isEqualTo("rg=0 col=id col=v"));
         }
     }
 
-    /// Eight small files, the first of which holds its page-index read at `firstIndex`.
-    private static List<CountingInputFile> smallFilesHoldingTheFirstIndex(ReadGate firstIndex) throws IOException {
+    /// Eight small files, the first of which holds its data read at `firstData`.
+    private static List<CountingInputFile> smallFilesHoldingTheFirstData(ReadGate firstData) throws IOException {
         List<CountingInputFile> files = new ArrayList<>();
         for (int i = 0; i < 8; i++) {
             InputFile bytes = InputFile.of(ByteBuffer.wrap(writeFile(i)));
-            files.add(new CountingInputFile(i == 0 ? new GatedFile(bytes, firstIndex) : new RemoteLike(bytes)));
+            files.add(new CountingInputFile(i == 0 ? new GatedFile(bytes, firstData) : new RemoteLike(bytes)));
         }
         return files;
     }
 
-    /// Reads every column of `files` with the read held at its first row group, whose page index
-    /// `firstIndex` holds, until every file past the next one has had its data fetched ahead.
+    /// Reads every column of `files` with the read held at its first row group, whose data
+    /// `firstData` holds, until every file after the first has had its data fetched ahead.
     ///
     /// @return the rows read
     private static long readWhileOpeningAhead(ParquetFileReader reader, List<CountingInputFile> files,
-                                              ReadGate firstIndex) throws Exception {
+                                              ReadGate firstData) throws Exception {
         int openedAhead = (int) files.stream().mapToLong(file -> openAheadReads(file)).sum();
-        firstIndex.arm();
+        firstData.arm();
         Consumer consumer = Consumer.start(() -> reader.buildColumnReaders(ColumnProjection.all()).build());
         for (int i = 0; i < 100 && files.stream().mapToLong(file -> openAheadReads(file)).sum()
-                < openedAhead + files.size() - 2; i++) {
+                < openedAhead + files.size() - 1; i++) {
             Thread.sleep(50);
         }
-        firstIndex.release();
+        firstData.release();
         return consumer.rows();
     }
 
     private static long openAheadReads(CountingInputFile file) {
-        return file.reads().stream().filter(read -> read.reason().startsWith("open-ahead ")).count();
+        return dataReads(file).size();
     }
 
-    /// On a context of zero threads the held page-index read holds the read's only thread, which
-    /// plans the files ahead too.
-    @Tag("pool")
+    /// While the read waits for its first file's data, what it fetches past the next file stays
+    /// within the context's read-ahead buffer.
     @Test
     void whatIsFetchedAheadStaysWithinTheReadAheadBuffer() throws Exception {
-        // Files of about 1.6 MB; room for about two of them ahead of the next file
+        // Files of about 1.6 MB; room for about two of them
         long limit = 4_000_000;
         System.setProperty(READ_AHEAD_BYTES, Long.toString(limit));
-        // Holding every page-index read holds the read's own planning of each row group, so the
-        // read stops at its first row group as a read whose consumer stops does, and whatever is
-        // fetched past it is fetched by opening files ahead
-        ReadGate indexes = new ReadGate(reason -> reason.endsWith(" indexes"));
+        // Holding the first file's data holds the read at its first row group, as a read whose
+        // consumer stops is held, and whatever is fetched past the next file is fetched ahead of
+        // it, charged to the read-ahead buffer
+        ReadGate firstData = new ReadGate(reason -> reason.startsWith("rg=0 col="));
         List<CountingInputFile> files = new ArrayList<>();
         for (int i = 0; i < 30; i++) {
-            files.add(new CountingInputFile(new GatedFile(InputFile.of(ByteBuffer.wrap(writeLargeFile(i))), indexes)));
+            InputFile bytes = InputFile.of(ByteBuffer.wrap(writeLargeFile(i)));
+            files.add(new CountingInputFile(i == 0 ? new GatedFile(bytes, firstData) : new RemoteLike(bytes)));
         }
+        // Armed before the read starts, which reads the first file's data at once
+        firstData.arm();
         try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
              ParquetFileReader reader = ParquetFileReader.openAll(files, context);
              ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build()) {
-            indexes.arm();
             Consumer consumer = Consumer.start(() -> cols);
             awaitQuiescence(files);
 
@@ -201,12 +200,11 @@ class FileOpenAheadTest {
             for (int i = 2; i < files.size(); i++) {
                 fetchedPastNext += files.get(i).bytesRead();
             }
-            assertThat(files.get(2).reads()).as("reads of file 2")
-                    .anySatisfy(read -> assertThat(read.reason()).startsWith("open-ahead "));
+            assertThat(dataReads(files.get(2))).as("data reads of file 2").isNotEmpty();
             assertThat(fetchedPastNext).as("bytes fetched past the next file").isLessThanOrEqualTo(limit);
             assertThat(dataReads(files.getLast())).as("data reads of the last file").isEmpty();
 
-            indexes.release();
+            firstData.release();
             assertThat(consumer.rows()).isEqualTo(30L * 100_000);
             assertThat(context.readAheadBuffer().held()).as("read-ahead held once read").isZero();
         }

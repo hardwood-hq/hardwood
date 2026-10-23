@@ -21,7 +21,8 @@ import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.PageIterator;
+import dev.hardwood.internal.reader.PageWalks;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
@@ -173,8 +174,8 @@ class InlineNullPageDropTest {
              InputFile inputFile = InputFile.of(file)) {
             inputFile.open();
             SequentialFetchPlan plan = SequentialFetchPlan.build(inputFile, columnSchema, columnChunk,
-                    context, 0, inputFile.name(), 0L, dropLeaves);
-            PageIterator pages = plan.pages();
+                    context, 0, inputFile.name(), 0L, dropLeaves, RowRanges.ALL, 0L);
+            PageWalks.Pages pages = PageWalks.of(plan);
             while (pages.hasNext()) {
                 if (!pages.next().isNullPlaceholder()) {
                     pagesRead++;

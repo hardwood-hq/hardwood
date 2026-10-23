@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -35,31 +34,18 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// [FetchPlan] for columns without an OffsetIndex.
 ///
-/// Pages are discovered lazily by scanning headers from fixed-size
-/// [ChunkHandle]s. The column chunk is split into uniform chunks.
-/// A single `ChunkHandle` serves both header scanning and page data
-/// resolution.
+/// Pages are discovered lazily by scanning headers in the bytes of the row group's
+/// [FetchSequence] entries that hold the column chunk: the whole chunk, cut into requests of at
+/// most S, or, under a row limit, a first part sized by [#computeChunkSize]. A page or a header
+/// peek that straddles the cut between two entries is copied from both into one buffer. Under a
+/// row limit, a walk that reads past the first part inserts the rest of the chunk as a demanded
+/// entry ([EntryCursor.Rest]), so a read the limit covers fetches nothing more.
 ///
-/// Each time a new chunk is entered, the next chunk's `ChunkHandle` is
-/// created and chained for one-ahead pre-fetch. When `ensureFetched()`
-/// completes on chunk N, it triggers an async fetch of chunk N+1. When
-/// the fetcher later advances to N+1 (already fetched), a new handle
-/// for N+2 is created and chained.
-///
-/// Chunk size controls the `readRange()` granularity:
-///
-/// - Without `maxRows`: `min(chunkLength, 128 MB)` — full column chunk
-///   in one fetch for most columns.
-/// - With `maxRows`: the full column chunk when it is at most 4 MiB;
-///   otherwise sized from the column's average compressed
-///   bytes-per-value (`totalCompressedSize / numValues`) multiplied by
-///   `maxRows` and a safety factor, floored at 1 MiB and capped at the
-///   default ceiling.
-///
-/// The first chunk's handle belongs to the plan rather than to a walk, so
-/// [#prefetch] fetches the bytes a [#pages] walk then reads.
-public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableFirstChunk {
-
+/// The first part's size, under a row limit: the full column chunk when it is at most 4 MiB;
+/// otherwise sized from the column's average compressed bytes-per-value
+/// (`totalCompressedSize / numValues`) multiplied by `maxRows` and a safety factor, floored at
+/// 1 MiB and capped at S.
+public final class SequentialFetchPlan implements FetchPlan {
 
     /// Minimum chunk size when `maxRows` is active (1 MB).
     /// Sized to roughly one Parquet data page so header scanning does not
@@ -72,52 +58,16 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
 
     /// Upper bound on `columnChunkLength` for fetching the entire column
     /// in one go even under `maxRows` truncation (4 MB). Below this
-    /// threshold the over-fetch is small (≤ 4× the `head(N)` floor) and
-    /// the column becomes coalesce-safe — all of its bytes can join a
-    /// cross-column [SharedRegion]. Above it, the per-column truncation
-    /// stays in effect: a 50 MB column under `head(30)` should not pull
-    /// down 50 MB. See #382.
+    /// threshold the over-fetch is small (≤ 4× the `head(N)` floor). Above it,
+    /// the per-column truncation stays in effect: a 50 MB column under `head(30)`
+    /// should not pull down 50 MB. See #382.
     private static final int FETCH_WHOLE_COLUMN_THRESHOLD = 4 * MAX_ROWS_CHUNK_FLOOR;
 
     /// A record count not known yet: the page's repetition levels are still to be read.
     private static final int UNKNOWN = -1;
 
-    static final String CHUNK_SIZE_PROPERTY = "hardwood.internal.sequentialChunkSize";
-
-    /// Chunk size when reading without a row limit. Also used as the ceiling
-    /// for the `maxRows` dynamic estimate.
-    private static final int DEFAULT_CHUNK_SIZE = 128 * 1024 * 1024;
-
-    /// The chunk size in bytes, [#DEFAULT_CHUNK_SIZE] unless overridden through
-    /// [#CHUNK_SIZE_PROPERTY].
-    ///
-    /// Read on each call rather than cached in a static final, so that the override
-    /// holds whenever it is set. Caching it would tie the value to whichever code
-    /// path happened to initialise this class first, which is not something a caller
-    /// setting the property can see or control. [#computeChunkSize] runs once per
-    /// column chunk of a plan, so the lookup is nowhere near a hot path.
-    ///
-    /// An unparseable value is rejected rather than quietly replaced by the default:
-    /// a chunk size that does not take effect produces a plausible read with the
-    /// wrong fetch behaviour, which is exactly what makes it hard to notice.
-    private static int defaultChunkSize() {
-        String override = System.getProperty(CHUNK_SIZE_PROPERTY);
-        if (override == null) {
-            return DEFAULT_CHUNK_SIZE;
-        }
-        try {
-            return Integer.parseInt(override);
-        }
-        catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    CHUNK_SIZE_PROPERTY + " must be a byte count, but was: " + override, e);
-        }
-    }
-
-    private final InputFile inputFile;
     private final long columnChunkOffset;
     private final int columnChunkLength;
-    private final int chunkSize;
     private final ColumnSchema columnSchema;
     private final ColumnChunk columnChunk;
     private final HardwoodContextImpl context;
@@ -138,28 +88,25 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
     private final WorkingSet.Column workingSet;
-    /// Where the one-ahead pre-fetch of each chunk runs.
-    private final PrefetchTasks prefetchTasks;
-    /// The [ChunkHandle] of the first chunk, shared by [#prefetch] and every [#pages] walk so
-    /// that a prefetched chunk is the one the walk reads. Region-backed when cross-column
-    /// coalescing (#374) attached a [SharedRegion], created standalone on first use otherwise.
-    /// Later chunks (with `chunkSize` < `columnChunkLength`) are created per walk.
-    private ChunkHandle firstChunkHandle;
-    /// Page headers the most recent [#pages] walk scanned, final once that walk runs to
-    /// exhaustion and zero for one abandoned before it. Counts every header the iterator read,
-    /// including those of pages a row mask or the inline statistics then kept it from emitting,
-    /// which is what separates a walk that stopped scanning early from one that read on and
-    /// discarded what it found.
+    /// The entries overlapping the chunk, in offset order.
+    private final List<FetchSequence.Entry> entries;
+    /// Inserts the rest of the chunk a row limit left out, or `null` when the entries hold it all.
+    private final EntryCursor.Rest rest;
+    /// Page headers the most recent walk scanned, final once that walk runs to exhaustion and zero
+    /// for one abandoned before it. Counts every header the walk read, including those of pages a
+    /// row mask or the inline statistics then kept it from emitting, which is what separates a walk
+    /// that stopped scanning early from one that read on and discarded what it found.
     private int scannedPages;
 
-    private SequentialFetchPlan(InputFile inputFile, long columnChunkOffset, int columnChunkLength,
-                                 int chunkSize, ColumnSchema columnSchema,
-                                 ColumnChunk columnChunk, HardwoodContextImpl context,
-                                 long maxRows, int rowGroupIndex, String fileName,
-                                 List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
-                                 RowRanges matchingRows, long rowGroupRowCount,
-                                 Dictionary preloadedDictionary, PrefetchTasks prefetchTasks,
-                                 WorkingSet.Column workingSet) {
+    /// A plan over `entries`, which hold the column chunk from `columnChunkOffset` on, or its first
+    /// part with `rest` inserting what follows.
+    SequentialFetchPlan(long columnChunkOffset, int columnChunkLength, ColumnSchema columnSchema,
+                        ColumnChunk columnChunk, HardwoodContextImpl context,
+                        long maxRows, int rowGroupIndex, String fileName,
+                        List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
+                        RowRanges matchingRows, long rowGroupRowCount,
+                        Dictionary preloadedDictionary, WorkingSet.Column workingSet,
+                        List<FetchSequence.Entry> entries, EntryCursor.Rest rest) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -168,23 +115,22 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
                     "rowGroupRowCount must be positive when matchingRows is non-trivial, got "
                             + rowGroupRowCount);
         }
-        this.inputFile = inputFile;
         this.columnChunkOffset = columnChunkOffset;
         this.columnChunkLength = columnChunkLength;
-        this.chunkSize = chunkSize;
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
         this.context = context;
         this.maxRows = maxRows;
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
-        this.dropLeaves = dropLeaves;
+        this.dropLeaves = dropLeaves == null ? List.of() : dropLeaves;
         this.dropReadability = dropReadability;
         this.matchingRows = matchingRows;
         this.rowGroupRowCount = rowGroupRowCount;
         this.preloadedDictionary = preloadedDictionary;
-        this.prefetchTasks = prefetchTasks;
         this.workingSet = workingSet;
+        this.entries = entries;
+        this.rest = rest;
     }
 
     @Override
@@ -197,84 +143,14 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
         return new SequentialPageWalk();
     }
 
-    /// Fetches the first chunk on the calling thread, which is the speculative task that
-    /// planned this row group, into the handle a [#walk] reads; waiting for that task covers
-    /// this read. A failure leaves the handle to the demand path, which reads it again and
-    /// reports the failure to a caller that is waiting for it.
-    @Override
-    public void prefetch() {
-        firstChunk().prefetch();
-    }
-
-    /// Returns the handle of the first chunk, creating a standalone one if none is attached.
-    /// Synchronized because [#prefetch] runs on a speculative task while a column's fetcher
-    /// may already be walking the plan.
-    private synchronized ChunkHandle firstChunk() {
-        if (firstChunkHandle == null) {
-            firstChunkHandle = new ChunkHandle(inputFile, columnChunkOffset, chunkSize, chunkPurpose(0),
-                    prefetchTasks);
-        }
-        return firstChunkHandle;
-    }
-
-    private String chunkPurpose(int relPos) {
-        return "rg=" + rowGroupIndex + " col='" + columnSchema.name()
-                + "' seqChunk@" + relPos;
-    }
-
-    /// Returns how many page headers the most recent [#pages] walk scanned. See [#scannedPages].
+    /// Returns how many page headers the most recent walk scanned. See [#scannedPages].
     public int scannedPages() {
         return scannedPages;
     }
 
-    /// Returns the byte offset of this plan's first ChunkHandle (the
-    /// chunk it would create on the first `advanceChunk(0)`). Used by
-    /// cross-column coalescing in [RowGroupIterator] to decide which
-    /// plans' first reads to merge into a shared region.
-    @Override
-    public long firstChunkOffset() {
-        return columnChunkOffset;
-    }
-
-    /// Returns the byte length of this plan's first ChunkHandle.
-    @Override
-    public int firstChunkLength() {
-        return chunkSize;
-    }
-
-    /// Coalesce-safe iff the first chunk covers the whole column chunk.
-    /// Smaller chunk sizes are produced by `head(N)` truncation; in that
-    /// case bridging to a neighbour column would pull in bytes the
-    /// per-column iterator would otherwise have read separately,
-    /// producing a double-fetch.
-    @Override
-    public boolean isCoalesceSafe() {
-        return chunkSize == columnChunkLength;
-    }
-
-    @Override
-    public long readStart() {
-        return columnChunkOffset;
-    }
-
-    @Override
-    public long readEnd() {
-        return columnChunkOffset + columnChunkLength;
-    }
-
-    /// Replaces the iterator's first ChunkHandle with a region-backed
-    /// view, so the first read slices the shared buffer rather than
-    /// issuing a per-column `readRange`.
-    @Override
-    public synchronized void attachSharedRegion(SharedRegion region, int rowGroupIndex) {
-        String purpose = "rg=" + rowGroupIndex + " col='" + columnSchema.name()
-                + "' seqChunk@0 (region-backed)";
-        this.firstChunkHandle = new ChunkHandle(region,
-                columnChunkOffset, chunkSize, purpose);
-    }
-
-    /// Builds a [SequentialFetchPlan] with no predicate-driven page skipping
-    /// and no per-page row mask. Equivalent to passing [RowRanges#ALL].
+    /// Builds a plan for one column chunk outside a read, with no predicate-driven page skipping
+    /// and no per-page row mask; its entries start on demand only ([FetchSequence#demandOnly]). On a
+    /// file whose bytes are in memory, its walk never stops for bytes.
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows) {
@@ -282,61 +158,40 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
                 maxRows, List.of(), RowRanges.ALL, 0L);
     }
 
-    /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
-    /// [Statistics] prove they cannot match any of the given AND-necessary leaf
-    /// predicates, with no per-page row mask.
-    public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
-                                      ColumnChunk columnChunk, HardwoodContextImpl context,
-                                      int rowGroupIndex, String fileName, long maxRows,
-                                      List<ResolvedPredicate> dropLeaves) {
-        return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, dropLeaves, RowRanges.ALL, 0L);
-    }
-
-    /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
-    /// [Statistics] prove they cannot match any of the given AND-necessary leaf
-    /// predicates. Dropped pages are replaced with [PageInfo#nullPlaceholder]
-    /// entries carrying the same `numValues`, so row alignment across sibling
-    /// columns is preserved and the record-level filter drops the rows via SQL
-    /// three-valued logic.
-    ///
-    /// Page skipping is only applied when the column is optional
-    /// (`maxDefinitionLevel > 0`) — required columns cannot produce nulls, so
-    /// every page is decoded normally.
-    ///
-    /// `matchingRows` carries the row-group-wide row ranges this column should
-    /// keep. [RowRanges#ALL] disables per-page masking (today's behaviour); a
-    /// non-trivial range pairs with `rowGroupRowCount` so the iterator can
-    /// compute the final page's `pageLastRow`.
+    /// As [#build(InputFile, ColumnSchema, ColumnChunk, HardwoodContextImpl, int, String, long)],
+    /// dropping data pages whose inline [Statistics] prove they cannot match any of the given
+    /// AND-necessary leaf predicates, and keeping only the records within `matchingRows`. Dropped pages are replaced with
+    /// [PageInfo#nullPlaceholder] entries carrying the same `numValues`, so row alignment across
+    /// sibling columns is preserved and the record-level filter drops the rows via SQL three-valued
+    /// logic. Page skipping is only applied when the column is optional (`maxDefinitionLevel > 0`).
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
                                       List<ResolvedPredicate> dropLeaves,
                                       RowRanges matchingRows, long rowGroupRowCount) {
-        return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount, null, 0,
-                new PrefetchTasks(context.ioExecutor()), WorkingSet.standalone(columnSchema));
+        int maxSpan = CoalescingPolicy.maxSpanBytes();
+        long start = columnChunk.chunkStartOffset();
+        int length = chunkLength(columnChunk, rowGroupIndex, fileName, columnSchema);
+        int firstPart = Math.min(length, computeChunkSize(length, columnChunk.metaData(), maxRows, maxSpan));
+        String reason = "rg=" + rowGroupIndex + " col=" + columnSchema.name();
+        FetchSequence sequence = FetchSequence.demandOnly(context);
+        List<FetchSequence.Span> spans = new ArrayList<>();
+        for (long piece = start; piece < start + firstPart; piece += maxSpan) {
+            spans.add(new FetchSequence.Span(piece, Math.toIntExact(Math.min(maxSpan, start + firstPart - piece)),
+                    reason, 1));
+        }
+        List<FetchSequence.Entry> entries = sequence.insert(0, inputFile, spans);
+        EntryCursor.Rest rest = firstPart == length ? null
+                : FetchPlanBuilder.rest(sequence, 0, inputFile, start + length, reason, maxSpan);
+        return new SequentialFetchPlan(start, length, columnSchema, columnChunk, context, maxRows,
+                rowGroupIndex, fileName, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount,
+                null, WorkingSet.standalone(columnSchema), entries, rest);
     }
 
-    /// @param dropReadability the readability `dropLeaves` decide inline page statistics under
-    ///        (see [PageDropPredicates#canDropPage])
-    /// @param preloadedDictionary the column's dictionary if pruning has read it, which the plan
-    ///        decodes with instead of fetching and parsing the dictionary page again; `null`
-    ///        otherwise
-    /// @param preloadedDictionaryEnd where the preloaded dictionary's page ends, which is where
-    ///        the plan starts reading; ignored without a preloaded dictionary
-    /// @param prefetchTasks where the one-ahead pre-fetch of each chunk runs; the overloads
-    ///        without it give the plan tasks of its own that nothing waits for
-    /// @param workingSet where the plan charges the dictionary it parses; the overloads without
-    ///        it give the plan a working set of its own
-    public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
-                                      ColumnChunk columnChunk, HardwoodContextImpl context,
-                                      int rowGroupIndex, String fileName, long maxRows,
-                                      List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
-                                      RowRanges matchingRows, long rowGroupRowCount,
-                                      Dictionary preloadedDictionary, long preloadedDictionaryEnd,
-                                      PrefetchTasks prefetchTasks, WorkingSet.Column workingSet) {
-        long columnChunkOffset = columnChunk.chunkStartOffset();
+    /// The length of `columnChunk`.
+    ///
+    /// @throws UnsupportedOperationException if the chunk is longer than this reader can address
+    static int chunkLength(ColumnChunk columnChunk, int rowGroupIndex, String fileName, ColumnSchema columnSchema) {
         long totalCompressedSize = columnChunk.metaData().totalCompressedSize();
         if (totalCompressedSize > Integer.MAX_VALUE) {
             // The file is correct; this reader will not fetch a region it cannot
@@ -346,42 +201,25 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
                     + "Column chunk too large (" + totalCompressedSize
                     + " bytes); the reader supports column chunks of up to " + Integer.MAX_VALUE + " bytes");
         }
-        int columnChunkLength = Math.toIntExact(totalCompressedSize);
-        if (preloadedDictionary != null) {
-            // The data pages start where the dictionary page ends.
-            Objects.checkFromToIndex(columnChunkOffset, preloadedDictionaryEnd, columnChunkOffset + columnChunkLength);
-            columnChunkLength -= Math.toIntExact(preloadedDictionaryEnd - columnChunkOffset);
-            columnChunkOffset = preloadedDictionaryEnd;
-        }
-        int chunkSize = Math.min(columnChunkLength,
-                computeChunkSize(columnChunkLength, columnChunk.metaData(), maxRows));
-
-        return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
-                columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
-                dropLeaves == null ? List.of() : dropLeaves, dropReadability,
-                matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount,
-                preloadedDictionary, prefetchTasks, workingSet);
+        return Math.toIntExact(totalCompressedSize);
     }
 
-    /// Computes the per-fetch chunk size.
+    /// Computes the size of the first part of a column chunk a read under `maxRows` fetches.
     ///
-    /// Without `maxRows`, returns the default ceiling so most column chunks
-    /// are fetched in a single request. With `maxRows`, estimates the bytes
-    /// required from the column's average compressed bytes-per-value:
+    /// Without `maxRows`, returns `maxSpan` (S), so the whole chunk is needed. With `maxRows`,
+    /// estimates the bytes required from the column's average compressed bytes-per-value:
     ///
     /// ```
     /// chunkSize = maxRows * (totalCompressedSize / numValues) * safetyFactor
     /// ```
     ///
     /// The estimate is floored at [MAX_ROWS_CHUNK_FLOOR] to avoid sub-page
-    /// round-trips during header scanning and capped at [#defaultChunkSize].
+    /// round-trips during header scanning and capped at `maxSpan`.
     /// Columns whose entire chunk is below [FETCH_WHOLE_COLUMN_THRESHOLD]
-    /// short-circuit to the full chunk length so they remain coalesce-safe
-    /// (#382).
-    static int computeChunkSize(int columnChunkLength, ColumnMetaData metaData, long maxRows) {
-        int defaultChunkSize = defaultChunkSize();
+    /// short-circuit to the full chunk length (#382).
+    static int computeChunkSize(int columnChunkLength, ColumnMetaData metaData, long maxRows, int maxSpan) {
         if (maxRows <= 0) {
-            return defaultChunkSize;
+            return Math.max(columnChunkLength, maxSpan);
         }
         if (columnChunkLength <= FETCH_WHOLE_COLUMN_THRESHOLD) {
             return columnChunkLength;
@@ -396,32 +234,30 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
         long effectiveRows = Math.min(maxRows, numValues);
         long estimate = Math.ceilDiv(
                 effectiveRows * totalCompressedSize * MAX_ROWS_CHUNK_SAFETY_FACTOR, numValues);
-        // Cap the floor at the ceiling so an override of the default chunk size
-        // below the floor does not produce an invalid clamp range.
-        long floor = Math.min(MAX_ROWS_CHUNK_FLOOR, defaultChunkSize);
-        long bounded = Math.clamp(estimate, floor, defaultChunkSize);
+        // Cap the floor at the ceiling so a span limit below the floor does not produce an
+        // invalid clamp range.
+        long floor = Math.min(MAX_ROWS_CHUNK_FLOOR, maxSpan);
+        long bounded = Math.clamp(estimate, floor, maxSpan);
         return Math.toIntExact(bounded);
     }
 
-    /// Discovers pages by scanning headers from [ChunkHandle]s, as a state machine over the
-    /// bytes present.
-    ///
-    /// A single `ChunkHandle` serves both header scanning and page data
-    /// resolution. As scanning advances past the current chunk, a new
-    /// handle is created and chained for one-ahead pre-fetch.
+    /// Discovers pages by scanning headers in the entries that hold the chunk, as a state machine
+    /// over the bytes present.
     ///
     /// The page under way is held in fields: its parsed header, the peek it was parsed from, its
-    /// record count once its repetition levels are read, and its inline-statistics decision. A
-    /// chunk the page needs that is not present stops [#advance] with the page's state in place, and
+    /// record count once its repetition levels are read, and its inline-statistics decision. An
+    /// entry the page needs that is not present stops [#advance] with the page's state in place, and
     /// the next call resumes it, so no header is parsed twice and no byte is read twice. The
     /// counters of the walk ([#position], [#valuesRead], [#recordsRead], [#pageCount]) move only
-    /// when a page is done with.
+    /// when a page is done with. No read starts before the header of the page under way, so the
+    /// walk passes the entries that end at or before it.
     private class SequentialPageWalk implements PageWalk {
 
         private final ColumnMetaData metaData = columnChunk.metaData();
         /// Where this chunk is, for a page whose statistics turn out to be unusable to name.
         private final LogContext logContext =
                 new LogContext(fileName, rowGroupIndex).withColumn(columnSchema.fieldPath());
+        private final EntryCursor cursor = new EntryCursor(entries, rest);
         private Dictionary dictionary;
         private boolean initialized;
         private boolean exhausted;
@@ -453,22 +289,6 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
         private boolean dropDecided;
         private boolean dropByStats;
 
-        // Current chunk handle state
-        private ChunkHandle currentHandle;
-        private int handleStart; // relative position where current handle starts
-        private int handleEnd;   // relative position where current handle ends (exclusive)
-        /// The handles the walk has moved past that hold bytes at or after the current page
-        /// header, oldest first. A header peek or a repetition-level read can run several
-        /// handles past the page's start before the page itself is read from there, and a page
-        /// spanning several handles is copied once all are present, so every handle from the
-        /// page's start onward stays readable from memory rather than being fetched again. A
-        /// handle ending at or before a page header is released when that header is read, since
-        /// no later read starts before it.
-        private final List<ChunkHandle> keptHandles = new ArrayList<>();
-        /// Where the page header being read starts: no read starts before it, so a handle
-        /// ending at or before it is not kept.
-        private int pageStart;
-
         @Override
         public int currentPage() {
             return currentPage;
@@ -495,6 +315,7 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
         private PageInfo end() {
             exhausted = true;
             scannedPages = pageCount;
+            cursor.releaseAll();
             emitEvent();
             return null;
         }
@@ -518,14 +339,11 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
             int remaining = columnChunkLength - position;
             if (peekSize == 0) {
                 peekSize = Math.min(PageFormatProbe.INITIAL_PEEK_SIZE, remaining);
-                // No later read starts before this header, so a handle ending at or before it is
-                // never read again.
-                pageStart = position;
-                int relPos = position;
-                keptHandles.removeIf(handle -> relativeEnd(handle) <= relPos);
+                // No later read starts before this header
+                cursor.releaseBefore(columnChunkOffset + position);
             }
             while (true) {
-                ByteBuffer headerBuf = readBytes(position, peekSize, true);
+                ByteBuffer headerBuf = readBytes(position, peekSize);
                 if (headerBuf == null) {
                     return false;
                 }
@@ -552,109 +370,20 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
             }
         }
 
-        /// Reads bytes at the given relative position, advancing through chunks as needed: a
-        /// zero-copy slice when the range fits in one chunk, assembled from each chunk when it
-        /// spans several. Every handle the read leaves that holds bytes of the current page is
-        /// kept when `keepLeftHandles` is set, since the page is read from its start afterwards;
-        /// a whole page's read is its last, so it releases them.
+        /// The `length` bytes at chunk-relative `relPos`: a slice of the entry holding them, or a
+        /// copy when they straddle a cut.
         ///
-        /// @return the bytes, or `null` when a chunk holding them is not present, which is then
+        /// @return the bytes, or `null` when an entry holding them is not present, which is then
         ///         [#pending]
-        private ByteBuffer readBytes(int relPos, int length, boolean keepLeftHandles) throws IOException {
-            ChunkHandle kept = keptHandleAt(relPos);
-            if (kept != null) {
-                if (relPos + length <= relativeEnd(kept)) {
-                    return slice(kept, relPos, length);
-                }
-                return assembleFromChunks(relPos, length, keepLeftHandles);
-            }
-            if (currentHandle == null || relPos < handleStart || relPos >= handleEnd) {
-                advanceChunk(relPos, keepLeftHandles);
-            }
-            if (relPos + length <= handleEnd) {
-                return slice(currentHandle, relPos, length);
-            }
-            return assembleFromChunks(relPos, length, keepLeftHandles);
-        }
-
-        /// A slice of `handle`'s bytes, or `null` when they are not present.
-        private ByteBuffer slice(ChunkHandle handle, int relPos, int length) throws IOException {
-            ByteBuffer bytes = handle.poll();
+        private ByteBuffer readBytes(int relPos, int length) throws IOException {
+            ByteBuffer bytes = cursor.read(columnChunkOffset + relPos, length);
             if (bytes == null) {
-                pending = handle;
-                return null;
+                pending = cursor.pending();
             }
-            return handle.slice(bytes, columnChunkOffset + relPos, length);
+            return bytes;
         }
 
-        /// Returns the kept handle holding `relPos`, or `null` when none does.
-        private ChunkHandle keptHandleAt(int relPos) {
-            for (ChunkHandle handle : keptHandles) {
-                if (relPos >= relativeStart(handle) && relPos < relativeEnd(handle)) {
-                    return handle;
-                }
-            }
-            return null;
-        }
-
-        private int relativeStart(ChunkHandle handle) {
-            return Math.toIntExact(handle.fileOffset() - columnChunkOffset);
-        }
-
-        private int relativeEnd(ChunkHandle handle) {
-            return relativeStart(handle) + handle.length();
-        }
-
-        /// Advances to the next chunk. If the current handle has a
-        /// pre-fetched next handle that covers `relPos`, it is reused.
-        /// Otherwise a new handle is created at `relPos`. The next
-        /// chunk is always chained for one-ahead pre-fetch. The handle left
-        /// goes into [#keptHandles] when `keepLeftHandle` is set and it holds
-        /// bytes after [#pageStart], and is released otherwise.
-        private void advanceChunk(int relPos, boolean keepLeftHandle) {
-            ChunkHandle previous = currentHandle;
-            ChunkHandle prefetched = previous != null ? previous.nextChunk() : null;
-            if (previous != null) {
-                // The plan holds on to the first handle; unlinked, it does not keep every
-                // later chunk of the column reachable through the chain.
-                previous.setNextChunk(null);
-                if (keepLeftHandle && relativeEnd(previous) > pageStart) {
-                    keptHandles.add(previous);
-                }
-            }
-
-            if (currentHandle == null && relPos == 0) {
-                // First advance: the plan's shared first handle, which a prefetch may
-                // already have fetched, or which slices a cross-column region.
-                currentHandle = firstChunk();
-                handleStart = 0;
-            }
-            else if (prefetched != null && relPos >= handleEnd
-                    && relPos < handleEnd + prefetched.length()) {
-                currentHandle = prefetched;
-                handleStart = handleEnd;
-            }
-            else {
-                int remaining = columnChunkLength - relPos;
-                int handleLength = Math.min(remaining, chunkSize);
-                currentHandle = new ChunkHandle(inputFile, columnChunkOffset + relPos, handleLength,
-                        chunkPurpose(relPos), prefetchTasks);
-                handleStart = relPos;
-            }
-            handleEnd = handleStart + currentHandle.length();
-
-            // Chain the next chunk for one-ahead pre-fetch
-            int nextStart = handleEnd;
-            if (nextStart < columnChunkLength) {
-                int nextRemaining = columnChunkLength - nextStart;
-                int nextLength = Math.min(nextRemaining, chunkSize);
-                currentHandle.setNextChunk(
-                        new ChunkHandle(inputFile, columnChunkOffset + nextStart, nextLength,
-                                chunkPurpose(nextStart), prefetchTasks));
-            }
-        }
-
-        /// Scans past the dictionary page (if present) on first access.
+    /// Scans past the dictionary page (if present) on first access.
         ///
         /// @return whether the walk is past it; `false` when bytes it needs are pending
         private boolean initialize() throws IOException {
@@ -684,7 +413,7 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
                 // when it is admitted
                 PageHeader dictionaryHeader = header;
                 WorkingSet.DictionaryParse parse = workingSet.parseDictionary(header.uncompressedPageSize(), () -> {
-                    ByteBuffer dictPage = readBytes(position, dictTotalSize, false);
+                    ByteBuffer dictPage = readBytes(position, dictTotalSize);
                     if (dictPage == null) {
                         return null;
                     }
@@ -820,7 +549,7 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
                             columnSchema.maxRepetitionLevel() == 0 ? placeholderRecords : PageInfo.UNKNOWN_RECORDS);
                 }
                 else {
-                    ByteBuffer pageData = readBytes(position, totalPageSize, false);
+                    ByteBuffer pageData = readBytes(position, totalPageSize);
                     if (pageData == null) {
                         return null;
                     }
@@ -896,62 +625,12 @@ public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.Co
                 // No repetition levels means every value is a top-level record.
                 return numValues;
             }
-            ByteBuffer repLevels = readBytes(position + headerSize, repLevelLength, true);
+            ByteBuffer repLevels = readBytes(position + headerSize, repLevelLength);
             if (repLevels == null) {
                 return UNKNOWN;
             }
             return PageRecordCounter.countTopLevelRecords(repLevels, 0, repLevelLength,
                     numValues, columnSchema.maxRepetitionLevel());
-        }
-
-        /// Reads bytes that span multiple chunks by advancing through handles and concatenating,
-        /// once every handle holding a byte of the range is present: a range copied in part
-        /// would leave the handles it passed released, and its next attempt would read them
-        /// again. Uses a direct buffer so the result is usable from FFM-based decompressors
-        /// (e.g. libdeflate), which require native MemorySegments.
-        ///
-        /// @return the bytes, or `null` when a chunk holding them is not present, which is then
-        ///         [#pending]
-        private ByteBuffer assembleFromChunks(int relPos, int length, boolean keepLeftHandles) throws IOException {
-            int end = relPos + length;
-            for (int pos = relPos; pos < end; ) {
-                ChunkHandle handle = handleAt(pos, true);
-                if (handle.poll() == null) {
-                    pending = handle;
-                    return null;
-                }
-                pos = relativeEnd(handle);
-            }
-            ByteBuffer combined = ByteBuffer.allocateDirect(length);
-            for (int pos = relPos; pos < end; ) {
-                ChunkHandle handle = handleAt(pos, false);
-                int toRead = Math.min(relativeEnd(handle), end) - pos;
-                combined.put(handle.slice(handle.poll(), columnChunkOffset + pos, toRead));
-                pos += toRead;
-            }
-            combined.flip();
-            if (!keepLeftHandles) {
-                // The range is the page's last read: no later read of it starts before its end.
-                keptHandles.removeIf(handle -> relativeEnd(handle) <= end);
-            }
-            return combined;
-        }
-
-        /// The handle holding `relPos`: a kept one, or the current one, which the walk advances
-        /// to `relPos` when `advance` is set, keeping the one it leaves.
-        private ChunkHandle handleAt(int relPos, boolean advance) {
-            ChunkHandle kept = keptHandleAt(relPos);
-            if (kept != null) {
-                return kept;
-            }
-            if (relPos < handleStart || relPos >= handleEnd) {
-                if (!advance) {
-                    throw new IllegalStateException("No chunk holds position " + relPos + " of column '"
-                            + columnSchema.name() + "'");
-                }
-                advanceChunk(relPos, true);
-            }
-            return currentHandle;
         }
 
         private long getValueCount(PageHeader header) {

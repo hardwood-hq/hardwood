@@ -7,36 +7,30 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
-import dev.hardwood.InputFile;
-import dev.hardwood.internal.FetchReason;
-
 /// Opens the files of a multi-file read ahead of the file the read has reached: up to
-/// [#maxFilesAhead] files after it have their footers read, and a file planned ahead has the first
-/// data request of its first row group started, a span its [FetchedAhead] holds ([#span]).
+/// [#maxFilesAhead] files after it have their footers read, so the read's planning chain can plan
+/// them ahead of it and their data enters the read's [FetchSequence].
 ///
 /// The file after the one reached is the next file, which a read opens ahead in any case: its
-/// footer read and its first data request are not charged. Every file further ahead is opened only
-/// while what it fetches fits the context's [ReadAheadBuffer]: its footer read is charged a fixed
-/// [#FOOTER_RESERVATION] from its start until the file is planned, which parses the footer, and its
-/// span its length from its start until a read takes from it. A footer or span that does not fit
-/// is started on a later release of the buffer, if its file is then still ahead. Nothing waits for
-/// the buffer.
+/// footer read is not charged. Every file further ahead is opened only while its footer fits the
+/// context's [ReadAheadBuffer]: its footer read is charged a fixed [#FOOTER_RESERVATION] from its
+/// start until the file is planned, which parses the footer. A footer that does not fit is started
+/// on a later release of the buffer, if its file is then still ahead. Nothing waits for the
+/// buffer.
 ///
 /// Opening stops for good once planning a file has failed, since no file after it is planned
 /// ([#stop]), which releases what the files past the failed one hold.
 ///
 /// [#pump] does the opening and runs on whichever thread changes what may be opened: the read
-/// reaching a file ([#reached]), a file being planned ([#planned]), a span planned ([#span]) and a
-/// release of the buffer, which may be another read's. It never waits: a footer read and a span
-/// run on the read's [PrefetchTasks], and a call while a thread pumps, that thread included, makes
+/// reaching a file ([#reached]), a file being planned ([#planned]) and a release of the buffer,
+/// which may be another read's. It never waits: a footer read runs on a virtual thread
+/// ([FileMetadataCache#prefetch]), and a call while a thread pumps, that thread included, makes
 /// it pump again. Nothing is released to the buffer under the pump's lock: a release runs the
 /// waiters of every read on the context, on the releasing thread, and a waiter that took the lock
 /// of a read whose own release waits for this one's would deadlock the two.
@@ -58,9 +52,7 @@ final class FileOpenAhead {
     private final int fileCount;
     private final FileMetadataCache files;
     private final ReadAheadBuffer buffer;
-    private final FetchedAhead fetchedAhead;
-    private final PrefetchTasks tasks;
-    /// Plans the files whose footers have been read, in order, on the read's planning carrier.
+    /// Tells the read's planning chain a footer has been read.
     private final Runnable planAhead;
 
     private final ReentrantLock pumpLock = new ReentrantLock();
@@ -75,33 +67,22 @@ final class FileOpenAhead {
     private int nextToOpen;
     /// Guarded by `pumpLock`: the reservation of each charged footer read, until its file is planned.
     private final Map<Integer, Long> footerCharges = new HashMap<>();
-    /// Guarded by `pumpLock`: the spans planned and not yet started, in file order.
-    private final Deque<PlannedSpan> plannedSpans = new ArrayDeque<>();
     /// Guarded by `pumpLock`: what the pump under way releases to the buffer once it has unlocked.
     private long toRelease;
     /// Set once the read plans no further file.
     private volatile boolean stopped;
     private volatile boolean closed;
 
-    /// The first data request of a file planned ahead: `length` bytes at `offset` of `inputFile`,
-    /// covering the row group of work item `workItemIndex`.
-    record PlannedSpan(int fileIndex, InputFile inputFile, int workItemIndex, int rowGroupIndex,
-                       long offset, int length) {
-    }
-
-    /// @param planAhead runs the planning of the files whose footers have been read; called on the
+    /// @param planAhead tells the read's planning chain a footer has been read; called on the
     ///        thread that completes a footer read, so it hands the planning to a carrier of its own
     FileOpenAhead(int maxFilesAhead, int fileCount, FileMetadataCache files, ReadAheadBuffer buffer,
-                  PrefetchTasks tasks, Runnable planAhead) {
+                  Runnable planAhead) {
         this.maxFilesAhead = maxFilesAhead;
         this.fileCount = fileCount;
         this.files = files;
         this.buffer = buffer;
-        this.tasks = tasks;
         this.planAhead = planAhead;
-        this.fetchedAhead = new FetchedAhead(buffer);
         this.nextToOpen = 1;
-        tasks.serveFrom(fetchedAhead);
     }
 
     /// The files a read opens ahead: [#DEFAULT_MAX_FILES_AHEAD] unless overridden through
@@ -125,11 +106,6 @@ final class FileOpenAhead {
                     MAX_FILES_AHEAD_PROPERTY + " must be a positive count, but was: " + override);
         }
         return count;
-    }
-
-    /// The last file the planning ahead may plan.
-    int horizon() {
-        return reached.get() + maxFilesAhead;
     }
 
     /// Whether `fileIndex` is past the next file, so what it fetches ahead is charged.
@@ -161,24 +137,6 @@ final class FileOpenAhead {
         }
     }
 
-    /// Queues the first data request of a file planned ahead, which starts once it fits the
-    /// buffer, if its file is then still past the next one.
-    void span(PlannedSpan span) {
-        pumpLock.lock();
-        try {
-            plannedSpans.addLast(span);
-        }
-        finally {
-            pumpLock.unlock();
-        }
-        pump();
-    }
-
-    /// Drops what was fetched ahead for work item `workItemIndex`, which every column has released.
-    void released(int workItemIndex) {
-        fetchedAhead.drop(workItemIndex);
-    }
-
     /// Opens what may be opened, on the calling thread, without waiting; see the class comment.
     void pump() {
         pumpAgain.set(true);
@@ -204,8 +162,7 @@ final class FileOpenAhead {
     }
 
     /// Stops opening files, since the read plans no further one, and releases the reservations of
-    /// the footers read ahead and drops the spans not yet started; a span started stays held until
-    /// released or closed.
+    /// the footers read ahead.
     void stop() {
         stopped = true;
         release(dropPlanned());
@@ -216,10 +173,9 @@ final class FileOpenAhead {
         closed = true;
         release(dropPlanned());
         buffer.cancel(onRelease);
-        fetchedAhead.close();
     }
 
-    /// Drops the footer reservations and the spans not yet started.
+    /// Drops the footer reservations.
     ///
     /// @return the bytes the reservations held
     private long dropPlanned() {
@@ -230,7 +186,6 @@ final class FileOpenAhead {
                 held += charge;
             }
             footerCharges.clear();
-            plannedSpans.clear();
             return held;
         }
         finally {
@@ -244,11 +199,10 @@ final class FileOpenAhead {
         }
     }
 
-    /// Starts the spans, then the footer reads, that fit, each in file order: a span's file is
-    /// nearer than any whose footer is still to be read. Called under `pumpLock`.
+    /// Starts the footer reads that fit, in file order. Called under `pumpLock`.
     private void open() {
         long releasesSeen = buffer.releases();
-        boolean blocked = startSpans() || openFooters();
+        boolean blocked = openFooters();
         if (blocked && waitingForRoom.compareAndSet(false, true)) {
             buffer.whenReleased(releasesSeen, onRelease);
         }
@@ -264,7 +218,7 @@ final class FileOpenAhead {
     ///
     /// @return whether the buffer had no room for one
     private boolean openFooters() {
-        int last = Math.min(horizon(), fileCount - 1);
+        int last = Math.min(reached.get() + maxFilesAhead, fileCount - 1);
         while (nextToOpen <= last) {
             int fileIndex = nextToOpen;
             if (fileIndex <= reached.get()) {
@@ -285,33 +239,6 @@ final class FileOpenAhead {
                 else {
                     toRelease += FOOTER_RESERVATION;
                 }
-            }
-        }
-        return false;
-    }
-
-    /// Starts the planned spans of files still past the next one.
-    ///
-    /// @return whether the buffer had no room for one
-    private boolean startSpans() {
-        while (!plannedSpans.isEmpty()) {
-            PlannedSpan span = plannedSpans.peekFirst();
-            if (!beyondNext(span.fileIndex())) {
-                // The read's own prefetch of its next row group reads it now
-                plannedSpans.removeFirst();
-                continue;
-            }
-            if (!buffer.tryCharge(span.length())) {
-                return true;
-            }
-            plannedSpans.removeFirst();
-            RangeRead read;
-            try (FetchReason.Scope ignored = FetchReason.set("open-ahead file=" + span.fileIndex())) {
-                read = RangeRead.start(span.inputFile(), span.offset(), span.length(),
-                        "rg=" + span.rowGroupIndex() + " span", true, tasks);
-            }
-            if (!fetchedAhead.add(span.inputFile(), span.workItemIndex(), read)) {
-                toRelease += span.length();
             }
         }
         return false;

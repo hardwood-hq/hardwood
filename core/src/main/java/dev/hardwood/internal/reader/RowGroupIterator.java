@@ -13,11 +13,12 @@ import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -35,14 +36,17 @@ import dev.hardwood.internal.reader.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.util.Lazy;
+import dev.hardwood.jfr.PageFilterEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
+import jdk.jfr.Event;
 
 /// Shared iterator over `(InputFile, RowGroup)` pairs across one or more files.
 ///
 /// Holds the read's work list and its lifecycle: planning a file at a time, `maxRows` limiting
-/// at the row-group level, prefetching ahead, the per-row-group caches and close. The schema
+/// at the row-group level, planning ahead of the read, the per-row-group caches and close. The
+/// read's data requests are the entries of its [FetchSequence], which planning a row group inserts. The schema
 /// checks ([SchemaCompatibility]), pruning ([RowGroupPruning]) and the building of fetch plans
 /// ([FetchPlanBuilder]) live in their own classes.
 ///
@@ -77,6 +81,17 @@ public class RowGroupIterator implements Closeable {
     /// memory; `null` for a read that opens only the next file ahead ([#triggerPrefetch]). Set by
     /// [#initialize], before the read plans its first file.
     private FileOpenAhead openAhead;
+    /// The read's data requests.
+    private final FetchSequence sequence;
+    /// S, the largest request, fixed for the read.
+    private final int maxSpan;
+    /// Whether planning goes past the next unit, by F ([FetchSequence#nextToPlan]): a read of files not all in
+    /// memory without a row limit, whose planning ahead is not only reordering its work.
+    private final boolean plansDeep;
+    /// The planning chain: held while a carrier runs it ([#advancePlanning]), and raised by every
+    /// change that may let it go further, which the carrier looks at before it lets go.
+    private final AtomicBoolean chainScheduled = new AtomicBoolean();
+    private volatile boolean chainWanted;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -145,26 +160,33 @@ public class RowGroupIterator implements Closeable {
     /// longer be set.
     private volatile boolean fetchPlansComputed;
 
-    /// The fetch plans of one row group, one per decoded column, and its batches, `null` when
-    /// the iterator plans no batches.
-    private record RowGroupPlans(FetchPlan[] columns, BatchPlan.RowGroupBatches batches) {}
+    /// The fetch plans of one row group, one per decoded column, its batches, `null` when the
+    /// iterator plans no batches, and the [PageFilterEvent]s the read commits once it reaches the
+    /// row group.
+    private record RowGroupPlans(FetchPlan[] columns, BatchPlan.RowGroupBatches batches,
+                                 List<PageFilterEvent> pageFilterEvents) {}
 
     // Number of projected columns still referencing each work item. Initialized to
     // projectedColumnCount in initialize(); each PageSource calls releaseWorkItem
     // when it advances past a work item, and on zero we evict the metadata and
-    // fetch-plan caches for that index. Prevents unbounded retention of fetched
-    // chunk bytes for the lifetime of the iterator (matters most for remote I/O,
-    // where ChunkHandle.data is heap-allocated rather than an mmap slice).
+    // fetch-plan caches for that index, and forget its entries in the sequence.
     /// One counter per work item, added as the item is planned. Keyed rather
     /// than indexed because the work list grows, and read from every column's
     /// fetch steps without the planning lock.
     private final Map<Integer, AtomicInteger> workItemRefCounts = new ConcurrentHashMap<>();
 
-    /// Work items whose first demand access has started the next row group's prefetch, held
-    /// until every column releases the item. The next row group is prefetched once per work
-    /// item, whichever column reaches the item first and whether or not the previous
-    /// prefetch planned it.
+    /// Work items whose first demand access has made the next row group the read's next unit, held
+    /// until every column releases the item. The next unit is planned once per work item, whichever
+    /// column reaches the item first and whether or not the planning ahead planned it.
     private final Set<Integer> nextRowGroupPrefetched = ConcurrentHashMap.newKeySet();
+
+    /// Work items whose events the read has committed, on reaching them ([#report]); held until
+    /// every column releases the item.
+    private final Set<Integer> reported = ConcurrentHashMap.newKeySet();
+
+    /// The [dev.hardwood.jfr.RowGroupFilterEvent] of each file planned, by file index, until the
+    /// read reaches the file ([#reportFiles]). Guarded by [#planLock].
+    private final TreeMap<Integer, Event> fileEvents = new TreeMap<>();
 
     /// The planning of each work item a column has reached, keyed by work item index, for a read
     /// that plans on virtual threads ([#planning]); evicted with the work item's other caches.
@@ -310,6 +332,12 @@ public class RowGroupIterator implements Closeable {
         this.readExecutor = ReadExecutor.forContext(context);
         this.prefetchTasks = new PrefetchTasks(context.ioExecutor());
         this.planningTasks = new PrefetchTasks(readExecutor);
+        this.maxSpan = CoalescingPolicy.maxSpanBytes();
+        this.plansDeep = maxRows <= 0 && planningMode.plansAhead()
+                && !inputFiles.stream().allMatch(RangeRead::inMemory);
+        this.sequence = new FetchSequence(prefetchTasks, context.readAheadBuffer(),
+                FetchSequence.fetchAheadBytes(maxSpan), maxRows <= 0,
+                this::advancePlanning);
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
         this.physicalSkip = physicalSkip;
@@ -385,7 +413,7 @@ public class RowGroupIterator implements Closeable {
         this.schemaCompatibility = new SchemaCompatibility(referenceSchema, projected, filter);
         this.pruning = new RowGroupPruning(context, filter, metadataFilteringEnabled);
         this.fetchPlanBuilder = new FetchPlanBuilder(projection, filter, metadataFilteringEnabled, context,
-                prefetchTasks, workingSet);
+                workingSet, maxSpan);
 
         schemaCompatibility.validateReferenceColumns(referenceFileName());
 
@@ -491,7 +519,9 @@ public class RowGroupIterator implements Closeable {
                 return false;
             }
             try {
-                if (!arrival(workItem).dropped()) {
+                RowGroupPruning.Arrival arrival = arrival(workItem);
+                report(workItem);
+                if (!arrival.dropped()) {
                     return true;
                 }
             }
@@ -673,6 +703,7 @@ public class RowGroupIterator implements Closeable {
 
     private RowGroupPlans rowGroupPlans(WorkItem workItem) throws IOException {
         int workItemIndex = workItem.workItemIndex();
+        sequence.requested(workItemIndex);
         RowGroupPlans plans = fetchPlanCache.get(workItemIndex);
         if (plans == null) {
             try {
@@ -691,14 +722,20 @@ public class RowGroupIterator implements Closeable {
                 throw ExceptionContext.unwrap(e);
             }
         }
-        // The first demand access prefetches the next row group, whether it planned this
-        // one or found the plans the previous prefetch cached; the prefetch task does not
-        // come through here, so prefetch stays one row group ahead. This runs outside the
-        // computation: prefetching plans the next file when this one is exhausted, which reads
-        // a footer and, under a filter, probes bloom filters, and every other column asking
-        // for this row group's plans waits for the whole of the computation.
-        if (planningMode.plansAhead() && nextRowGroupPrefetched.add(workItemIndex)) {
-            prefetchNextRowGroup(workItem);
+        // The first demand access reports the row group and makes the next one the read's next
+        // unit, whether it planned this one or found the plans the planning ahead cached; that
+        // planning does not come through here. This runs outside the computation: resolving the
+        // next work item plans the next file when this one is exhausted, which reads a footer and,
+        // under a filter, probes bloom filters, and every other column asking for this row group's
+        // plans waits for the whole of the computation.
+        if (nextRowGroupPrefetched.add(workItemIndex)) {
+            report(workItem);
+            for (PageFilterEvent event : plans.pageFilterEvents()) {
+                event.commit();
+            }
+            if (planningMode.plansAhead()) {
+                enterNextUnit(workItem);
+            }
         }
         return plans;
     }
@@ -721,9 +758,8 @@ public class RowGroupIterator implements Closeable {
         int idx = workItem.workItemIndex();
         int remaining = counter.decrementAndGet();
         if (remaining == 0) {
-            if (openAhead != null) {
-                openAhead.released(idx);
-            }
+            sequence.forget(idx);
+            reported.remove(idx);
             metadataCache.remove(idx);
             arrivalCache.remove(idx);
             fetchPlanCache.remove(idx);
@@ -740,25 +776,15 @@ public class RowGroupIterator implements Closeable {
         return counter != null && counter.get() == 0;
     }
 
-    /// Triggers async pre-computation and pre-fetch for the next row group, as tasks
-    /// [#close()] waits for. The I/O planning needs first, the row group's index window and
-    /// Bloom filters, is read on a virtual thread, which then plans the row group, reading its
-    /// dictionaries under a filter; the first chunk is read on a virtual thread again. A read that
-    /// plans on the step ([PlanningMode#ON_STEP_PLAN_AHEAD]) plans the row group as a task at the
-    /// tail of its executor instead.
+    /// Makes the work item after `currentWorkItem` the read's next unit, once per work item, when
+    /// the first column enters `currentWorkItem`: its first entry starts without F and uncharged
+    /// ([FetchSequence#nextUnit]), and the planning chain plans it whatever F holds
+    /// ([FetchSequence#nextToPlan]).
     ///
-    /// The caller plans the current work item: a virtual thread ([#planning]), or, for a read that
-    /// plans on the step, the fetch step that reached the work item ([PlanningMode]). Planning the next
-    /// row group happens once ([OnceCache]): whoever reaches it while it is being planned waits for
-    /// that planning, a virtual thread or a step of a read that waits for no read, and one that
-    /// reaches it first plans it itself, and the prefetch finds it planned.
-    ///
-    /// The next row group is asked for through [#workItemAt], so the last row group of a
-    /// file prefetches into the next one rather than stopping at the boundary — which
-    /// is the one step of a read this prefetch exists to cover.
-    ///
-    /// That call stays on the caller, so that planning the next file is done by the time the
-    /// read reaches it. What the caller waits for there is the next file's footer, whose read
+    /// The next row group is asked for through [#workItemAt], on the caller, so the last row group
+    /// of a file resolves the next file rather than stopping at the boundary — which is the one
+    /// step of a read this exists to cover — and that planning is done by the time the read
+    /// reaches it. What the caller waits for there is the next file's footer, whose read
     /// [#triggerPrefetch] has already started, or which the caller reads in place for a file
     /// whose bytes are in memory ([FileMetadataCache#prefetch]) — and under a filter, where
     /// planning also probes that file's bloom filters, which nothing has started.
@@ -770,9 +796,8 @@ public class RowGroupIterator implements Closeable {
     ///
     /// Called once per work item, by the planning that computes or first finds its plans, after
     /// their `computeIfAbsent` returns, never from inside it: this blocks, and every other caller
-    /// asking for the work item's plans waits for the whole computation. The task below plans the
-    /// next row group without going through [#rowGroupPlans], so it starts no further prefetch.
-    private void prefetchNextRowGroup(WorkItem currentWorkItem) {
+    /// asking for the work item's plans waits for the whole computation.
+    private void enterNextUnit(WorkItem currentWorkItem) {
         WorkItem nextWorkItem;
         try {
             nextWorkItem = workItemAt(currentWorkItem.workItemIndex() + 1);
@@ -784,43 +809,151 @@ public class RowGroupIterator implements Closeable {
         if (nextWorkItem == null) {
             return;
         }
-        prefetchTasks.submit(() -> {
-            try (FetchReason.Scope ignored = FetchReason.set(
-                    "prefetch rg=" + nextWorkItem.rowGroupIndex())) {
-                IndexWindow window = nextWorkItem.indexWindow();
-                if (window != null && !closed && !isReleased(nextWorkItem)) {
-                    try {
-                        window.buffersFor(nextWorkItem.workItemIndex());
-                        window.bloomFiltersFor(nextWorkItem.workItemIndex());
-                    }
-                    catch (IOException e) {
-                        // Speculative: the demand path reads the window again and reports it
-                        LOG.get().log(System.Logger.Level.DEBUG,
-                                "Prefetch failed for row group {0}", nextWorkItem.rowGroupIndex(), e);
-                        return;
-                    }
-                    catch (IllegalStateException e) {
-                        // Every column released the row group since the check above
-                        return;
-                    }
-                }
-                if (planningMode == PlanningMode.VIRTUAL_THREAD) {
-                    // Planning waits for the row group's dictionaries, so it stays on the
-                    // virtual thread; its CPU work runs on the pool
-                    planAhead(nextWorkItem);
-                }
-                else {
-                    planningTasks.submit(() -> planAhead(nextWorkItem));
-                }
-            }
-        });
+        sequence.nextUnit(nextWorkItem.workItemIndex());
+        // The next unit's entries and windows at once, on a virtual thread of their own: the chain
+        // may be planning further ahead, or wait at the tail of the read's queue for its planning
+        prefetchTasks.submit(() -> readAhead(nextWorkItem));
+        advancePlanning();
     }
 
-    /// Plans `nextWorkItem` ahead of its read, on the virtual thread of its prefetch or, for a read
-    /// that plans on the step, as a task of the read's executor ([PlanningMode]), and prefetches
-    /// its first chunk on the I/O executor.
+    /// Inserts `workItem`'s entries from its chunks' extents and reads its index window and Bloom
+    /// filters, ahead of its planning, which needs the windows and inserts the entries otherwise.
+    /// Speculative: a failure is left to the planning, which repeats the work and reports it.
+    private void readAhead(WorkItem workItem) {
+        if (closed || isReleased(workItem)) {
+            return;
+        }
+        try (FetchReason.Scope ignored = FetchReason.set("prefetch rg=" + workItem.rowGroupIndex())) {
+            insertChunkEntries(workItem);
+            IndexWindow window = workItem.indexWindow();
+            if (window != null) {
+                window.buffersFor(workItem.workItemIndex());
+                window.bloomFiltersFor(workItem.workItemIndex());
+            }
+        }
+        catch (IllegalStateException e) {
+            // Every column released the row group since the check above
+        }
+        catch (IOException | RuntimeException e) {
+            LOG.get().log(System.Logger.Level.DEBUG,
+                    "Prefetch failed for row group {0}", workItem.rowGroupIndex(), e);
+        }
+    }
+
+    /// Runs the planning chain, unless it runs already, which then looks again: on a virtual thread
+    /// of the read's prefetch tasks, which may wait for the planning's reads. Called on every change
+    /// that may let it go further: the read entering a row group, an entry starting, a footer read
+    /// ahead arriving.
+    private void advancePlanning() {
+        if (!planningMode.plansAhead() || closed) {
+            return;
+        }
+        // Raised before the claim is tried: a chain that releases the claim reads it after
+        chainWanted = true;
+        if (chainScheduled.compareAndSet(false, true)) {
+            chainCarrier().submit(this::runChain);
+        }
+    }
+
+    /// Where the chain runs: a virtual thread of the read's prefetch tasks, or, for a read that
+    /// plans on the step, a task at the tail of its executor, which plans files and row groups
+    /// where every other planning of the read runs.
+    private PrefetchTasks chainCarrier() {
+        return planningMode == PlanningMode.VIRTUAL_THREAD ? prefetchTasks : planningTasks;
+    }
+
+    /// Plans work items ahead of the read, in work-list order, once each, while
+    /// [FetchSequence#nextToPlan] allows. A read that plans on the step ([PlanningMode#ON_STEP_PLAN_AHEAD]) reads a work item's
+    /// entries and index window on a virtual thread, which then plans it as a task at the tail of
+    /// the read's executor and continues the chain there.
+    private void runChain() {
+        do {
+            chainWanted = false;
+            while (!closed) {
+                int index = sequence.nextToPlan(plansDeep);
+                if (index < 0 || !planned(index - 1)) {
+                    // A row group still being planned on demand runs the chain again once it is
+                    break;
+                }
+                WorkItem workItem = workItemAhead(index);
+                if (workItem == null) {
+                    break;
+                }
+                if (planningMode == PlanningMode.VIRTUAL_THREAD) {
+                    // Planning waits for the row group's dictionaries, so it stays on the virtual
+                    // thread; its CPU work runs on the pool
+                    readAhead(workItem);
+                    planAhead(workItem);
+                    sequence.planned(index);
+                    continue;
+                }
+                prefetchTasks.submit(() -> {
+                    readAhead(workItem);
+                    planningTasks.submit(() -> {
+                        try {
+                            planAhead(workItem);
+                            sequence.planned(index);
+                        }
+                        finally {
+                            chainScheduled.set(false);
+                            advancePlanning();
+                        }
+                    });
+                });
+                return;
+            }
+            chainScheduled.set(false);
+            // Released before the flag is read: a change after the chain looked either raised the
+            // flag before this read, or finds the claim free and runs the chain
+        }
+        while (chainWanted && chainScheduled.compareAndSet(false, true));
+    }
+
+    /// Whether the work item at `index` has its plans, or has been released by every column, so the
+    /// one after it may be planned: row groups are planned in work-list order. `true` before the
+    /// first.
+    boolean planned(int index) {
+        if (index < 0 || fetchPlanCache.get(index) != null) {
+            return true;
+        }
+        AtomicInteger counter = workItemRefCounts.get(index);
+        return counter != null && counter.get() == 0;
+    }
+
+    /// The work item at `index` for the planning chain, planning files only as far as their
+    /// footers have been read, so the chain waits for no footer, and the next unit, which the
+    /// read resolves itself ([#enterNextUnit]); `null` when it is not planned yet, or past
+    /// the end or a planning failure. A file whose footer arrives later is planned then: its
+    /// arrival runs the chain again.
+    private WorkItem workItemAhead(int index) {
+        planLock.lock();
+        try {
+            while (workItems.size() <= index && planningFailure == null && nextFileToPlan < inputFiles.size()
+                    && (RangeRead.inMemory(inputFiles.get(nextFileToPlan))
+                            || fileMetadataCache.footerRead(nextFileToPlan))) {
+                try {
+                    if (!planNextFile()) {
+                        break;
+                    }
+                }
+                catch (IOException | RuntimeException | Error e) {
+                    // Kept by planNextFile for the read to rethrow when it reaches the file
+                    return null;
+                }
+            }
+            if (planningFailure != null && index >= workItemsBeforeFailure) {
+                return null;
+            }
+            return index < workItems.size() ? workItems.get(index) : null;
+        }
+        finally {
+            planLock.unlock();
+        }
+    }
+
+    /// Plans `nextWorkItem` ahead of its read, on the planning chain's carrier ([#runChain]).
     private void planAhead(WorkItem nextWorkItem) {
-        RowGroupPlans nextPlans = fetchPlanCache.computeIfAbsent(
+        fetchPlanCache.computeIfAbsent(
                 nextWorkItem.workItemIndex(),
                 idx -> {
                     // Every column may already have read past the row group and
@@ -844,15 +977,27 @@ public class RowGroupIterator implements Closeable {
                         return null;
                     }
                 });
-        if (nextPlans == null) {
+    }
+
+    /// Commits the events of `workItem`'s row group that its planning decided, once, when the read
+    /// reaches it, however far ahead the planning ran: the drop by its Bloom filters or
+    /// dictionaries.
+    private void report(WorkItem workItem) {
+        if (!reported.add(workItem.workItemIndex())) {
             return;
         }
-        // Pre-fetch the first chunk of the first plan that reads one
-        for (FetchPlan plan : nextPlans.columns()) {
-            if (!plan.isEmpty() && !(plan instanceof SkippedColumnFetchPlan)) {
-                prefetchTasks.submit(plan::prefetch);
-                break;
-            }
+        RowGroupPruning.Arrival arrival = RowGroupPruning.droppableOnArrival(workItem)
+                ? arrivalCache.get(workItem.workItemIndex()) : null;
+        if (arrival != null && arrival.dropEvent() != null) {
+            arrival.dropEvent().commit();
+        }
+    }
+
+    /// Commits the [dev.hardwood.jfr.RowGroupFilterEvent]s of the files planned up to `fileIndex`,
+    /// once the read has reached it. Called under [#planLock].
+    private void reportFiles(int fileIndex) {
+        while (!fileEvents.isEmpty() && fileEvents.firstKey() <= fileIndex) {
+            fileEvents.pollFirstEntry().getValue().commit();
         }
     }
 
@@ -862,12 +1007,16 @@ public class RowGroupIterator implements Closeable {
     /// that row group is planned.
     private RowGroupPlans computeFetchPlans(WorkItem workItem) throws IOException {
         fetchPlansComputed = true;
+        long fileLength = workItem.inputFile().length();
+        // Before the page index, which the plans need and these entries do not: they start while
+        // it is read
+        insertChunkEntries(workItem);
         SharedRowGroupMetadata shared = getSharedMetadata(workItem);
         int projectedCount = projection.decoded().getProjectedColumnCount();
         if (shared.dropped()) {
             FetchPlan[] empty = new FetchPlan[projectedCount];
             Arrays.fill(empty, FetchPlan.EMPTY);
-            return new RowGroupPlans(empty, planBatches(workItem, 0));
+            return new RowGroupPlans(empty, planBatches(workItem, 0), List.of());
         }
         RowGroup rowGroup = workItem.rowGroup();
         RowRanges matchingRows = shared.matchingRows();
@@ -914,12 +1063,35 @@ public class RowGroupIterator implements Closeable {
         // Parsing the page index and building the plans is CPU work that grows with the projected
         // columns and their pages, so it runs on the pool, which bounds a read's CPU.
         RowRanges planned = matchingRows;
-        FetchPlan[] plans = context.compute("fetch plans", () -> fetchPlanBuilder.columnPlans(
-                workItem, shared, planned, pageFilterApplied, perRgMaxRows));
+        FetchPlanBuilder.Plans plans = context.compute("fetch plans", () -> fetchPlanBuilder.columnPlans(
+                workItem, shared, planned, pageFilterApplied, perRgMaxRows, sequence, fileLength));
 
         // Last, once nothing above can fail: a speculative plan that fails is planned again on
         // demand, and the batch plan takes each row group once.
-        return new RowGroupPlans(plans, planBatches(workItem, matchingRows.rowCount(rowGroup.numRows())));
+        return new RowGroupPlans(plans.columns(), planBatches(workItem, matchingRows.rowCount(rowGroup.numRows())),
+                plans.pageFilterEvents());
+    }
+
+    /// Inserts the entries of `workItem`'s row group from its chunks' extents, once, where every row
+    /// of it is read and nothing can drop it ([#readsAllRows]), so they start before its page index
+    /// is read.
+    private void insertChunkEntries(WorkItem workItem) throws IOException {
+        if (readsAllRows(workItem) && !RangeRead.inMemory(workItem.inputFile())
+                && sequence.entries(workItem.workItemIndex()) == null) {
+            sequence.insert(workItem.workItemIndex(), workItem.inputFile(),
+                    fetchPlanBuilder.chunkSpans(workItem, workItem.inputFile().length()));
+        }
+    }
+
+    /// Whether every row of `workItem`'s row group is read and no Bloom filter or dictionary can drop
+    /// it, so its entries follow from its chunks' extents in the footer alone ([FetchPlanBuilder#chunkSpans]):
+    /// no filter narrows its pages, no tail or row limit cuts it, and its chunks are in this file.
+    private boolean readsAllRows(WorkItem workItem) {
+        long perRgMaxRows = perRgMaxRows(workItem);
+        return !RowGroupPruning.droppableOnArrival(workItem) && !pruning.pageFiltering(workItem)
+                && !(tailSkip > 0 && workItem.workItemIndex() == 0)
+                && (perRgMaxRows == 0 || perRgMaxRows >= workItem.rowGroup().numRows())
+                && storedInThisFile(workItem.rowGroup());
     }
 
     /// Plans `workItem`'s batches from the rows its page masks keep, or returns `null` when the
@@ -967,6 +1139,9 @@ public class RowGroupIterator implements Closeable {
             return;
         }
         closed = true;
+        // Starts nothing more, and releases what it holds of the read-ahead buffer; its reads in
+        // flight are prefetch tasks, waited for below
+        sequence.close();
         if (openAhead != null) {
             // Opens nothing more, and releases what it holds of the read-ahead buffer
             openAhead.close();
@@ -1147,8 +1322,12 @@ public class RowGroupIterator implements Closeable {
                 chunkPaths.verify(sourceRowGroups.get(rgIndex), rgIndex, prepared.inputFile());
             }
         }
-        List<RowGroupPruning.FilteredRowGroup> rowGroups = pruning.filterRowGroups(
+        RowGroupPruning.FilteredRowGroups filtered = pruning.filterRowGroups(
                 sourceRowGroups, prepared.inputFile(), columnOrdinals);
+        List<RowGroupPruning.FilteredRowGroup> rowGroups = filtered.rowGroups();
+        if (filtered.event() != null) {
+            fileEvents.put(fileIndex, filtered.event());
+        }
 
         // Appended to the work list once the file's index windows are formed over them.
         List<WorkItem> planned = new ArrayList<>();
@@ -1261,6 +1440,7 @@ public class RowGroupIterator implements Closeable {
     /// file's footer, the row group's Bloom filters, dictionaries and page index; a fetch step that
     /// gets the planning before it completes yields on it.
     WorkItemPlanning planning(int index) {
+        sequence.requested(index);
         if (planningMode != PlanningMode.VIRTUAL_THREAD) {
             WorkItemPlanning planning = new WorkItemPlanning();
             planning.run(p -> plan(index, p), prefetchTasks);
@@ -1314,6 +1494,8 @@ public class RowGroupIterator implements Closeable {
             if (workItem != null && openAhead != null) {
                 openAhead.reached(workItem.fileIndex());
             }
+            // The read has reached the file of the work item, or the end
+            reportFiles(workItem != null ? workItem.fileIndex() : Integer.MAX_VALUE);
             return workItem;
         }
         finally {
@@ -1350,6 +1532,7 @@ public class RowGroupIterator implements Closeable {
             while (planNextFile()) {
                 // planNextFile appends
             }
+            reportFiles(Integer.MAX_VALUE);
         }
         finally {
             planLock.unlock();
@@ -1378,103 +1561,7 @@ public class RowGroupIterator implements Closeable {
             return null;
         }
         return new FileOpenAhead(maxFilesAhead, inputFiles.size(), fileMetadataCache, context.readAheadBuffer(),
-                prefetchTasks, this::scheduleFilesAhead);
-    }
-
-    /// Plans the files whose footers have been read ahead ([#planFilesAhead]) on the read's
-    /// planning carrier: a virtual thread, which may wait for the planning lock, or, for a read
-    /// that plans on the step, a task at the tail of its executor.
-    private void scheduleFilesAhead() {
-        if (planningMode == PlanningMode.VIRTUAL_THREAD) {
-            prefetchTasks.submit(this::planFilesAhead);
-        }
-        else {
-            planningTasks.submit(this::planFilesAhead);
-        }
-    }
-
-    /// Plans, in order, the files within the open-ahead's reach whose footers have been read, and
-    /// queues the first data request of each one past the next file. Stops at a file whose footer
-    /// is still in flight, which schedules this again once read. A planning failure stops it; the
-    /// iterator keeps the failure for the read to raise when it reaches the file
-    /// ([#planNextFile]).
-    private void planFilesAhead() {
-        planLock.lock();
-        try {
-            while (!closed && planningFailure == null && nextFileToPlan < inputFiles.size()
-                    && nextFileToPlan <= openAhead.horizon() && fileMetadataCache.footerRead(nextFileToPlan)) {
-                int fileIndex = nextFileToPlan;
-                int planned = workItems.size();
-                try {
-                    if (!planNextFile()) {
-                        return;
-                    }
-                }
-                catch (IOException | RuntimeException | Error e) {
-                    // Kept by planNextFile for the read to rethrow when it reaches the file
-                    return;
-                }
-                if (workItems.size() > planned && openAhead.beyondNext(fileIndex)) {
-                    FileOpenAhead.PlannedSpan span = plannedSpan(fileIndex, workItems.get(planned));
-                    if (span != null) {
-                        openAhead.span(span);
-                    }
-                }
-            }
-        }
-        finally {
-            planLock.unlock();
-        }
-    }
-
-    /// The first data request a read starts for `workItem`, the first work item of a file opened
-    /// ahead, from the footer alone: the column chunks of every column the row group's plans read,
-    /// merged under the gap policy from the first one on, as far as the gap and span limits allow.
-    /// `null` where the plans may read less than whole chunks, so a span would fetch bytes they do
-    /// not read, as under page filtering, and where the footer's chunk ranges are not usable as a
-    /// request.
-    private FileOpenAhead.PlannedSpan plannedSpan(int fileIndex, WorkItem workItem) {
-        if (pruning.pageFiltering(workItem)) {
-            return null;
-        }
-        RowGroup rowGroup = workItem.rowGroup();
-        int projectedCount = projection.decoded().getProjectedColumnCount();
-        List<long[]> chunks = new ArrayList<>(projectedCount);
-        for (int projCol = 0; projCol < projectedCount; projCol++) {
-            if (fetchPlanBuilder.skipsColumn(workItem, projCol)) {
-                continue;
-            }
-            int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(projCol));
-            ColumnChunk chunk = rowGroup.columns().get(fileOrdinal);
-            long start = chunk.chunkStartOffset();
-            chunks.add(new long[] { start, start + chunk.metaData().totalCompressedSize() });
-        }
-        if (chunks.isEmpty()) {
-            return null;
-        }
-        chunks.sort(Comparator.comparingLong(chunk -> chunk[0]));
-        long start = chunks.get(0)[0];
-        long end = chunks.get(0)[1];
-        for (int i = 1; i < chunks.size(); i++) {
-            long[] chunk = chunks.get(i);
-            if (chunk[0] < end || !CoalescingPolicy.merges(start, end, chunk[0], chunk[1])) {
-                break;
-            }
-            end = chunk[1];
-        }
-        long length = end - start;
-        try {
-            if (start < 0 || length <= 0 || length > CoalescingPolicy.MAX_SPAN_BYTES
-                    || end > workItem.inputFile().length()) {
-                return null;
-            }
-        }
-        catch (IOException e) {
-            // Speculative: the read of the row group reports what fails
-            return null;
-        }
-        return new FileOpenAhead.PlannedSpan(fileIndex, workItem.inputFile(), workItem.workItemIndex(),
-                workItem.rowGroupIndex(), start, Math.toIntExact(length));
+                this::advancePlanning);
     }
 
     /// Triggers async loading of the file at the given index, where [FileMetadataCache#prefetch]

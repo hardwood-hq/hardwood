@@ -36,7 +36,7 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.InPlacePageReads;
 import dev.hardwood.internal.reader.PageDecoder;
 import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageIterator;
+import dev.hardwood.internal.reader.PageWalk;
 import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -111,9 +111,11 @@ public class PageHandlingBenchmark {
                     SequentialFetchPlan plan = SequentialFetchPlan.build(
                             inputFile, columnSchema, columnChunk,
                             context, rgIdx, inputFile.name(), 0);
-                    PageIterator iter = plan.pages();
-                    while (iter.hasNext()) {
-                        allPages.add(iter.next());
+                    // A file in memory: the walk never stops for bytes
+                    PageWalk walk = plan.walk();
+                    PageInfo page;
+                    while ((page = walk.advance()) != null) {
+                        allPages.add(page);
                     }
                 }
             }

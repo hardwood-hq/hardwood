@@ -20,7 +20,7 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// The fetch plan resolves the page bytes before creating the `PageInfo`.
 /// By the time a decode task calls [#pageData()], the buffer is ready —
-/// no lazy I/O, no [ChunkHandle] reference. This keeps `PageInfo` a
+/// no lazy I/O, no reference to the entry it was sliced from. This keeps `PageInfo` a
 /// simple data holder.
 ///
 /// A `PageInfo` may also carry a **null-placeholder** marker, produced by

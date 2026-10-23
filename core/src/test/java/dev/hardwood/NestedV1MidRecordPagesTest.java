@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageIterator;
+import dev.hardwood.internal.reader.PageWalks;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.ReferencePageDecoder;
 import dev.hardwood.internal.reader.SequentialFetchPlan;
@@ -58,8 +58,8 @@ class NestedV1MidRecordPagesTest {
             ColumnSchema column = schema.getColumn(tags);
             for (RowGroup rowGroup : meta.rowGroups()) {
                 assertThat(rowGroup.columns().get(tags).offsetIndexOffset()).as("offset index").isNull();
-                PageIterator iterator = SequentialFetchPlan.build(file, column, rowGroup.columns().get(tags),
-                        context, 0, file.name(), 0).pages();
+                PageWalks.Pages iterator = PageWalks.of(SequentialFetchPlan.build(file, column, rowGroup.columns().get(tags),
+                        context, 0, file.name(), 0));
                 while (iterator.hasNext()) {
                     PageInfo pageInfo = iterator.next();
                     ReferencePageDecoder.DecodedPage page = new ReferencePageDecoder(pageInfo.columnSchema(),
