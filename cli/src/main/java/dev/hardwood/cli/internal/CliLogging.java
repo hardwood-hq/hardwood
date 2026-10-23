@@ -43,7 +43,11 @@ public final class CliLogging {
         for (Handler handler : root.getHandlers()) {
             root.removeHandler(handler);
         }
-        root.addHandler(new StderrHandler());
+        Handler stderr = new StderrHandler();
+        // The handler's own threshold keeps stderr at WARNING when a log file session lowers
+        // Hardwood's logger to FINE.
+        stderr.setLevel(Level.WARNING);
+        root.addHandler(stderr);
         root.setLevel(Level.WARNING);
     }
 
@@ -67,7 +71,7 @@ public final class CliLogging {
     /// what it prints without a log file: Hardwood's `FINE` records go to the file only.
     ///
     /// @param logFile the file to write the command's records to, or `null` to change nothing
-    /// @return the session, whose `close` closes the file and restores the stderr threshold
+    /// @return the session, whose `close` closes the file and restores Hardwood's level
     /// @throws IOException if `logFile` cannot be opened, in which case nothing has changed
     public static Session forCommand(Path logFile) throws IOException {
         return new Session(openLogFile(logFile), true);
@@ -91,7 +95,6 @@ public final class CliLogging {
         private final Logger root = Logger.getLogger("");
         private final Logger hardwood = Logger.getLogger(HARDWOOD);
         private final Handler[] terminalHandlers;
-        private final Level[] terminalLevels;
         private final Level hardwoodLevel;
         private final Handler fileHandler;
         private final boolean keepTerminal;
@@ -100,29 +103,15 @@ public final class CliLogging {
             this.fileHandler = fileHandler;
             this.keepTerminal = keepTerminal;
             this.terminalHandlers = root.getHandlers();
-            this.terminalLevels = new Level[terminalHandlers.length];
             this.hardwoodLevel = hardwood.getLevel();
-            for (int i = 0; i < terminalHandlers.length; i++) {
-                terminalLevels[i] = terminalHandlers[i].getLevel();
-                if (!keepTerminal) {
-                    root.removeHandler(terminalHandlers[i]);
-                }
-                else if (fileHandler != null) {
-                    // Hardwood's level drops to FINE below, and its records reach every root
-                    // handler; raising the terminal's own threshold to the root level keeps them
-                    // off stderr.
-                    raiseTo(terminalHandlers[i], root.getLevel());
+            if (!keepTerminal) {
+                for (Handler handler : terminalHandlers) {
+                    root.removeHandler(handler);
                 }
             }
             if (fileHandler != null) {
                 root.addHandler(fileHandler);
                 hardwood.setLevel(Level.FINE);
-            }
-        }
-
-        private static void raiseTo(Handler handler, Level level) {
-            if (level != null && handler.getLevel().intValue() < level.intValue()) {
-                handler.setLevel(level);
             }
         }
 
@@ -133,10 +122,9 @@ public final class CliLogging {
                 fileHandler.close();
             }
             hardwood.setLevel(hardwoodLevel);
-            for (int i = 0; i < terminalHandlers.length; i++) {
-                terminalHandlers[i].setLevel(terminalLevels[i]);
-                if (!keepTerminal) {
-                    root.addHandler(terminalHandlers[i]);
+            if (!keepTerminal) {
+                for (Handler handler : terminalHandlers) {
+                    root.addHandler(handler);
                 }
             }
         }

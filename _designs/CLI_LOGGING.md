@@ -30,7 +30,7 @@ The native image is built with `-H:-UseServiceLoaderFeature`, so a provider foun
 
 ## Format and threshold
 
-`Main.run` calls `CliLogging.configure()` after it has set stdout and stderr to UTF-8. The root logger gets one handler, which prints each record as one line, `LEVEL: message`, with an attached exception appended after a colon, and the root level is `WARNING`. The level names are `java.util.logging`'s, so a `System.Logger` `ERROR` prints as `SEVERE`. The CLI's own warnings use the same `WARNING: ` prefix.
+`Main.run` calls `CliLogging.configure()` after it has set stdout and stderr to UTF-8. The root logger gets one handler, which prints each record as one line, `LEVEL: message`, with an attached exception appended after a colon. Both the root level and the handler's own level are `WARNING`. The level names are `java.util.logging`'s, so a `System.Logger` `ERROR` prints as `SEVERE`. The CLI's own warnings use the same `WARNING: ` prefix.
 
 The handler writes to the `System.err` current when a record is published, where `ConsoleHandler` keeps the one current when it was created, so it follows the UTF-8 stream `Main` installs and the stream each command test captures.
 
@@ -40,7 +40,7 @@ The configuration is code rather than a `logging.properties` resource, so it nee
 
 Every command that reads a file takes `--log-file <path>` through `LogFileMixin`. The file receives records in a timestamped one-line format, `time LEVEL [logger] message`: Hardwood's from `FINE`, which includes every S3 fetch, and every other source's from `WARNING`. It is opened before the command runs, truncated, and closed when the command ends; a file that cannot be opened fails the command before it reads anything.
 
-A non-interactive command keeps its stderr as it is without the option. `CliLogging.forCommand` adds the file handler to the root logger and lowers Hardwood's logger to `FINE`; since Hardwood's records reach every root handler, it raises the stderr handler's own level to the root level for the command, so the `FINE` records go to the file only. Closing the session restores both levels.
+A non-interactive command keeps its stderr as it is without the option. `CliLogging.forCommand` adds the file handler to the root logger and lowers Hardwood's logger to `FINE`. Hardwood's records then reach every root handler, and the stderr handler's own `WARNING` level keeps the `FINE` ones off stderr. Closing the session restores Hardwood's level. Under an explicit `java.util.logging` configuration the session lowers Hardwood's logger all the same, and the configured handlers decide what they print.
 
 ## dive
 
@@ -56,4 +56,4 @@ Test: `dev.hardwood.LoggerLookupTest`.
 
 Hardwood logs at `WARNING` what a reader of the file should know: statistics discarded for pruning, annotations dropped, an unrecognised reader option. The internals of a read, such as a failed speculative prefetch, are logged at `DEBUG` or below, so neither the CLI nor an application embedding the library shows them by default.
 
-Tests: `dev.hardwood.cli.internal.CliLoggingTest`, `dev.hardwood.cli.command.CliLoggingTest`, `DiveCommandTest`, `NativeBinarySmokeIT`.
+Tests: `dev.hardwood.cli.internal.CliLoggingTest`, `LogFileOptionTest`, `InfoS3CommandIT`, `dev.hardwood.cli.command.CliLoggingTest`, `DiveCommandTest`, `NativeBinarySmokeIT`.
