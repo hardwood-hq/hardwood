@@ -26,11 +26,11 @@ import dev.hardwood.schema.ColumnSchema;
 /// Pages are pre-computed at plan time from the OffsetIndex (with filter and
 /// maxRows already applied). Byte data and dictionary parsing are deferred
 /// until the walk is first advanced — no I/O happens at plan time.
-final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
+final class IndexedFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableFirstChunk {
 
 
-    private final List<RowGroupIterator.NeededPage> neededPages;
-    private final List<RowGroupIterator.PageGroup> pageGroups;
+    private final List<FetchPlanBuilder.NeededPage> neededPages;
+    private final List<FetchPlanBuilder.PageGroup> pageGroups;
     private List<ChunkHandle> chunkHandles;
     /// The dictionary page's own handle when it is too far ahead of the first needed page to be
     /// fetched with it, or `null` when the first page group holds it or the plan needs no fetch
@@ -50,8 +50,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     /// Where the plan charges the dictionary it parses.
     private final WorkingSet.Column workingSet;
 
-    private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
-                              List<RowGroupIterator.PageGroup> pageGroups,
+    private IndexedFetchPlan(List<FetchPlanBuilder.NeededPage> neededPages,
+                              List<FetchPlanBuilder.PageGroup> pageGroups,
                               List<ChunkHandle> chunkHandles,
                               ChunkHandle dictionaryHandle,
                               long dictionaryStart,
@@ -176,8 +176,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
     ///        the page groups leave the dictionary page out; `null` otherwise
     /// @param workingSet where the plan charges the dictionary it parses
-    static IndexedFetchPlan build(List<RowGroupIterator.NeededPage> neededPages,
-                                   List<RowGroupIterator.PageGroup> pageGroups,
+    static IndexedFetchPlan build(List<FetchPlanBuilder.NeededPage> neededPages,
+                                   List<FetchPlanBuilder.PageGroup> pageGroups,
                                    List<ChunkHandle> chunkHandles,
                                    ChunkHandle dictionaryHandle,
                                    long dictionaryStart,
@@ -264,7 +264,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
 
             // Advance to next page group if needed
             while (currentGroupIndex < pageGroups.size() - 1) {
-                RowGroupIterator.PageGroup nextGroup = pageGroups.get(currentGroupIndex + 1);
+                FetchPlanBuilder.PageGroup nextGroup = pageGroups.get(currentGroupIndex + 1);
                 if (index >= nextGroup.firstPageIndex()) {
                     currentGroupIndex++;
                 }
@@ -273,7 +273,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 }
             }
 
-            RowGroupIterator.NeededPage needed = neededPages.get(index);
+            FetchPlanBuilder.NeededPage needed = neededPages.get(index);
             currentPage = needed.pageIndex();
             PageLocation loc = needed.location();
             ChunkHandle handle = chunkHandles.get(currentGroupIndex);
@@ -316,7 +316,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         /// The records `needed` contributes after its mask, for [PageInfo#records()]: its row span
         /// in the offset index for a column without repetition, whose records are its values; a
         /// column with repetition counts its records from its repetition levels once decoded.
-        private int keptRecords(RowGroupIterator.NeededPage needed) {
+        private int keptRecords(FetchPlanBuilder.NeededPage needed) {
             if (columnSchema.maxRepetitionLevel() > 0) {
                 return PageInfo.UNKNOWN_RECORDS;
             }

@@ -29,7 +29,7 @@ CLASSES=(
   reader/OnceCache reader/WorkItemPlanning reader/PageSource reader/ParquetMetadataReader
   reader/DictionaryParser predicate/RowGroupBloomFilterSource reader/PageFormatProbe
   reader/RowGroupIndexBuffers reader/ReadAheadBuffer reader/ReadExecutor DecodeExecutor
-  reader/HardwoodContextImpl
+  reader/HardwoodContextImpl reader/SchemaCompatibility reader/RowGroupPruning reader/FetchPlanBuilder
 )
 
 REF=${1:-}

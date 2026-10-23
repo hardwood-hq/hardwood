@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// file's leaf ordinals (issue #903).
 ///
 /// Every fixture pair here passes the physical/logical/repetition-type checks
-/// in `RowGroupIterator.validateSchemaCompatibility`, because the columns
+/// in `SchemaCompatibility.validateSchemaCompatibility`, because the columns
 /// differ only in where they sit in the flattened leaf list — the case that
 /// path-based validation cannot see but ordinal-based reading depends on.
 class CrossFileColumnOrderTest {

@@ -23,7 +23,7 @@ Bloom filters and dictionaries answer "is this value present?". That bounds what
 
 The contract that everything below serves: pruning never disagrees with the per-row matchers. A unit is dropped only when the matchers would return none of its rows, and promised in full only when they would return all of them. Every predicate of the literal corpus is read through the row reader, the record path, the column reader, and both with metadata filtering off, and checked against an oracle; `tools/predicate-audit` runs the same comparison over a larger matrix in the PR build.
 
-`hardwood.metadata-filtering=false` turns off every metadata-driven decision: no row group or page is dropped and no row group is promised in full (`RowGroupIterator.filterRowGroups`).
+`hardwood.metadata-filtering=false` turns off every metadata-driven decision: no row group or page is dropped and no row group is promised in full (`RowGroupPruning.filterRowGroups`).
 
 Tests: `PredicatePathAgreementTest`, `RowGroupDecideTest`, `MetadataFilteringOptionTest`.
 
@@ -170,7 +170,7 @@ Readability is a property of the file that wrote the bounds. `BoundsReadability.
 
 The readability also records which unreadable columns have been reported. `claimReport` grants one report per column, so an opened file names each unreadable column once, however many row groups and pages its reads prune.
 
-`MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`RowGroupIterator` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` reads the remaining leaves as readable, under the column's `INT96` order where it has one ([INT96 and stored-byte comparisons](#int96-and-stored-byte-comparisons)). Untested.
+`MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`FetchPlanBuilder` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` reads the remaining leaves as readable, under the column's `INT96` order where it has one ([INT96 and stored-byte comparisons](#int96-and-stored-byte-comparisons)). Untested.
 
 Whether an annotation names an order at all is `AnnotationKind.namesAnOrder`, a fact of the annotation's constant ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#annotation-model)); `AnnotationPairings.namesAnOrder`, which takes the file's `ColumnOrder` and the physical type too, decides the first and second conditions above together. Bounds readability here reads it, as do the writer's `StatisticsOrder.supportsBounds` and `FilterPredicateResolver`'s refusal of ordered operators. A column whose values have no order has no bounds worth recording or trusting, which is why one answer serves all three.
 
@@ -218,7 +218,7 @@ A file may declare `INT96_TIMESTAMP_ORDER` instead, which `BoundsReadability.int
 
 A pair whose own nanoseconds lie outside `[0, 1 day)` shows the promise broken and is discarded (`NANOS_OUTSIDE_A_DAY`), reported as any faulty pair is. A value inside the unit that breaks it cannot be seen from the bounds: such a file can lose rows the way a file whose `INT64` maximum sits below a value it holds does. Decoding stays lenient regardless: a value with nanoseconds past one day reads as the instant it encodes.
 
-Inline page statistics are decided by leaves numbered in the reference file's ordinals rather than the page's file's, so `RowGroupIterator` hands `SequentialFetchPlan` the column's order alone (`BoundsReadability.ofOneColumn`).
+Inline page statistics are decided by leaves numbered in the reference file's ordinals rather than the page's file's, so `FetchPlanBuilder` hands `SequentialFetchPlan` the column's order alone (`BoundsReadability.ofOneColumn`).
 
 On any other column a `STORED_BYTES` comparison reads no bounds and reports nothing, since it tests equality on raw bytes of a column whose bounds are in value order. Type-specific comparison rules are in [PREDICATE_MODEL.md](PREDICATE_MODEL.md#per-column-type).
 
@@ -237,11 +237,11 @@ Tests: `SizeStatisticsMetadataTest`, `MalformedMetadataValidationTest`, `PageFil
 
 ## Row groups
 
-`RowGroupIterator.filterRowGroups` decides every row group of a file on its statistics when the file is planned, before any of its row groups is read. `RowGroupFilterEvaluator.planRowGroup` folds the predicate and decides each leaf with `ChunkStats.of(rowGroup, column, readability).decide(leaf, …)`. Planning passes a `BloomFilterColumnRecorder`, which reads nothing: where a leaf's statistics leave it `MIGHT_MATCH`, the absence switch asks it for the chunk's bloom filter, and it records the column. A leaf the statistics decide reaches no probe, so the recorded columns are those whose filter the decision may need, and only they are fetched ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-index-windows)).
+`RowGroupPruning.filterRowGroups` decides every row group of a file on its statistics when the file is planned, before any of its row groups is read. `RowGroupFilterEvaluator.planRowGroup` folds the predicate and decides each leaf with `ChunkStats.of(rowGroup, column, readability).decide(leaf, …)`. Planning passes a `BloomFilterColumnRecorder`, which reads nothing: where a leaf's statistics leave it `MIGHT_MATCH`, the absence switch asks it for the chunk's bloom filter, and it records the column. A leaf the statistics decide reaches no probe, so the recorded columns are those whose filter the decision may need, and only they are fetched ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-index-windows)).
 
 `GeospatialPredicate` is decided in the fold from `ColumnMetaData.geospatialStatistics().bbox()`, which lives on the chunk alone ([LOGICAL_TYPES.md](LOGICAL_TYPES.md)).
 
-A `CANNOT_MATCH` row group is dropped; a surviving one carries whether it is `ALWAYS_MATCHES`, the `LeafDecisions` recorded for each leaf and the recorded bloom-filter columns. Bloom filters and dictionaries are probed later, in `RowGroupIterator.computeSharedMetadata`, when the read reaches an undecided row group (a reader reaches its leading row groups before it starts its columns, see [COLUMN_READER.md](COLUMN_READER.md#advancing-the-scan)); an `ALWAYS_MATCHES` one is not probed, since either probe can only prove absence and so cannot contradict the statistics. Two passes each replay the recorded leaf decisions and repeat no statistics warning:
+A `CANNOT_MATCH` row group is dropped; a surviving one carries whether it is `ALWAYS_MATCHES`, the `LeafDecisions` recorded for each leaf and the recorded bloom-filter columns. Bloom filters and dictionaries are probed later, in `RowGroupIterator.computeSharedMetadata` through `RowGroupPruning.probeOnArrival`, when the read reaches an undecided row group (a reader reaches its leading row groups before it starts its columns, see [COLUMN_READER.md](COLUMN_READER.md#advancing-the-scan)); an `ALWAYS_MATCHES` one is not probed, since either probe can only prove absence and so cannot contradict the statistics. Two passes each replay the recorded leaf decisions and repeat no statistics warning:
 
 1. `refineWithBloomFilters` probes the bloom filter of each leaf left `MIGHT_MATCH`, and records the leaf decisions it reaches. A row group without recorded columns skips this pass.
 2. `refineWithDictionaries` starts from those decisions and reads a dictionary only for a leaf still `MIGHT_MATCH`, so a leaf its bloom filter dropped reads no dictionary, and a row group its bloom filters dropped reads none at all.

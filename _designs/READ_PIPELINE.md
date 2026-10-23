@@ -174,7 +174,7 @@ Tests: `BatchSizingTest`, `WideListBatchBoundTest`.
 
 ### The work list
 
-`RowGroupIterator` holds an ordered work list of `WorkItem`s, one per surviving row group: the file, the row group and its index in the file, the file's schema and column ordinals, the item's index in the list, the rows planned before it, the row group's always-match flag and the per-leaf filter decisions its dictionaries sharpen later.
+`RowGroupIterator` holds an ordered work list of `WorkItem`s, one per surviving row group: the file, the row group and its index in the file, the file's schema and column ordinals, the item's index in the list, the rows planned before it, the row group's always-match flag and the per-leaf filter decisions its dictionaries sharpen later. It plans files into the list and owns the list's lifecycle; the schema checks (`SchemaCompatibility`), the pruning by statistics, Bloom filters and dictionaries (`RowGroupPruning`) and the building of each row group's fetch plans (`FetchPlanBuilder`) are classes of their own.
 
 Each `PageSource` walks the list with an integer cursor through `planning(i)`, the planning of the work item at `i` (`workItemAt(i)` with the plans of all decoded columns computed), whose work item is `null` when the read is done. The first column to arrive starts the planning, the others find it started; the plans are cached per item, and the column drains its own. When the plan is exhausted it calls `releaseWorkItem`; each item carries a reference count of the decoded columns, and the last release evicts the item's cached metadata and plans. Page slices and page tasks in flight keep their bytes alive until they finish.
 

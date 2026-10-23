@@ -20,7 +20,7 @@ On a local file up to 2 GB a `readRange` is a zero-copy slice of the whole-file 
 | Step | Where | Requests |
 |---|---|---|
 | Footer | `ParquetMetadataReader.read` | Two reads: the trailing length and magic, then the footer body; the leading magic is not read ([FILE_METADATA.md](FILE_METADATA.md#footer-read)). A footer a `MetadataSource` supplies costs the first read only ([FILE_METADATA.md](FILE_METADATA.md#supplied-footers)). On S3 the suffix read `S3InputFile.open` issues serves both when the footer lies inside it ([S3_STORAGE.md](S3_STORAGE.md)) |
-| Row-group pruning on footer statistics | `RowGroupIterator.filterRowGroups` | None. Records, per kept row group, the columns whose bloom filter a leaf would probe |
+| Row-group pruning on footer statistics | `RowGroupPruning.filterRowGroups` | None. Records, per kept row group, the columns whose bloom filter a leaf would probe |
 
 A file is planned when the first column enters the previous file's last row group, one row group ahead of the read ([READ_PIPELINE.md](READ_PIPELINE.md#incremental-planning)), or earlier when the read opens it ahead ([Opening files ahead](#opening-files-ahead)). Planning reads no bloom filter; which leaves are probed is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
@@ -59,9 +59,9 @@ Two byte ranges are fetched as one request when the gap between them is at most 
 
 | Merge | Where |
 |---|---|
-| Needed pages within a column into page groups | `RowGroupIterator.coalescePages` |
-| The dictionary page into the first page group | `RowGroupIterator.foldsDictionary` |
-| First reads of different columns into a shared region | `RowGroupIterator.coalesceAcrossColumns` |
+| Needed pages within a column into page groups | `FetchPlanBuilder.coalescePages` |
+| The dictionary page into the first page group | `FetchPlanBuilder.foldsDictionary` |
+| First reads of different columns into a shared region | `FetchPlanBuilder.coalesceAcrossColumns` |
 | Page-index and bloom-filter slices of one structure | `CoalescedRanges` |
 
 A merge bridges the gap between two needed ranges. It never extends a request before the first needed byte or past the last one. A range longer than the span limit is a request of its own.
@@ -173,7 +173,7 @@ A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapp
 
 A nested column without an OffsetIndex whose pages are `DATA_PAGE` (v1) holds its repetition levels inside the compressed body, so counting its records would mean decompressing pages the mask exists to skip. Such a column closes the gate for the whole row group: `computeFetchPlans` promotes the row group's ranges to all rows, so no plan applies a mask, and the filter falls to row-group statistics and per-row evaluation. A fast `tail` is not taken for the read ([ROW_READER.md](ROW_READER.md#tail)).
 
-`RowGroupIterator.masksApplicableForRowGroup` decides the gate at most once per row group. `SharedRowGroupMetadata` holds it as a `LazyMaskCapability`, which computes it on first request and caches it; a failed probe caches nothing. `computeFetchPlans` requests it only when the row group's ranges are neither all rows nor empty, and the tail path (`canFastSkipAllRowGroups`) requests it for each row group in turn, stopping at the first that closes the gate, before the tail range exists, so an unfiltered read without a tail never probes. The v1/v2 question is answered by `PageFormatProbe`, which reads the page header at `data_page_offset` and accepts it only if it is a data page ending within the chunk; otherwise (some writers understate the offset or point it at the dictionary page) it walks from the chunk start past the dictionary page. A chunk with consistent offsets costs one request. Writers do not mix page versions within a chunk, so one header decides the chunk. A row group its dictionaries drop needs no gate, and a file whose chunks all have an OffsetIndex pays nothing.
+`FetchPlanBuilder.masksApplicableForRowGroup` decides the gate at most once per row group. `SharedRowGroupMetadata` holds it as a `LazyMaskCapability`, which computes it on first request and caches it; a failed probe caches nothing. `computeFetchPlans` requests it only when the row group's ranges are neither all rows nor empty, and the tail path (`canFastSkipAllRowGroups`) requests it for each row group in turn, stopping at the first that closes the gate, before the tail range exists, so an unfiltered read without a tail never probes. The v1/v2 question is answered by `PageFormatProbe`, which reads the page header at `data_page_offset` and accepts it only if it is a data page ending within the chunk; otherwise (some writers understate the offset or point it at the dictionary page) it walks from the chunk start past the dictionary page. A chunk with consistent offsets costs one request. Writers do not mix page versions within a chunk, so one header decides the chunk. A row group its dictionaries drop needs no gate, and a file whose chunks all have an OffsetIndex pays nothing.
 
 ### Sequential plans under a mask
 

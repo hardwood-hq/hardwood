@@ -36,21 +36,21 @@ class CoalescingPolicyTest {
 
     @Test
     void pagesWithinAColumnFollowTheRule() {
-        assertThat(RowGroupIterator.coalescePages(pagesWithGap(GAP), 0)).hasSize(1);
-        assertThat(RowGroupIterator.coalescePages(pagesWithGap(GAP + 1), 0)).hasSize(2);
+        assertThat(FetchPlanBuilder.coalescePages(pagesWithGap(GAP), 0)).hasSize(1);
+        assertThat(FetchPlanBuilder.coalescePages(pagesWithGap(GAP + 1), 0)).hasSize(2);
     }
 
     @Test
     void theDictionaryPageFollowsTheRule() {
         // Dictionary page [4, 1004), first data page at 1004.
-        assertThat(RowGroupIterator.foldsDictionary(4, 1004, new PageLocation(1004 + GAP, 100, 0))).isTrue();
-        assertThat(RowGroupIterator.foldsDictionary(4, 1004, new PageLocation(1004 + GAP + 1, 100, 0))).isFalse();
+        assertThat(FetchPlanBuilder.foldsDictionary(4, 1004, new PageLocation(1004 + GAP, 100, 0))).isTrue();
+        assertThat(FetchPlanBuilder.foldsDictionary(4, 1004, new PageLocation(1004 + GAP + 1, 100, 0))).isFalse();
     }
 
     /// Two 100-byte pages, `gap` bytes apart.
-    private static List<RowGroupIterator.NeededPage> pagesWithGap(int gap) {
+    private static List<FetchPlanBuilder.NeededPage> pagesWithGap(int gap) {
         return List.of(
-                new RowGroupIterator.NeededPage(new PageLocation(4, 100, 0), PageRowMask.ALL, 0, 10),
-                new RowGroupIterator.NeededPage(new PageLocation(104 + gap, 100, 10), PageRowMask.ALL, 1, 10));
+                new FetchPlanBuilder.NeededPage(new PageLocation(4, 100, 0), PageRowMask.ALL, 0, 10),
+                new FetchPlanBuilder.NeededPage(new PageLocation(104 + gap, 100, 10), PageRowMask.ALL, 1, 10));
     }
 }

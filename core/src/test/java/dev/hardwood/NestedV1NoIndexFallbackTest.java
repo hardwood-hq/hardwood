@@ -13,9 +13,9 @@ import java.nio.file.Paths;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.predicate.BoundsReadability;
+import dev.hardwood.internal.reader.FetchPlanBuilder;
 import dev.hardwood.internal.reader.FileColumnOrdinals;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -73,7 +73,7 @@ class NestedV1NoIndexFallbackTest {
 
             FileSchema schema = FileSchema.fromSchemaElements(meta.schema());
             ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
-            boolean applicable = RowGroupIterator.masksApplicableForRowGroup(
+            boolean applicable = FetchPlanBuilder.masksApplicableForRowGroup(
                     projected, rg, schema,
                     FileColumnOrdinals.identity(schema.getColumnCount(), null, BoundsReadability.ALL), file);
 

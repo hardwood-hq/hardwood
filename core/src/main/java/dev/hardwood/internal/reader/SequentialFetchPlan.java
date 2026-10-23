@@ -58,7 +58,7 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// The first chunk's handle belongs to the plan rather than to a walk, so
 /// [#prefetch] fetches the bytes a [#pages] walk then reads.
-public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
+public final class SequentialFetchPlan implements FetchPlan, FetchPlanBuilder.CoalescableFirstChunk {
 
 
     /// Minimum chunk size when `maxRows` is active (1 MB).

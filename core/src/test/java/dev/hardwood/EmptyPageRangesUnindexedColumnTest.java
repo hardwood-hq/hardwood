@@ -14,9 +14,9 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.reader.FetchPlanBuilder;
 import dev.hardwood.internal.reader.FileColumnOrdinals;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
@@ -51,9 +51,9 @@ class EmptyPageRangesUnindexedColumnTest {
                     schema.getColumnCount(), null, BoundsReadability.ALL);
             RowGroup rowGroup = meta.rowGroups().get(0);
 
-            assertThat(RowGroupIterator.masksApplicableForRowGroup(
+            assertThat(FetchPlanBuilder.masksApplicableForRowGroup(
                     ProjectedSchema.create(schema, FLAT), rowGroup, schema, ordinals, file)).isTrue();
-            assertThat(RowGroupIterator.masksApplicableForRowGroup(
+            assertThat(FetchPlanBuilder.masksApplicableForRowGroup(
                     ProjectedSchema.create(schema, ColumnProjection.all()), rowGroup, schema, ordinals, file))
                     .isFalse();
         }
