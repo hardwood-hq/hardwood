@@ -11,8 +11,6 @@ import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
@@ -108,8 +106,9 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     // === Pipeline control ===
     /// Set when the column stops: closed, its last batch published, or failed.
     volatile boolean done;
-    /// Page tasks and fetch steps submitted and not finished, which [#close()] waits for.
-    private final AtomicInteger tasks = new AtomicInteger();
+    /// The read's page tasks and fetch steps submitted and not finished, which [#close()] waits
+    /// for; this column's among them.
+    private final ReadTasks tasks;
     /// Raised when a publish found no room, so the consumer publishes when it takes a batch.
     private final AtomicBoolean publishWanted = new AtomicBoolean();
     /// A fetch step is queued or running; stays set once the fetch has ended, so that no step
@@ -117,11 +116,6 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     private final AtomicBoolean fetchScheduled = new AtomicBoolean();
     /// Raised by every [#scheduleFetch()]: the running step looks again before it returns.
     private volatile boolean fetchWanted;
-    /// The thread that claimed the close and waits for the page tasks; the last task unparks it.
-    private volatile Thread closingThread;
-    /// Claimed by the one thread that closes the column ([#close()]); every other closer waits
-    /// until that close has completed.
-    private final CloseClaim closeClaim = new CloseClaim();
 
     // === Fetch steps only ===
     private PageDecoder pageDecoder;
@@ -135,6 +129,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
         this.column = column;
         this.decompressorFactory = decompressorFactory;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
+        this.tasks = scheduler.executor().tasks();
         exchange.setRoomListener(this::roomPossible);
         if (scheduler.executor() instanceof ReadQueue queue) {
             exchange.setQueue(queue);
@@ -147,46 +142,31 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
         scheduleFetch();
     }
 
-    /// Stops every column of the read ([ReadScheduler#stop()]) and waits until this one is
-    /// quiescent: every fetch step and page task submitted for it has finished, so that the
-    /// caller can release what the `InputFile` owns. Nothing is interrupted.
+    /// Stops every column of the read ([ReadScheduler#stop()]) and waits until the read is
+    /// quiescent: every fetch step and page task submitted for its columns has finished, so that
+    /// the caller can release what the `InputFile` owns. Nothing is interrupted.
     ///
     /// A read's columns are closed together, one after another. Stopping them all on the first
     /// close lets the waits of every column overlap: a column still running while an earlier one
-    /// is awaited would go on fetching, submitting and decoding pages.
+    /// is awaited would go on fetching, submitting and decoding pages. The first close waits for
+    /// all of them, and the later ones find the read quiescent.
     ///
-    /// A reader and its parent can close a read on two threads at once. One thread claims the
-    /// close and waits for the column; every other closer returns once that close has completed.
+    /// A reader and its parent can close a read on two threads at once: each waits until the
+    /// read is quiescent. A close counts itself as a task of the read while it stops the read, so
+    /// a closer that finds the read already stopping waits for that stop to finish too.
     ///
     /// On a context without a pool, the closing thread runs the read's queue while it waits, as
-    /// nothing else runs the column's tasks; each returns at once on a stopped column.
+    /// nothing else runs the read's tasks; each returns at once on a stopped column.
     @Override
     public void close() {
-        if (!closeClaim.claim()) {
-            return;
-        }
-        boolean interrupted = false;
+        tasks.started();
         try {
             scheduler.stop();
-            // Written before the count is read, as a task reads it after the count: either this
-            // sees the last task's decrement or that task sees this thread and unparks it.
-            closingThread = Thread.currentThread();
-            if (scheduler.executor() instanceof ReadQueue queue) {
-                queue.runUntil(() -> tasks.get() == 0);
-            }
-            while (tasks.get() > 0) {
-                LockSupport.park(this);
-                // A park returns at once while the interrupt flag is set: cleared here and
-                // restored on the way out, so an interrupted close waits instead of spinning.
-                interrupted |= Thread.interrupted();
-            }
         }
         finally {
-            closeClaim.completed();
+            tasks.ended();
         }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
-        }
+        tasks.await(tasks::idle, scheduler.executor() instanceof ReadQueue queue ? queue : null);
     }
 
     /// Stops the column without waiting for it: no publish runs after it, its consumer sees the
@@ -234,9 +214,9 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
         return publishedRow;
     }
 
-    /// The column's page tasks submitted and not finished.
+    /// The read's page tasks and fetch steps submitted and not finished.
     int tasksInFlight() {
-        return tasks.get();
+        return tasks.count();
     }
 
     /// Takes the column's next queued page off the queue and counts it as a task. The task is
@@ -244,7 +224,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     ///
     /// @return the page, or `null` if the column is done
     PageTask takeReady() {
-        tasks.incrementAndGet();
+        tasks.started();
         PageTask page;
         lock.lock();
         try {
@@ -263,8 +243,9 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
 
     /// Ends the read with the decode pool's refusal of a page task, which a closed context gives.
     void rejected(PageTask page, RejectedExecutionException e) {
-        taskEnded(page);
         signalError(ScheduledColumn.contextClosed(e));
+        // Last: a poll that finds the read idle must find the failure too
+        taskEnded(page);
     }
 
     // ==================== Fetch steps ====================
@@ -282,14 +263,15 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
         if (!fetchScheduled.compareAndSet(false, true)) {
             return;
         }
-        tasks.incrementAndGet();
+        tasks.started();
         try {
             scheduler.executeFetch(this::runFetchStep);
         }
         catch (RejectedExecutionException e) {
-            uncountTask();
             endFetch();
             signalError(ScheduledColumn.contextClosed(e));
+            // Last: a poll that finds the read idle must find the failure too
+            uncountTask();
         }
     }
 
@@ -300,8 +282,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     /// admitted waits for a task of the read to end ([WorkingSet#admitTask]). Each keeps the
     /// column's claim and its count of tasks, and the need's completion queues the next step
     /// ([#resumeFetch]): no step waits for I/O or another task, and a close waits for the read,
-    /// the planning and the task. The read's executor counts the step as
-    /// outstanding until then ([ReadExecutor#yielded()]).
+    /// the planning and the task.
     private void runFetchStep() {
         Need pending = null;
         try {
@@ -334,7 +315,6 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
             else {
                 // Last: the completion may queue the next step at once, which another thread of
                 // the pool runs
-                scheduler.executor().yielded();
                 pending.whenMet(this::resumeFetch);
             }
         }
@@ -347,13 +327,10 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
             scheduler.executeFetch(this::runFetchStep);
         }
         catch (RejectedExecutionException e) {
-            uncountTask();
             endFetch();
             signalError(ScheduledColumn.contextClosed(e));
-        }
-        finally {
-            // After the step is queued, so that the read's queue is never seen idle in between
-            scheduler.executor().resumed();
+            // Last: a poll that finds the read idle must find the failure too
+            uncountTask();
         }
     }
 
@@ -616,12 +593,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     }
 
     private void uncountTask() {
-        if (tasks.decrementAndGet() == 0) {
-            Thread closing = closingThread;
-            if (closing != null) {
-                LockSupport.unpark(closing);
-            }
-        }
+        tasks.ended();
     }
 
     /// A failure met reading `column`, typed ([#asReadFailure]) and placed with the file, row group

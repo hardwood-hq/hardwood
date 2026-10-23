@@ -205,7 +205,7 @@ class ScheduledColumnCloseTest {
     }
 
     /// Two threads closing one column at once, as a reader and its parent can, both return, and
-    /// only once the column's queued fetch step has finished. The single decode thread is held,
+    /// only once the read's queued fetch step has finished. The single decode thread is held,
     /// so the column's first fetch step is queued and cannot run until it is released.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -220,11 +220,11 @@ class ScheduledColumnCloseTest {
                 try {
                     awaitTrue(() -> scheduled.tasksInFlight() > 0, "a fetch step is queued");
                     first = Thread.ofPlatform().start(scheduled::close);
-                    awaitTrue(() -> LockSupport.getBlocker(first) == scheduled,
-                            "the first close claimed the column and waits for its fetch step");
+                    awaitTrue(() -> LockSupport.getBlocker(first) instanceof ReadTasks,
+                            "the first close waits for the read's fetch step");
                     second = Thread.ofVirtual().start(scheduled::close);
                     awaitParkedOrExited(second);
-                    assertThat(second.isAlive()).as("the second close waits for the claimed close").isTrue();
+                    assertThat(second.isAlive()).as("the second close waits for the read's fetch step").isTrue();
                 }
                 finally {
                     releaseWorker.countDown();
@@ -256,11 +256,11 @@ class ScheduledColumnCloseTest {
                         scheduled.close();
                         interruptedOnReturn.set(Thread.currentThread().isInterrupted());
                     });
-                    awaitTrue(() -> LockSupport.getBlocker(closer) == scheduled,
-                            "the close waits for the column's fetch step");
+                    awaitTrue(() -> LockSupport.getBlocker(closer) instanceof ReadTasks,
+                            "the close waits for the read's fetch step");
                     closer.interrupt();
                     awaitTrue(() -> closer.getState() == Thread.State.WAITING
-                            && LockSupport.getBlocker(closer) == scheduled && !closer.isInterrupted(),
+                            && LockSupport.getBlocker(closer) instanceof ReadTasks && !closer.isInterrupted(),
                             "the close takes the interrupt and waits again");
 
                     ThreadMXBean threads = ManagementFactory.getThreadMXBean();

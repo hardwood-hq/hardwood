@@ -186,7 +186,7 @@ public final class PrefetchTasks {
         for (CompletableFuture<Void> future : started) {
             if (queue != null) {
                 // Nothing else may run the read's queue: the task runs here, dropping its work
-                queue.runUntil(future::isDone);
+                queue.tasks().await(future::isDone, queue);
             }
             // A task catches its own failures, so the join returns normally.
             future.join();

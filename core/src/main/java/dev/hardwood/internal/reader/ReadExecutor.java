@@ -21,7 +21,7 @@ public sealed interface ReadExecutor permits ReadExecutor.PoolExecutor, ReadQueu
     /// The executor of a read on `context`: its pool, or a queue of the read's own where it has
     /// none.
     static ReadExecutor forContext(HardwoodContextImpl context) {
-        return context.hasPool() ? new PoolExecutor(context) : new ReadQueue(context);
+        return context.hasPool() ? new PoolExecutor(context, new ReadTasks()) : new ReadQueue(context);
     }
 
     /// Runs a column's fetch step, at the head.
@@ -42,18 +42,11 @@ public sealed interface ReadExecutor permits ReadExecutor.PoolExecutor, ReadQueu
     /// The threads that decode the read's pages: the pool's, or the one driving the read.
     int decodeThreads();
 
-    /// Counts a fetch step that yielded on a need as outstanding work of the read, until
-    /// [#resumed()]; a pool, whose threads never look for a read's work, counts nothing.
-    default void yielded() {
-    }
-
-    /// Ends the count of a yielded fetch step, after the need's completion queued the step again
-    /// or failed to.
-    default void resumed() {
-    }
+    /// The read's fetch steps and page tasks in flight, and the wait of the threads using it.
+    ReadTasks tasks();
 
     /// The read's work on its context's pool.
-    record PoolExecutor(HardwoodContextImpl context) implements ReadExecutor {
+    record PoolExecutor(HardwoodContextImpl context, ReadTasks tasks) implements ReadExecutor {
 
         @Override
         public void executeStep(Runnable step) {

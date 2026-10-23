@@ -393,12 +393,12 @@ public class BatchExchange<B> {
     /// reads in flight. An interrupt ends the wait before the next item runs, as it ends a pooled
     /// read's wait: an item may read a file, whose channel an interrupted thread would close.
     ///
-    /// @throws IllegalStateException if no work is outstanding on the read's queue and no batch
+    /// @throws IllegalStateException if no fetch step or page task of the read is in flight and no batch
     ///         is ready: nothing could publish one any more
     @SuppressWarnings("unchecked")
     private B drive() throws InterruptedException, IOException {
         while (true) {
-            long seen = queue.signals();
+            long seen = queue.tasks().signals();
             Object batch = taken(readyQueue.poll());
             if (batch == END_OF_STREAM) {
                 checkError();
@@ -416,7 +416,7 @@ public class BatchExchange<B> {
             if (queue.runOne()) {
                 continue;
             }
-            if (queue.idle()) {
+            if (queue.tasks().idle()) {
                 // Looked at again: work that ended before the queue was idle published before
                 if (readyQueue.isEmpty() && !finished) {
                     throw new IllegalStateException("The read of column '" + columnName
@@ -426,7 +426,7 @@ public class BatchExchange<B> {
             }
             BatchWaitEvent event = new BatchWaitEvent();
             event.begin();
-            queue.park(seen);
+            queue.tasks().park(seen);
             event.column = columnName;
             event.commit();
             if (Thread.interrupted()) {
