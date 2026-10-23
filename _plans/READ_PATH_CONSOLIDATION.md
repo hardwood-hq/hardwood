@@ -231,8 +231,7 @@ stages move code into or add):
 - concurrency constructs: lines containing `ReentrantLock`, `synchronized`, `Atomic*`,
   `CompletableFuture`, `volatile` and `tryLock`.
 
-Stage 0 records the baseline on `4fbba14e7`; for the first sixteen classes alone it is 4,325 lines
-and 88 constructs. Each stage's last PR reports both. Expected after stage 2: about −20 % lines
+The baseline on `4fbba14e7` is 5,314 lines of code and 96 concurrency constructs. Each stage's last PR reports both. Expected after stage 2: about −20 % lines
 and −40 % constructs. A stage that falls well short says why in its PR before the next one starts.
 
 ## Gates
@@ -242,14 +241,14 @@ Against a baseline jar of `4fbba14e7`, with `run-gate.sh` in hardwood-benchmarks
 | When | Gate | Time |
 | --- | --- | --- |
 | Every PR | `./mvnw verify -DskipITs` and the `-Pzero-threads` core suite; the request-shape tests; `run-gate.sh --counts-only` (the full `./mvnw verify` before push when the PR touches the S3 path) | the build, the second core suite and about 20 s |
-| The last PR of stages 2 and 3 | `run-gate.sh` on the container: the projected, filtered, many-small-files, multi-file and remote-beside-wide-remote contenders at 30 ms, base and head interleaved over two rounds, none slower beyond a band of at least 5 % | about 4.5 min |
+| The last PR of stages 2 and 3 | `run-gate.sh` on the container: the projected, many-small-files, multi-file and remote-beside-wide-remote contenders at 30 ms, base and head interleaved over two rounds, none slower beyond a band of at least 5 % | under 5 min |
 | The end of stages 2 and 3, and before 1.1.0.CR1 | `run-regression.sh`, narrow and flat presets, on the N300 pinned at 1.50 GHz, two rounds, once on a pool and once with `-Dhardwood.internal.zeroThreads=true`: 0 rows slower | |
 | Before 1.1.0.CR1 | `run-s3.sh` at 235 ms, many-small-files included | |
 
 The counts check passes when, for every S3 read the benchmark checks, requests are no more than
 the baseline's, and bytes no more than the baseline's plus G for every request saved plus, per
 file, the S3 suffix's growth over 64 KiB. Base against base, the timed S3 contenders moved by at
-most 3.2 % between rounds. Local reads are not timed on the container, where short runs of the
+most 0.8 % between rounds; the filtered scan's three requests are held by the counts. Local reads are not timed on the container, where short runs of the
 same jar move by 20 % and more between rounds; the N300 runs cover them at the end of each stage,
 the zero-thread path included. `head`, `tail`, nested reads and chunks without an offset index
 are held by their request-shape tests and the counts. A stage changes no default these gates do
@@ -271,9 +270,8 @@ an accepted end state: stage 3 starts only if its decision rule below says so.
 
 ### Stage 0: baseline
 
-- `run-gate.sh` in hardwood-benchmarks, calibrated base against base, and the baseline jar of
-  `4fbba14e7`. The multi-file and remote-beside-wide-remote contenders join the timed set, the
-  counts check takes the rule above, and the calibration is repeated.
+- `run-gate.sh` in hardwood-benchmarks (hardwood-benchmarks#35), calibrated base against base,
+  and the baseline jar of `4fbba14e7` (`1.1.0-m1665-SNAPSHOT`).
 - `tools/read-path-measures.sh` and the baseline it records.
 - #1630, #1629 and #1393 continue alongside; they touch fuzz targets and `S3Fetcher`'s body
   handling. #1399 lands in stage 2, after #1629.
