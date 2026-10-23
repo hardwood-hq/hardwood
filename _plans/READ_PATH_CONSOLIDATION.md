@@ -87,17 +87,26 @@ The remote work that follows becomes changes to the numbers and to the sequence'
 
 ## Gates
 
-A baseline is taken once on `4fbba14e7` before stage 1 and kept for every stage:
+Every PR passes one gate of at most 5 minutes on the dev container, against a baseline jar of
+`4fbba14e7` built once:
 
-- `run-regression.sh`, narrow and flat presets, on the container and the N300 pinned at 1.50 GHz:
-  0 rows slower.
-- `run-s3.sh` on the emulated store at 30 ms and 235 ms, the many-small-files contender included:
-  no contender slower beyond the runner's noise band.
-- The tests that pin request shapes and counts: unchanged, or fewer requests.
-- The `-Pzero-threads` core suite and the full `./mvnw verify` green.
+- **Exact, in the build:** the tests that pin request shapes and counts, unchanged or fewer
+  requests; the `-Pzero-threads` core suite and `./mvnw verify` green.
+- **Exact, from the benchmark:** requests and bytes fetched per contender, from the S3 benchmark's
+  metadata, no more than the baseline's.
+- **Timed:** `run-gate.sh` in hardwood-benchmarks runs base and head interleaved, two rounds, on a
+  fixed set of contenders with short iterations: the narrow `hardwood` contenders and
+  `hardwoodColumnar` on local files, and `hardwoodS3`, `hardwoodFilteredScan` and
+  `hardwoodManySmallFiles` at 30 ms emulated latency. No contender slower beyond the band the
+  script reports for that contender, from the spread between its rounds.
 
-A stage changes no default the gates do not cover. Each PR updates the design documents its
-change alters (`READ_PIPELINE.md`, `FETCH_PLANNING.md`, `THREADING.md`, `FILE_METADATA.md`).
+Stage 0 builds the script and checks it against itself (base against base) for its band.
+
+The long suites, `run-regression.sh` with rounds on the container and the N300 pinned at
+1.50 GHz and `run-s3.sh` at 235 ms, run once before 1.1.0.CR1, and on a stage only when the quick
+gate flags a contender it cannot settle. A stage changes no default the quick gate does not
+cover. Each PR updates the design documents its change alters (`READ_PIPELINE.md`,
+`FETCH_PLANNING.md`, `THREADING.md`, `FILE_METADATA.md`).
 
 ## Stages
 
@@ -114,7 +123,7 @@ Stages run in order, one PR each or more, every commit keyed to #1662.
 
 ### Stage 0: baseline
 
-- Take the baseline above.
+- Build `run-gate.sh` and the baseline jar, and measure the script's band base against base.
 - #1399 lands cut down: a 256 KiB S3 tail (64 KiB when a `MetadataSource` supplies the footers),
   a range that ends inside the tail fetching only the bytes before it, the open-ahead charging the
   tail's size, and the tail dropped once a file's last work item is released. #100's early close
