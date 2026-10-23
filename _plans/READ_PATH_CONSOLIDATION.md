@@ -8,6 +8,34 @@ request of a read, sized by five numbers, without making any read slower. It pre
 Building out remote reads (split and parallel requests, deeper read-ahead) follows it, as changes
 to those numbers.
 
+## Goals
+
+1. **One mechanism.** One fetch sequence issues every byte request of a read. The six
+   read-ahead mechanisms, four coalescing passes, ten request sites and three planning modes go,
+   sized by G, S, F, R and W.
+2. **Efficient use of I/O and CPU.**
+   - Read ahead far enough that decode never waits for bytes it could have had, and no further:
+     bytes ahead are bounded by F per read and R per context, and released as the consumer passes
+     them.
+   - Organize requests well: needed ranges coalesced across columns under G, every request at
+     most S, no byte fetched twice, nothing fetched that no read uses. The organization admits
+     parallel requests later as a change of S and F.
+   - No thread waits for I/O. Planning, page walks and decode use the pool or, on a context of
+     zero threads, the thread driving the read.
+3. **No read gets slower,** local or remote, under the gates below.
+4. **Every capability and guarantee is kept:**
+   - correctness, and robustness against crafted files (W, R);
+   - zero-thread contexts, close safety, failure reporting, JFR events;
+   - pruning by statistics, Bloom filters, dictionaries and page index;
+   - row limits (`head`, `tail`, skip), nested and flat reads, row and column readers;
+   - multi-file reads with schema checks, footers a `MetadataSource` supplies;
+   - files in memory or mapped, S3, range-backed files.
+5. **No design decision is left to an implementing PR.** Each stage states the rules its PRs
+   implement. A question an implementation raises that the plan does not answer goes back into the
+   plan before the PR continues.
+6. **Iteration stays fast:** gates of seconds per PR and minutes per stage.
+7. **Building out remote reads changes parameters, not mechanisms.**
+
 ## Where the complexity is
 
 Data reads go through `RangeRead`, whose future a fetch step yields on. Planning reads do not:
