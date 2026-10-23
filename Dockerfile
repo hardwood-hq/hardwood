@@ -22,6 +22,7 @@ RUN microdnf install -y --nodocs \
       gcc \
       glibc-devel \
       zlib-devel \
+      libdeflate \
       file \
       poppler-utils \
       vim-common \
