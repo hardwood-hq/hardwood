@@ -1,7 +1,7 @@
 # Plan: one fetch sequence per read
 
 Tracking issue: #1662. Related: #1663 (the 1.1.0.CR1 read-path plan, which this plan precedes),
-#1399 and #100 (small files), #1629 and #1393 (S3 transport).
+#1399, #1659 and #100 (folded into stage 4), #1629 and #1393 (S3 transport).
 
 This plan reduces the read path's fetching and planning to one mechanism that issues every byte
 request of a read, sized by five numbers, without making any read slower. It precedes 1.1.0.CR1.
@@ -87,32 +87,29 @@ The remote work that follows becomes changes to the numbers and to the sequence'
 
 ## Gates
 
-Every PR passes one gate of at most 5 minutes on the dev container, against a baseline jar of
-`4fbba14e7` built once:
+Against a baseline jar of `4fbba14e7`, with `run-gate.sh` in hardwood-benchmarks on the dev
+container:
 
-- **Exact, in the build:** the tests that pin request shapes and counts, unchanged or fewer
-  requests; the `-Pzero-threads` core suite and `./mvnw verify` green.
-- **Exact, from the benchmark:** requests and bytes fetched per contender, from the S3 benchmark's
-  metadata, no more than the baseline's.
-- **Timed:** `run-gate.sh` in hardwood-benchmarks runs base and head interleaved, two rounds, on a
-  fixed set of contenders with short iterations: the narrow `hardwood` contenders and
-  `hardwoodColumnar` on local files, and `hardwoodS3`, `hardwoodFilteredScan` and
-  `hardwoodManySmallFiles` at 30 ms emulated latency. No contender slower beyond the band the
-  script reports for that contender, from the spread between its rounds.
+| When | Gate | Time |
+| --- | --- | --- |
+| Every PR | `./mvnw verify` and the `-Pzero-threads` core suite green; the tests that pin request shapes unchanged or fewer requests; `run-gate.sh --counts-only`: requests and bytes of every S3 read the benchmark checks, none more than the baseline's | the build plus about 20 s |
+| The last PR of stages 2, 3 and 4 | `run-gate.sh`: `hardwoodProjectedScan`, `hardwoodFilteredScan` and `hardwoodManySmallFiles` at 30 ms emulated latency, base and head interleaved over two rounds, none slower beyond a band of at least 5 % | about 3.5 min |
+| The end of stage 4, and before 1.1.0.CR1 | `run-regression.sh`, narrow and flat presets, on the N300 pinned at 1.50 GHz, two rounds: 0 rows slower | |
+| Before 1.1.0.CR1 | `run-s3.sh` at 235 ms, many-small-files included | |
 
-Stage 0 builds the script and checks it against itself (base against base) for its band.
-
-The long suites, `run-regression.sh` with rounds on the container and the N300 pinned at
-1.50 GHz and `run-s3.sh` at 235 ms, run once before 1.1.0.CR1, and on a stage only when the quick
-gate flags a contender it cannot settle. A stage changes no default the quick gate does not
-cover. Each PR updates the design documents its change alters (`READ_PIPELINE.md`,
-`FETCH_PLANNING.md`, `THREADING.md`, `FILE_METADATA.md`).
+The counts are exact, and they are what an I/O restructuring changes first. Base against base,
+the timed contenders move by at most 2 % between rounds, as latency dominates them. Local reads
+are not timed on the container: short runs of them there move by 20 % and more between rounds of
+the same jar, so their gate is the N300 run at the end of stage 4, the stage that changes where a
+local read plans. A stage changes no default these gates do not cover. Each PR updates the design
+documents its change alters (`READ_PIPELINE.md`, `FETCH_PLANNING.md`, `THREADING.md`,
+`FILE_METADATA.md`).
 
 ## Stages
 
 | # | Stage | Removes | Risk |
 | --- | --- | --- | --- |
-| 0 | Baseline, cut-down #1399 | — | low |
+| 0 | Gate script and baseline | — | low |
 | 1 | Deletions and moves | dead code, five hand-written waits, `RowGroupIterator` down to its work list | low |
 | 2 | One coalescing pass per row group | `SharedRegion`, `CoalescableFirstChunk`, `plannedSpan` | medium |
 | 3 | The fetch sequence for data | the chunk chains, the next row group's first-chunk prefetch, `FileOpenAhead` spans, `FetchedAhead` | medium |
@@ -123,13 +120,8 @@ Stages run in order, one PR each or more, every commit keyed to #1662.
 
 ### Stage 0: baseline
 
-- Build `run-gate.sh` and the baseline jar, and measure the script's band base against base.
-- #1399 lands cut down: a 256 KiB S3 tail (64 KiB when a `MetadataSource` supplies the footers),
-  a range that ends inside the tail fetching only the bytes before it, the open-ahead charging the
-  tail's size, and the tail dropped once a file's last work item is released. #100's early close
-  and reopen stay out; #100 stays open.
-- #1659 lands as the check of a row group's Bloom filters before its index window is fetched
-  ahead, or folds into stage 3.
+- `run-gate.sh` in hardwood-benchmarks, calibrated base against base, and the baseline jar of
+  `4fbba14e7`.
 - #1630, #1629, #1393 and #1671 continue alongside: they touch fuzz targets and `S3Fetcher` only.
 
 ### Stage 1: deletions and moves
@@ -180,6 +172,15 @@ the last lands, planning never blocks, and `PlanningMode`, `WorkItemPlanning`, t
 `PrefetchTasks`, `executePlanning`, the planning `compute` hops, `FileMetadataCache`'s hand-off
 and `DecodeExecutor.awaitFirst` go. Whether `OnceCache` and the `ReentrantLock`s still need their
 JDK 21 reasons is checked then.
+
+Two issues fold into this stage:
+
+- #1399: the footer read is a file's first entry, whose size is a parameter tuned on real S3
+  (#1671). A file up to that size is read whole by it, a range the entry holds is not fetched
+  again, and the entry is charged to R while ahead and released once the file's last row group is
+  read. #100 is settled with it.
+- #1659: a row group's Bloom filters come before its page-index window in the sequence, so a row
+  group they drop costs no index read.
 
 Two questions are settled in this stage, as the dictionary reads move:
 
