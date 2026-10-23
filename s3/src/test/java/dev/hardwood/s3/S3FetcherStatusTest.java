@@ -64,11 +64,14 @@ class S3FetcherStatusTest {
                 "us-east-1", endpoint, true, Duration.ofSeconds(10), 0);
         anonymousApi = new S3Api(httpClient, null,
                 "us-east-1", endpoint, true, Duration.ofSeconds(10), 0);
+        // A tail smaller than the object, so a range read outside it goes to the endpoint
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(64 * 1024));
         fetcher = new S3Fetcher(signedApi, "bucket", "object.parquet");
     }
 
     @AfterEach
     void tearDown() {
+        System.clearProperty(S3Fetcher.TAIL_BYTES_PROPERTY);
         httpClient.close();
         server.stop(0);
     }

@@ -24,11 +24,12 @@ import dev.hardwood.internal.FetchReason;
 ///
 /// The file after the one reached is the next file, which a read opens ahead in any case: its
 /// footer read and its first data request are not charged. Every file further ahead is opened only
-/// while what it fetches fits the context's [ReadAheadBuffer]: its footer read is charged a fixed
-/// [#FOOTER_RESERVATION] from its start until the file is planned, which parses the footer, and its
-/// span its length from its start until a read takes from it. A footer or span that does not fit
-/// is started on a later release of the buffer, if its file is then still ahead. Nothing waits for
-/// the buffer.
+/// while what it fetches fits the context's [ReadAheadBuffer]: its footer read is charged from its
+/// start until the file is planned, which parses the footer, and its span its length from its
+/// start until a read takes from it. A footer read is charged the tail a [TailHolder] fetches
+/// ([TailHolder#tailReservation]), and a fixed [#FOOTER_RESERVATION] for any other file. A footer
+/// or span that does not fit is started on a later release of the buffer, if its file is then
+/// still ahead. Nothing waits for the buffer.
 ///
 /// Opening stops for good once planning a file has failed, since no file after it is planned
 /// ([#stop]), which releases what the files past the failed one hold.
@@ -50,7 +51,7 @@ final class FileOpenAhead {
     /// prune holds no charge once planned, and small files fit the buffer by the thousand.
     static final int DEFAULT_MAX_FILES_AHEAD = 32;
 
-    /// What a footer read ahead is charged: the tail an S3 open fetches. The footer's size is not
+    /// What a footer read ahead of a file that holds no tail is charged. The footer's size is not
     /// known before its read, which [#maxFilesAhead] bounds in number.
     static final long FOOTER_RESERVATION = 64 * 1024;
 
@@ -159,6 +160,14 @@ final class FileOpenAhead {
         if (charge != null) {
             buffer.release(charge);
         }
+    }
+
+    /// What the footer read of `fileIndex` is charged: for a [TailHolder] the tail its open
+    /// fetches.
+    private long footerReservation(int fileIndex) {
+        return files.inputFiles().get(fileIndex) instanceof TailHolder holder
+                ? holder.tailReservation(files.footersSupplied())
+                : FOOTER_RESERVATION;
     }
 
     /// Queues the first data request of a file planned ahead, which starts once it fits the
@@ -273,17 +282,18 @@ final class FileOpenAhead {
                 continue;
             }
             boolean charged = beyondNext(fileIndex);
-            if (charged && !buffer.tryCharge(FOOTER_RESERVATION)) {
+            long reservation = charged ? footerReservation(fileIndex) : 0;
+            if (charged && !buffer.tryCharge(reservation)) {
                 return true;
             }
             nextToOpen++;
             boolean started = files.prefetch(fileIndex, planAhead);
             if (charged) {
                 if (started) {
-                    footerCharges.put(fileIndex, FOOTER_RESERVATION);
+                    footerCharges.put(fileIndex, reservation);
                 }
                 else {
-                    toRelease += FOOTER_RESERVATION;
+                    toRelease += reservation;
                 }
             }
         }

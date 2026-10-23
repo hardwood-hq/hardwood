@@ -10,7 +10,9 @@ package dev.hardwood.s3;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -49,6 +51,17 @@ class S3RangeBackingIT {
                 .build();
     }
 
+    /// A tail smaller than the fixtures, so the reads the range cache serves go past it.
+    @BeforeEach
+    void tailSmallerThanTheFiles() {
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(64 * 1024));
+    }
+
+    @AfterEach
+    void clearTailSize() {
+        System.clearProperty(S3Fetcher.TAIL_BYTES_PROPERTY);
+    }
+
     @AfterAll
     static void tearDown() {
         backedSource.close();
@@ -59,34 +72,31 @@ class S3RangeBackingIT {
     void repeatReadAgainstSameRangeReducesHttpGets() throws Exception {
         S3InputFile cached = backedSource.inputFile(bucket.name(), "column_index_pushdown.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(cached);
-                ColumnReader col = reader.columnReader("id")) {
-            while (col.nextBatch()) {
-                // drain
+        // Two column readers of one open reader: the range cache lives as long as the file is
+        // open, so the byte ranges the first pass fetched are served from the local mmap
+        try (ParquetFileReader reader = ParquetFileReader.open(cached)) {
+            try (ColumnReader col = reader.columnReader("id")) {
+                while (col.nextBatch()) {
+                    // drain
+                }
             }
-        }
-        long requestsAfterFirst = cached.networkRequestCount();
-        long bytesAfterFirst = cached.networkBytesFetched();
-        assertThat(requestsAfterFirst).isPositive();
+            long requestsAfterFirst = cached.networkRequestCount();
+            long bytesAfterFirst = cached.networkBytesFetched();
+            assertThat(requestsAfterFirst).isPositive();
 
-        long requestsBeforeSecond = cached.networkRequestCount();
-        // Re-open + re-read against the *same* InputFile instance. The
-        // range cache is alive, so byte ranges fetched on the first
-        // pass should now be served from the local mmap.
-        try (ParquetFileReader reader = ParquetFileReader.open(cached);
-                ColumnReader col = reader.columnReader("id")) {
-            while (col.nextBatch()) {
-                // drain
+            try (ColumnReader col = reader.columnReader("id")) {
+                while (col.nextBatch()) {
+                    // drain
+                }
             }
-        }
-        long requestsForSecond = cached.networkRequestCount() - requestsBeforeSecond;
 
-        assertThat(requestsForSecond)
-                .as("second pass should issue strictly fewer GETs than the first")
-                .isLessThan(requestsAfterFirst);
-        assertThat(cached.networkBytesFetched() - bytesAfterFirst)
-                .as("second pass should fetch strictly fewer bytes than the first")
-                .isLessThan(bytesAfterFirst);
+            assertThat(cached.networkRequestCount())
+                    .as("second pass should issue no GET")
+                    .isEqualTo(requestsAfterFirst);
+            assertThat(cached.networkBytesFetched())
+                    .as("second pass should fetch no bytes")
+                    .isEqualTo(bytesAfterFirst);
+        }
     }
 
     @Test
@@ -116,25 +126,23 @@ class S3RangeBackingIT {
     void rowReaderRereadReducesHttpGets() throws Exception {
         S3InputFile cached = backedSource.inputFile(bucket.name(), "column_index_pushdown.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(cached);
-                RowReader rows = reader.rowReader()) {
-            while (rows.hasNext()) {
-                rows.next();
+        try (ParquetFileReader reader = ParquetFileReader.open(cached)) {
+            try (RowReader rows = reader.rowReader()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                }
             }
-        }
-        long after = cached.networkRequestCount();
-        long requestsBeforeSecond = cached.networkRequestCount();
+            long requestsAfterFirst = cached.networkRequestCount();
 
-        try (ParquetFileReader reader = ParquetFileReader.open(cached);
-                RowReader rows = reader.rowReader()) {
-            while (rows.hasNext()) {
-                rows.next();
+            try (RowReader rows = reader.rowReader()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                }
             }
-        }
-        long requestsForSecond = cached.networkRequestCount() - requestsBeforeSecond;
 
-        assertThat(requestsForSecond)
-                .as("RowReader re-read should issue fewer GETs than the first read")
-                .isLessThan(after);
+            assertThat(cached.networkRequestCount())
+                    .as("RowReader re-read should issue no GET")
+                    .isEqualTo(requestsAfterFirst);
+        }
     }
 }

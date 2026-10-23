@@ -14,6 +14,7 @@ import java.util.Optional;
 import dev.hardwood.Experimental;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.RangeBackedInputFile;
+import dev.hardwood.internal.reader.TailHolder;
 
 /// [InputFile] backed by an object in Amazon S3 (or an S3-compatible service).
 ///
@@ -25,9 +26,9 @@ import dev.hardwood.internal.reader.RangeBackedInputFile;
 /// discovers the file length from the `Content-Range` response header
 /// and pre-fetches the Parquet footer (which sits at the end of the file) in
 /// the same round-trip — eliminating a separate HEAD request per file.
-/// Those tail bytes are retained for as long as the file is open, and a
-/// read falling entirely inside that window is answered from them
-/// without a request.
+/// A small file comes back whole in that request. A read falling entirely
+/// inside the tail is answered from it without a request, until a reader
+/// is done with the file or closes it.
 ///
 /// When the owning [S3Source] is configured with
 /// [RangeBacking#SPARSE_TEMPFILE], an internal mmap-backed range cache
@@ -37,7 +38,7 @@ import dev.hardwood.internal.reader.RangeBackedInputFile;
 /// only network traffic in either mode.
 ///
 /// Thread-safe once [#open()] has been called.
-public class S3InputFile implements InputFile {
+public class S3InputFile implements InputFile, TailHolder {
 
     /// The S3 network path, retained so the counters report network
     /// traffic only: under [RangeBacking#SPARSE_TEMPFILE] a cache hit is
@@ -59,6 +60,26 @@ public class S3InputFile implements InputFile {
     @Override
     public void open() throws IOException {
         impl.open();
+    }
+
+    /// Internal: called by the reader, not part of the supported API.
+    @Override
+    public long tailReservation(boolean footerSupplied) {
+        return fetcher.tailReservation(footerSupplied);
+    }
+
+    /// Internal: called by the reader, not part of the supported API.
+    @Override
+    public void open(boolean footerSupplied) throws IOException {
+        // The fetcher first, so the range cache's open of it finds it open with this tail
+        fetcher.open(footerSupplied);
+        impl.open();
+    }
+
+    /// Internal: called by the reader, not part of the supported API.
+    @Override
+    public void releaseTail() {
+        fetcher.releaseTail();
     }
 
     @Override
@@ -99,7 +120,8 @@ public class S3InputFile implements InputFile {
 
     /// Number of bytes fetched from the network since [#open()]. The tail
     /// fetch from `open` contributes its actual response size; each
-    /// network-fetch [#readRange] contributes the requested length.
+    /// network-fetch [#readRange] contributes the length it requests, which
+    /// leaves out the part of the range the tail holds.
     /// Tail-cache and range-cache hits do not count.
     public long networkBytesFetched() {
         return fetcher.networkBytesFetched();

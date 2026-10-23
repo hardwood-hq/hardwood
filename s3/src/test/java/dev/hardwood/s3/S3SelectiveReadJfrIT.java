@@ -13,7 +13,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
@@ -138,6 +140,17 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
                 .pathStyle(true)
                 .credentials(S3Credentials.of(S3Proxy.ACCESS_KEY, S3Proxy.SECRET_KEY))
                 .build();
+    }
+
+    /// A tail smaller than the fixtures, so what a read transfers depends on what it selects.
+    @BeforeEach
+    void tailSmallerThanTheFiles() {
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(64 * 1024));
+    }
+
+    @AfterEach
+    void clearTailSize() {
+        System.clearProperty(S3Fetcher.TAIL_BYTES_PROPERTY);
     }
 
     @AfterAll

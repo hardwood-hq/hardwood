@@ -13,14 +13,17 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -52,6 +55,16 @@ class S3InputFileIT {
     static void tearDown() {
         source.close();
         bucket.delete();
+    }
+
+    @AfterEach
+    void clearTailSize() {
+        System.clearProperty(S3Fetcher.TAIL_BYTES_PROPERTY);
+    }
+
+    /// Sets the tail an open fetches to 64 KiB, less than `column_index_pushdown.parquet`.
+    private static void tailSmallerThanTheFile() {
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(64 * 1024));
     }
 
     @Test
@@ -224,6 +237,7 @@ class S3InputFileIT {
     void openingAFileLargerThanTheTailCacheTakesOneRequest() throws Exception {
         // column_index_pushdown.parquet is larger than the 64 KB tail cache, so a read of its
         // first bytes would be a request of its own; the footer comes from the tail read.
+        tailSmallerThanTheFile();
         S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
         try (ParquetFileReader reader = ParquetFileReader.open(file)) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(10_000);
@@ -238,6 +252,7 @@ class S3InputFileIT {
         // network — proving the counters increase past the open() baseline.
         // (A tiny fixture would fit entirely inside the tail cache and the
         // counters would correctly stay at 1.)
+        tailSmallerThanTheFile();
         S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
         try (ParquetFileReader reader = ParquetFileReader.open(file)) {
             long openRequests = file.networkRequestCount();
@@ -254,6 +269,51 @@ class S3InputFileIT {
             assertThat(file.networkRequestCount()).isGreaterThan(openRequests);
             assertThat(file.networkBytesFetched()).isGreaterThan(openBytes);
         }
+    }
+
+    @Test
+    void aFileWithinTheTailIsReadInItsOpenRequest() throws Exception {
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(256 * 1024));
+        S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            assertThat(file.length()).isLessThan(256 * 1024);
+            long rows = 0;
+            try (ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build()) {
+                while (cols.nextBatch()) {
+                    rows += cols.getRecordCount();
+                }
+            }
+
+            assertThat(rows).isEqualTo(10_000);
+            assertThat(file.networkRequestCount()).isEqualTo(1);
+            assertThat(file.networkBytesFetched()).isEqualTo(file.length());
+            // Released before the reader closes the file, once the read is done with it
+            assertTailReleased(file);
+        }
+    }
+
+    @Test
+    void aFileLargerThanTheTailIsReadAsBefore() throws Exception {
+        tailSmallerThanTheFile();
+        S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            try (ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build()) {
+                while (cols.nextBatch()) {
+                    // drain
+                }
+            }
+
+            // The open, and one request for the row group's column chunks
+            assertThat(file.networkRequestCount()).isEqualTo(2);
+            assertTailReleased(file);
+        }
+    }
+
+    /// Asserts that `file` no longer holds its tail: a read of its last byte issues a request.
+    static void assertTailReleased(S3InputFile file) throws IOException {
+        long requests = file.networkRequestCount();
+        file.readRange(file.length() - 1, 1);
+        assertThat(file.networkRequestCount()).as("requests of a read inside the tail").isEqualTo(requests + 1);
     }
 
     @Test

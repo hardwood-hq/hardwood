@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -58,24 +59,46 @@ class S3MetadataSourceIT {
         bucket.delete();
     }
 
+    @AfterEach
+    void clearTailSize() {
+        System.clearProperty(S3Fetcher.TAIL_BYTES_PROPERTY);
+    }
+
     @Test
     void aSuppliedFooterInsideThePrefetchedTailCostsNoRequest() throws Exception {
-        assertThat(footerOf(SMALL_FOOTER).footerLength()).isLessThan(S3Fetcher.TAIL_SIZE - 8);
+        assertThat(footerOf(SMALL_FOOTER).footerLength()).isLessThan(S3Fetcher.SUPPLIED_FOOTER_TAIL_SIZE - 8);
 
-        assertThat(requestsToOpen(SMALL_FOOTER, null)).isEqualTo(1);
-        assertThat(requestsToOpen(SMALL_FOOTER, cachingSource())).isEqualTo(1);
+        assertThat(open(SMALL_FOOTER, null).requests()).isEqualTo(1);
+        assertThat(open(SMALL_FOOTER, cachingSource()).requests()).isEqualTo(1);
     }
 
     @Test
     void aSuppliedFooterOutsideThePrefetchedTailSavesItsRequest() throws Exception {
-        assertThat(footerOf(LARGE_FOOTER).footerLength()).isGreaterThan(S3Fetcher.TAIL_SIZE);
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(S3Fetcher.SUPPLIED_FOOTER_TAIL_SIZE));
+        assertThat(footerOf(LARGE_FOOTER).footerLength()).isGreaterThan(S3Fetcher.SUPPLIED_FOOTER_TAIL_SIZE);
 
-        assertThat(requestsToOpen(LARGE_FOOTER, null)).isEqualTo(2);
-        assertThat(requestsToOpen(LARGE_FOOTER, cachingSource())).isEqualTo(1);
+        assertThat(open(LARGE_FOOTER, null).requests()).isEqualTo(2);
+        assertThat(open(LARGE_FOOTER, cachingSource()).requests()).isEqualTo(1);
     }
 
-    /// The requests an open of `key` issues, with `metadataSource` installed when not `null`.
-    private static long requestsToOpen(String key, MetadataSource metadataSource) throws IOException {
+    /// A tail larger than the file: an open whose footer is read from the file fetches the file
+    /// whole, one whose footer is supplied no more than it would with the smaller tail.
+    @Test
+    void aSuppliedFooterKeepsTheOpenRequestAtItsSize() throws Exception {
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(4 * 1024 * 1024));
+        long length = lengthOf(LARGE_FOOTER);
+        assertThat(length).isGreaterThan(S3Fetcher.SUPPLIED_FOOTER_TAIL_SIZE).isLessThan(4 * 1024 * 1024);
+
+        assertThat(open(LARGE_FOOTER, null)).isEqualTo(new Opened(1, length));
+        assertThat(open(LARGE_FOOTER, cachingSource())).isEqualTo(new Opened(1, S3Fetcher.SUPPLIED_FOOTER_TAIL_SIZE));
+    }
+
+    /// The requests an open issued and the bytes they fetched.
+    private record Opened(long requests, long bytes) {
+    }
+
+    /// Opens `key`, with `metadataSource` installed when not `null`.
+    private static Opened open(String key, MetadataSource metadataSource) throws IOException {
         HardwoodContext.Builder builder = HardwoodContext.builder();
         if (metadataSource != null) {
             builder.metadataSource(metadataSource);
@@ -88,7 +111,7 @@ class S3MetadataSourceIT {
         S3InputFile file = source.inputFile(bucket.name(), key);
         try (HardwoodContext context = builder.build();
                 ParquetFileReader reader = ParquetFileReader.open(file, context)) {
-            return file.networkRequestCount();
+            return new Opened(file.networkRequestCount(), file.networkBytesFetched());
         }
     }
 
@@ -103,6 +126,13 @@ class S3MetadataSourceIT {
             }
             return footer;
         };
+    }
+
+    private static long lengthOf(String key) throws IOException {
+        try (S3InputFile file = source.inputFile(bucket.name(), key)) {
+            file.open();
+            return file.length();
+        }
     }
 
     private static ParsedFooter footerOf(String key) throws IOException {

@@ -32,6 +32,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 **Improvements:**
 
 - A multi-file read of files not in memory, such as files on S3, opens several files ahead, fetching their footers and first data while it reads earlier files ([#1665](https://github.com/hardwood-hq/hardwood/issues/1665))
+- Opening an S3 file reads a file of up to 256 KiB whole in its one request, and releases the fetched bytes once the read is done with the file ([#1399](https://github.com/hardwood-hq/hardwood/issues/1399))
 
 ## 1.1.0.Beta3 (2026-10-21)
 

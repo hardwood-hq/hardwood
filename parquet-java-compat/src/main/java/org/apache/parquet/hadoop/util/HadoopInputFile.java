@@ -20,6 +20,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.io.InputFile;
 
+import dev.hardwood.internal.reader.TailHolder;
+
 /// Shim for Hadoop's `HadoopInputFile`.
 ///
 /// Implements [InputFile] (the parquet-java shim interface) and internally
@@ -158,7 +160,7 @@ public final class HadoopInputFile implements InputFile {
             dev.hardwood.InputFile inputFile = (dev.hardwood.InputFile) inputFileMethod.invoke(source, bucket, key);
 
             // Wrap so that closing the InputFile also closes the S3Source (which owns the HttpClient)
-            return new OwnedSourceInputFile(inputFile, (Closeable) source);
+            return new OwnedSourceInputFile(inputFile, (TailHolder) inputFile, (Closeable) source);
         }
         catch (UnsupportedOperationException e) {
             throw e;
@@ -198,14 +200,31 @@ public final class HadoopInputFile implements InputFile {
 
     /// Wraps an [dev.hardwood.InputFile] and closes an owned resource (the [dev.hardwood.s3.S3Source])
     /// when the file is closed. This ensures the `HttpClient` created for a one-off S3 read
-    /// via `HadoopInputFile` is properly cleaned up.
+    /// via `HadoopInputFile` is properly cleaned up. Forwards the S3 file's tail
+    /// ([TailHolder]), so the reader sizes, charges and releases the tail as for the file itself.
     private record OwnedSourceInputFile(
             dev.hardwood.InputFile delegate,
-            Closeable ownedResource) implements dev.hardwood.InputFile {
+            TailHolder tail,
+            Closeable ownedResource) implements dev.hardwood.InputFile, TailHolder {
 
         @Override
         public void open() throws IOException {
             delegate.open();
+        }
+
+        @Override
+        public long tailReservation(boolean footerSupplied) {
+            return tail.tailReservation(footerSupplied);
+        }
+
+        @Override
+        public void open(boolean footerSupplied) throws IOException {
+            tail.open(footerSupplied);
+        }
+
+        @Override
+        public void releaseTail() {
+            tail.releaseTail();
         }
 
         @Override

@@ -77,6 +77,35 @@ class FileOpenAheadTest {
         }
     }
 
+    /// A file that holds the tail its open fetches (#1399) is charged that tail while its footer is
+    /// read ahead, so the buffer bounds how many such opens are in flight.
+    @Test
+    void aFooterReadAheadIsChargedTheTailItsOpenFetches() throws Exception {
+        int tail = 256 * 1024;
+        System.setProperty(MAX_FILES_AHEAD, "4");
+        // Room for two tails; charged a fixed footer reservation, all four files ahead would fit
+        System.setProperty(READ_AHEAD_BYTES, Long.toString(2L * tail));
+        ReadGate opens = new ReadGate(reason -> true);
+        List<InputFile> files = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            files.add(new GatedOpenTailFile(writeFile(i), "file-" + i, tail, opens));
+        }
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
+             ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
+            opens.arm();
+            Consumer consumer = Consumer.start(() -> reader.buildColumnReaders(ColumnProjection.all()).build());
+
+            // The next file, which is not charged, and the two whose tails fit
+            assertThat(opens.awaitInFlight(3)).as("opens in flight at once").isTrue();
+            Thread.sleep(200);
+            assertThat(opens.maxInFlight()).as("most opens in flight at once").isEqualTo(3);
+
+            opens.release();
+            assertThat(consumer.rows()).isEqualTo(12L * ROWS);
+            assertThat(context.readAheadBuffer().held()).as("read-ahead held once read").isZero();
+        }
+    }
+
     @Test
     void aRunOfPrunedFilesIsOpenedAhead() throws Exception {
         System.setProperty(MAX_FILES_AHEAD, "4");
@@ -444,6 +473,23 @@ class FileOpenAheadTest {
         @Override
         public void close() throws IOException {
             delegate.close();
+        }
+    }
+
+    /// A [TailFile] whose open passes through a [ReadGate].
+    private static final class GatedOpenTailFile extends TailFile {
+
+        private final ReadGate gate;
+
+        GatedOpenTailFile(byte[] bytes, String name, int tailSize, ReadGate gate) {
+            super(bytes, name, tailSize, tailSize);
+            this.gate = gate;
+        }
+
+        @Override
+        public void open(boolean footerSupplied) throws IOException {
+            gate.pass();
+            super.open(footerSupplied);
         }
     }
 

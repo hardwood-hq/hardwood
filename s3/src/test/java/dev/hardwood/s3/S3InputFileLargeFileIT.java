@@ -13,7 +13,9 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,8 +42,9 @@ class S3InputFileLargeFileIT {
     private static final long STRADDLE_OFFSET = TWO_GB - 8;
     private static final long BEYOND_OFFSET = TWO_GB + 4096;
     /// Padded past `BEYOND_OFFSET + BEYOND.length` by more than the 64 KB
-    /// tail cache so the straddle and post-2 GB reads exercise the network
-    /// path — that's where the long-typed offset arithmetic lives.
+    /// tail cache [#tailSmallerThanThePadding] sets, so the straddle and post-2 GB
+    /// reads exercise the network path — that's where the long-typed offset
+    /// arithmetic lives.
     private static final long FILE_SIZE = TWO_GB + 256 * 1024L + 16;
     private static final String KEY = "large.bin";
 
@@ -64,6 +67,16 @@ class S3InputFileLargeFileIT {
                 .pathStyle(true)
                 .credentials(S3Credentials.of(S3Proxy.ACCESS_KEY, S3Proxy.SECRET_KEY))
                 .build();
+    }
+
+    @BeforeEach
+    void tailSmallerThanThePadding() {
+        System.setProperty(S3Fetcher.TAIL_BYTES_PROPERTY, Integer.toString(64 * 1024));
+    }
+
+    @AfterEach
+    void clearTailSize() {
+        System.clearProperty(S3Fetcher.TAIL_BYTES_PROPERTY);
     }
 
     @AfterAll

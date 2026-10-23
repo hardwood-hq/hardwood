@@ -118,10 +118,15 @@ public final class ParquetMetadataReader {
     }
 
     /// Opens `inputFile` for a read whose footers come from `source`. For [#FROM_FILE] no reader
-    /// asks for the file's identity, so a local file defers reading it until something does.
+    /// asks for the file's identity, so a local file defers reading it until something does. A
+    /// file that holds its tail ([TailHolder]) fetches the tail sized for where the footer comes
+    /// from.
     public static void open(InputFile inputFile, MetadataSource source) throws IOException {
         if (source == FROM_FILE && inputFile instanceof MappedInputFile mapped) {
             mapped.openDeferringIdentity();
+        }
+        else if (inputFile instanceof TailHolder holder) {
+            holder.open(source != FROM_FILE);
         }
         else {
             inputFile.open();

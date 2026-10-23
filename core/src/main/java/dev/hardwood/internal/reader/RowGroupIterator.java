@@ -193,6 +193,10 @@ public class RowGroupIterator implements Closeable {
     /// fetch steps without the planning lock.
     private final Map<Integer, AtomicInteger> workItemRefCounts = new ConcurrentHashMap<>();
 
+    /// Per planned file, its work items that some column has not released yet. Once every column
+    /// has released them all, the file's tail has served every read it can ([TailHolder]).
+    private final Map<Integer, AtomicInteger> unreleasedPerFile = new ConcurrentHashMap<>();
+
     /// Work items whose first demand access has started the next row group's prefetch, held
     /// until every column releases the item. The next row group is prefetched once per work
     /// item, whichever column reaches the item first and whether or not the previous
@@ -971,6 +975,11 @@ public class RowGroupIterator implements Closeable {
             nextRowGroupPrefetched.remove(idx);
             plannings.remove(idx);
             workItem.indexWindow().release(idx);
+            AtomicInteger unreleased = unreleasedPerFile.get(workItem.fileIndex());
+            if (unreleased != null && unreleased.decrementAndGet() == 0) {
+                unreleasedPerFile.remove(workItem.fileIndex());
+                TailHolder.releaseTail(workItem.inputFile());
+            }
         }
     }
 
@@ -1825,6 +1834,7 @@ public class RowGroupIterator implements Closeable {
         }
         int fileIndex = nextFileToPlan++;
         PreparedFile prepared = getPreparedFile(fileIndex);
+        int plannedBefore = workItems.size();
         // Pruning by statistics, the schema checks and the index windows grow with the file's row
         // groups, so they run on the pool, which bounds a read's CPU; the footer is all that waits
         try {
@@ -1840,6 +1850,10 @@ public class RowGroupIterator implements Closeable {
         catch (UncheckedIOException e) {
             // Wrapped only to leave the supplier, and undone in the frame that can declare it
             throw ExceptionContext.unwrap(e);
+        }
+        if (workItems.size() == plannedBefore) {
+            // No row group to read: the tail has served the footer, all the read takes from the file
+            TailHolder.releaseTail(prepared.inputFile());
         }
         if (openAhead == null) {
             triggerPrefetch(fileIndex + 1);
@@ -1960,6 +1974,7 @@ public class RowGroupIterator implements Closeable {
             }
         }
         WorkItem first = planned.getFirst();
+        unreleasedPerFile.put(first.fileIndex(), new AtomicInteger(count));
         List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(),
                 first.workItemIndex(), rowGroups, rowGroupIndexes, offsetIndexColumns,
                 columnIndexColumns, bloomFilterColumns);

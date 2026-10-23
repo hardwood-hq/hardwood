@@ -445,7 +445,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ### 11.1 S3 Support (`hardwood-s3`)
 - [x] `S3InputFile` implementation with suffix-range GET for footer pre-fetch
-- [x] Tail caching (64 KB) for Parquet footer locality
+- [x] Tail caching (256 KiB, 64 KB for supplied footers): a file up to the tail read whole in its open request, the tail released once the read is done with the file (#1399; see [`_designs/S3_STORAGE.md`](_designs/S3_STORAGE.md#open-suffix-range-tail-fetch))
 - [x] Range backing (`RangeBacking.SPARSE_TEMPFILE`) — mmap-backed whole-file range cache for repeat reads
 - [x] Anonymous (unsigned) requests for public buckets (#1464)
 - [x] Writing to S3: `S3Source.outputFile(...)`, a single `PUT` or a multipart upload aborted on failure (#1454)

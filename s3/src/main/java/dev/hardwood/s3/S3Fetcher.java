@@ -27,8 +27,10 @@ import dev.hardwood.s3.internal.S3Api;
 /// discovers the file length from the `Content-Range` response header
 /// and pre-fetches the Parquet footer (which sits at the end of the file)
 /// in the same round-trip — eliminating a separate HEAD request per file.
-/// The fetched tail is retained and serves any subsequent read that falls
-/// entirely within it.
+/// A file no longer than the suffix comes back whole. The fetched tail is
+/// retained until [#releaseTail()] or [#close()] and serves any subsequent
+/// read that falls entirely within it; a read that ends inside it fetches
+/// only the bytes before it.
 ///
 /// This class is unaware of [RangeBacking]. Under
 /// [RangeBacking#SPARSE_TEMPFILE] the mmap-backed range cache wraps an
@@ -40,17 +42,25 @@ final class S3Fetcher implements InputFile {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(S3Fetcher.class.getName()));
 
-    /// Number of bytes to fetch from the tail of the file during [#open()].
-    /// Sized so that the round-trip discovering the file length usually
-    /// carries the Parquet footer with it, saving a second request.
+    static final String TAIL_BYTES_PROPERTY = "hardwood.internal.s3TailBytes";
+
+    /// Number of bytes to fetch from the tail of the file during [#open()]
+    /// without the override. The request is sent before the file's length
+    /// is known, so this is also the threshold up to which a file is fetched
+    /// whole; every larger file has its footer, and usually its page index,
+    /// in the same round-trip.
     ///
-    /// A cost heuristic, not an assumption about file layout. Footer size
-    /// grows with row groups × columns and with the size of the per-column
-    /// statistics, so wide schemas, heavily split files, or long min/max
-    /// values can push it past 64 KB. A footer that does not fit is read by
-    /// a second range request: [#readRange] serves only reads fully
-    /// contained in the fetched tail and goes to the network otherwise.
-    static final int TAIL_SIZE = 64 * 1024;
+    /// A cost heuristic, not an assumption about file layout. Every open
+    /// fetches this many bytes even when only the footer is used. A footer
+    /// or range that does not fit is read by a request of its own:
+    /// [#readRange] serves only reads fully contained in the fetched tail
+    /// and goes to the network otherwise.
+    static final int DEFAULT_TAIL_SIZE = 256 * 1024;
+
+    /// Number of bytes [#open(boolean)] fetches for a read whose footers a
+    /// [dev.hardwood.MetadataSource] supplies, when the tail is larger: the
+    /// trailer, and a footer the source reads on a miss, without a whole file.
+    static final int SUPPLIED_FOOTER_TAIL_SIZE = 64 * 1024;
 
     private static final int HTTP_UNAUTHORIZED = 401;
     private static final int HTTP_FORBIDDEN = 403;
@@ -58,8 +68,11 @@ final class S3Fetcher implements InputFile {
     private final S3Api api;
     private final String bucket;
     private final String key;
+    private final int tailSize;
     private long fileLength = -1;
-    private ByteBuffer tailCache;
+    /// `null` before the open and once released; written after [#tailCacheOffset], which it
+    /// publishes to the threads reading it.
+    private volatile ByteBuffer tailCache;
     private long tailCacheOffset;
     /// The object's `ETag` from the response to the suffix-range `GET` in [#open()].
     private Optional<String> identity;
@@ -70,14 +83,52 @@ final class S3Fetcher implements InputFile {
         this.api = api;
         this.bucket = bucket;
         this.key = key;
+        this.tailSize = tailSize();
+    }
+
+    /// The tail an open fetches: [#DEFAULT_TAIL_SIZE] unless overridden through
+    /// [#TAIL_BYTES_PROPERTY], read for each file. A value that is not a positive byte count is
+    /// rejected rather than replaced by the default.
+    static int tailSize() {
+        String override = System.getProperty(TAIL_BYTES_PROPERTY);
+        if (override == null) {
+            return DEFAULT_TAIL_SIZE;
+        }
+        int size;
+        try {
+            size = Integer.parseInt(override);
+        }
+        catch (NumberFormatException e) {
+            throw new IllegalArgumentException(invalidTailSize(override), e);
+        }
+        if (size < 1) {
+            throw new IllegalArgumentException(invalidTailSize(override));
+        }
+        return size;
+    }
+
+    private static String invalidTailSize(String value) {
+        return TAIL_BYTES_PROPERTY + " must be a positive byte count of at most " + Integer.MAX_VALUE
+                + ", but was: " + value;
+    }
+
+    /// The most bytes an open holds, for a read whose footers are read from the file or, when
+    /// `footerSupplied`, supplied by a [dev.hardwood.MetadataSource].
+    int tailReservation(boolean footerSupplied) {
+        return footerSupplied ? Math.min(tailSize, SUPPLIED_FOOTER_TAIL_SIZE) : tailSize;
     }
 
     @Override
     public void open() throws IOException {
+        open(false);
+    }
+
+    /// Opens the file, fetching the tail sized by [#tailReservation]. Idempotent.
+    void open(boolean footerSupplied) throws IOException {
         if (fileLength >= 0) {
             return;
         }
-        String suffixRange = "bytes=-" + TAIL_SIZE;
+        String suffixRange = "bytes=-" + tailReservation(footerSupplied);
         HttpResponse<byte[]> response = api.getBytes(bucket, key, suffixRange);
         int status = response.statusCode();
         if (status != 206 && status != 200) {
@@ -91,10 +142,11 @@ final class S3Fetcher implements InputFile {
         long totalBytes = networkBytesFetched.addAndGet(tail.length);
         // Use a direct buffer so slices are usable from FFM-based decompressors
         // (e.g. libdeflate), which require native MemorySegments.
-        tailCache = ByteBuffer.allocateDirect(tail.length);
-        tailCache.put(tail);
-        tailCache.flip();
+        ByteBuffer held = ByteBuffer.allocateDirect(tail.length);
+        held.put(tail);
+        held.flip();
         tailCacheOffset = fileLength - tail.length;
+        tailCache = held;
         logFetch("open-tail", tailCacheOffset, tail.length, requestNo, totalBytes);
     }
 
@@ -111,19 +163,22 @@ final class S3Fetcher implements InputFile {
             return ByteBuffer.allocateDirect(0);
         }
         // Serve from the tail cache if the requested range falls within it
-        if (tailCache != null && offset >= tailCacheOffset
-                && offset + length <= tailCacheOffset + tailCache.capacity()) {
+        ByteBuffer tail = tailCache;
+        if (holds(tail, offset, length)) {
             int relOffset = Math.toIntExact(offset - tailCacheOffset);
             LOG.get().log(System.Logger.Level.DEBUG,
                     "[{0}] readRange offset={1} length={2} reason={3} (tail cache hit)",
                     name(), offset, length, FetchReason.current());
-            return tailCache.slice(relOffset, length);
+            return tail.slice(relOffset, length);
         }
+        // A range ending inside the tail requests only the bytes before it, and takes the rest
+        // from the tail, so no byte the open fetched is fetched again
+        int fetched = endsInTail(tail, offset, length) ? Math.toIntExact(tailCacheOffset - offset) : length;
 
         long requestNo = networkRequestCount.incrementAndGet();
-        long totalBytes = networkBytesFetched.addAndGet(length);
-        logFetch(FetchReason.current(), offset, length, requestNo, totalBytes);
-        String range = "bytes=" + offset + "-" + (offset + length - 1);
+        long totalBytes = networkBytesFetched.addAndGet(fetched);
+        logFetch(FetchReason.current(), offset, fetched, requestNo, totalBytes);
+        String range = "bytes=" + offset + "-" + (offset + fetched - 1);
         HttpResponse<InputStream> response = api.getStream(bucket, key, range);
         int status = response.statusCode();
         if (status != 206) {
@@ -139,34 +194,42 @@ final class S3Fetcher implements InputFile {
                     detail = " " + new String(body.readAllBytes()) + unsignedHint(status);
                 }
             }
-            throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
+            throw new IOException("Failed to read range [" + offset + ", " + (offset + fetched)
                     + ") from " + name() + ": HTTP " + status + detail);
         }
         try (InputStream stream = response.body()) {
             ByteBuffer buf = ByteBuffer.allocateDirect(length);
-            byte[] tmp = new byte[Math.min(8192, length)];
-            while (buf.hasRemaining()) {
-                int toRead = Math.min(tmp.length, buf.remaining());
+            byte[] tmp = new byte[Math.min(8192, fetched)];
+            while (buf.position() < fetched) {
+                int toRead = Math.min(tmp.length, fetched - buf.position());
                 int read = stream.read(tmp, 0, toRead);
                 if (read < 0) {
                     break;
                 }
                 buf.put(tmp, 0, read);
             }
-            if (buf.position() != length) {
-                throw new IOException("Short read from " + name() + ": expected " + length
+            if (buf.position() != fetched) {
+                throw new IOException("Short read from " + name() + ": expected " + fetched
                         + " bytes but received " + buf.position());
             }
             // Read to the end of the response before closing it. Closed earlier, the response is
             // cancelled, and the client closes its connection, even after handing it back to the
             // pool for another request.
             if (stream.read() != -1) {
-                throw new IOException("Long read from " + name() + ": expected " + length
+                throw new IOException("Long read from " + name() + ": expected " + fetched
                         + " bytes but received more");
+            }
+            if (fetched < length) {
+                buf.put(tail.slice(0, length - fetched));
             }
             buf.flip();
             return buf;
         }
+    }
+
+    /// Whether `[offset, offset + length)` starts before `tail` and ends inside it.
+    private boolean endsInTail(ByteBuffer tail, long offset, int length) {
+        return tail != null && offset < tailCacheOffset && offset + length > tailCacheOffset;
     }
 
     @Override
@@ -192,11 +255,26 @@ final class S3Fetcher implements InputFile {
         return identity;
     }
 
-    /// No-op: the fetcher holds no per-file resources. The [S3Api] and its
-    /// [java.net.http.HttpClient] are owned by the [S3Source] and outlive
-    /// individual files.
+    /// The bytes the tail holds; `0` before the open and once released.
+    long tailBytes() {
+        ByteBuffer tail = tailCache;
+        return tail == null ? 0 : tail.capacity();
+    }
+
+    private boolean holds(ByteBuffer tail, long offset, int length) {
+        return tail != null && offset >= tailCacheOffset && offset + length <= tailCacheOffset + tail.capacity();
+    }
+
+    /// Drops the tail, so later reads inside it issue requests. Slices handed out stay valid.
+    void releaseTail() {
+        tailCache = null;
+    }
+
+    /// Releases the tail. The [S3Api] and its [java.net.http.HttpClient] are
+    /// owned by the [S3Source] and outlive individual files.
     @Override
     public void close() {
+        releaseTail();
     }
 
     /// Points out that a request the object store denied carried no credentials.
@@ -236,7 +314,7 @@ final class S3Fetcher implements InputFile {
     ///
     /// For suffix-range requests, S3 returns a `Content-Range` header like
     /// `bytes 1000-1999/2000` where the number after `/` is the total
-    /// object size. If the header is absent (e.g. file smaller than TAIL_SIZE),
+    /// object size. If the header is absent (e.g. file smaller than the tail),
     /// falls back to `Content-Length`.
     private static long parseFileLength(HttpResponse<?> response) throws IOException {
         String contentRange = response.headers().firstValue("Content-Range").orElse(null);

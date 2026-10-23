@@ -8,6 +8,8 @@
 package dev.hardwood.s3;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -59,6 +61,31 @@ class S3MultiFileIT {
                     count++;
                 }
                 assertThat(count).isEqualTo(6); // 3 rows x 2 files
+            }
+        }
+    }
+
+    /// Each file is no longer than the tail its open fetches, so the open is its only request, and
+    /// its tail is released once the read is done with it, before the reader closes the files.
+    @Test
+    void manySmallFilesAreReadInOneRequestEach() throws Exception {
+        List<S3InputFile> files = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            files.add(source.inputFile(bucket.name(), "plain_uncompressed.parquet"));
+        }
+        try (Hardwood hardwood = Hardwood.create();
+                ParquetFileReader reader = hardwood.openAll(List.copyOf(files))) {
+            try (RowReader rows = reader.rowReader()) {
+                int count = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    count++;
+                }
+                assertThat(count).isEqualTo(3 * 40);
+            }
+            for (S3InputFile file : files) {
+                assertThat(file.networkRequestCount()).as("requests of a file").isEqualTo(1);
+                S3InputFileIT.assertTailReleased(file);
             }
         }
     }
