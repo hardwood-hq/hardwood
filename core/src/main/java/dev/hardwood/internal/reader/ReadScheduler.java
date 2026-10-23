@@ -97,12 +97,13 @@ public final class ReadScheduler {
     /// ([ScheduledColumn#changePending]).
     private final ConcurrentLinkedQueue<ScheduledColumn<?>> changed = new ConcurrentLinkedQueue<>();
     // The index, touched only by the thread submitting.
-    /// Columns with a page queued, by the first row of their next queued page.
-    private final TreeSet<ScheduledColumn<?>> queued = new TreeSet<>(
-            Comparator.comparingLong((ScheduledColumn<?> c) -> c.indexedHeadRow).thenComparingInt(c -> c.scheduleId));
-    /// Columns not done with nothing queued, by the row their next page starts at or after.
-    private final TreeSet<ScheduledColumn<?>> pending = new TreeSet<>(
-            Comparator.comparingLong((ScheduledColumn<?> c) -> c.indexedNextRow).thenComparingInt(c -> c.scheduleId));
+    /// Columns not done, by their next row: the first row of their next queued page, or, with
+    /// nothing queued, the row their next page starts at or after. At an equal row a column with a
+    /// page queued comes first, since a page a column queues later starts at or after its row.
+    private final TreeSet<ScheduledColumn<?>> rows = new TreeSet<>(
+            Comparator.comparingLong((ScheduledColumn<?> c) -> c.indexedRow)
+                    .thenComparingInt(c -> c.indexedQueued ? 0 : 1)
+                    .thenComparingInt(c -> c.scheduleId));
     /// Columns not done, by their first row not published.
     private final TreeSet<ScheduledColumn<?>> unpublished = new TreeSet<>(
             Comparator.comparingLong((ScheduledColumn<?> c) -> c.indexedPublishedRow).thenComparingInt(c -> c.scheduleId));
@@ -298,17 +299,16 @@ public final class ReadScheduler {
             column.changePending.set(false);
             index(column);
         }
-        if (queued.isEmpty()) {
+        // A column with nothing queued first in the rows may yet queue a page below every queued
+        // one. Its next row is read before its queue, and a page queued later starts at or after it.
+        ScheduledColumn<?> best = rows.isEmpty() ? null : rows.first();
+        if (best == null || !best.indexedQueued) {
             return null;
         }
-        ScheduledColumn<?> best = queued.first();
-        long bestRow = best.indexedHeadRow;
-        // The lowest row a column with nothing queued may yet queue a page at. Its next row is
-        // read before its queue, and a page queued later starts at or after it.
-        long pendingRow = pending.isEmpty() ? Long.MAX_VALUE : pending.first().indexedNextRow;
+        long bestRow = best.indexedRow;
         // The read's first row a column has not published: the slowest column's
         long readPublished = unpublished.isEmpty() ? Long.MAX_VALUE : unpublished.first().indexedPublishedRow;
-        if (pendingRow < bestRow || submitted.get() >= pagesInFlight) {
+        if (submitted.get() >= pagesInFlight) {
             return null;
         }
         chosenLowestRow = bestRow;
@@ -329,11 +329,11 @@ public final class ReadScheduler {
             return null;
         }
         int passed = 0;
-        for (ScheduledColumn<?> candidate : queued.tailSet(best, false)) {
-            if (candidate.indexedHeadRow > pendingRow || passed++ == threads) {
+        for (ScheduledColumn<?> candidate : rows.tailSet(best, false)) {
+            if (!candidate.indexedQueued || passed++ == threads) {
                 return null;
             }
-            if (admitted(candidate, candidate.indexedHeadRow, readPublished)) {
+            if (admitted(candidate, candidate.indexedRow, readPublished)) {
                 return admits(candidate) ? candidate : null;
             }
         }
@@ -342,13 +342,9 @@ public final class ReadScheduler {
 
     /// Re-reads `column`'s keys and moves it to where they place it in the index.
     private void index(ScheduledColumn<?> column) {
-        if (column.indexedQueued) {
-            queued.remove(column);
-            column.indexedQueued = false;
-        }
-        if (column.indexedPending) {
-            pending.remove(column);
-            column.indexedPending = false;
+        if (column.indexedInRows) {
+            rows.remove(column);
+            column.indexedInRows = false;
         }
         if (column.indexedPublished) {
             unpublished.remove(column);
@@ -362,16 +358,10 @@ public final class ReadScheduler {
         column.indexedPublished = true;
         long nextRow = column.nextRow();
         PageTask head = column.peekReady();
-        if (head == null) {
-            column.indexedNextRow = nextRow;
-            pending.add(column);
-            column.indexedPending = true;
-        }
-        else {
-            column.indexedHeadRow = head.firstRow;
-            queued.add(column);
-            column.indexedQueued = true;
-        }
+        column.indexedQueued = head != null;
+        column.indexedRow = head == null ? nextRow : head.firstRow;
+        rows.add(column);
+        column.indexedInRows = true;
     }
 
     /// Whether the task of `column`'s next queued page may start now ([WorkingSet#admitTask]),

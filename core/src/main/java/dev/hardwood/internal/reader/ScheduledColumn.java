@@ -95,13 +95,14 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     final AtomicBoolean changePending = new AtomicBoolean();
     /// The column's position among the read's columns, which orders columns with equal keys.
     int scheduleId;
-    /// Where the scheduler indexed the column: [ReadScheduler] keeps it in at most one of its
-    /// queued and pending sets, by the key last read here.
+    /// Where the scheduler indexed the column: [ReadScheduler] keeps it in its rows and its
+    /// unpublished set while it is not done, by the keys last read here. `indexedRow` is the first
+    /// row of its next queued page where `indexedQueued`, and otherwise the row its next page
+    /// starts at or after.
+    boolean indexedInRows;
     boolean indexedQueued;
-    boolean indexedPending;
     boolean indexedPublished;
-    long indexedHeadRow;
-    long indexedNextRow;
+    long indexedRow;
     long indexedPublishedRow;
 
     // === Pipeline control ===
