@@ -42,7 +42,7 @@ try (Hardwood hardwood = Hardwood.create();
 }
 ```
 
-Cross-file prefetching is automatic: when pages from file N are running low, pages from file N+1 are already being prefetched.
+Cross-file prefetching is automatic: when pages from file N are running low, pages from file N+1 are already being prefetched. For files not in memory, such as files on S3, several files after N are opened ahead as well ([Cross-file prefetching](../concepts/concurrency-model.md#cross-file-prefetching)).
 
 The schema of the first file is the reference schema. Each later file a data reader reaches is
 validated against it for that reader's projection and filter; inspecting a file's metadata does not

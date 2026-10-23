@@ -1,6 +1,6 @@
 # Fetch planning
 
-Describes which bytes a read requests from its `InputFile`, and in which requests: the fetch sequence per file and per row group, the gap policy every merge applies, the fetch plans that locate a column's pages, chunk handles and their prefetch, cross-column coalescing, per-page row masks and the gate that allows them, row limits on the fetch side, and the I/O budget tests hold reads to.
+Describes which bytes a read requests from its `InputFile`, and in which requests: the fetch sequence per file and per row group, the gap policy every merge applies, the fetch plans that locate a column's pages, chunk handles and their prefetch, the files a multi-file read opens ahead, cross-column coalescing, per-page row masks and the gate that allows them, row limits on the fetch side, and the I/O budget tests hold reads to.
 
 Related documents:
 
@@ -22,7 +22,7 @@ On a local file up to 2 GB a `readRange` is a zero-copy slice of the whole-file 
 | Footer | `ParquetMetadataReader.read` | Two reads: the trailing length and magic, then the footer body; the leading magic is not read ([FILE_METADATA.md](FILE_METADATA.md#footer-read)). A footer a `MetadataSource` supplies costs the first read only ([FILE_METADATA.md](FILE_METADATA.md#supplied-footers)). On S3 the suffix read `S3InputFile.open` issues serves both when the footer lies inside it ([S3_STORAGE.md](S3_STORAGE.md)) |
 | Row-group pruning on footer statistics | `RowGroupIterator.filterRowGroups` | None. Records, per kept row group, the columns whose bloom filter a leaf would probe |
 
-A file is planned when the first column enters the previous file's last row group, one row group ahead of the read ([READ_PIPELINE.md](READ_PIPELINE.md#incremental-planning)). Planning reads no bloom filter; which leaves are probed is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
+A file is planned when the first column enters the previous file's last row group, one row group ahead of the read ([READ_PIPELINE.md](READ_PIPELINE.md#incremental-planning)), or earlier when the read opens it ahead ([Opening files ahead](#opening-files-ahead)). Planning reads no bloom filter; which leaves are probed is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
 ### Per row group
 
@@ -128,6 +128,18 @@ Which column triggers the next row group's prefetch, on which thread, and when t
 
 Tests: `NextRowGroupPrefetchTest`, `SequentialNextRowGroupPrefetchTest`, `DictionaryPushDownIoTest`, `S3SelectiveReadJfrIT` (s3).
 
+### Opening files ahead
+
+A multi-file read of files not all in memory, without a row limit, opens up to `FileOpenAhead.maxFilesAhead` files after the one it has reached: the last file whose planning the read itself asked for, through a column's walk or through the next-row-group prefetch, which plans the next file. Opening a file reads its footer and, once the file is planned, starts the first data request of its first row group statistics keep: a span. The read plans the files whose footers have been read in file order, as they arrive (`RowGroupIterator.planFilesAhead`), so a run of files statistics prune is planned while the footers of the files after it are in flight, and a file the read reaches has its footer and first data already fetched. On a context of zero threads that planning is an item at the tail of the read's queue ([THREADING.md](THREADING.md#a-context-of-zero-threads)), so its spans start once the thread driving the read reaches it, while the footers are read ahead on virtual threads in any case; the spans of a context of zero threads are untested.
+
+A span covers the column chunks of every column the row group's plans read, from the first chunk on, merged under the [gap policy](#gap-policy) as far as the gap and span limits allow, computed from the footer alone. The row group's Bloom filters, dictionaries and page index are read when the read reaches it, as for any row group. A read of a range the span covers, a chunk handle's or a shared region's, takes its bytes from the span (`FetchedAhead`, `RangeRead.start`) and issues no request. A page-filtered row group gets no span, since its plans may read less than whole chunks and a span would fetch the pages they drop.
+
+The next file, the one after the file reached, is opened as a read opens it in any case: its footer read and its next-row-group prefetch are not charged. Every file further ahead is opened only while what it fetches fits the context's read-ahead buffer ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)): its footer read is charged a fixed reservation, the size of the tail an S3 open fetches, until the file is planned, and its span its length until a read takes from it, when the span's bytes become the row group's, held by its plans as every read of the row group is. A footer or span that does not fit starts on a later release of the buffer if its file is still past the next one; nothing waits for the buffer. The count bounds the requests in flight for files the read has not reached, which the buffer does not: a file statistics prune holds no charge once planned. A span no read took is dropped, and its charge released, once every column has released its row group or the read closes. A planning failure stops the opening, since no file after the failed one is planned.
+
+A read with a row limit opens only the next file: it may need no further file, and under a filter it learns only downstream that its limit is reached. `FileOpenAhead.maxFilesAhead` is an internal property (`hardwood.internal.maxFilesAhead`), read for each read; at `1` a read opens only the next file.
+
+Tests: `FileOpenAheadTest`, `MultiFilePlanningTest`.
+
 ## Cross-column coalescing
 
 After building a row group's plans, `coalesceAcrossColumns` merges the first reads of several columns into `SharedRegion`s, one `readRange` each:
@@ -211,6 +223,7 @@ Tests: `SequentialFetchPlanChunkSizeTest`, `S3SelectiveReadJfrIT` (s3).
 | `rg=N col='name' seqChunk@K` | sequential plan handles |
 | `rg=N region=A..B` | a shared region whose first and last members in file order are plans `A` and `B` |
 | `prefetch rg=N` | outer tag of the next-row-group prefetch |
+| `open-ahead file=F \| rg=N span` | the span of row group `N` of file `F`, opened ahead |
 
 Tests: `CrossColumnCoalesceTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`.
 

@@ -35,6 +35,9 @@ import dev.hardwood.internal.util.Lazy;
 /// A read has a priority. A read a step waits for is [Priority#DEMAND]; a read started ahead of
 /// need, such as a one-ahead prefetch, is [Priority#SPECULATIVE] until a step waits for it
 /// ([#raiseToDemand]).
+///
+/// A range that a read's [FetchedAhead] holds is not read again: [#start] serves it from the bytes
+/// fetched ahead ([#servedBy]).
 public final class RangeRead implements PrefetchTasks.Untaken {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RangeRead.class.getName()));
@@ -67,25 +70,69 @@ public final class RangeRead implements PrefetchTasks.Untaken {
     }
 
     /// Starts the read of `length` bytes at `offset` of `inputFile`: in place for a file whose
-    /// bytes are in memory, on a task of `tasks` otherwise. The read carries `reason`, composed
-    /// with the caller's [FetchReason]. A read `tasks` no longer admits, as once its owner closes,
-    /// fails.
+    /// bytes are in memory, from the bytes `tasks`' [FetchedAhead] holds when they cover the range,
+    /// and on a task of `tasks` otherwise. The read carries `reason`, composed with the caller's
+    /// [FetchReason]. A read `tasks` no longer admits, as once its owner closes, fails.
     static RangeRead start(InputFile inputFile, long offset, int length, String reason, Priority priority,
                            PrefetchTasks tasks) {
-        RangeRead read = new RangeRead(inputFile, offset, length, priority,
-                Objects.requireNonNull(tasks, "tasks"));
-        String outer = FetchReason.current();
-        String composed = "unattributed".equals(outer) ? reason : outer + " | " + reason;
+        Objects.requireNonNull(tasks, "tasks");
+        String composed = composed(reason);
         if (inMemory(inputFile)) {
+            RangeRead read = new RangeRead(inputFile, offset, length, priority, tasks);
             read.run(composed);
+            return read;
         }
-        else {
-            tasks.submit(() -> read.run(composed), () -> read.bytes.completeExceptionally(
-                    new IOException(ExceptionContext.filePrefix(inputFile.name())
-                            + "The read was closed before the range at offset " + offset + " (length " + length
-                            + ") was fetched")));
+        FetchedAhead fetchedAhead = tasks.fetchedAhead();
+        RangeRead served = fetchedAhead == null ? null
+                : fetchedAhead.serve(inputFile, offset, length, composed, priority, tasks);
+        if (served != null) {
+            return served;
         }
+        RangeRead read = new RangeRead(inputFile, offset, length, priority, tasks);
+        read.submit(composed);
         return read;
+    }
+
+    /// A read of `length` bytes at `offset` of `inputFile` that `span`, a read started ahead of
+    /// need whose range covers it, serves: it completes with a slice of the span's bytes once the
+    /// span completes, and, when the span fails, reads its range itself on a task of `tasks`, as
+    /// [#start] does.
+    static RangeRead servedBy(RangeRead span, InputFile inputFile, long offset, int length, String composedReason,
+                              Priority priority, PrefetchTasks tasks) {
+        if (offset < span.offset || offset + length > span.offset + span.length) {
+            throw new IllegalArgumentException("Range at offset " + offset + " (length " + length
+                    + ") lies outside the read at offset " + span.offset + " (length " + span.length + ")");
+        }
+        RangeRead read = new RangeRead(inputFile, offset, length, priority, tasks);
+        span.bytes.whenComplete((buffer, failure) -> {
+            if (failure != null) {
+                read.submit(composedReason);
+                return;
+            }
+            try {
+                read.bytes.complete(buffer.slice(Math.toIntExact(offset - span.offset), length));
+            }
+            catch (RuntimeException e) {
+                // A buffer shorter than its range: the read fails as a read of it would, never
+                // leaving the step waiting
+                read.bytes.completeExceptionally(e);
+            }
+        });
+        return read;
+    }
+
+    /// `reason` composed with the caller's [FetchReason].
+    private static String composed(String reason) {
+        String outer = FetchReason.current();
+        return "unattributed".equals(outer) ? reason : outer + " | " + reason;
+    }
+
+    /// Runs this read on a task of its [PrefetchTasks], or fails it if they no longer admit it.
+    private void submit(String composedReason) {
+        tasks.submit(() -> run(composedReason), () -> bytes.completeExceptionally(
+                new IOException(ExceptionContext.filePrefix(inputFile.name())
+                        + "The read was closed before the range at offset " + offset + " (length " + length
+                        + ") was fetched")));
     }
 
     /// Whether `inputFile` holds its bytes in memory, so a read of it slices them without waiting.

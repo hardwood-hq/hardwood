@@ -13,12 +13,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
 /// The memory a context's reads hold by choice rather than because a file forces it: the buffers
-/// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admitTask]).
+/// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admitTask]), and
+/// what a multi-file read fetches for the files it opens past the next one ([FileOpenAhead]).
 ///
-/// Such a task starts only while its buffers fit; one that does not fit is not started and is
-/// considered again on a later release. Nothing waits for the buffer, so the reads of a context
-/// can share it: a read's own task is never charged here, and every charge is released by a task
-/// ending, which does not depend on a read whose task was deferred.
+/// Such a task, footer read or span starts only while it fits; one that does not fit is not started
+/// and is considered again on a later release. Nothing waits for the buffer, so the reads of a
+/// context can share it: a read's own task and its next file are never charged here, and every
+/// charge is released by a task ending, a file being planned, a span being taken over, or the read
+/// closing, none of which depends on a read whose work was deferred.
 public final class ReadAheadBuffer {
 
     static final String READ_AHEAD_BYTES_PROPERTY = "hardwood.internal.readAheadBytes";
@@ -95,7 +97,8 @@ public final class ReadAheadBuffer {
     }
 
     /// Runs what waited for a release: a read's own task ended, which lets one of its tasks start
-    /// without the buffer.
+    /// without the buffer, or room was released, which lets a deferred task, footer read or span of
+    /// any read start. A waiter runs on the releasing thread, so it takes no lock it could wait for.
     ///
     /// Runs the waiters registered before it only, every one of them even where one throws, and
     /// then rethrows the first failure. A waiter that finds no room again registers

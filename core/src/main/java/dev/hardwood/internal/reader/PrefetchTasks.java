@@ -56,6 +56,9 @@ public final class PrefetchTasks {
     /// The work that failed with an `Error`, raised by [#awaitAll()] unless a step took it.
     /// Guarded by `this`.
     private final List<Untaken> failedWork = new ArrayList<>();
+    /// What the read fetched ahead for the files it opened ahead, which serves the reads it covers
+    /// ([RangeRead#start]); `null` for a read that opens no file ahead.
+    private volatile FetchedAhead fetchedAhead;
 
     /// Work whose failure a step takes, such as a read it yielded on: an `Error` it failed with
     /// that no step took is raised by [#awaitAll()].
@@ -79,6 +82,16 @@ public final class PrefetchTasks {
     PrefetchTasks(ReadExecutor readExecutor) {
         this.executor = readExecutor::executePlanning;
         this.queue = readExecutor instanceof ReadQueue readQueue ? readQueue : null;
+    }
+
+    /// Serves the reads started on these tasks that `fetchedAhead` covers from it.
+    void serveFrom(FetchedAhead fetchedAhead) {
+        this.fetchedAhead = fetchedAhead;
+    }
+
+    /// What serves the reads it covers, `null` if nothing does.
+    FetchedAhead fetchedAhead() {
+        return fetchedAhead;
     }
 
     /// Runs `task` on the executor, carrying the caller's [FetchReason], unless

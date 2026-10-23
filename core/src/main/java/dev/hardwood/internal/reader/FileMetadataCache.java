@@ -127,20 +127,38 @@ public final class FileMetadataCache {
     /// [MetadataSource] supplies is prefetched on a context with a pool, since the source may wait
     /// for a remote store.
     void prefetch(int fileIndex) {
-        if (fileIndex >= 0 && fileIndex < inputFiles.size()
-                && RangeRead.inMemory(inputFiles.get(fileIndex))
-                && (!footersSupplied() || !context.hasPool())) {
+        prefetch(fileIndex, () -> {});
+    }
+
+    /// As [#prefetch(int)], and runs `whenRead` once the footer has been read, by the read this
+    /// starts or by a load or read already registered, on the thread that completes it, or at once
+    /// on the caller's where it is read in place or already read. Not run once the cache is closed
+    /// or for an index past the last file.
+    ///
+    /// @return whether it started a read
+    boolean prefetch(int fileIndex, Runnable whenRead) {
+        if (readsInPlace(fileIndex)) {
             // Its read waits for nothing, so the load on the thread that asks for the file reads it
-            return;
+            whenRead.run();
+            return false;
         }
         CompletableFuture<OpenedFooter> read = new CompletableFuture<>();
+        CompletableFuture<?> registered;
         synchronized (lifecycleLock) {
-            if (closeStarted || fileIndex < 0 || fileIndex >= inputFiles.size()
-                    || loads.containsKey(fileIndex) || prefetched.containsKey(fileIndex)) {
-                return;
+            if (closeStarted || fileIndex < 0 || fileIndex >= inputFiles.size()) {
+                return false;
             }
-            prefetched.put(fileIndex, read);
+            Load load = loads.get(fileIndex);
+            registered = load != null ? load.outcome : prefetched.get(fileIndex);
+            if (registered == null) {
+                prefetched.put(fileIndex, read);
+            }
         }
+        if (registered != null) {
+            registered.whenComplete((ignored, failure) -> whenRead.run());
+            return false;
+        }
+        read.whenComplete((ignored, failure) -> whenRead.run());
         InputFile inputFile = inputFiles.get(fileIndex);
         try {
             context.ioExecutor().execute(() -> {
@@ -161,6 +179,32 @@ public final class FileMetadataCache {
             read.completeExceptionally(e);
             throw e;
         }
+        return true;
+    }
+
+    /// Whether the footer of `fileIndex` has been read, so that a load of it waits for no I/O: a
+    /// load or a prefetched read of it has completed, or the file's footer is read in place.
+    boolean footerRead(int fileIndex) {
+        if (readsInPlace(fileIndex)) {
+            return true;
+        }
+        synchronized (lifecycleLock) {
+            Load load = loads.get(fileIndex);
+            if (load != null) {
+                return load.outcome.isDone();
+            }
+            CompletableFuture<OpenedFooter> read = prefetched.get(fileIndex);
+            return read != null && read.isDone();
+        }
+    }
+
+    /// Whether the footer of `fileIndex` is read in place by its load, since the read waits for
+    /// nothing: the file's bytes are in memory, and the footer is read from the file or the
+    /// context has no pool.
+    private boolean readsInPlace(int fileIndex) {
+        return fileIndex >= 0 && fileIndex < inputFiles.size()
+                && RangeRead.inMemory(inputFiles.get(fileIndex))
+                && (!footersSupplied() || !context.hasPool());
     }
 
     /// Prevents new loads, waits for every admitted load, and releases cached

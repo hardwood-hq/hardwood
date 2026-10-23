@@ -49,7 +49,10 @@ mean decode (or I/O) isn't keeping up with consumption.
 
 When a reader spans multiple files (via `Hardwood.openAll(...)`), prefetching crosses file
 boundaries: as the pages of file _N_ run low, pages of file _N+1_ are already being fetched and
-decoded. This is the main reason to open
+decoded. A read of files not in memory, such as files on S3, also opens several files beyond
+_N+1_: their footers and the first data of each are fetched while the read works on earlier files,
+within a share of the heap the context holds for reading ahead. A read with a row limit opens only
+file _N+1_ ahead. This is the main reason to open
 a multi-file reader rather than looping over single-file readers yourself, and the reason the
 shared pool matters, since all the files draw on the same workers. See
 [Read Multiple Files as One Dataset](../how-to/multi-file.md).

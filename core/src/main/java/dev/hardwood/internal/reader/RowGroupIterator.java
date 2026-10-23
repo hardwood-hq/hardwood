@@ -99,6 +99,10 @@ public class RowGroupIterator implements Closeable {
     private final ReadExecutor readExecutor;
     /// Where the read plans its work items and the next row group, fixed once for the read.
     private final PlanningMode planningMode;
+    /// Opens files ahead of the one the read has reached, for a multi-file read of files not all in
+    /// memory; `null` for a read that opens only the next file ahead ([#triggerPrefetch]). Set by
+    /// [#initialize], before the read plans its first file.
+    private FileOpenAhead openAhead;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -513,6 +517,7 @@ public class RowGroupIterator implements Closeable {
         // read reaches. Nothing is planned yet.
         planRowBudget = maxRows > 0 ? maxRows : Long.MAX_VALUE;
         planSkipRemaining = physicalSkip;
+        openAhead = createOpenAhead();
         nextFileToPlan = 0;
 
         return projected;
@@ -957,6 +962,9 @@ public class RowGroupIterator implements Closeable {
         int idx = workItem.workItemIndex();
         int remaining = counter.decrementAndGet();
         if (remaining == 0) {
+            if (openAhead != null) {
+                openAhead.released(idx);
+            }
             metadataCache.remove(idx);
             arrivalCache.remove(idx);
             fetchPlanCache.remove(idx);
@@ -1670,6 +1678,10 @@ public class RowGroupIterator implements Closeable {
             return;
         }
         closed = true;
+        if (openAhead != null) {
+            // Opens nothing more, and releases what it holds of the read-ahead buffer
+            openAhead.close();
+        }
         Throwable failure = null;
         try {
             // Before the caches are cleared: a planning task fills its cache entry once it has
@@ -1775,6 +1787,10 @@ public class RowGroupIterator implements Closeable {
             catch (IOException | RuntimeException | Error e) {
                 planningFailure = e;
                 workItemsBeforeFailure = plannedBefore;
+                if (openAhead != null) {
+                    // No file after the failed one is planned, so none is opened
+                    openAhead.stop();
+                }
                 throw e;
             }
         }
@@ -1825,7 +1841,13 @@ public class RowGroupIterator implements Closeable {
             // Wrapped only to leave the supplier, and undone in the frame that can declare it
             throw ExceptionContext.unwrap(e);
         }
-        triggerPrefetch(fileIndex + 1);
+        if (openAhead == null) {
+            triggerPrefetch(fileIndex + 1);
+        }
+        else {
+            openAhead.planned(fileIndex);
+            openAhead.pump();
+        }
         return true;
     }
 
@@ -2018,7 +2040,11 @@ public class RowGroupIterator implements Closeable {
             else if (index >= workItemsBeforeFailure) {
                 rethrowPlanningFailure();
             }
-            return index < workItems.size() ? workItems.get(index) : null;
+            WorkItem workItem = index < workItems.size() ? workItems.get(index) : null;
+            if (workItem != null && openAhead != null) {
+                openAhead.reached(workItem.fileIndex());
+            }
+            return workItem;
         }
         finally {
             planLock.unlock();
@@ -2029,8 +2055,14 @@ public class RowGroupIterator implements Closeable {
     private void ensurePlannedThrough(int index) throws IOException {
         planLock.lock();
         try {
-            while (workItems.size() <= index && planNextFile()) {
-                // planNextFile appends
+            while (workItems.size() <= index) {
+                if (openAhead != null) {
+                    // The read waits for this file: the files after it are opened ahead of it
+                    openAhead.reached(nextFileToPlan);
+                }
+                if (!planNextFile()) {
+                    break;
+                }
             }
         }
         finally {
@@ -2062,6 +2094,117 @@ public class RowGroupIterator implements Closeable {
         // `CompletableFuture` body. Nothing about a footer read is different on this path,
         // only what the frame above it is allowed to declare.
         return fileMetadataCache.getFile(fileIndex);
+    }
+
+    /// The open-ahead of a multi-file read of files not all in memory whose read plans ahead, or
+    /// `null` where it opens only the next file ahead: a read of one file; of files all in memory,
+    /// whose reads wait for nothing to overlap; with a row limit, which may need no further file and
+    /// under a filter learns only downstream that it is satisfied; or one set to open one file
+    /// ahead ([FileOpenAhead#maxFilesAhead]).
+    private FileOpenAhead createOpenAhead() {
+        int maxFilesAhead = FileOpenAhead.maxFilesAhead();
+        if (inputFiles.size() < 2 || maxFilesAhead < 2 || maxRows > 0 || !planningMode.plansAhead()
+                || inputFiles.stream().allMatch(RangeRead::inMemory)) {
+            return null;
+        }
+        return new FileOpenAhead(maxFilesAhead, inputFiles.size(), fileMetadataCache, context.readAheadBuffer(),
+                prefetchTasks, this::scheduleFilesAhead);
+    }
+
+    /// Plans the files whose footers have been read ahead ([#planFilesAhead]) on the read's
+    /// planning carrier: a virtual thread, which may wait for the planning lock, or, for a read
+    /// that plans on the step, a task at the tail of its executor.
+    private void scheduleFilesAhead() {
+        if (planningMode == PlanningMode.VIRTUAL_THREAD) {
+            prefetchTasks.submit(this::planFilesAhead);
+        }
+        else {
+            planningTasks.submit(this::planFilesAhead);
+        }
+    }
+
+    /// Plans, in order, the files within the open-ahead's reach whose footers have been read, and
+    /// queues the first data request of each one past the next file. Stops at a file whose footer
+    /// is still in flight, which schedules this again once read. A planning failure stops it; the
+    /// iterator keeps the failure for the read to raise when it reaches the file
+    /// ([#planNextFile]).
+    private void planFilesAhead() {
+        planLock.lock();
+        try {
+            while (!closed && planningFailure == null && nextFileToPlan < inputFiles.size()
+                    && nextFileToPlan <= openAhead.horizon() && fileMetadataCache.footerRead(nextFileToPlan)) {
+                int fileIndex = nextFileToPlan;
+                int planned = workItems.size();
+                try {
+                    if (!planNextFile()) {
+                        return;
+                    }
+                }
+                catch (IOException | RuntimeException | Error e) {
+                    // Kept by planNextFile for the read to rethrow when it reaches the file
+                    return;
+                }
+                if (workItems.size() > planned && openAhead.beyondNext(fileIndex)) {
+                    FileOpenAhead.PlannedSpan span = plannedSpan(fileIndex, workItems.get(planned));
+                    if (span != null) {
+                        openAhead.span(span);
+                    }
+                }
+            }
+        }
+        finally {
+            planLock.unlock();
+        }
+    }
+
+    /// The first data request a read starts for `workItem`, the first work item of a file opened
+    /// ahead, from the footer alone: the column chunks of every column the row group's plans read,
+    /// merged under the gap policy from the first one on, as far as the gap and span limits allow.
+    /// `null` where the plans may read less than whole chunks, so a span would fetch bytes they do
+    /// not read, as under page filtering, and where the footer's chunk ranges are not usable as a
+    /// request.
+    private FileOpenAhead.PlannedSpan plannedSpan(int fileIndex, WorkItem workItem) {
+        if (pageFiltering(workItem)) {
+            return null;
+        }
+        RowGroup rowGroup = workItem.rowGroup();
+        int projectedCount = projection.decoded().getProjectedColumnCount();
+        List<long[]> chunks = new ArrayList<>(projectedCount);
+        for (int projCol = 0; projCol < projectedCount; projCol++) {
+            if (skipsColumn(workItem, projCol)) {
+                continue;
+            }
+            int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(projCol));
+            ColumnChunk chunk = rowGroup.columns().get(fileOrdinal);
+            long start = chunk.chunkStartOffset();
+            chunks.add(new long[] { start, start + chunk.metaData().totalCompressedSize() });
+        }
+        if (chunks.isEmpty()) {
+            return null;
+        }
+        chunks.sort(Comparator.comparingLong(chunk -> chunk[0]));
+        long start = chunks.get(0)[0];
+        long end = chunks.get(0)[1];
+        for (int i = 1; i < chunks.size(); i++) {
+            long[] chunk = chunks.get(i);
+            if (chunk[0] < end || !CoalescingPolicy.merges(start, end, chunk[0], chunk[1])) {
+                break;
+            }
+            end = chunk[1];
+        }
+        long length = end - start;
+        try {
+            if (start < 0 || length <= 0 || length > CoalescingPolicy.MAX_SPAN_BYTES
+                    || end > workItem.inputFile().length()) {
+                return null;
+            }
+        }
+        catch (IOException e) {
+            // Speculative: the read of the row group reports what fails
+            return null;
+        }
+        return new FileOpenAhead.PlannedSpan(fileIndex, workItem.inputFile(), workItem.workItemIndex(),
+                workItem.rowGroupIndex(), start, Math.toIntExact(length));
     }
 
     /// Triggers async loading of the file at the given index, where [FileMetadataCache#prefetch]
