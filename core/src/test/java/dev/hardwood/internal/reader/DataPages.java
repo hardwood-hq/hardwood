@@ -89,9 +89,17 @@ final class DataPages {
 
     /// A decoder of a chunk of `column` that no page here outgrows.
     static PageDecoder decoder(ColumnSchema column, CompressionCodec codec) {
-        ColumnMetaData metaData = new ColumnMetaData(column.type(), List.of(Encoding.PLAIN), FieldPath.of("c"),
+        return new PageDecoder(metaData(column, codec), column, new DecompressorFactory(null));
+    }
+
+    /// A decoder of `column` whose pages are charged to `workingSet`.
+    static PageDecoder decoder(ColumnSchema column, CompressionCodec codec, WorkingSet.Column workingSet) {
+        return new PageDecoder(metaData(column, codec), column, new DecompressorFactory(null), true, workingSet);
+    }
+
+    private static ColumnMetaData metaData(ColumnSchema column, CompressionCodec codec) {
+        return new ColumnMetaData(column.type(), List.of(Encoding.PLAIN), FieldPath.of("c"),
                 codec, Long.MAX_VALUE, 0, 0, Map.of(), 0, null, null, null, null, null, List.of(), null);
-        return new PageDecoder(metaData, column, new DecompressorFactory(null));
     }
 
     /// An uncompressed `DATA_PAGE` of `numValues` values in `encoding`, its body (levels included)
@@ -129,6 +137,16 @@ final class DataPages {
     /// its values compressed with `codec` when `compressed`, stored as they are otherwise.
     static ByteBuffer pageV2(Encoding encoding, int numValues, int numRows, byte[] repetitionLevels,
                              byte[] definitionLevels, byte[] values, CompressionCodec codec, boolean compressed) {
+        return pageV2(encoding, numValues, numRows, repetitionLevels, definitionLevels, definitionLevels.length,
+                values, codec, compressed);
+    }
+
+    /// A `DATA_PAGE_V2` as [#pageV2(Encoding, int, int, byte\[\], byte\[\], byte\[\], CompressionCodec, boolean)]
+    /// builds it, whose header declares its definition levels `declaredDefinitionLength` bytes
+    /// long, whatever their stored length.
+    static ByteBuffer pageV2(Encoding encoding, int numValues, int numRows, byte[] repetitionLevels,
+                             byte[] definitionLevels, int declaredDefinitionLength, byte[] values,
+                             CompressionCodec codec, boolean compressed) {
         byte[] stored = compressed ? new CompressorFactory().getCompressor(codec).compress(values, 0, values.length)
                 : values;
         byte[] body = concat(repetitionLevels, definitionLevels, stored);
@@ -155,7 +173,7 @@ final class DataPages {
         header.writeFieldBegin(4, ThriftCompactConstants.FieldType.I32);
         header.writeI32(thriftValue(encoding));
         header.writeFieldBegin(5, ThriftCompactConstants.FieldType.I32);
-        header.writeI32(definitionLevels.length);
+        header.writeI32(declaredDefinitionLength);
         header.writeFieldBegin(6, ThriftCompactConstants.FieldType.I32);
         header.writeI32(repetitionLevels.length);
         header.writeBool(7, compressed);

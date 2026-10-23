@@ -90,7 +90,7 @@ public final class RowGroupBuffer {
         long budgetBytesPerColumn = rowGroupBufferTargetBytes / columns.length;
         for (int c = 0; c < columns.length; c++) {
             columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, pageTargetRows,
-                    PageLimit.DEFAULT_MAX_PAGE_VALUES, budgetBytesPerColumn, targetRows, encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
+                    PageLimit.MAX_PAGE_VALUES, budgetBytesPerColumn, targetRows, encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
         }
     }
 

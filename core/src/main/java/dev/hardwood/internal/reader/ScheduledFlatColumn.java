@@ -226,7 +226,7 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             PageDecoder.LevelScratch scratch = scratch(buffers);
             PageInfo info = page.info;
             FlatPageValues values = info.isNullPlaceholder()
-                    ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).flat()
+                    ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch, false).flat()
                     : page.decoder.decodeFlat(info.pageData(), info.dictionary(), scratch, buffers);
             checkRows(info, values.size());
             for (int i = 0; i < page.segments.size(); i++) {
@@ -261,7 +261,7 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
         PageDecoder.LevelScratch scratch = scratch(buffers);
         PageInfo info = page.info;
         BinaryPageValues values = info.isNullPlaceholder()
-                ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).binary()
+                ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch, false).binary()
                 : page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch, buffers);
         checkRows(info, values.size());
         List<Segment> segments = page.segments;

@@ -310,9 +310,34 @@ class PageValuesValidationTest {
         PageDecoder decoder = DataPages.decoder(DataPages.optional(PhysicalType.FIXED_LEN_BYTE_ARRAY, 4),
                 CompressionCodec.UNCOMPRESSED);
 
-        PageDecoder.InPlaceNestedPage page = decoder.nullsInPlace(3, new PageDecoder.LevelScratch());
+        PageDecoder.InPlaceNestedPage page = decoder.nullsInPlace(3, new PageDecoder.LevelScratch(), false);
 
         assertThat(DataPages.values(page.binary(), 1)).isDeepEqualTo(new byte[3][]);
+    }
+
+    @Test
+    void nullPlaceholderIsChargedBeforeItsLevelsAreAllocated() {
+        ColumnSchema column = DataPages.optional(PhysicalType.INT64, null);
+        PageDecoder decoder = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED,
+                new WorkingSet(1, 1024 * 1024, null).column(0, column));
+
+        // A placeholder of the most values a page may declare, from a page its statistics dropped
+        assertThatThrownBy(() -> decoder.nullsInPlace(Integer.MAX_VALUE - 9, new PageDecoder.LevelScratch(), false))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Data page needs 25769803656 bytes to decode, which takes the read's working set to "
+                        + "25769803656 bytes, more than its limit of 1048576 (hardwood.internal.maxWorkingSetBytes)");
+    }
+
+    @Test
+    void refusesV2LevelSectionsLongerThanThePage() {
+        ColumnSchema column = DataPages.optional(PhysicalType.INT32, null);
+        ByteBuffer page = DataPages.pageV2(Encoding.PLAIN, 1, 1, new byte[0], new byte[] { 2, 1 },
+                Integer.MAX_VALUE, new byte[4], CompressionCodec.UNCOMPRESSED, false);
+
+        assertThatThrownBy(() -> DataPages.read(DataPages.decoder(column, CompressionCodec.UNCOMPRESSED), column,
+                page, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("DATA_PAGE_V2 level sections of 0 and 2147483647 bytes exceed the page's 6 bytes");
     }
 
     // ==================== Helpers ====================

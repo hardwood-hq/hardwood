@@ -161,7 +161,7 @@ class FlatAppendTest {
     private static ColumnChunkBuffer buffer(FileSchema schema, ColumnEncoding encoding, double bloomFilterFpp) {
         // Small pages, so a chunk has many and the page cuts are compared too.
         return new ColumnChunkBuffer(schema.getColumn(0), 4096, WriterConfig.DEFAULT_PAGE_TARGET_ROWS,
-                PageLimit.DEFAULT_MAX_PAGE_VALUES, 1 << 20, RowGroupBuffer.MAX_ROWS, encoding, 64, new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
+                PageLimit.MAX_PAGE_VALUES, 1 << 20, RowGroupBuffer.MAX_ROWS, encoding, 64, new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
                 CompressionCodec.UNCOMPRESSED, RowGroupBuffer.MAX_STORE_CAPACITY, bloomFilterFpp);
     }
 

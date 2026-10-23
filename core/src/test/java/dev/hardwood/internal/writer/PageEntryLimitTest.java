@@ -33,9 +33,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PageEntryLimitTest {
 
     @Test
-    void byteTargetIsClampedToHalfTheReadersPageLimit() {
-        assertThat(ColumnChunkBuffer.cutTargetBytes(Integer.MAX_VALUE)).isEqualTo(128 * 1024 * 1024);
-        assertThat(ColumnChunkBuffer.cutTargetBytes(128 * 1024 * 1024 + 1)).isEqualTo(128 * 1024 * 1024);
+    void byteTargetIsClampedToHalfTheLargestPageAReaderAccepts() {
+        int half = (Integer.MAX_VALUE - 8) / 2;
+        assertThat(ColumnChunkBuffer.cutTargetBytes(Integer.MAX_VALUE)).isEqualTo(half);
+        assertThat(ColumnChunkBuffer.cutTargetBytes(half + 1)).isEqualTo(half);
         assertThat(ColumnChunkBuffer.cutTargetBytes(WriterConfig.DEFAULT_PAGE_TARGET_BYTES))
                 .isEqualTo(WriterConfig.DEFAULT_PAGE_TARGET_BYTES);
     }

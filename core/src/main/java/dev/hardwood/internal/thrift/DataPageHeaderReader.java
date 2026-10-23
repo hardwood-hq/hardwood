@@ -49,7 +49,7 @@ public class DataPageHeaderReader {
                 // reported as a field that never arrived.
                 case 1: // num_values
                     reader.requireField(header, Codes.I32);
-                    numValues = reader.readBoundedI32(PageLimit.maxPageValues(), PageLimit.MAX_PAGE_VALUES_BOUND);
+                    numValues = reader.readBoundedI32(PageLimit.MAX_PAGE_VALUES, PageLimit.MAX_PAGE_VALUES_BOUND);
                     seen |= 1L << fieldId;
                     break;
                 case 2: // encoding

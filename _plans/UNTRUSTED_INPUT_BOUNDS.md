@@ -18,21 +18,22 @@ holds:
 | --- | --- |
 | The bytes present: the Thrift buffer's remainder, the enclosing region, the file | every list count and binary length of the footer, page index and page headers; every offset and region length the footer declares |
 | The bytes decoded: a count is checked against the bytes that must back it | dictionary entries (`numValues × width ≤ length`; 4 bytes per `BYTE_ARRAY` entry) |
-| The page limit: `hardwood.internal.maxPageBytes`, default 256 MiB (until stage 6 replaces it with the working-set limit) | a page's uncompressed size; a page's value count, at 4 bytes per value |
+| The page limit: the longest Java array (`PageLimit`) | a page's uncompressed size; a page's value count, less one for its offsets |
+| The working-set limit `W` and the read-ahead buffer `R` (stage 6) | what a read holds at once; its large tasks beside its first |
 | The batch: `BatchSizing.MAX_BATCH` | rows and values per batch, whatever a row group or chunk declares |
 
 A file breaking a bound fails with `ParquetReadException` naming the field and the bound, before
-the allocation. The page limit is an internal system property, read on each check like
-`hardwood.internal.sequentialChunkSize`: it is the escape hatch for a legitimate page above
-256 MiB (a single binary value that large, or a writer that cuts pages by size alone and RLE-
-encodes a constant column) and covers the CLI as well as the library.
+the allocation. A legitimate large page (a single binary value of hundreds of MiB, or a writer
+that cuts pages by size alone and RLE-encodes a constant column) reads wherever `W` allows it;
+the internal property `hardwood.internal.maxWorkingSetBytes` is the escape hatch, and it covers
+the CLI as well as the library.
 
-The page limit bounds each allocation, not their sum: a page within it is decoded whole, and
-the allocations of many columns are live at once. A file whose pages exceed the limit, such as
-DuckDB's `42.parquet`, fails with a controlled error and is not read; no writer produces such
-pages, so the reader does not decode pages in windows to read them. Bounding the sum is stage 6,
-whose working-set limit supersedes the page limit: the limit is an interim bound, fitted to no heap, that
-also refuses legitimate pages larger than it, such as one holding a single large binary value.
+The page limit keeps each size a header declares within the array it sizes, so that no arithmetic
+sizing an array overflows; a page past it, such as one of DuckDB's `42.parquet` (2^31 - 1
+values), fails with a controlled error and is not read. What a read holds at once, the sum over
+its columns and tasks, is the working-set limit's and the read-ahead buffer's (stage 6): a page
+within the page limit is read wherever the working set it brings fits, and the reader does not
+decode pages in windows to read a page larger than that.
 
 ## Fields
 
@@ -48,8 +49,8 @@ also refuses legitimate pages larger than it, such as one holding a single large
 | `DictionaryPageHeader.num_values` | dictionary arrays | the bytes decoded | done |
 | `SchemaElement.type_length` | FLBA width | positive (schema validation); dictionary checked against its bytes; batch values in bounded chunks | done |
 | `RowGroup.num_rows`, `ColumnMetaData.num_values`, `SizeStatistics` | batch sizing | `MAX_BATCH` | done |
-| `PageHeader.uncompressed_page_size` | decompression buffer, `scratch.bytes` | the page limit | 2 |
-| `DataPageHeader.num_values`, `DataPageHeaderV2.num_values` | level and dictionary-id scratch arrays | the page limit; at most the chunk's `num_values` | 3, 4 |
+| `PageHeader.uncompressed_page_size` | decompression buffer, `scratch.bytes` | the page limit (the longest array); the working-set limit | 2, 6 |
+| `DataPageHeader.num_values`, `DataPageHeaderV2.num_values` | level, dictionary-id and offset scratch arrays, batches | the page limit (the longest array, less one); at most the chunk's `num_values`; the working-set limit | 3, 4, 6 |
 | RLE/bit-packing run header, `DELTA_BINARY_PACKED` header counts | run length, block layout | `int` range | 5 |
 | `TIME` stored value | `LocalTime` | the units of one day | 5 |
 
@@ -248,11 +249,11 @@ type it sizes. The error for an oversized page names `W` instead of the page lim
 A page's task fills every batch the page covers, so its batches count in full: a page of
 64 Mi `INT64` values brings 512 MiB of working set, and reads where `W` allows that.
 
-The writer cuts pages at `PageLimit.DEFAULT_MAX_PAGE_VALUES` entries and clamps its byte target
-to half the page limit only to match the reader; both go with it. The byte target bounds a
-page's size, but not its value count where the values compress to almost nothing, such as a
-constant column RLE-encoded; whether the writer cuts such pages at a value count of its own is
-a question of its defaults, like whether it caps its dictionary pages.
+The writer cuts pages at the reader's value bound and clamps its byte target to half its byte
+bound, so that it writes no page a reader refuses; with the bounds at the longest array, both
+bind only where a caller raises both page targets past anything a reader could hold. The byte
+target bounds a page's size, but not its value count where the values compress to almost
+nothing, such as a constant column RLE-encoded; the record target cuts those at its default.
 
 #### PRs
 
@@ -284,8 +285,10 @@ a question of its defaults, like whether it caps its dictionary pages.
    `W` was the dictionaries of row groups sharing a batch, which PR 1 counts, and concurrent
    parses. They are charged with #1264, which adds the fetched read-ahead they ride on, once a
    measurement such as a slow consumer shows them to matter.
-3. **The page limit goes**, both halves, with the writer's matching cuts, and `VALUE_DECODE.md`, `READ_PIPELINE.md` and
-   `THREADING.md` describe both bounds.
+3. **The page limit goes**, both halves, down to the array bound, with the writer's matching
+   cuts following it; `VALUE_DECODE.md` and `WRITER_ENCODING.md` describe the bound, and the
+   roadmap lists stage 6. Tests: the `42.parquet` shape still fails at the header, on the array
+   bound; a page of 64 Mi + 1 values passes its header and fails on `W`.
 
 Fetched bytes are charged with #1264, demand ranges to `W` and speculative ones to `R`. #1264
 puts the fetched side in the same buffer: a speculative read starts while it is
@@ -301,6 +304,6 @@ and fuzzing mode on a schedule. Seed the corpus with the stage 3 file and parque
 
 ## End state
 
-`VALUE_DECODE.md` (page limit, page-against-chunk check) and `FILE_METADATA.md` (the Thrift
+`VALUE_DECODE.md` (page limit, page-against-chunk check, working-set limit, read-ahead buffer) and `FILE_METADATA.md` (the Thrift
 policy, which already states the remaining-bytes bound) describe every bound in the target model.
 This plan is deleted in the PR that completes stage 7.

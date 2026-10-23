@@ -245,19 +245,19 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// gives the dictionary up rather than let the table outgrow what an array can hold.
     private static final int LAST_DICTIONARY_INDEX = DictionaryEncoder.MAX_SIZE - 1;
 
-    /// The most bytes a data page is cut at, whatever `pageTargetBytes` asks for: half the
-    /// reader's default page limit ([PageLimit#DEFAULT_MAX_PAGE_BYTES]). The cut charges a page's
-    /// levels and values, not the framing around them (run headers, level length prefixes), so a
-    /// page cut at the limit itself could come out a few bytes past it; at half, that framing
-    /// stays far inside.
-    static final int MAX_PAGE_TARGET_BYTES = PageLimit.DEFAULT_MAX_PAGE_BYTES / 2;
+    /// The most bytes a data page is cut at, whatever `pageTargetBytes` asks for: half the largest
+    /// page a reader accepts ([PageLimit#MAX_PAGE_BYTES]). The cut charges a page's levels and
+    /// values, not the framing around them (run headers, level length prefixes), so a page cut at
+    /// the limit itself could come out a few bytes past it; at half, that framing stays far
+    /// inside.
+    static final int MAX_PAGE_TARGET_BYTES = PageLimit.MAX_PAGE_BYTES / 2;
 
     /// @param column the column's schema (physical type, level depths)
     /// @param pageTargetBytes encoded bytes after which a data page is cut, at most
     ///        [#MAX_PAGE_TARGET_BYTES]
     /// @param pageTargetRows records after which a data page is cut
     /// @param maxPageEntries entries after which a data page is cut whatever the two targets
-    ///        allow, the most a reader accepts in a page ([PageLimit#DEFAULT_MAX_PAGE_VALUES])
+    ///        allow, the most a reader accepts in a page ([PageLimit#MAX_PAGE_VALUES])
     /// @param encoding this column's resolved encoding policy
     /// @param compressor compresses each page body before framing
     /// @param codec the codec `compressor` applies, recorded in the chunk metadata

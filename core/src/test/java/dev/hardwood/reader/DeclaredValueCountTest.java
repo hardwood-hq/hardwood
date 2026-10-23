@@ -19,11 +19,12 @@ import dev.hardwood.internal.thrift.RleExpansionFile.Chunk;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A data page's declared value count is held to the page limit before the decode sizes
-/// anything from it, on files whose every layer agrees with the pages.
+/// A data page's declared value count is held to the longest array its decode allocates and to its
+/// chunk before the decode sizes anything from it, on files whose every layer agrees with the
+/// pages.
 class DeclaredValueCountTest {
 
-    private static final String MAX_PAGE_BYTES_PROPERTY = "hardwood.internal.maxPageBytes";
+    private static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
 
     @Test
     void pageOfMaxIntValuesFailsInsteadOfAllocating() {
@@ -33,7 +34,8 @@ class DeclaredValueCountTest {
         assertThatThrownBy(() -> countRows(file))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("[<memory>: row group 0, column 'b', page 0] DataPageHeader.num_values — "
-                        + "must not exceed 67108864 (hardwood.internal.maxPageBytes / 4) but was 2147483647");
+                        + "must not exceed 2147483638 (the longest array a page's values decode into, less one) "
+                        + "but was 2147483647");
     }
 
     @Test
@@ -43,31 +45,54 @@ class DeclaredValueCountTest {
         assertThatThrownBy(() -> countRows(file))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("[<memory>: row group 0, column 'b', page 0] DataPageHeaderV2.num_values \u2014 "
-                        + "must not exceed 67108864 (hardwood.internal.maxPageBytes / 4) but was 2147483647");
+                        + "must not exceed 2147483638 (the longest array a page's values decode into, less one) "
+                        + "but was 2147483647");
     }
 
     @Test
-    void pageAtTheLimitReads() throws IOException {
-        System.setProperty(MAX_PAGE_BYTES_PROPERTY, "4096");
-        try {
-            assertThat(countRows(RleExpansionFile.build(1024, 3, 3 * 1024))).isEqualTo(3 * 1024);
-        }
-        finally {
-            System.clearProperty(MAX_PAGE_BYTES_PROPERTY);
-        }
+    void pageOneValuePastTheLongestArrayFails() {
+        int values = Integer.MAX_VALUE - 8;
+        byte[] file = RleExpansionFile.build(values, 1, values);
+
+        assertThatThrownBy(() -> countRows(file))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>: row group 0, column 'b', page 0] DataPageHeader.num_values — "
+                        + "must not exceed 2147483638 (the longest array a page's values decode into, less one) "
+                        + "but was 2147483639");
     }
 
     @Test
-    void pageOneValuePastTheLimitFails() {
-        System.setProperty(MAX_PAGE_BYTES_PROPERTY, "4096");
+    void pageAtTheLongestArrayPassesItsHeader() {
+        // Its header is accepted; the working set then holds the page
+        System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Integer.toString(1024 * 1024));
+        int values = Integer.MAX_VALUE - 9;
         try {
-            assertThatThrownBy(() -> countRows(RleExpansionFile.build(1025, 1, 1025)))
+            assertThatThrownBy(() -> countRows(RleExpansionFile.build(values, 1, values)))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>: row group 0, column 'b', page 0] DataPageHeader.num_values — "
-                            + "must not exceed 1024 (hardwood.internal.maxPageBytes / 4) but was 1025");
+                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 25769803663 bytes "
+                            + "to decode, which takes the read's working set to 25769803671 bytes, more than its "
+                            + "limit of 1048576 (hardwood.internal.maxWorkingSetBytes)");
         }
         finally {
-            System.clearProperty(MAX_PAGE_BYTES_PROPERTY);
+            System.clearProperty(MAX_WORKING_SET_BYTES_PROPERTY);
+        }
+    }
+
+    @Test
+    void pageOfManyValuesIsHeldToTheWorkingSet() {
+        // A count within the longest array passes the header; the read fails on what decoding
+        // the page would hold, before allocating it
+        System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Integer.toString(1024 * 1024));
+        int values = 64 * 1024 * 1024 + 1;
+        try {
+            assertThatThrownBy(() -> countRows(RleExpansionFile.build(values, 1, values)))
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 805306386 bytes to "
+                            + "decode, which takes the read's working set to 805306394 bytes, more than its limit "
+                            + "of 1048576 (hardwood.internal.maxWorkingSetBytes)");
+        }
+        finally {
+            System.clearProperty(MAX_WORKING_SET_BYTES_PROPERTY);
         }
     }
 

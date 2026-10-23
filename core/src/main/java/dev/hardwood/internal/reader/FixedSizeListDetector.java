@@ -275,7 +275,9 @@ public final class FixedSizeListDetector {
                 return idx == 0 ? FixedSizeListShape.UNDETERMINED : FixedSizeListShape.NOT_APPLICABLE;
             }
             int groups = groupCount(header);
-            if (groups <= 0 || groups > end - pos) {
+            // A run of more groups than the values left is not a fixed-width list's; bounding it
+            // here also keeps the value index within an `int`
+            if (groups <= 0 || groups > end - pos || groups > (numValues - idx + 7) / 8) {
                 return FixedSizeListShape.NOT_APPLICABLE;
             }
             int payloadPos = pos;

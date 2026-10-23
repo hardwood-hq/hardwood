@@ -326,15 +326,19 @@ public class PageDecoder {
     }
 
     /// The values of a null placeholder page, every one null, for a fill that reads them in place:
-    /// all-zero definition (and repetition) levels in `scratch` and no value bytes.
+    /// all-zero definition (and repetition) levels in `scratch` and no value bytes. The page's
+    /// levels and batches are charged to the read's working set first, as a decoded page's are.
     ///
+    /// @param kept whether the column keeps the page's levels past its task
     /// @throws IllegalStateException for a required column, which a placeholder cannot stand in for
-    InPlaceNestedPage nullsInPlace(int numValues, LevelScratch scratch) {
+    /// @throws ParquetReadException if the read's working set would exceed its limit
+    InPlaceNestedPage nullsInPlace(int numValues, LevelScratch scratch, boolean kept) {
         int maxDefLevel = column.maxDefinitionLevel();
         if (maxDefLevel == 0) {
             throw new IllegalStateException("Cannot create null placeholder page for required column '"
                     + column.name() + "' — maxDefinitionLevel is 0");
         }
+        workingSet.page(numValues, 0, 0, Encoding.PLAIN, kept);
         int[] definitionLevels = scratch.definitionLevels(numValues);
         Arrays.fill(definitionLevels, 0, numValues, 0);
         int[] repetitionLevels = null;
@@ -548,6 +552,11 @@ public class PageDecoder {
                                       boolean ownBytes, DecodeBuffers buffers) {
         int repLength = header.repetitionLevelsByteLength();
         int defLength = header.definitionLevelsByteLength();
+        // Checked before the level sections size an array from them
+        if ((long) repLength + defLength > pageData.remaining()) {
+            throw new ParquetReadException("DATA_PAGE_V2 level sections of " + repLength + " and " + defLength
+                    + " bytes exceed the page's " + pageData.remaining() + " bytes");
+        }
         int valuesOffset = repLength + defLength;
         int storedValuesLength = pageData.remaining() - valuesOffset;
         int numValues = header.numValues();
