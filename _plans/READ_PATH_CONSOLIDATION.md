@@ -154,6 +154,16 @@ requests. The one pass sees every column's ranges at once, so no request is cut 
 from being fetched twice, which `isCoalesceSafe` and the `fetchedAlone` extents guard today. The first
 request of a file opened ahead is the first entry of this list, so `plannedSpan` goes.
 
+A column without an offset index takes part through its chunk's range from the footer: the whole
+chunk, or under a row limit the first part today's estimate sizes (bytes per value times the
+limit, twice, at least 1 MiB). Its fetch step scans page headers across the requests that hold
+the chunk, as `SequentialFetchPlan`'s walk does today, with two differences:
+
+- A page that straddles the cut between two requests is copied from both into one buffer, at
+  most once per cut, since a cut at S cannot follow page boundaries no header has yet revealed.
+- Under a row limit, the rest of the chunk becomes a request only when the walk reaches the end of
+  what it holds, so `head(N)` fetches no more of a large chunk than today.
+
 ### Stage 3: the fetch sequence for data
 
 A per-read sequence takes the row groups' request lists in work-list order and starts them while
@@ -161,8 +171,14 @@ the bytes held ahead stay within F, charged to R. It replaces the `ChunkHandle` 
 `SharedRegion` chains, the first-chunk prefetch of the next row group, and the open-ahead spans
 with `FetchedAhead`. Footers and index windows are appended as entries, still parsed where they
 are today. F's default is set by the gates: the smallest value at which no contender is slower
-than the baseline. `maxFilesAhead` stays as a bound on requests for files not reached, if the
-many-small-files contender needs it.
+than the baseline.
+
+A file's footer request has to start before the data of the files ahead of it is known, so footers
+are not placed by consumption order alone. The footers of files the read has not reached start
+while the footer bytes held ahead stay within a share of F, so data always keeps the rest of F:
+with F of 64 MiB, a share of a quarter and 256 KiB footer requests, 64 files ahead. The share is
+set with F by the many-small-files contender, and it replaces `maxFilesAhead` and
+`FOOTER_RESERVATION`.
 
 ### Stage 4: planning reads through the sequence
 
@@ -179,8 +195,10 @@ Two issues fold into this stage:
   (#1671). A file up to that size is read whole by it, a range the entry holds is not fetched
   again, and the entry is charged to R while ahead and released once the file's last row group is
   read. #100 is settled with it.
-- #1659: a row group's Bloom filters come before its page-index window in the sequence, so a row
-  group they drop costs no index read.
+- #1659: a window's page-index request is appended once the Bloom filters of its row groups have
+  decided, so a window whose row groups they all drop costs no index read. That puts one round trip
+  between a file's Bloom filters and its page index, which F hides for every file but the first, as
+  today; starting both together would save it at the cost of index reads for dropped windows.
 
 Two questions are settled in this stage, as the dictionary reads move:
 
