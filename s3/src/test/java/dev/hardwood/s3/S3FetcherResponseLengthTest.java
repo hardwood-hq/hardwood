@@ -35,10 +35,10 @@ import dev.hardwood.s3.internal.S3Api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Checks that [S3Fetcher] reads each range response to its end, against a local endpoint
-/// that answers a range with `extra` bytes more than it asked for and records the client
-/// port of every request. A response closed before its end is cancelled, and the client
-/// closes its connection instead of returning it to the pool.
+/// Checks that [S3Fetcher] returns a range body of exactly the requested length, rejects a
+/// shorter or longer one, and reuses connections across range reads, against a local endpoint
+/// that answers a range with `extra` bytes more than it asked for (fewer, when negative) and
+/// records the client port of every request.
 class S3FetcherResponseLengthTest {
 
     private static final int OBJECT_SIZE = 4 * 1024 * 1024;
@@ -104,6 +104,7 @@ class S3FetcherResponseLengthTest {
 
         ByteBuffer range = fetcher.readRange(1000, 100);
 
+        assertThat(range.isDirect()).isTrue();
         assertThat(range.remaining()).isEqualTo(100);
         assertThat(range.get(99)).isEqualTo(object[1099]);
     }
@@ -140,5 +141,22 @@ class S3FetcherResponseLengthTest {
         assertThatThrownBy(() -> fetcher.readRange(1000, 100))
                 .isInstanceOf(IOException.class)
                 .hasMessage("Long read from s3://bucket/object.parquet: expected 100 bytes but received more");
+
+        // The cancelled response's connection carries no leftover bytes into the next read
+        extra = 0;
+        ByteBuffer range = fetcher.readRange(2000, 100);
+        assertThat(range.remaining()).isEqualTo(100);
+        assertThat(range.get(0)).isEqualTo(object[2000]);
+        assertThat(range.get(99)).isEqualTo(object[2099]);
+    }
+
+    @Test
+    void rangeReadRejectsShorterResponse() throws IOException {
+        fetcher.open();
+        extra = -1;
+
+        assertThatThrownBy(() -> fetcher.readRange(1000, 100))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Short read from s3://bucket/object.parquet: expected 100 bytes but received 99");
     }
 }

@@ -8,13 +8,13 @@
 package dev.hardwood.s3.internal;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -33,17 +33,24 @@ import dev.hardwood.s3.S3Credentials;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Checks that [S3Api] releases the response of a failed attempt before it
-/// retries, against a local endpoint whose first answer is a `503` with a
-/// body too large to fit in the socket buffers. The endpoint's write of
-/// that body completes only once the client reads or closes the response.
+/// Checks how [S3Api] retries a range `GET`, against a local endpoint whose first answer fails
+/// as [#firstAnswer] says and whose second carries the range.
 class S3ApiRetryTest {
+
+    enum FirstAnswer {
+        /// A `503` with a body too large to fit in the socket buffers. The endpoint's write of
+        /// that body completes only once the client reads or closes the response.
+        LARGE_ERROR,
+        /// A `206` whose connection closes after half of its body.
+        TRUNCATED_BODY
+    }
 
     private static final int ERROR_BODY_SIZE = 16 * 1024 * 1024;
     private static final byte[] RANGE_BODY = { 1, 2, 3, 4 };
 
     private final AtomicInteger requests = new AtomicInteger();
     private final CountDownLatch errorResponseReleased = new CountDownLatch(1);
+    private volatile FirstAnswer firstAnswer = FirstAnswer.LARGE_ERROR;
     private ExecutorService executor;
     private HttpServer server;
     private HttpClient httpClient;
@@ -73,17 +80,9 @@ class S3ApiRetryTest {
 
     private void respond(HttpExchange exchange) throws IOException {
         if (requests.getAndIncrement() == 0) {
-            try {
-                exchange.sendResponseHeaders(503, ERROR_BODY_SIZE);
-                try (OutputStream body = exchange.getResponseBody()) {
-                    body.write(new byte[ERROR_BODY_SIZE]);
-                }
-            }
-            catch (IOException e) {
-                // The client closed the connection instead of reading the body
-            }
-            finally {
-                errorResponseReleased.countDown();
+            switch (firstAnswer) {
+                case LARGE_ERROR -> respondLargeError(exchange);
+                case TRUNCATED_BODY -> respondTruncated(exchange);
             }
             return;
         }
@@ -94,17 +93,59 @@ class S3ApiRetryTest {
         }
     }
 
-    @Test
-    void streamRetryReleasesFailedResponse() throws Exception {
-        HttpResponse<InputStream> response = api.getStream("bucket", "object.parquet", "bytes=0-3");
-        try (InputStream body = response.body()) {
-            assertThat(response.statusCode()).isEqualTo(206);
-            assertThat(body.readAllBytes()).isEqualTo(RANGE_BODY);
+    private void respondLargeError(HttpExchange exchange) {
+        try {
+            exchange.sendResponseHeaders(503, ERROR_BODY_SIZE);
+            try (OutputStream body = exchange.getResponseBody()) {
+                body.write(new byte[ERROR_BODY_SIZE]);
+            }
         }
+        catch (IOException e) {
+            // The client closed the connection instead of reading the body
+        }
+        finally {
+            errorResponseReleased.countDown();
+        }
+    }
 
+    private static void respondTruncated(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().add("Content-Range", "bytes 0-3/4");
+        exchange.sendResponseHeaders(206, RANGE_BODY.length);
+        OutputStream body = exchange.getResponseBody();
+        body.write(RANGE_BODY, 0, RANGE_BODY.length / 2);
+        body.flush();
+        // Fails for the bytes missing; the server closes the connection of a handler that throws
+        body.close();
+    }
+
+    @Test
+    void rangeRetryReleasesFailedResponse() throws Exception {
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length);
+
+        assertThat(response.statusCode()).isEqualTo(206);
+        assertThat(bytes(response.body())).isEqualTo(RANGE_BODY);
         assertThat(requests.get()).isEqualTo(2);
         assertThat(errorResponseReleased.await(5, TimeUnit.SECONDS))
                 .as("503 response body released before the retry")
                 .isTrue();
+    }
+
+    @Test
+    void rangeRetriesBodyFailingMidway() throws Exception {
+        firstAnswer = FirstAnswer.TRUNCATED_BODY;
+
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length);
+
+        assertThat(response.statusCode()).isEqualTo(206);
+        assertThat(response.body().overflow()).isFalse();
+        assertThat(bytes(response.body())).isEqualTo(RANGE_BODY);
+        assertThat(requests.get()).isEqualTo(2);
+    }
+
+    private static byte[] bytes(RangeBody body) {
+        ByteBuffer buffer = body.bytes();
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.get(bytes);
+        return bytes;
     }
 }

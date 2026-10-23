@@ -8,7 +8,6 @@
 package dev.hardwood.s3.internal;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,9 +30,6 @@ import dev.hardwood.s3.S3CredentialsProvider;
 /// and HTTP transport. Used by [dev.hardwood.s3.S3InputFile] for reads, by
 /// [dev.hardwood.s3.S3OutputFile] for uploads, and by test infrastructure.
 public final class S3Api {
-
-    /// The most bytes `discard` reads of a body before closing it.
-    private static final int DISCARD_LIMIT = 64 * 1024;
 
     private static final int HTTP_INTERNAL_SERVER_ERROR = 500;
     private static final int HTTP_SERVICE_UNAVAILABLE = 503;
@@ -86,12 +82,14 @@ public final class S3Api {
         return sendWithRetry(bucket, key, rangeHeader, HttpResponse.BodyHandlers.ofByteArray());
     }
 
-    /// Sends a GET request with a `Range` header and returns a streaming response body.
+    /// Sends a GET request with a `Range` header of `length` bytes and receives the response body
+    /// through a [RangeBodyHandler]: a `206` body into a direct buffer of `length` bytes.
     ///
-    /// Retries on HTTP 500/503 responses and network errors up to [#maxRetries] times
-    /// with exponential backoff and jitter.
-    public HttpResponse<InputStream> getStream(String bucket, String key, String rangeHeader) throws IOException {
-        return sendWithRetry(bucket, key, rangeHeader, HttpResponse.BodyHandlers.ofInputStream());
+    /// Retries on HTTP 500/503 responses and network errors, a failure while the body arrives
+    /// included, up to [#maxRetries] times with exponential backoff and jitter.
+    public HttpResponse<RangeBody> getRange(String bucket, String key, String rangeHeader, int length)
+            throws IOException {
+        return sendWithRetry(bucket, key, rangeHeader, new RangeBodyHandler(length));
     }
 
     private <T> HttpResponse<T> sendWithRetry(String bucket, String key, String rangeHeader,
@@ -116,7 +114,6 @@ public final class S3Api {
                 int status = response.statusCode();
                 if ((status == HTTP_INTERNAL_SERVER_ERROR || status == HTTP_SERVICE_UNAVAILABLE) && attempt < maxRetries) {
                     lastException = new IOException(description + " failed: HTTP " + status);
-                    discardBody(response);
                     continue;
                 }
                 return response;
@@ -126,6 +123,11 @@ public final class S3Api {
                 throw new IOException("Interrupted during " + description, e);
             }
             catch (IOException e) {
+                // The client wraps an Error from a body subscriber, such as a direct buffer
+                // the JVM could not allocate; it is no network failure to retry
+                if (e.getCause() instanceof Error error) {
+                    throw error;
+                }
                 lastException = e;
                 if (attempt >= maxRetries) {
                     throw e;
@@ -133,28 +135,6 @@ public final class S3Api {
             }
         }
         throw lastException;
-    }
-
-    /// Closes a streamed body the caller will never see, so a response
-    /// abandoned for a retry does not hold its connection until GC.
-    /// A byte-array body is already fully read and needs no release.
-    private static void discardBody(HttpResponse<?> response) throws IOException {
-        if (response.body() instanceof InputStream body) {
-            discard(body);
-        }
-    }
-
-    /// Releases a response body the caller does not need. A body of up to
-    /// 64 KiB, such as an error document, is read to its end, so
-    /// its HTTP/1.1 connection goes back to the pool: closed before its end, the
-    /// response is cancelled and the connection closed, even after the client has
-    /// handed it to another request. A longer body is closed after 64 KiB; while
-    /// it is still arriving, its connection has not reached the pool, and the
-    /// close ends only its own exchange.
-    public static void discard(InputStream body) throws IOException {
-        try (body) {
-            body.readNBytes(DISCARD_LIMIT);
-        }
     }
 
     private static void sleepBeforeRetry(int attempt) throws IOException {
