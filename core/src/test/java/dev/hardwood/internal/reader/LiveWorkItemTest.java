@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -74,11 +75,11 @@ class LiveWorkItemTest {
             schema = reader.getFileSchema();
         }
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = new RowGroupIterator(List.of(file), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);
             try {
                 iterator.setFirstFile(schema, metaData.rowGroups());
-                iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.columns("code")),
-                        filter == null ? null : FilterPredicateResolver.resolve(filter, schema));
+                iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.columns("code"))),
+                        filter == null ? null : FilterPredicateResolver.resolve(filter, schema), true);
                 return iterator.hasLiveWorkItem();
             }
             finally {

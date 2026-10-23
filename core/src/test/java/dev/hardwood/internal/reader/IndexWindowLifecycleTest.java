@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -235,9 +236,10 @@ class IndexWindowLifecycleTest {
             schema = reader.getFileSchema();
         }
         RowGroupIterator iterator = withBudget(budget,
-                () -> new RowGroupIterator(List.of(file), context, 0));
+                () -> RowGroupIterators.standalone(List.of(file), context));
         iterator.setFirstFile(schema, metaData.rowGroups());
-        iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.columns("c05")), null);
+        iterator.initialize(ReadProjection.of(
+                ProjectedSchema.create(schema, ColumnProjection.columns("c05"))), null, true);
         return iterator;
     }
 

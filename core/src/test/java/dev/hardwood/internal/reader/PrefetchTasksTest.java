@@ -39,6 +39,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
@@ -183,9 +184,10 @@ class PrefetchTasksTest {
         PrefetchFailingInputFile file = new PrefetchFailingInputFile(InputFile.of(FOUR_ROW_GROUPS), "prefetch rg=1 |");
         file.open();
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
-            RowGroupIterator iterator = new RowGroupIterator(List.of(file), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);
             iterator.setFirstFile(schema, metaData.rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.columns("__row__")), null);
+            iterator.initialize(ReadProjection.of(
+                    ProjectedSchema.create(schema, ColumnProjection.columns("__row__"))), null, true);
             iterator.getColumnPlan(iterator.workItemAt(0), 0);
             assertThat(file.awaitFailedRead()).isTrue();
 

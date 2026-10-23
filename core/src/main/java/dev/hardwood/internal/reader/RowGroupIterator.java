@@ -37,7 +37,6 @@ import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
 /// Shared iterator over `(InputFile, RowGroup)` pairs across one or more files.
@@ -53,9 +52,6 @@ import dev.hardwood.schema.FileSchema;
 public class RowGroupIterator implements Closeable {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RowGroupIterator.class.getName()));
-
-    private static final Consumer<RowGroupIterator> NO_CLOSE_LISTENER = iterator -> {
-    };
 
     private final List<InputFile> inputFiles;
     private final FileMetadataCache fileMetadataCache;
@@ -274,19 +270,12 @@ public class RowGroupIterator implements Closeable {
 
     private List<RowGroup> firstFileRowGroups;
 
-    /// Creates a RowGroupIterator for the given files.
+    /// Creates a RowGroupIterator over the files of `fileMetadataCache`.
     ///
-    /// @param inputFiles one or more input files (must not be empty)
-    /// @param context the Hardwood context
-    /// @param maxRows maximum rows to read (0 = unlimited)
-    public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context, long maxRows) {
-        this(inputFiles, context, maxRows, 0);
-    }
-
-    /// Creates a RowGroupIterator with a tail-skip budget applied to the first
-    /// row group.
-    ///
-    /// @param inputFiles one or more input files (must not be empty)
+    /// @param fileMetadataCache the files' metadata, shared with a parent reader or owned
+    /// @param ownsFileMetadataCache whether [#close()] closes `fileMetadataCache` and the files
+    /// @param closeListener invoked with this iterator once [#close()] has released its caches, so
+    ///        a parent can stop tracking an iterator its child reader has already torn down
     /// @param context the Hardwood context
     /// @param maxRows maximum rows to read (0 = unlimited)
     /// @param tailSkip leading rows of the first row group to skip via per-page
@@ -294,46 +283,16 @@ public class RowGroupIterator implements Closeable {
     ///        in every subset row group has an OffsetIndex; otherwise sequential
     ///        columns would emit unmaskable rows from offset 0 and break
     ///        cross-column alignment.
-    public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
-                            long maxRows, long tailSkip) {
-        this(inputFiles, context, maxRows, tailSkip, 0);
-    }
-
-    /// Creates a RowGroupIterator with tail-skip and physical-skip budgets.
-    ///
-    /// @param inputFiles one or more input files (must not be empty)
-    /// @param context the Hardwood context
-    /// @param maxRows maximum rows to read (0 = unlimited)
-    /// @param tailSkip leading rows of the first row group to skip via per-page
-    ///        masking (0 = unused)
     /// @param physicalSkip leading physical rows to skip while building the
     ///        work list (0 = unused). Whole row groups are dropped; the residue
     ///        within the first kept row group is exposed via [#firstRowGroupSkip()].
     ///        Mutually exclusive with `tailSkip` — one masks the first row group's
     ///        leading rows, the other drops leading row groups, with no combined
     ///        semantics.
-    public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
-                            long maxRows, long tailSkip, long physicalSkip) {
-        this(new FileMetadataCache(inputFiles, context), true, NO_CLOSE_LISTENER, context,
-                maxRows, tailSkip, physicalSkip);
-    }
-
-    /// Creates a RowGroupIterator sharing file metadata with its parent reader.
-    ///
-    /// `closeListener` is invoked with this iterator once [#close()] has released
-    /// its caches, so the parent can stop tracking an iterator its child reader
-    /// has already torn down.
-    public RowGroupIterator(FileMetadataCache fileMetadataCache,
+    public RowGroupIterator(FileMetadataCache fileMetadataCache, boolean ownsFileMetadataCache,
                             Consumer<RowGroupIterator> closeListener,
-                            HardwoodContextImpl context,
-                            long maxRows, long tailSkip, long physicalSkip) {
-        this(fileMetadataCache, false, closeListener, context, maxRows, tailSkip, physicalSkip);
-    }
-
-    private RowGroupIterator(FileMetadataCache fileMetadataCache, boolean ownsFileMetadataCache,
-                             Consumer<RowGroupIterator> closeListener,
-                             HardwoodContextImpl context, long maxRows, long tailSkip,
-                             long physicalSkip) {
+                            HardwoodContextImpl context, long maxRows, long tailSkip,
+                            long physicalSkip) {
         context.requireOffPool();
         if (tailSkip < 0) {
             throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
@@ -411,63 +370,17 @@ public class RowGroupIterator implements Closeable {
         return referenceSchema;
     }
 
-    /// Applies column projection and optional filter, builds the full work list.
-    /// Statistics-based filtering stays enabled.
-    ///
-    /// @param projection column projection
-    /// @param filter resolved predicate, or `null` for no filtering
-    /// @return the projected schema
-    public ProjectedSchema initialize(ColumnProjection projection, ResolvedPredicate filter) throws IOException {
-        return initialize(projection, filter, true);
-    }
-
-    /// Applies column projection and optional filter, builds the full work list.
-    ///
-    /// @param projection column projection
-    /// @param filter resolved predicate, or `null` for no filtering
-    /// @param metadataFilteringEnabled when `false`, the filter takes no
-    ///        metadata-derived shortcut — no row-group pruning from statistics,
-    ///        bloom filters or dictionaries, no page-index or
-    ///        inline-page-statistics skipping, no always-match decision — so the
-    ///        predicate is evaluated against every decoded row
-    /// @return the projected schema
-    public ProjectedSchema initialize(ColumnProjection projection, ResolvedPredicate filter,
-                                      boolean metadataFilteringEnabled) throws IOException {
-        return initialize(ProjectedSchema.create(referenceSchema, projection), filter,
-                metadataFilteringEnabled);
-    }
-
-    /// Applies a pre-built projected schema and optional filter, builds the full work list.
-    /// Statistics-based filtering stays enabled.
-    ///
-    /// @param projected pre-built projected schema
-    /// @param filter resolved predicate, or `null` for no filtering
-    /// @return the projected schema (same as input)
-    public ProjectedSchema initialize(ProjectedSchema projected, ResolvedPredicate filter) throws IOException {
-        return initialize(projected, filter, true);
-    }
-
-    /// Applies a pre-built projected schema and optional filter, builds the full work list.
-    /// Every projected column is exposed.
-    ///
-    /// @param projected pre-built projected schema
-    /// @param filter resolved predicate, or `null` for no filtering
-    /// @param metadataFilteringEnabled when `false`, the filter takes no
-    ///        metadata-derived shortcut, so the predicate is evaluated against
-    ///        every decoded row (see the sibling three-arg overload)
-    /// @return the projected schema (same as input)
-    public ProjectedSchema initialize(ProjectedSchema projected, ResolvedPredicate filter,
-                                      boolean metadataFilteringEnabled) throws IOException {
-        return initialize(ReadProjection.of(projected), filter, metadataFilteringEnabled);
-    }
-
     /// Applies a read projection and optional filter, builds the full work list. The
     /// iterator plans [ReadProjection#decoded()], and knows which of its columns are
     /// filter-only.
     ///
     /// @param projection the exposed and decoded columns
     /// @param filter resolved predicate, or `null` for no filtering
-    /// @param metadataFilteringEnabled as for [#initialize(ProjectedSchema, ResolvedPredicate, boolean)]
+    /// @param metadataFilteringEnabled when `false`, the filter takes no
+    ///        metadata-derived shortcut — no row-group pruning from statistics,
+    ///        bloom filters or dictionaries, no page-index or
+    ///        inline-page-statistics skipping, no always-match decision — so the
+    ///        predicate is evaluated against every decoded row
     /// @return the decoded projection
     public ProjectedSchema initialize(ReadProjection projection, ResolvedPredicate filter,
                                       boolean metadataFilteringEnabled) throws IOException {

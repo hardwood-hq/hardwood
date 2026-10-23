@@ -29,6 +29,7 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
@@ -239,11 +240,11 @@ class ReadAheadCapTest {
     private static RowGroupIterator iterator(HardwoodContextImpl context, byte[] file) throws Exception {
         InputFile input = InputFile.of(ByteBuffer.wrap(file));
         input.open();
-        RowGroupIterator iterator = new RowGroupIterator(List.of(input), context, 0);
+        RowGroupIterator iterator = RowGroupIterators.standalone(List.of(input), context);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             FileSchema schema = reader.getFileSchema();
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
         }
         return iterator;
     }

@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Timeout;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
@@ -51,9 +52,9 @@ class ScheduledColumnCloseTest {
             ColumnSchema column = schema.getColumn(0);
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            RowGroupIterator iterator = new RowGroupIterator(List.of(inputFile), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(inputFile), context);
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
             int batchCapacity = 64;
             iterator.planBatches(batchCapacity, 0);
 
@@ -125,9 +126,9 @@ class ScheduledColumnCloseTest {
             FileSchema schema = reader.getFileSchema();
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            RowGroupIterator iterator = new RowGroupIterator(List.of(inputFile), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(inputFile), context);
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
             int batchCapacity = 64;
             iterator.planBatches(batchCapacity, 0);
 
@@ -308,9 +309,9 @@ class ScheduledColumnCloseTest {
             ColumnSchema column = schema.getColumn(0);
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            RowGroupIterator iterator = new RowGroupIterator(List.of(inputFile), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(inputFile), context);
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
             iterator.planBatches(BATCH_CAPACITY, 0);
             CountDownLatch releaseWorker = null;
             if (holdDecodeThread) {

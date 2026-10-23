@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -178,11 +179,10 @@ public class FetchPlanEquivalenceTest {
     private static RowGroupIterator createIterator(InputFile inputFile, FileSchema schema,
                                                     FileMetaData metaData,
                                                     HardwoodContextImpl context) throws IOException {
-        RowGroupIterator iterator = new RowGroupIterator(
-                List.of(inputFile), context, 0);
+        RowGroupIterator iterator = RowGroupIterators.standalone(
+                List.of(inputFile), context);
         iterator.setFirstFile(schema, metaData.rowGroups());
-        iterator.initialize(
-                ProjectedSchema.create(schema, ColumnProjection.all()), null);
+        iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
         return iterator;
     }
 

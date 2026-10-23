@@ -25,6 +25,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.reader.BatchPlan.RowGroupBatches;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
@@ -542,11 +543,11 @@ class BatchPlanTest {
             input.open();
             inputs.add(input);
         }
-        RowGroupIterator iterator = new RowGroupIterator(inputs, context, 0);
+        RowGroupIterator iterator = RowGroupIterators.standalone(inputs, context);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(files[0]))) {
             FileSchema schema = reader.getFileSchema();
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
         }
         return iterator;
     }

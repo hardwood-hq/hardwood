@@ -24,6 +24,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
@@ -130,9 +131,9 @@ class NestedFillThreadTest {
             ColumnSchema column = schema.getColumn(COLUMN);
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            RowGroupIterator iterator = new RowGroupIterator(List.of(inputFile), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(inputFile), context);
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
             iterator.planBatches(batchSize, 0);
             NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema)[COLUMN];
             BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);

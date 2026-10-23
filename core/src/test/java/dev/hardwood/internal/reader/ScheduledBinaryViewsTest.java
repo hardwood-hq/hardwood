@@ -22,6 +22,7 @@ import dev.hardwood.internal.predicate.DictionaryBinaryBatchMatcher;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
@@ -113,9 +114,9 @@ class ScheduledBinaryViewsTest {
             ColumnSchema column = schema.getColumn(0);
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            RowGroupIterator iterator = new RowGroupIterator(List.of(inputFile), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(inputFile), context);
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
             iterator.planBatches(10, 0);
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(

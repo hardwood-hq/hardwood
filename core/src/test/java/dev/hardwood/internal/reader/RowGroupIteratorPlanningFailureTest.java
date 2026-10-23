@@ -16,6 +16,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
 
@@ -42,10 +44,11 @@ class RowGroupIteratorPlanningFailureTest {
     @Test
     void aLaterRequestForTheFailedFileFailsTheSameWay() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             RowGroupIterator iterator = new RowGroupIterator(
-                     List.of(InputFile.of(CHUNK_PATH_SWAPPED)), context, 0)) {
+             RowGroupIterator iterator = RowGroupIterators.standalone(
+                     List.of(InputFile.of(CHUNK_PATH_SWAPPED)), context)) {
             iterator.openFirst();
-            iterator.initialize(ColumnProjection.all(), null);
+            iterator.initialize(ReadProjection.of(
+                    ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.all())), null, true);
 
             assertThatThrownBy(() -> iterator.workItemAt(0))
                     .isInstanceOf(SchemaIncompatibleException.class)
@@ -59,12 +62,13 @@ class RowGroupIteratorPlanningFailureTest {
     @Test
     void aLaterRequestDoesNotPlanPastTheFailedFile() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             RowGroupIterator iterator = new RowGroupIterator(
+             RowGroupIterator iterator = RowGroupIterators.standalone(
                      List.of(InputFile.of(ORDER_AB), InputFile.of(CHUNK_PATH_SWAPPED),
                              InputFile.of(ORDER_AB)),
-                     context, 0)) {
+                     context)) {
             iterator.openFirst();
-            iterator.initialize(ColumnProjection.all(), null);
+            iterator.initialize(ReadProjection.of(
+                    ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.all())), null, true);
 
             assertThat(iterator.workItemAt(0).fileIndex()).isZero();
             assertThatThrownBy(() -> iterator.workItemAt(1))
@@ -80,10 +84,11 @@ class RowGroupIteratorPlanningFailureTest {
     @Test
     void anErrorInPlanningFailsEveryLaterRequest() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             RowGroupIterator iterator = new RowGroupIterator(
-                     List.of(InputFile.of(ORDER_AB), new ErrorOnOpenInputFile()), context, 0)) {
+             RowGroupIterator iterator = RowGroupIterators.standalone(
+                     List.of(InputFile.of(ORDER_AB), new ErrorOnOpenInputFile()), context)) {
             iterator.openFirst();
-            iterator.initialize(ColumnProjection.all(), null);
+            iterator.initialize(ReadProjection.of(
+                    ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.all())), null, true);
 
             assertThat(iterator.workItemAt(0).fileIndex()).isZero();
             assertThatThrownBy(() -> iterator.workItemAt(1))
@@ -102,10 +107,11 @@ class RowGroupIteratorPlanningFailureTest {
     @Test
     void aRequestBeforeTheFailedFileIsAnswered() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             RowGroupIterator iterator = new RowGroupIterator(
-                     List.of(InputFile.of(THREE_ROW_GROUPS), new ErrorOnOpenInputFile()), context, 0)) {
+             RowGroupIterator iterator = RowGroupIterators.standalone(
+                     List.of(InputFile.of(THREE_ROW_GROUPS), new ErrorOnOpenInputFile()), context)) {
             iterator.openFirst();
-            iterator.initialize(ColumnProjection.all(), null);
+            iterator.initialize(ReadProjection.of(
+                    ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.all())), null, true);
 
             assertThat(iterator.workItemAt(0).rowGroupIndex()).isZero();
             assertThatThrownBy(() -> iterator.workItemAt(3))

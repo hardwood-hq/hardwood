@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.FilterPredicate;
@@ -118,11 +119,11 @@ class BloomFilterWindowIoTest {
         }
         CountingInputFile file = countingFile();
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = new RowGroupIterator(List.of(file), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);
             try {
                 iterator.setFirstFile(schema, metaData.rowGroups());
-                iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.columns("code")),
-                        FilterPredicateResolver.resolve(FilterPredicate.eq("code", 5), schema));
+                iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.columns("code"))),
+                        FilterPredicateResolver.resolve(FilterPredicate.eq("code", 5), schema), true);
 
                 assertThat(iterator.getWorkItems()).hasSize(ROW_GROUPS);
                 assertThat(pruningReads(file)).isEmpty();

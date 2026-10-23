@@ -515,7 +515,7 @@ public class ParquetFileReader implements Closeable {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
         RowGroupIterator iterator = trackedIterator(0L, 0L, 0L);
         iterator.setFirstFile(schema, subset);
-        iterator.initialize(projectedSchema, null);
+        iterator.initialize(ReadProjection.of(projectedSchema), null, true);
 
         boolean fastSkip = (skip == 0) || iterator.canFastSkipAllRowGroups();
         if (fastSkip && skip > 0) {
@@ -728,7 +728,8 @@ public class ParquetFileReader implements Closeable {
         if (resolved == null) {
             RowGroupIterator iterator = trackedIterator(0, 0, 0);
             iterator.setFirstFile(schema, rowGroups);
-            ProjectedSchema projected = iterator.initialize(ProjectedSchema.create(schema, requests, false), null);
+            ProjectedSchema projected = iterator.initialize(
+                    ReadProjection.of(ProjectedSchema.create(schema, requests, false)), null, true);
             // Every row group pruned (e.g. a byte-range row-group filter dropped
             // them all): nothing to decode. Asked of the first work item rather than
             // the whole list, which would plan every file before the first batch.
@@ -784,7 +785,7 @@ public class ParquetFileReader implements Closeable {
     /// Creates an iterator over this reader's files and tracks it until it is
     /// closed. See [#openChildren].
     private RowGroupIterator trackedIterator(long maxRows, long tailSkip, long physicalSkip) {
-        RowGroupIterator iterator = new RowGroupIterator(fileMetadataCache, openChildren::remove,
+        RowGroupIterator iterator = new RowGroupIterator(fileMetadataCache, false, openChildren::remove,
                 context, maxRows, tailSkip, physicalSkip);
         openChildren.put(iterator, iterator);
         return iterator;

@@ -78,8 +78,8 @@ class RowGroupIteratorCloseTest {
     @Test
     void aFailedFileCloseIsReportedRatherThanLogged() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = new RowGroupIterator(
-                    List.of(uncloseable("first.parquet")), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(
+                    List.of(uncloseable("first.parquet")), context);
 
             assertThatThrownBy(iterator::close)
                     .isInstanceOf(IOException.class)
@@ -90,11 +90,11 @@ class RowGroupIteratorCloseTest {
     @Test
     void theFirstFailureIsRaisedAndTheRestSuppressedBeneathIt() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = new RowGroupIterator(
+            RowGroupIterator iterator = RowGroupIterators.standalone(
                     List.of(uncloseable("first.parquet"),
                             uncloseable("second.parquet"),
                             uncloseable("third.parquet")),
-                    context, 0);
+                    context);
 
             assertThatThrownBy(iterator::close)
                     .isInstanceOf(IOException.class)
@@ -112,8 +112,8 @@ class RowGroupIteratorCloseTest {
         // refused to close is the leak this reporting exists to make visible.
         CountingInputFile closeable = new CountingInputFile(InputFile.of(TEST_FILE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = new RowGroupIterator(
-                    List.of(uncloseable("first.parquet"), closeable), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(
+                    List.of(uncloseable("first.parquet"), closeable), context);
 
             assertThatThrownBy(iterator::close).isInstanceOf(IOException.class);
         }
@@ -125,9 +125,9 @@ class RowGroupIteratorCloseTest {
     void anUncheckedCloseFailureStillClosesTheRemainingFiles() throws Exception {
         CountingInputFile closeable = new CountingInputFile(InputFile.of(TEST_FILE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = new RowGroupIterator(
+            RowGroupIterator iterator = RowGroupIterators.standalone(
                     List.of(new UncloseableInputFile(InputFile.of(TEST_FILE), "first.parquet", true), closeable),
-                    context, 0);
+                    context);
 
             assertThatThrownBy(iterator::close)
                     .isInstanceOf(IllegalStateException.class)

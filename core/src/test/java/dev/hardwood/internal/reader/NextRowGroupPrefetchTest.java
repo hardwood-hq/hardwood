@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -49,10 +50,11 @@ class NextRowGroupPrefetchTest {
         file.open();
         QuiescentExecutor speculative = new QuiescentExecutor();
         try (HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(Runtime.getRuntime().availableProcessors(), speculative)) {
-            RowGroupIterator iterator = new RowGroupIterator(List.of(file), context, 0);
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);
             try {
                 iterator.setFirstFile(schema, metaData.rowGroups());
-                iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.columns("__row__")), null);
+                iterator.initialize(ReadProjection.of(
+                        ProjectedSchema.create(schema, ColumnProjection.columns("__row__"))), null, true);
 
                 // The demand accesses come one row group at a time, each only once the
                 // previous one's prefetch has issued its read, so a row group is always
