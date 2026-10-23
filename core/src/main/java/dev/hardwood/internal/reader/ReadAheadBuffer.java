@@ -67,7 +67,7 @@ public final class ReadAheadBuffer {
         return bytes;
     }
 
-    /// The releases so far, to hand to [#whenReleased] once a charge did not fit.
+    /// The releases so far, to hand to [#releaseAfter] or [#whenReleased] once a charge did not fit.
     long releases() {
         return releases.get();
     }
@@ -141,6 +141,12 @@ public final class ReadAheadBuffer {
         if (releases.get() != releasesSeen && waiters.remove(resume)) {
             resume.run();
         }
+    }
+
+    /// The next release after the one `releasesSeen` counted, as a [Need]: met on the thread
+    /// releasing, or at once on the caller's if one has come since ([#whenReleased]).
+    Need releaseAfter(long releasesSeen) {
+        return resume -> whenReleased(releasesSeen, resume);
     }
 
     /// Drops `resume` if it still waits, so that a waiter its owner no longer needs, such as one

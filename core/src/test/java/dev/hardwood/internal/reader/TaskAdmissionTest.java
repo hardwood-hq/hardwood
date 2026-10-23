@@ -83,7 +83,7 @@ class TaskAdmissionTest {
         long seen = workingSet.tasksEnded();
         assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
         AtomicInteger resumed = new AtomicInteger();
-        workingSet.whenTaskEnds(seen, resumed::incrementAndGet);
+        workingSet.taskEndAfter(seen).whenMet(resumed::incrementAndGet);
 
         assertThat(resumed).hasValue(0);
         workingSet.taskEnded(own);
@@ -101,7 +101,7 @@ class TaskAdmissionTest {
         workingSet.taskEnded(own);
         AtomicInteger resumed = new AtomicInteger();
 
-        workingSet.whenTaskEnds(seen, resumed::incrementAndGet);
+        workingSet.taskEndAfter(seen).whenMet(resumed::incrementAndGet);
 
         assertThat(resumed).hasValue(1);
     }

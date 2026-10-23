@@ -388,7 +388,7 @@ public final class ReadScheduler {
         long admitted = workingSet.admitTask(bytes);
         if (admitted == WorkingSet.REFUSED) {
             if (waitingForTask.compareAndSet(false, true)) {
-                workingSet.whenTaskEnds(tasksEnded, onTaskEnd);
+                workingSet.taskEndAfter(tasksEnded).whenMet(onTaskEnd);
             }
             return false;
         }

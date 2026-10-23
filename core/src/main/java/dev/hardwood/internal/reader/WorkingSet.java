@@ -57,7 +57,7 @@ public final class WorkingSet {
 
     /// [#admitTask] admitted the task as the read's one task its working set counts.
     static final long OWN_TASK = -1;
-    /// [#admitTask] did not admit the task: it waits for a task to end ([#whenTaskEnds]).
+    /// [#admitTask] did not admit the task: it waits for a task to end ([#taskEndAfter]).
     static final long REFUSED = -2;
 
     static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
@@ -167,7 +167,7 @@ public final class WorkingSet {
     ///
     /// @return the admission to hand to [#taskEnded] when the task's buffers are released:
     ///         [#OWN_TASK], the bytes charged to the read-ahead buffer, or `0`; or [#REFUSED],
-    ///         after which the task waits for [#whenTaskEnds]
+    ///         after which the task waits for [#taskEndAfter]
     long admitTask(long bytes) {
         if (readAhead == null || bytes <= DecodeBuffers.RETAINED_BYTES) {
             return 0;
@@ -189,16 +189,16 @@ public final class WorkingSet {
         }
     }
 
-    /// The count to hand to [#whenTaskEnds], taken before the [#admitTask] it follows.
+    /// The count to hand to [#taskEndAfter], taken before the [#admitTask] it follows.
     long tasksEnded() {
         return readAhead == null ? 0 : readAhead.releases();
     }
 
-    /// Runs `retry` once a task ended or released read-ahead after the [#tasksEnded] count
-    /// `seen`; at once if one has. A refused task always has one to wait for: it was refused only
-    /// while the read's own task ran.
-    void whenTaskEnds(long seen, Runnable retry) {
-        readAhead.whenReleased(seen, retry);
+    /// What a task [#admitTask] refused waits for: a task ending or read-ahead released after the
+    /// [#tasksEnded] count `seen`, met at once if one has. A refused task always has one to wait
+    /// for: it was refused only while the read's own task ran.
+    Need taskEndAfter(long seen) {
+        return readAhead.releaseAfter(seen);
     }
 
     /// Drops `retry` if it still waits for a task to end.
@@ -264,7 +264,7 @@ public final class WorkingSet {
             long tasksEnded = set.tasksEnded();
             long admission = set.admitTask(uncompressedSize);
             if (admission == REFUSED) {
-                return new DictionaryParse(null, retry -> set.whenTaskEnds(tasksEnded, retry));
+                return new DictionaryParse(null, set.taskEndAfter(tasksEnded));
             }
             try {
                 return new DictionaryParse(read.read(), null);
