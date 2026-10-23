@@ -111,9 +111,11 @@ Positions are ordered by file, then row group, then kind:
 
 This keeps today's order of a row group's planning reads: Bloom filters, dictionaries, page
 index. A row group whose rows are all read and that no Bloom filter or dictionary can drop has its
-data entries derived from the footer's chunk ranges, so they can start before its page index
-arrives, as `plannedSpan` does for files opened ahead today; its page index is still read for the
-columns that have one, which walk their pages by it.
+data entries derived from the footer's chunk ranges, cut into requests of at most S, so they can
+start before its page index arrives, as `plannedSpan` does for files opened ahead today; its page
+index is still read for the columns that have one, which walk their pages by it. A page that
+straddles a cut is copied from both entries into one buffer, at most once per cut, whichever walk
+reads it.
 
 A row group with a chunk in another file (`file_path`) gets no entries, and its failure is raised
 when the read reaches it, as today.
@@ -126,8 +128,13 @@ when the read reaches it, as today.
    hold, and is never charged to either.
 2. **The read's next unit.** When the first column enters row group k, row group k+1's planning
    entries and its first data entry in position order are the next unit; at the last row group
-   of a file, the next file's footer and its first row group's are. These start without F and are
-   not charged to R, which is today's rule for a read's own task and its next file.
+   of a file, the next file's footer and its first row group's are. A row group a column asks to
+   plan before any column has entered it (the read's first row group, or one whose next-unit
+   planning failed) starts its first data entry the same way. These start without F and are not
+   charged to R, which is today's rule for a read's own task and its next file. The next unit's
+   planning reads (their I/O; the parse stays with the chain) start when the first column enters
+   k, whatever the planning chain is planning: until planning reads are entries (stage 2, item 3)
+   on a virtual thread of the read's own, and from then on as entries the sequence starts itself.
 3. **Data further ahead.** Every other data entry is speculative. It starts, in position order,
    while the read's started speculative data bytes stay within F and the context's R has room for
    them. Nothing waits for R: an entry that does not fit starts on a later release. A release of
@@ -151,8 +158,10 @@ when the read reaches it, as today.
    data bytes planned but not started are below F, and never more than one row group past the
    last row group with a started data entry, which bounds the dictionaries and index windows held
    for planned row groups. For a read whose files are all in memory, depth stays one row group on
-   a pool and none on a context of zero threads, as today. The chain plans row groups once each,
-   in work-list order; a footer that arrives early waits its turn. `BatchPlan`, the row budget,
+   a pool and none on a context of zero threads, as today. The chain starts when a column first
+   asks for a work item, and plans row groups once each, in work-list order: it plans row group j
+   only once j-1 has its plans, so a planning that waits for a read holds the chain behind it. A
+   footer that arrives early waits its turn. `BatchPlan`, the row budget,
    the skip residue and the sticky planning failure stay with the chain.
 8. **Concurrency.** Each sequence has one `ReentrantLock`, which guards its entries and positions
    and is never held across I/O, a waiter or a future's completion. Planning, demanding steps,
@@ -172,7 +181,8 @@ when the read reaches it, as today.
     `ParquetReadException` naming the column, so a shared entry never fails for a column whose
     ranges were valid.
 12. **Fetch reason.** An entry carries today's `FetchReason` strings: `rg=N indexes`,
-    `rg=N pruning`, and for data `rg=N col=…` for each column it serves.
+    `rg=N pruning`, and for data `rg=N col=a col=b`, one `col=` for each column it serves, by name,
+    in file order.
 13. **Events.** `RowGroupFilterEvent`, `PageFilterEvent`, `RowGroupBloomFilterEvent` and
     `RowGroupDictionaryFilterEvent` are emitted when the read reaches the file or row group they
     describe, as today, though planning may decide earlier. `FileOpenedEvent` begins when the
