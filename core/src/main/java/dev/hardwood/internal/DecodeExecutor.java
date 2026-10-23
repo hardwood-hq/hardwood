@@ -56,15 +56,7 @@ public final class DecodeExecutor {
     ///
     /// @throws RejectedExecutionException if the pool is shut down
     public void execute(Consumer<DecodeBuffers> task) {
-        pool().execute(() -> {
-            DecodeBuffers buffers = take();
-            try {
-                task.accept(buffers);
-            }
-            finally {
-                idle.offer(buffers);
-            }
-        });
+        pool().execute(() -> withBuffers(task));
     }
 
     /// Runs `task` on the pool without a set of buffers, at the head of the queue: a column's
@@ -86,25 +78,13 @@ public final class DecodeExecutor {
     /// Runs `task` on the calling thread with a set of buffers: a page task of a read on a context
     /// without a pool, run by the thread driving the read.
     public void runInPlace(Consumer<DecodeBuffers> task) {
-        DecodeBuffers buffers = take();
-        try {
-            task.accept(buffers);
-        }
-        finally {
-            idle.offer(buffers);
-        }
+        withBuffers(task);
     }
 
     /// Runs `work` on the calling thread, a thread of the pool or one driving a read on a context
     /// without a pool, with a set of buffers.
     public <T> T decodeInPlace(Function<DecodeBuffers, T> work) {
-        DecodeBuffers buffers = take();
-        try {
-            return work.apply(buffers);
-        }
-        finally {
-            idle.offer(buffers);
-        }
+        return withBuffers(work);
     }
 
     /// Runs `task` on the pool, at the head of the queue, and waits for its result: work a thread
@@ -124,15 +104,7 @@ public final class DecodeExecutor {
     ///
     /// @throws RejectedExecutionException if the pool is shut down
     public <T> T decode(Function<DecodeBuffers, T> work) {
-        Awaited<T> result = new Awaited<>(() -> {
-            DecodeBuffers buffers = take();
-            try {
-                return work.apply(buffers);
-            }
-            finally {
-                idle.offer(buffers);
-            }
-        });
+        Awaited<T> result = new Awaited<>(() -> withBuffers(work));
         pool().execute(result);
         return await(result);
     }
@@ -177,6 +149,28 @@ public final class DecodeExecutor {
             throw new IllegalStateException("The HardwoodContext has no pool to run the task on");
         }
         return executor;
+    }
+
+    /// Runs `task` with a set of buffers taken for it, and gives the set back.
+    private void withBuffers(Consumer<DecodeBuffers> task) {
+        DecodeBuffers buffers = take();
+        try {
+            task.accept(buffers);
+        }
+        finally {
+            idle.offer(buffers);
+        }
+    }
+
+    /// Applies `work` to a set of buffers taken for it, and gives the set back.
+    private <T> T withBuffers(Function<DecodeBuffers, T> work) {
+        DecodeBuffers buffers = take();
+        try {
+            return work.apply(buffers);
+        }
+        finally {
+            idle.offer(buffers);
+        }
     }
 
     private DecodeBuffers take() {
