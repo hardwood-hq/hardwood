@@ -7631,3 +7631,31 @@ drop_page_index(_empty_ranges_path, 'tags.list.element')
 print("\nGenerated page_index_empty_ranges_unindexed_column.parquet:")
 print("  - 100 rows, 1 row group; id: Page Index, pages 0-49 and 100-149")
 print("  - value (flat) and tags (nested, v1 pages): no Page Index")
+
+# ===== Snappy page whose header understates its stream =====
+# The first data page header's uncompressed_page_size is patched from 160000 to 80000 (both a
+# three-byte varint, so the header keeps its length); the page's Snappy stream still holds
+# 160000 bytes. Read from a mapped file, the page goes through the direct-buffer decompress path.
+_snappy_understated_path = 'core/src/test/resources/snappy_understated_page_size.parquet'
+pq.write_table(
+    pa.table({'id': pa.array(range(20_000), pa.int64())},
+             schema=pa.schema([pa.field('id', pa.int64(), False)])),
+    _snappy_understated_path,
+    use_dictionary=False,
+    compression='snappy',
+    data_page_version='1.0',
+    write_statistics=False,
+)
+_offset = pq.ParquetFile(_snappy_understated_path).metadata.row_group(0).column(0).data_page_offset
+with open(_snappy_understated_path, 'r+b') as f:
+    f.seek(_offset)
+    # field 1 (type, i32) = DATA_PAGE, then field 2 (uncompressed_page_size, i32)
+    assert f.read(3) == b'\x15\x00\x15'
+    _actual = _write_zigzag(160_000)
+    assert f.read(len(_actual)) == _actual
+    _understated = _write_zigzag(80_000)
+    assert len(_understated) == len(_actual)
+    f.seek(_offset + 3)
+    f.write(_understated)
+print("\nGenerated snappy_understated_page_size.parquet:")
+print("  - 20000 INT64 rows, SNAPPY, one data page declaring 80000 of its 160000 uncompressed bytes")

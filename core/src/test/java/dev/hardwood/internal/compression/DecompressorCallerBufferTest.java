@@ -158,13 +158,14 @@ class DecompressorCallerBufferTest {
                 .containsOnly(SENTINEL);
     }
 
-    /// Snappy decompresses a heap page natively into the caller's buffer, which bounds nothing;
-    /// the stream's declared length is checked first, so a stream longer than the page declares
-    /// fails without a byte written.
-    @Test
-    void refusesASnappyHeapStreamLongerThanThePageDeclares() throws Exception {
+    /// Snappy decompresses a page natively, into the caller's buffer from the heap and into a
+    /// direct buffer otherwise, and neither bounds the write; the stream's declared length is
+    /// checked first, so a stream longer than the page declares fails without a byte written.
+    @ParameterizedTest
+    @EnumSource(PageBuffer.class)
+    void refusesASnappyStreamLongerThanThePageDeclares(PageBuffer pageBuffer) throws Exception {
         byte[] body = body();
-        ByteBuffer compressed = ByteBuffer.wrap(Snappy.compress(body));
+        ByteBuffer compressed = pageBuffer.wrap(Snappy.compress(body));
         byte[] dest = new byte[body.length + 64];
         Arrays.fill(dest, SENTINEL);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.SNAPPY);
@@ -175,10 +176,11 @@ class DecompressorCallerBufferTest {
         assertThat(dest).containsOnly(SENTINEL);
     }
 
-    @Test
-    void refusesASnappyHeapStreamShorterThanThePageDeclares() throws Exception {
+    @ParameterizedTest
+    @EnumSource(PageBuffer.class)
+    void refusesASnappyStreamShorterThanThePageDeclares(PageBuffer pageBuffer) throws Exception {
         byte[] body = body();
-        ByteBuffer compressed = ByteBuffer.wrap(Snappy.compress(body));
+        ByteBuffer compressed = pageBuffer.wrap(Snappy.compress(body));
         byte[] dest = new byte[body.length + 64];
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.SNAPPY);
 

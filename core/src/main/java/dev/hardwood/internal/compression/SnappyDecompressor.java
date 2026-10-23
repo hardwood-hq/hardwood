@@ -39,8 +39,11 @@ public class SnappyDecompressor implements Decompressor {
                 actualSize = uncompressHeap(input, 0, input.length, uncompressedSize, dest);
             }
             else {
+                ByteBuffer input = DirectBuffers.ensureDirect(compressed);
+                // The native call bounds its write by nothing but the stream's own length
+                checkStreamLength(Snappy.uncompressedLength(input), uncompressedSize);
                 ByteBuffer directOutput = borrowDirectBuffer(buffers, uncompressedSize);
-                actualSize = Snappy.uncompress(DirectBuffers.ensureDirect(compressed), directOutput);
+                actualSize = Snappy.uncompress(input, directOutput);
                 if (actualSize == uncompressedSize) {
                     directOutput.rewind();
                     directOutput.get(dest, 0, uncompressedSize);
@@ -61,12 +64,15 @@ public class SnappyDecompressor implements Decompressor {
     private static int uncompressHeap(byte[] input, int offset, int length, int uncompressedSize, byte[] dest)
             throws IOException {
         // The stream's own length, checked before the native call writes into `dest`
-        int declared = Snappy.uncompressedLength(input, offset, length);
+        checkStreamLength(Snappy.uncompressedLength(input, offset, length), uncompressedSize);
+        return Snappy.uncompress(input, offset, length, dest, 0);
+    }
+
+    private static void checkStreamLength(int declared, int uncompressedSize) {
         if (declared != uncompressedSize) {
             throw new ParquetReadException("Snappy decompression size mismatch: expected "
                     + uncompressedSize + ", got " + declared);
         }
-        return Snappy.uncompress(input, offset, length, dest, 0);
     }
 
     private static ByteBuffer borrowDirectBuffer(DecodeBuffers buffers, int minSize) {
