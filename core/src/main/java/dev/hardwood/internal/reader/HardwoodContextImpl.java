@@ -84,6 +84,8 @@ public class HardwoodContextImpl implements HardwoodContext {
     private final Set<Thread> poolThreads;
     private final LibdeflatePool libdeflatePool;
     private final DecompressorFactory decompressorFactory;
+    /// The read-ahead its reads share.
+    private final ReadAheadBuffer readAheadBuffer = new ReadAheadBuffer();
     private final MetadataSource metadataSource;
     /// Set by [#close()] on a context without a pool, whose closing the pool's shutdown cannot
     /// record.
@@ -331,6 +333,11 @@ public class HardwoodContextImpl implements HardwoodContext {
     /// The number of threads in [#executor()], zero for a context without a pool.
     public int threads() {
         return threads;
+    }
+
+    /// The read-ahead buffer the context's reads share.
+    public ReadAheadBuffer readAheadBuffer() {
+        return readAheadBuffer;
     }
 
     /// Get the decompressor factory.

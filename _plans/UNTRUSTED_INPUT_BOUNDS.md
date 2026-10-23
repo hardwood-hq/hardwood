@@ -267,10 +267,15 @@ a question of its defaults, like whether it caps its dictionary pages.
    buffers above the retention size are not kept. A/B against main on the container and the N300:
    the narrow, flat and 1BRC presets.
 2. **Read-ahead buffer, decoded side.** The context's account, charged with the task buffers of
-   a page or dictionary decoded while another of the read decodes; one that does not fit is
-   deferred to the next release. A read always has its one task of `W`, so deferring never
-   stalls it. Tests: a crafted file whose concurrent dictionary parses exceed `R` reads with
-   fewer at once and the same rows.
+   a page or dictionary decoded while another of the read decodes, for tasks above the
+   retention size (a context keeps that much per thread anyway); one that does not fit is
+   deferred until a task of the read ends. A read always has its one task of `W`, so deferring
+   never stalls it. The indexed walk parses each data page's header to size its task. Tests:
+   the admission rules; reads with `R` at 0 on crafted large dictionaries and pages return
+   every row on 0, 1 and 4 threads. Measured with the probe (8 columns of 256 MiB dictionaries,
+   8 threads): one row group reads on a 3 GiB heap, where PR 1 runs out of memory, and its live
+   peak at 5 GiB drops from 4.2 to 2.6 GiB; three row groups in one batch read on 7 GiB, where
+   PR 1 runs out of memory.
 
    The scheduler's pages ahead and the dictionaries of chunks a column reaches early are not
    charged. A first version charged them and measured no change: with `R` at 0, live peaks on

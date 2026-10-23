@@ -12,9 +12,13 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.thrift.PageHeaderReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.schema.ColumnSchema;
 
 /// [FetchPlan] for columns with an OffsetIndex.
@@ -199,8 +203,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         private boolean eventEmitted;
         private int index;
         private int currentGroupIndex;
-        /// The bytes the last advance stopped on.
-        private ByteNeed pending;
+        /// What the last advance stopped on: bytes, or a task of the read ending.
+        private Need pending;
 
         @Override
         public int currentPage() {
@@ -208,7 +212,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         }
 
         @Override
-        public ByteNeed pending() {
+        public Need pending() {
             return pending;
         }
 
@@ -225,13 +229,36 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 if (pending != null) {
                     return null;
                 }
-                // Set the flag *before* parsing so a throw from the parse
-                // doesn't cause a retry loop. This is safe because a throw
-                // propagates to the column's fetch step (ScheduledColumn.runFetchStep), which
-                // calls signalError → done=true → the pipeline stops; advance() is
-                // never re-entered on the same walk.
-                dictionaryParsed = true;
-                dictionary = parseDictionary(dictRegion);
+                if (dictRegion == null) {
+                    dictionaryParsed = true;
+                    dictionary = preloadedDictionary();
+                }
+                else {
+                    ThriftCompactReader headerReader = new ThriftCompactReader(dictRegion, 0);
+                    PageHeader header = PageHeaderReader.read(headerReader);
+                    int headerSize = headerReader.getBytesRead();
+                    WorkingSet.DictionaryParse parse = workingSet.parseDictionary(header.uncompressedPageSize(), () -> {
+                        // Set the flag *before* parsing so a throw from the parse
+                        // doesn't cause a retry loop. This is safe because a throw
+                        // propagates to the column's fetch step (ScheduledColumn.runFetchStep), which
+                        // calls signalError → done=true → the pipeline stops; advance() is
+                        // never re-entered on the same walk.
+                        dictionaryParsed = true;
+                        // Not retitled on the way out. The parser says what is wrong with the
+                        // dictionary — a checksum that disagrees, a header that will not parse —
+                        // and naming the step that noticed would replace that with less.
+                        return header.type() == PageType.DICTIONARY_PAGE
+                                ? DictionaryParser.parsePage(header,
+                                        dictRegion.slice(headerSize, header.compressedPageSize()), columnSchema,
+                                        columnChunk.metaData(), context, workingSet)
+                                : null;
+                    });
+                    if (parse.pending() != null) {
+                        pending = parse.pending();
+                        return null;
+                    }
+                    dictionary = parse.dictionary();
+                }
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 
@@ -257,8 +284,11 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             }
             index++;
             ByteBuffer pageData = handle.slice(groupBytes, loc.offset(), loc.compressedPageSize());
-            PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(),
-                    dictionary, needed.mask(), keptRecords(needed));
+            // The header gives the buffers decoding the page takes, which the read admits before
+            // it submits the page
+            PageHeader header = PageHeaderReader.read(new ThriftCompactReader(pageData, 0));
+            PageInfo page = PageInfo.dataPage(pageData, header, columnSchema, columnChunk.metaData(), dictionary,
+                    needed.mask(), keptRecords(needed));
 
             if (!eventEmitted && index >= neededPages.size()) {
                 emitEvent();
@@ -293,18 +323,14 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             return needed.mask().isAll() ? needed.rows() : needed.mask().totalRecords();
         }
 
-        private Dictionary parseDictionary(ByteBuffer dictRegion) throws IOException {
+
+        /// The dictionary pruning parsed for the chunk, charged to the column as it takes it; `null`
+        /// where pruning parsed none and the chunk has no dictionary page.
+        private Dictionary preloadedDictionary() {
             if (preloadedDictionary != null) {
                 workingSet.dictionary(preloadedDictionary);
-                return preloadedDictionary;
             }
-            if (dictRegion == null) {
-                return null;
-            }
-            // Not retitled on the way out. The parser says what is wrong with the
-            // dictionary — a checksum that disagrees, a header that will not parse —
-            // and naming the step that noticed would replace that with less.
-            return DictionaryParser.parse(dictRegion, columnSchema, columnChunk.metaData(), context, workingSet);
+            return preloadedDictionary;
         }
 
         private void emitEvent() {

@@ -466,7 +466,8 @@ class BatchPlanTest {
                         return page;
                     }
                     return new PageInfo(page.pageData(), page.columnSchema(), page.columnMetaData(),
-                            page.dictionary(), page.mask(), page.records() + extraRows);
+                            page.dictionary(), page.mask(), page.records() + extraRows, page.declaredValues(),
+                            page.uncompressedSize(), page.encoding());
                 }
 
                 @Override

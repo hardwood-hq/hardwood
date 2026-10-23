@@ -251,7 +251,7 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             if (scratch != null) {
                 scratch.trim();
             }
-            taskEnded();
+            taskEnded(page);
         }
     }
 

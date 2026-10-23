@@ -111,6 +111,27 @@ public final class ReadScheduler {
     private long chosenLowestRow;
     private long chosenReadPublished;
     private final AtomicInteger submitted = new AtomicInteger();
+    /// The read's working set, which admits its pages' tasks ([WorkingSet#admitTask]); taken from
+    /// the first column on [#start()].
+    private WorkingSet workingSet;
+    /// Raised while the scheduler waits for a task of the read to end to submit a page that was
+    /// not admitted.
+    private final AtomicBoolean waitingForTask = new AtomicBoolean();
+    /// Submits again once a task of the read ended, registered while [#waitingForTask] is raised.
+    /// It runs on the thread that released, which may be another read's: a failure of the
+    /// submission has ended every column of this read with it ([#submit()]) and goes no further,
+    /// so that it does not end the other read too.
+    private final Runnable onTaskEnd = () -> {
+        waitingForTask.set(false);
+        try {
+            submit();
+        }
+        catch (RuntimeException | Error e) {
+            // Every column of the read carries it
+        }
+    };
+    /// The admission of the page [#admits] last admitted, touched only by the thread submitting.
+    private long admission;
     /// Calls to [#submit()] not yet served; the caller that raises it from zero submits.
     private final AtomicInteger submitting = new AtomicInteger();
     private volatile boolean started;
@@ -153,6 +174,9 @@ public final class ReadScheduler {
     /// Queues every column's first fetch step. Must be called once, after every column was added.
     public void start() {
         started = true;
+        if (!columns.isEmpty()) {
+            workingSet = columns.get(0).pageSource.readWorkingSet();
+        }
         for (ScheduledColumn<?> column : columns) {
             markChanged(column);
         }
@@ -170,6 +194,10 @@ public final class ReadScheduler {
         }
         for (ScheduledColumn<?> column : columns) {
             column.signalStop();
+        }
+        // A stopped read submits nothing more, and must not stay reachable through the waiters
+        if (workingSet != null) {
+            workingSet.cancelWait(onTaskEnd);
         }
     }
 
@@ -220,9 +248,15 @@ public final class ReadScheduler {
         } while (calls != 0);
     }
 
-    void pageEnded(ScheduledColumn<?> column) {
+    /// Counts `page`'s task as ended and releases what it was admitted under.
+    void pageEnded(ScheduledColumn<?> column, PageTask page) {
         submitted.decrementAndGet();
-        submit(column);
+        try {
+            workingSet.taskEnded(page.admission);
+        }
+        finally {
+            submit(column);
+        }
     }
 
     private void submitReady() {
@@ -231,19 +265,27 @@ public final class ReadScheduler {
             PageTask page = next.takeReady();
             index(next);
             if (page == null) {
+                workingSet.taskEnded(admission);
                 continue;
             }
+            page.admission = admission;
             int inFlight = submitted.incrementAndGet();
-            SubmissionObserver observer = submissionObserver;
-            if (observer != null) {
-                observer.submitted(next, page, inFlight, chosenLowestRow, chosenReadPublished);
-            }
             ScheduledColumn<?> column = next;
             try {
+                SubmissionObserver observer = submissionObserver;
+                if (observer != null) {
+                    observer.submitted(column, page, inFlight, chosenLowestRow, chosenReadPublished);
+                }
                 executor.executePage(buffers -> column.runPage(page, buffers));
             }
             catch (RejectedExecutionException e) {
-                column.rejected(e);
+                column.rejected(page, e);
+            }
+            catch (RuntimeException | Error e) {
+                // The page was counted and admitted but never runs: end it, so that the read's
+                // close does not wait for it and what it was admitted under is released
+                column.taskEnded(page);
+                throw e;
             }
         }
     }
@@ -272,7 +314,8 @@ public final class ReadScheduler {
         chosenLowestRow = bestRow;
         chosenReadPublished = readPublished;
         if (admitted(best, bestRow, readPublished)) {
-            return best;
+            // A page whose task does not start yet holds the read at its row until a task ends
+            return admits(best) ? best : null;
         }
         // The page at the lowest row is past the cap, so every page below it is submitted and
         // every later page is past the cap too. A later page is still admitted where it holds
@@ -291,7 +334,7 @@ public final class ReadScheduler {
                 return null;
             }
             if (admitted(candidate, candidate.indexedHeadRow, readPublished)) {
-                return candidate;
+                return admits(candidate) ? candidate : null;
             }
         }
         return null;
@@ -329,6 +372,28 @@ public final class ReadScheduler {
             queued.add(column);
             column.indexedQueued = true;
         }
+    }
+
+    /// Whether the task of `column`'s next queued page may start now ([WorkingSet#admitTask]),
+    /// which then holds its admission in [#admission]. A page that is not admitted is submitted
+    /// once a task of the read ends, which this asks the working set for.
+    private boolean admits(ScheduledColumn<?> column) {
+        admission = 0;
+        PageTask page = column.peekReady();
+        long bytes = page != null && page.info != null ? page.info.taskBytes() : 0;
+        if (bytes == 0) {
+            return true;
+        }
+        long tasksEnded = workingSet.tasksEnded();
+        long admitted = workingSet.admitTask(bytes);
+        if (admitted == WorkingSet.REFUSED) {
+            if (waitingForTask.compareAndSet(false, true)) {
+                workingSet.whenTaskEnds(tasksEnded, onTaskEnd);
+            }
+            return false;
+        }
+        admission = admitted;
+        return true;
     }
 
     /// Whether a page of `column` starting at the read's row `row` may be submitted: it starts within

@@ -123,12 +123,13 @@ class FetchStepYieldTest {
                     walked.add(page.pageData().remaining());
                     continue;
                 }
-                ByteNeed pending = walk.pending();
+                Need pending = walk.pending();
                 if (pending == null) {
                     break;
                 }
                 stops++;
-                RangeRead read = pending.issue();
+                // A walk outside a read has no read-ahead buffer to stop on
+                RangeRead read = ((ByteNeed) pending).issue();
                 assertThat(read.priority()).isEqualTo(RangeRead.Priority.DEMAND);
                 read.await();
             }

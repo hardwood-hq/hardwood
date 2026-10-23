@@ -26,8 +26,8 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// - The **fetcher** runs as fetch steps, tasks of the decode pool. A step pulls the column's
 ///   pages from its [PageSource] and queues them for the scheduler ([#queue]), yielding where
-///   the source's walk needs bytes not yet read or its next work item is still being planned
-///   ([Need]). It queues while fewer than [#FETCH_AHEAD] pages are queued and
+///   the source's walk needs bytes not yet read, its next work item is still being planned, or
+///   a dictionary page waits for a task of the read to end ([Need]). It queues while fewer than [#FETCH_AHEAD] pages are queued and
 ///   returns once that many are; a change that makes room queues the column's next step
 ///   ([#scheduleFetch()]). At most one step of a column is queued or running, so the steps of a
 ///   column run one after another and see each other's state. The steps go to the head of the
@@ -51,9 +51,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// Sentinel for the `maxRows` / row-limit contract meaning "no limit".
     static final long UNLIMITED = 0L;
 
-    /// Pages a column keeps decoded and not yet filled into its cells, at most: the unplaced pages
-    /// of a nested column, and the size of a flat binary column's scratch pool. Overridable via the
-    /// `hardwood.internal.maxOutstanding` system property.
+    /// Pages a nested column keeps decoded and not yet placed into its cells, at most
+    /// ([ScheduledNestedColumn]). Overridable via the `hardwood.internal.maxOutstanding` system
+    /// property.
     static final int MAX_INFLIGHT_PAGES = Integer.getInteger("hardwood.internal.maxOutstanding", 8);
 
     /// Pages the fetch steps keep queued for the scheduler.
@@ -261,8 +261,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     /// Ends the read with the decode pool's refusal of a page task, which a closed context gives.
-    void rejected(RejectedExecutionException e) {
-        taskEnded();
+    void rejected(PageTask page, RejectedExecutionException e) {
+        taskEnded(page);
         signalError(ScheduledColumn.contextClosed(e));
     }
 
@@ -293,11 +293,13 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     /// Runs fetch steps until the column has no room and no change arrived since the last one
-    /// looked, its fetch ends, or it needs bytes or plans that are not ready. A step that stops on
-    /// bytes issues their read as demand; one that stops on a work item's planning leaves it to the
-    /// virtual thread that plans it. Either keeps the column's claim and its count of tasks, and
-    /// the need's completion queues the next step ([#resumeFetch]): no step waits for I/O, and a
-    /// close waits for the read and the planning. The read's executor counts the step as
+    /// looked, its fetch ends, or it needs bytes, plans or a task's end that are not ready. A step
+    /// that stops on bytes issues their read as demand; one that stops on a work item's planning
+    /// leaves it to the virtual thread that plans it; one that stops on a dictionary page not yet
+    /// admitted waits for a task of the read to end ([WorkingSet#admitTask]). Each keeps the
+    /// column's claim and its count of tasks, and the need's completion queues the next step
+    /// ([#resumeFetch]): no step waits for I/O or another task, and a close waits for the read,
+    /// the planning and the task. The read's executor counts the step as
     /// outstanding until then ([ReadExecutor#yielded()]).
     private void runFetchStep() {
         Need pending = null;
@@ -611,9 +613,10 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         scheduler.submit(this);
     }
 
-    void taskEnded() {
+    /// Counts `page`'s task as ended.
+    void taskEnded(PageTask page) {
         uncountTask();
-        scheduler.pageEnded(this);
+        scheduler.pageEnded(this, page);
     }
 
     private void uncountTask() {

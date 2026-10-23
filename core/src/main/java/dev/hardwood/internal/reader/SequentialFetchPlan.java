@@ -438,8 +438,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// page are touched rather than after they parse, because a header that will not
         /// parse is exactly the case with no [PageInfo] to carry it.
         private int currentPage = ExceptionContext.UNKNOWN_PAGE;
-        /// The bytes the last [#advance] stopped on.
-        private ByteNeed pending;
+        /// What the last [#advance] stopped on: bytes, or a task of the read ending.
+        private Need pending;
 
         // The page under way, reset by clearPage() once the walk is done with it
         /// The header of the page at [#position], `null` until it is parsed.
@@ -475,7 +475,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         }
 
         @Override
-        public ByteNeed pending() {
+        public Need pending() {
             return pending;
         }
 
@@ -680,15 +680,29 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
                 int compressedSize = header.compressedPageSize();
                 int dictTotalSize = headerSize + compressedSize;
-                ByteBuffer dictPage = readBytes(position, dictTotalSize, false);
-                if (dictPage == null) {
+                // Admitted before its bytes are read: a refused page read now would be read again
+                // when it is admitted
+                PageHeader dictionaryHeader = header;
+                WorkingSet.DictionaryParse parse = workingSet.parseDictionary(header.uncompressedPageSize(), () -> {
+                    ByteBuffer dictPage = readBytes(position, dictTotalSize, false);
+                    if (dictPage == null) {
+                        return null;
+                    }
+                    initialized = true;
+                    // The header is already parsed, so hand it over rather than a region the
+                    // parser would have to open and read the same header out of again.
+                    return DictionaryParser.parsePage(dictionaryHeader, dictPage.slice(headerSize, compressedSize),
+                            columnSchema, metaData, context, workingSet);
+                });
+                if (parse.pending() != null) {
+                    pending = parse.pending();
                     return false;
                 }
-                initialized = true;
-                // The header is already parsed, so hand it over rather than a region the
-                // parser would have to open and read the same header out of again.
-                dictionary = DictionaryParser.parsePage(header, dictPage.slice(headerSize, compressedSize),
-                        columnSchema, metaData, context, workingSet);
+                if (!initialized) {
+                    // The page's bytes are not present, which `readBytes` made pending
+                    return false;
+                }
+                dictionary = parse.dictionary();
                 position += dictTotalSize;
                 clearPage();
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
@@ -810,7 +824,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     if (pageData == null) {
                         return null;
                     }
-                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask,
+                    pageInfo = PageInfo.dataPage(pageData, header, columnSchema, metaData, dictionary, mask,
                             keptRecords(mask, numValues));
                 }
                 donePage(numValues, pageRecords, totalPageSize);

@@ -501,7 +501,7 @@ public class RowGroupIterator implements Closeable {
         ProjectedSchema projected = projection.decoded();
         this.metadataFilteringEnabled = metadataFilteringEnabled;
         this.projection = projection;
-        this.workingSet = new WorkingSet(projected.getProjectedColumnCount());
+        this.workingSet = new WorkingSet(projected.getProjectedColumnCount(), context.readAheadBuffer());
         this.filterPredicate = filter;
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
         this.dropLeavesByColumn = filter != null && metadataFilteringEnabled

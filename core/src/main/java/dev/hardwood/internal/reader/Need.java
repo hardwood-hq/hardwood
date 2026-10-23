@@ -8,7 +8,8 @@
 package dev.hardwood.internal.reader;
 
 /// What a column's fetch step needs and is not ready, which [PageSource#pending] returns: bytes
-/// not yet read ([ByteNeed]), or the plans of a work item still being planned. The step does not
+/// not yet read ([ByteNeed]), the plans of a work item still being planned, or a task of the read
+/// ending before a dictionary page is parsed beside its other tasks ([WorkingSet#admitTask]). The step does not
 /// wait for it: it registers its resume ([#whenMet]) and returns, and the resume queues the next
 /// step.
 public interface Need {

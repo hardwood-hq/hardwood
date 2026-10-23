@@ -32,6 +32,9 @@ class PageTask {
     /// The read's row, counted in kept rows over every row group before, of the page's first kept
     /// record. Pages reach the decode pool in this order across the read's columns.
     final long firstRow;
+    /// What the read admitted the page's task under ([WorkingSet#admitTask]), set by the
+    /// scheduler before it submits the page.
+    long admission;
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
 

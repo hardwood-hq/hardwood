@@ -33,12 +33,16 @@ public final class PageIterator {
         while (next == null && !ended) {
             next = walk.advance();
             if (next == null) {
-                ByteNeed pending = walk.pending();
+                Need pending = walk.pending();
                 if (pending == null) {
                     ended = true;
                 }
+                else if (pending instanceof ByteNeed bytes) {
+                    bytes.issue().await();
+                }
                 else {
-                    pending.issue().await();
+                    // Only a read's tasks wait for one another to end ([WorkingSet#admitTask])
+                    throw new IllegalStateException("A walk outside a read waits for bytes only, not " + pending);
                 }
             }
         }

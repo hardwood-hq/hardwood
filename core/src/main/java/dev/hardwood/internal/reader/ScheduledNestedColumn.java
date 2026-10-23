@@ -364,7 +364,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
             throw err;
         }
         finally {
-            taskEnded();
+            taskEnded(task);
         }
     }
 

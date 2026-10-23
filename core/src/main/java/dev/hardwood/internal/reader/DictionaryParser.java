@@ -206,16 +206,7 @@ public final class DictionaryParser {
     /// @return the parsed dictionary, or `null` if no dictionary page is found
     public static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema,
                             ColumnMetaData metaData, HardwoodContextImpl context) {
-        return parse(dictRegion, columnSchema, metaData, context, WorkingSet.standalone(columnSchema));
-    }
-
-    /// Parses the dictionary page at the start of `dictRegion` as [#parse] does, charging it to
-    /// a read's working set before it is decompressed.
-    ///
-    /// @param workingSet the read's handle for the column
-    /// @return the parsed dictionary, or `null` if no dictionary page is found
-    public static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema, ColumnMetaData metaData,
-                                   HardwoodContextImpl context, WorkingSet.Column workingSet) {
+        WorkingSet.Column workingSet = WorkingSet.standalone(columnSchema);
         return context.decode(buffers -> parse(dictRegion, columnSchema, metaData, context, workingSet, buffers));
     }
 
