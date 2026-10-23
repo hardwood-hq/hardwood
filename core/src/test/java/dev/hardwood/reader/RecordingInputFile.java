@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets;
 
 import dev.hardwood.InputFile;
 
-/// Serves fixed bytes, records whether it was closed, and optionally fails to
+/// Serves fixed bytes, records how often it was closed, and optionally fails to
 /// open or to close.
 final class RecordingInputFile implements InputFile {
 
@@ -24,6 +24,7 @@ final class RecordingInputFile implements InputFile {
     private final IOException openFailure;
     private final Exception closeFailure;
     boolean closed;
+    int closeCount;
 
     RecordingInputFile(String name, byte[] data, IOException openFailure, Exception closeFailure) {
         if (closeFailure != null && !(closeFailure instanceof IOException) && !(closeFailure instanceof RuntimeException)) {
@@ -69,6 +70,7 @@ final class RecordingInputFile implements InputFile {
     @Override
     public void close() throws IOException {
         closed = true;
+        closeCount++;
         if (closeFailure instanceof IOException e) {
             throw e;
         }

@@ -122,6 +122,9 @@ public class ParquetFileReader implements Closeable {
     /// finishes after a close began sees `closed` set. See [#buildChild].
     private final ReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
     private volatile boolean closed;
+    /// Whether a close has run the teardown, so a later close does not run it again. Guarded
+    /// by the write lock of [#lifecycleLock].
+    private boolean tornDown;
 
     private ParquetFileReader(List<InputFile> inputFiles, FileFooter firstFileFooter,
                               HardwoodContextImpl context, boolean fixedListFastPathEnabled,
@@ -1274,7 +1277,9 @@ public class ParquetFileReader implements Closeable {
     /// closes every child reader still open, which stops its columns and waits for the
     /// prefetches its read started, then this reader's metadata, an owned context and
     /// owned input files. A failure to close a child does not stop the rest from being
-    /// closed; the first failure is thrown, later ones suppressed beneath it.
+    /// closed; the first failure is thrown, later ones suppressed beneath it. A later or
+    /// concurrent close waits until the first has completed and returns without closing
+    /// anything again.
     @Override
     public void close() throws IOException {
         // Set before the lock is taken, so a build under way closes its own child and fails.
@@ -1282,6 +1287,10 @@ public class ParquetFileReader implements Closeable {
         Lock lock = lifecycleLock.writeLock();
         lock.lock();
         try {
+            if (tornDown) {
+                return;
+            }
+            tornDown = true;
             closeOwned();
         }
         finally {
