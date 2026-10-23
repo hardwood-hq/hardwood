@@ -62,8 +62,4 @@ public final class PageIterator {
         return result;
     }
 
-    /// Which page of the column chunk the walk is on; see [PageWalk#currentPage].
-    public int currentPage() {
-        return walk.currentPage();
-    }
 }

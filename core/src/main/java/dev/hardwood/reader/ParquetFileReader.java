@@ -785,7 +785,7 @@ public class ParquetFileReader implements Closeable {
     /// Creates an iterator over this reader's files and tracks it until it is
     /// closed. See [#openChildren].
     private RowGroupIterator trackedIterator(long maxRows, long tailSkip, long physicalSkip) {
-        RowGroupIterator iterator = new RowGroupIterator(fileMetadataCache, false, openChildren::remove,
+        RowGroupIterator iterator = new RowGroupIterator(fileMetadataCache, openChildren::remove,
                 context, maxRows, tailSkip, physicalSkip);
         openChildren.put(iterator, iterator);
         return iterator;

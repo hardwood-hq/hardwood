@@ -504,12 +504,6 @@ public final class BinaryBatchValues {
         return new String(buffers[bufferIds[idx]], start, len, StandardCharsets.UTF_8);
     }
 
-    /// Length in bytes of value `idx`.
-    public int lengthAt(int idx) {
-        ensureViews();
-        return ends[idx] - starts[idx];
-    }
-
     private static IllegalStateException twoDictionaries() {
         return new IllegalStateException("A batch holds values of two column chunks' dictionaries");
     }

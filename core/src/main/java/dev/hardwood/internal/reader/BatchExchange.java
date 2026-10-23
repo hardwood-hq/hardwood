@@ -206,11 +206,6 @@ public class BatchExchange<B> {
         return detaching(columnName, NestedBatch::new, batch -> batch.recordCount, batchCapacity);
     }
 
-    /// Returns the column name for error messages.
-    public String name() {
-        return columnName;
-    }
-
     // ==================== Column Side ====================
 
     /// Queues the batch without waiting, if the ready queue has room: in detaching mode, if it
@@ -268,7 +263,7 @@ public class BatchExchange<B> {
     /// Wakes the threads parked on the read's queue, after the ready queue changed.
     private void signalQueue() {
         if (queue != null) {
-            queue.signal();
+            queue.tasks().signal();
         }
     }
 

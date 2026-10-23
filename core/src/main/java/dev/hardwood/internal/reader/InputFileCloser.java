@@ -10,21 +10,12 @@ package dev.hardwood.internal.reader;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.List;
-
-import dev.hardwood.InputFile;
 
 /// Closes the input files a reader or iterator owns, or the child readers a reader closes with
 /// it, attempting every one even when an earlier one fails to close.
 public final class InputFileCloser {
 
     private InputFileCloser() {
-    }
-
-    /// Closes every file in `files`, throws the first close failure and attaches
-    /// the later ones to it as suppressed.
-    public static void closeAll(List<? extends InputFile> files) throws IOException {
-        rethrow(closeAll(files, null));
     }
 
     /// Throws `failure`, an [IOException], a [RuntimeException] or an [Error], unless it is `null`.

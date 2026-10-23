@@ -135,7 +135,7 @@ public sealed interface Dictionary {
 
         /// The entries' bytes back to back, entry `i` at
         /// `[entryOffsets[i], entryOffsets[i + 1])`. A batch copies this once and points
-        /// its values at it (see [BinaryBatchValues#viewDictionaryRange]); nothing holds
+        /// its values at it (see [BinaryBatchValues#ensureViews()]); nothing holds
         /// the entries in any other form.
         private final byte[] entryBytes;
         private final int[] entryOffsets;

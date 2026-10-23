@@ -308,28 +308,6 @@ public final class DictionaryParser {
                 columnSchema, metaData.codec(), context, buffers);
     }
 
-    /// Parses a dictionary from a buffer given the chunk layout. Locates the
-    /// dictionary region between `dictAreaStart` and `firstDataPageOffset`,
-    /// slices it from the buffer, and parses.
-    ///
-    /// @param buffer the buffer containing the chunk data
-    /// @param bufferFileOffset absolute file offset of the buffer's start
-    /// @param dictAreaStart absolute file offset where the dictionary region starts
-    /// @param firstDataPageOffset absolute file offset of the first data page
-    /// @param columnSchema the column schema
-    /// @param metaData the column metadata
-    /// @param context the hardwood context
-    /// @return the parsed dictionary, or `null` if no dictionary
-    static Dictionary parseFromBuffer(ByteBuffer buffer, long bufferFileOffset,
-                                       long dictAreaStart, long firstDataPageOffset,
-                                       ColumnSchema columnSchema, ColumnMetaData metaData,
-                                       HardwoodContextImpl context) {
-        int dictRelOffset = Math.toIntExact(dictAreaStart - bufferFileOffset);
-        int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictAreaStart);
-        ByteBuffer dictRegion = buffer.slice(dictRelOffset, dictRegionSize);
-        return parse(dictRegion, columnSchema, metaData, context);
-    }
-
     private static Dictionary decompress(ByteBuffer compressedData, int numValues,
                                           int uncompressedSize, ColumnSchema column,
                                           CompressionCodec codec,

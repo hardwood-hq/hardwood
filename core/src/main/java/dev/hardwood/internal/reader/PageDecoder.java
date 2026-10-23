@@ -267,13 +267,6 @@ public class PageDecoder {
         return columnMetaData == metaData;
     }
 
-    /// Gets the decompressor factory used by this PageDecoder.
-    ///
-    /// @return the decompressor factory
-    public DecompressorFactory getDecompressorFactory() {
-        return decompressorFactory;
-    }
-
     /// Reads a data page (`V1` or `V2`) of a fixed-width numeric or boolean column without
     /// repetition whose values a fill reads in place, in any encoding the format defines for its
     /// type.

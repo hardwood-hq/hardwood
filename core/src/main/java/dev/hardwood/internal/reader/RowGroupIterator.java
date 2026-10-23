@@ -55,7 +55,6 @@ public class RowGroupIterator implements Closeable {
 
     private final List<InputFile> inputFiles;
     private final FileMetadataCache fileMetadataCache;
-    private final boolean ownsFileMetadataCache;
     private final Consumer<RowGroupIterator> closeListener;
 
     /// [#close()] can be reached more than once, for instance through a
@@ -272,8 +271,7 @@ public class RowGroupIterator implements Closeable {
 
     /// Creates a RowGroupIterator over the files of `fileMetadataCache`.
     ///
-    /// @param fileMetadataCache the files' metadata, shared with a parent reader or owned
-    /// @param ownsFileMetadataCache whether [#close()] closes `fileMetadataCache` and the files
+    /// @param fileMetadataCache the files' metadata, which the parent reader owns and closes
     /// @param closeListener invoked with this iterator once [#close()] has released its caches, so
     ///        a parent can stop tracking an iterator its child reader has already torn down
     /// @param context the Hardwood context
@@ -289,8 +287,7 @@ public class RowGroupIterator implements Closeable {
     ///        Mutually exclusive with `tailSkip` — one masks the first row group's
     ///        leading rows, the other drops leading row groups, with no combined
     ///        semantics.
-    public RowGroupIterator(FileMetadataCache fileMetadataCache, boolean ownsFileMetadataCache,
-                            Consumer<RowGroupIterator> closeListener,
+    public RowGroupIterator(FileMetadataCache fileMetadataCache, Consumer<RowGroupIterator> closeListener,
                             HardwoodContextImpl context, long maxRows, long tailSkip,
                             long physicalSkip) {
         context.requireOffPool();
@@ -306,7 +303,6 @@ public class RowGroupIterator implements Closeable {
                             + ", physicalSkip=" + physicalSkip);
         }
         this.fileMetadataCache = fileMetadataCache;
-        this.ownsFileMetadataCache = ownsFileMetadataCache;
         this.closeListener = closeListener;
         this.inputFiles = fileMetadataCache.inputFiles();
         this.planningMode = PlanningMode.of(inputFiles.stream().allMatch(RangeRead::inMemory), context.hasPool());
@@ -328,11 +324,6 @@ public class RowGroupIterator implements Closeable {
     /// The read's executor, which the read's [ReadScheduler] takes.
     public ReadExecutor readExecutor() {
         return readExecutor;
-    }
-
-    /// Returns the maximum rows limit (0 = unlimited).
-    public long maxRows() {
-        return maxRows;
     }
 
     /// Rows to discard from the first kept row group after whole row groups
@@ -420,19 +411,9 @@ public class RowGroupIterator implements Closeable {
         }
     }
 
-    /// Returns the projected schema.
-    public ProjectedSchema projectedSchema() {
-        return projection != null ? projection.decoded() : null;
-    }
-
     /// Returns the reference schema (from the first file).
     public FileSchema referenceSchema() {
         return referenceSchema;
-    }
-
-    /// Returns the filter predicate, or `null` if none.
-    public ResolvedPredicate filterPredicate() {
-        return filterPredicate;
     }
 
     /// Returns shared metadata for the given work item, computing it on first access.
@@ -970,23 +951,16 @@ public class RowGroupIterator implements Closeable {
         return Math.max(0, maxRows - workItem.rowsConsumedBefore() + leadingSkip);
     }
 
-    /// Returns the context.
-    public HardwoodContextImpl context() {
-        return context;
-    }
-
     /// Waits for the speculative tasks the read has started, then releases
-    /// iterator-local caches. Standalone iterators also wait for in-flight metadata
-    /// loads and close their input files; iterators owned by ParquetFileReader leave
-    /// those shared resources to the parent and instead tell it to stop tracking this
-    /// iterator, so a closed child reader's work list does not stay reachable for the
-    /// parent's whole lifetime.
+    /// iterator-local caches. The metadata cache and the files are the parent reader's
+    /// ([dev.hardwood.reader.ParquetFileReader]), which closes them; the iterator tells the
+    /// parent to stop tracking it, so a closed child reader's work list does not stay
+    /// reachable for the parent's whole lifetime.
     ///
     /// The caller closes the columns first, which waits for their fetch steps, so no step starts
     /// a prefetch task while this waits.
     ///
-    /// An `Error` speculative work raised is thrown once the iterator is closed, with a failure
-    /// to close the files suppressed beneath it.
+    /// An `Error` speculative work raised is thrown once the iterator is closed.
     @Override
     public void close() throws IOException {
         if (closed) {
@@ -1012,7 +986,7 @@ public class RowGroupIterator implements Closeable {
         try {
             releaseResources();
         }
-        catch (IOException | RuntimeException | Error e) {
+        catch (RuntimeException | Error e) {
             if (failure == null) {
                 failure = e;
             }
@@ -1023,8 +997,8 @@ public class RowGroupIterator implements Closeable {
         InputFileCloser.rethrow(failure);
     }
 
-    /// Releases the caches and, for a standalone iterator, the metadata cache and the files.
-    private void releaseResources() throws IOException {
+    /// Releases the caches and tells the parent to stop tracking this iterator.
+    private void releaseResources() {
         metadataCache.clear();
         arrivalCache.clear();
         fetchPlanCache.clear();
@@ -1032,29 +1006,9 @@ public class RowGroupIterator implements Closeable {
         plannings.clear();
         releaseIndexWindows();
 
-        try {
-            if (ownsFileMetadataCache) {
-                Throwable failure = null;
-                try {
-                    fileMetadataCache.close();
-                }
-                catch (Error e) {
-                    failure = e;
-                }
-                // Reported rather than logged: a close that fails has failed, and a
-                // warning nobody reads is a silent failure. Every file is attempted, one
-                // failure is raised and the rest suppressed beneath it, as
-                // ParquetFileReader.close does.
-                InputFileCloser.rethrow(InputFileCloser.closeAll(inputFiles, failure));
-            }
-        }
-        finally {
-            // The parent stops tracking this iterator whether or not closing its files
-            // succeeded: a failed close is still a close, and leaving the iterator on the
-            // parent's list would keep a torn-down work list reachable for the parent's
-            // whole lifetime.
-            closeListener.accept(this);
-        }
+        // The parent stops tracking this iterator, so that a closed child reader's work list does
+        // not stay reachable for the parent's whole lifetime.
+        closeListener.accept(this);
     }
 
     // ==================== Internal ====================
@@ -1402,8 +1356,8 @@ public class RowGroupIterator implements Closeable {
         }
     }
 
-    /// Gets or loads file-wide metadata. Projection-specific validation remains
-    /// local to [#buildWorkList].
+    /// Gets or loads file-wide metadata. Projection-specific validation remains with the
+    /// read ([SchemaCompatibility]).
     private PreparedFile getPreparedFile(int fileIndex) throws IOException {
         // The checked accessor, because the one caller — [#planNextFile] — can say so. Its
         // sibling exists for the callers that cannot: a mapping function, a `Runnable`, a

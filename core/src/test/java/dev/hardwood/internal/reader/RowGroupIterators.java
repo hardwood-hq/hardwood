@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 
 import dev.hardwood.InputFile;
@@ -17,10 +19,18 @@ final class RowGroupIterators {
     private RowGroupIterators() {
     }
 
-    /// An iterator over `inputFiles` with no row limit that owns its files' metadata, so its close
-    /// closes the files.
+    /// An iterator over `inputFiles` with no row limit. Its close closes the files' metadata
+    /// and the files, as the parent reader of a read does.
     static RowGroupIterator standalone(List<InputFile> inputFiles, HardwoodContextImpl context) {
-        return new RowGroupIterator(new FileMetadataCache(inputFiles, context), true, iterator -> {
+        FileMetadataCache metadata = new FileMetadataCache(inputFiles, context);
+        return new RowGroupIterator(metadata, iterator -> {
+            try {
+                metadata.close();
+                InputFileCloser.rethrow(InputFileCloser.closeAll(inputFiles, null));
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
         }, context, 0, 0, 0);
     }
 }

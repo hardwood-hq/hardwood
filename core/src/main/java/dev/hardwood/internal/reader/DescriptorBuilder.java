@@ -18,11 +18,6 @@ final class DescriptorBuilder {
     private DescriptorBuilder() {
     }
 
-    static TopLevelFieldMap.FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,
-                                                              ProjectedSchema projectedSchema) {
-        return TopLevelFieldMap.buildStructDesc(group, null, projectedSchema);
-    }
-
     static TopLevelFieldMap.FieldDesc.ListOf buildListDesc(SchemaNode.GroupNode listGroup,
                                                             ProjectedSchema projectedSchema) {
         return TopLevelFieldMap.buildListDesc(listGroup, null, projectedSchema);

@@ -103,8 +103,4 @@ public final class ReadQueue implements ReadExecutor {
         return true;
     }
 
-    /// Wakes every thread waiting for the read, after one of its exchanges changed.
-    void signal() {
-        tasks.signal();
-    }
 }
