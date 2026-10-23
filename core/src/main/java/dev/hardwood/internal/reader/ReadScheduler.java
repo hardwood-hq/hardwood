@@ -240,7 +240,7 @@ public final class ReadScheduler {
             catch (RuntimeException | Error e) {
                 // Nothing else submits the columns' pages: every column ends with the failure
                 for (ScheduledColumn<?> column : columns) {
-                    column.fail(e);
+                    column.signalError(e);
                 }
                 throw e;
             }

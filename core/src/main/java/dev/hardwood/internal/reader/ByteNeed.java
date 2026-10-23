@@ -12,8 +12,8 @@ package dev.hardwood.internal.reader;
 /// does ([#issue]) and yields on the read, and a thread off the pool waits for it.
 public interface ByteNeed extends Need {
 
-    /// The read of the bytes: started as demand when none is under way or a speculative one
-    /// failed, and raised to demand when one is under way.
+    /// The read of the bytes: the one under way, or one started as demand when none is under way
+    /// or a speculative one failed.
     RangeRead issue();
 
     /// Issues the read ([#issue]) and runs `resume` once it has completed.

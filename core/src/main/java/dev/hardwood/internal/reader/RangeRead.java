@@ -32,23 +32,11 @@ import dev.hardwood.internal.util.Lazy;
 /// failure of a read started ahead of need, and a demand read's when its step stopped before it
 /// took it. An `Error` therefore reaches the caller once, through the step or through the close.
 ///
-/// A read has a priority. A read a step waits for is [Priority#DEMAND]; a read started ahead of
-/// need, such as a one-ahead prefetch, is [Priority#SPECULATIVE] until a step waits for it
-/// ([#raiseToDemand]).
-///
 /// A range that a read's [FetchedAhead] holds is not read again: [#start] serves it from the bytes
 /// fetched ahead ([#servedBy]).
 public final class RangeRead implements PrefetchTasks.Untaken {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RangeRead.class.getName()));
-
-    /// The priority #1397's scheduler gives a read.
-    public enum Priority {
-        /// A step waits for the bytes.
-        DEMAND,
-        /// Nothing waits for the bytes yet.
-        SPECULATIVE
-    }
 
     private final InputFile inputFile;
     private final long offset;
@@ -56,16 +44,14 @@ public final class RangeRead implements PrefetchTasks.Untaken {
     private final boolean startedSpeculative;
     private final PrefetchTasks tasks;
     private final CompletableFuture<ByteBuffer> bytes = new CompletableFuture<>();
-    private volatile Priority priority;
     /// The `Error` the read failed with, until a step takes it ([#bytes]).
     private volatile Error untakenError;
 
-    private RangeRead(InputFile inputFile, long offset, int length, Priority priority, PrefetchTasks tasks) {
+    private RangeRead(InputFile inputFile, long offset, int length, boolean speculative, PrefetchTasks tasks) {
         this.inputFile = inputFile;
         this.offset = offset;
         this.length = length;
-        this.priority = priority;
-        this.startedSpeculative = priority == Priority.SPECULATIVE;
+        this.startedSpeculative = speculative;
         this.tasks = tasks;
     }
 
@@ -73,22 +59,22 @@ public final class RangeRead implements PrefetchTasks.Untaken {
     /// bytes are in memory, from the bytes `tasks`' [FetchedAhead] holds when they cover the range,
     /// and on a task of `tasks` otherwise. The read carries `reason`, composed with the caller's
     /// [FetchReason]. A read `tasks` no longer admits, as once its owner closes, fails.
-    static RangeRead start(InputFile inputFile, long offset, int length, String reason, Priority priority,
+    static RangeRead start(InputFile inputFile, long offset, int length, String reason, boolean speculative,
                            PrefetchTasks tasks) {
         Objects.requireNonNull(tasks, "tasks");
         String composed = composed(reason);
         if (inMemory(inputFile)) {
-            RangeRead read = new RangeRead(inputFile, offset, length, priority, tasks);
+            RangeRead read = new RangeRead(inputFile, offset, length, speculative, tasks);
             read.run(composed);
             return read;
         }
         FetchedAhead fetchedAhead = tasks.fetchedAhead();
         RangeRead served = fetchedAhead == null ? null
-                : fetchedAhead.serve(inputFile, offset, length, composed, priority, tasks);
+                : fetchedAhead.serve(inputFile, offset, length, composed, speculative, tasks);
         if (served != null) {
             return served;
         }
-        RangeRead read = new RangeRead(inputFile, offset, length, priority, tasks);
+        RangeRead read = new RangeRead(inputFile, offset, length, speculative, tasks);
         read.submit(composed);
         return read;
     }
@@ -98,12 +84,12 @@ public final class RangeRead implements PrefetchTasks.Untaken {
     /// span completes, and, when the span fails, reads its range itself on a task of `tasks`, as
     /// [#start] does.
     static RangeRead servedBy(RangeRead span, InputFile inputFile, long offset, int length, String composedReason,
-                              Priority priority, PrefetchTasks tasks) {
+                              boolean speculative, PrefetchTasks tasks) {
         if (offset < span.offset || offset + length > span.offset + span.length) {
             throw new IllegalArgumentException("Range at offset " + offset + " (length " + length
                     + ") lies outside the read at offset " + span.offset + " (length " + span.length + ")");
         }
-        RangeRead read = new RangeRead(inputFile, offset, length, priority, tasks);
+        RangeRead read = new RangeRead(inputFile, offset, length, speculative, tasks);
         span.bytes.whenComplete((buffer, failure) -> {
             if (failure != null) {
                 read.submit(composedReason);
@@ -224,15 +210,6 @@ public final class RangeRead implements PrefetchTasks.Untaken {
     /// the caller's when it already has.
     void whenDone(Runnable action) {
         bytes.whenComplete((ignored, failure) -> action.run());
-    }
-
-    /// Marks the read as one a step waits for.
-    void raiseToDemand() {
-        priority = Priority.DEMAND;
-    }
-
-    Priority priority() {
-        return priority;
     }
 
     long offset() {

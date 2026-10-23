@@ -46,7 +46,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// order. It is held for bookkeeping only: no decoding, filling or I/O runs under it.
 ///
 /// @param <B> the batch type
-public abstract class ScheduledColumn<B> implements ColumnPipeline {
+public abstract class ScheduledColumn<B> implements AutoCloseable {
 
     /// Sentinel for the `maxRows` / row-limit contract meaning "no limit".
     static final long UNLIMITED = 0L;
@@ -601,11 +601,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         scheduler.submit(this);
     }
 
-    /// Ends the column's read with `t`: the scheduler failed.
-    void fail(Throwable t) {
-        signalError(t);
-    }
-
     void signalError(Throwable t) {
         done = true;
         exchange.signalError(t);
@@ -626,10 +621,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                 LockSupport.unpark(closing);
             }
         }
-    }
-
-    void unparkScheduler() {
-        scheduler.submit(this);
     }
 
     /// A failure met reading `column`, typed ([#asReadFailure]) and placed with the file, row group

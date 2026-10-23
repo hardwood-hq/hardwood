@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 
 import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.ColumnPipeline;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedIndexMode;
@@ -19,6 +18,7 @@ import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageSource;
 import dev.hardwood.internal.reader.ReadScheduler;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.reader.ScheduledColumn;
 import dev.hardwood.internal.reader.ScheduledFlatColumn;
 import dev.hardwood.internal.reader.ScheduledNestedColumn;
 import dev.hardwood.schema.ColumnSchema;
@@ -35,7 +35,7 @@ final class ColumnCursor {
     private final boolean nested;
     private final BatchExchange<BatchExchange.Batch> flatExchange;
     private final BatchExchange<NestedBatch> nestedExchange;
-    private final ColumnPipeline pipeline;
+    private final ScheduledColumn<?> pipeline;
 
     private BatchExchange.Batch flatBatch;
     private NestedBatch nestedBatch;
@@ -43,7 +43,7 @@ final class ColumnCursor {
     private boolean closed;
 
     private ColumnCursor(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatExchange,
-                         BatchExchange<NestedBatch> nestedExchange, ColumnPipeline pipeline) {
+                         BatchExchange<NestedBatch> nestedExchange, ScheduledColumn<?> pipeline) {
         this.column = column;
         this.nested = nestedExchange != null;
         this.flatExchange = flatExchange;

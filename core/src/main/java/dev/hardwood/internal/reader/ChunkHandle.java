@@ -160,7 +160,6 @@ public class ChunkHandle implements ByteNeed {
         }
         RangeRead current = read;
         if (current != null && !current.failedSpeculatively()) {
-            current.raiseToDemand();
             return current;
         }
         startLock.lock();
@@ -168,11 +167,8 @@ public class ChunkHandle implements ByteNeed {
             current = read;
             if (current == null || current.failedSpeculatively()) {
                 current = RangeRead.start(inputFile, fileOffset, length, purpose,
-                        RangeRead.Priority.DEMAND, prefetchTasks);
+                        false, prefetchTasks);
                 read = current;
-            }
-            else {
-                current.raiseToDemand();
             }
             return current;
         }
@@ -195,7 +191,7 @@ public class ChunkHandle implements ByteNeed {
         try {
             if (read == null) {
                 read = RangeRead.start(inputFile, fileOffset, length, purpose,
-                        RangeRead.Priority.SPECULATIVE, prefetchTasks);
+                        true, prefetchTasks);
             }
         }
         finally {

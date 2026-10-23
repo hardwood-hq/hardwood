@@ -60,7 +60,7 @@ final class FetchedAhead {
     /// A read of the range that `inputFile`'s span serves, or `null` when it has none covering the
     /// range. The first read the span serves releases its charge.
     RangeRead serve(InputFile inputFile, long offset, int length, String composedReason,
-                    RangeRead.Priority priority, PrefetchTasks tasks) {
+                    boolean speculative, PrefetchTasks tasks) {
         Span span;
         synchronized (this) {
             span = spans.get(inputFile);
@@ -69,7 +69,7 @@ final class FetchedAhead {
             return null;
         }
         release(span);
-        return RangeRead.servedBy(span.read(), inputFile, offset, length, composedReason, priority, tasks);
+        return RangeRead.servedBy(span.read(), inputFile, offset, length, composedReason, speculative, tasks);
     }
 
     /// Drops the span of the work item `workItemIndex`, if one is held.

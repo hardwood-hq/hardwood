@@ -184,7 +184,7 @@ class ScheduledColumnCloseTest {
             ScheduledColumn.roomWaitObserver = column -> {
                 if (stoppedForRoom.getCount() > 0) {
                     stoppedForRoom.countDown();
-                    column.fail(new IllegalStateException("stopped"));
+                    column.signalError(new IllegalStateException("stopped"));
                 }
             };
             try (HeldRead read = HeldRead.start(context, reader, iterator -> new PageSource(iterator, 0))) {

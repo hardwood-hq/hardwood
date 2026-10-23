@@ -308,7 +308,7 @@ final class FileOpenAhead {
             RangeRead read;
             try (FetchReason.Scope ignored = FetchReason.set("open-ahead file=" + span.fileIndex())) {
                 read = RangeRead.start(span.inputFile(), span.offset(), span.length(),
-                        "rg=" + span.rowGroupIndex() + " span", RangeRead.Priority.SPECULATIVE, tasks);
+                        "rg=" + span.rowGroupIndex() + " span", true, tasks);
             }
             if (!fetchedAhead.add(span.inputFile(), span.workItemIndex(), read)) {
                 toRelease += span.length();

@@ -41,7 +41,7 @@ import dev.hardwood.schema.FileSchema;
 public final class NestedRowReader implements FileAwareRowReader {
 
     private final BatchExchange<NestedBatch>[] exchanges;
-    private final ColumnPipeline[] columnPipelines;
+    private final ScheduledColumn<?>[] columnPipelines;
     private final int columnCount;
 
     private final FileSchema fileSchema;
@@ -96,7 +96,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// parent's, waits until that close has completed.
     private final CloseClaim closeClaim = new CloseClaim();
 
-    NestedRowReader(BatchExchange<NestedBatch>[] exchanges, ColumnPipeline[] columnPipelines,
+    NestedRowReader(BatchExchange<NestedBatch>[] exchanges, ScheduledColumn<?>[] columnPipelines,
                     FileSchema fileSchema, ProjectedSchema payload, NestedBatchDataView dataView,
                     long maxMatchedRows, RowMatcher recordMatcher, PredicateView predicateView,
                     RecordFilterTally tally, RowGroupIterator rowGroupIterator) {
@@ -190,7 +190,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         if (!rowGroupIterator.hasLiveWorkItem()) {
             @SuppressWarnings("unchecked")
             BatchExchange<NestedBatch>[] none = new BatchExchange[0];
-            NestedRowReader reader = new NestedRowReader(none, new ColumnPipeline[0], schema,
+            NestedRowReader reader = new NestedRowReader(none, new ScheduledColumn<?>[0], schema,
                     projection.payload(), dataView, readerMatchLimit, recordMatcher, predicateView, tally,
                     rowGroupIterator);
             reader.exhausted = true;
@@ -206,7 +206,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         // beyond the first file: statistics reach the reader per row group, on
         // NestedBatch.filterAlwaysMatches (see #1107).
         rowGroupIterator.planBatches(batchSize, maxRows);
-        ColumnPipeline[] pipelines = new ColumnPipeline[projectedColumnCount];
+        ScheduledColumn<?>[] pipelines = new ScheduledColumn<?>[projectedColumnCount];
         ReadScheduler scheduler = new ReadScheduler(rowGroupIterator.readExecutor(), batchSize, budgetRows);
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
@@ -501,7 +501,7 @@ public final class NestedRowReader implements FileAwareRowReader {
                 tally.close();
             }
             if (columnPipelines != null) {
-                for (ColumnPipeline pipeline : columnPipelines) {
+                for (ScheduledColumn<?> pipeline : columnPipelines) {
                     pipeline.close();
                 }
             }

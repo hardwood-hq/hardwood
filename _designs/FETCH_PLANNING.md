@@ -114,13 +114,11 @@ Tests: `PageRangeIoTest`, `DictionaryPrefixFetchTest`, `SequentialFetchPlanEarly
 
 A `ChunkHandle` is a handle on one contiguous byte range, read by one `RangeRead` at a time. A walk asks for its bytes with `poll()`, which never waits and issues no read: it returns the bytes, or `null` while they are not present, and the walk then returns the handle as the `ByteNeed` the step issues (`ByteNeed.issue()`), which starts the read or joins the one under way. A thread off the pool issues the read and waits for it (`ensureFetched()`). A file whose bytes are in memory (`MappedInputFile`, `ByteBufferInputFile`) is sliced in place by `poll()`, so a local walk stops only to read again bytes whose prefetch failed; any other file is read on a virtual thread of the context's I/O executor, as a task of the iterator's `PrefetchTasks`, which its close awaits ([READ_PIPELINE.md](READ_PIPELINE.md#cancellation-and-close)). The first `poll()` that finds the bytes present while a next handle is chained starts the next handle's read, whether this handle was read on demand or by a prefetch. The prefetch reads only its own handle and starts none, so prefetch stays one handle ahead of the walk and never cascades down the chain. A handle backed by a `SharedRegion` slices the region instead of reading, and leaves prefetch to the region's own chain (`SharedRegion.nextRegion`), which follows the same rule one region ahead.
 
-**Priority.** A read a step issues is demand; a prefetch is speculative until a step issues its handle, which raises it to demand, the priority #1397's scheduler gives a range a reader waits for.
-
 A failed prefetch leaves its failure in the read, which `poll()` takes as not present, and the step issues the handle's read again as demand ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#crossing-a-thread-boundary)). A demand read that fails raises an `IOException` naming the file, offset and length.
 
 Each column fetches independently, and no column waits for another's data, except that the first read of coalesce-safe plans may be shared through a `SharedRegion`.
 
-Tests: `ChunkPrefetchChainTest`, `FetchStepYieldTest` (issue and priority, a failed prefetch read again, a failed demand read, a step holding no thread while its read is held, its close and a closed context).
+Tests: `ChunkPrefetchChainTest`, `FetchStepYieldTest` (issue joining a prefetch, a failed prefetch read again, a failed demand read, a step holding no thread while its read is held, its close and a closed context).
 
 ### Next-row-group prefetch
 

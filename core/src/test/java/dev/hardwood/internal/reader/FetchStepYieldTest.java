@@ -129,9 +129,7 @@ class FetchStepYieldTest {
                 }
                 stops++;
                 // A walk outside a read has no read-ahead buffer to stop on
-                RangeRead read = ((ByteNeed) pending).issue();
-                assertThat(read.priority()).isEqualTo(RangeRead.Priority.DEMAND);
-                read.await();
+                ((ByteNeed) pending).issue().await();
             }
 
             assertThat(walked).isEqualTo(expected);
@@ -145,9 +143,9 @@ class FetchStepYieldTest {
     }
 
     /// A walk issues no read: polling a handle of a file not in memory starts nothing, and the read
-    /// the step issues is demand, raising a prefetch under way rather than starting another.
+    /// the step issues joins a prefetch under way rather than starting another.
     @Test
-    void pollIssuesNoReadAndIssueRaisesAPrefetchToDemand() throws Exception {
+    void pollIssuesNoReadAndIssueJoinsAPrefetch() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(100));
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
         ChunkHandle handle = new ChunkHandle(file, 0, 10, "chunk", tasks);
@@ -155,16 +153,15 @@ class FetchStepYieldTest {
         assertThat(handle.poll()).isNull();
         assertThat(file.readCount()).isZero();
 
-        RangeRead read = handle.issue();
-        assertThat(read.priority()).isEqualTo(RangeRead.Priority.DEMAND);
+        handle.issue();
         assertThat(handle.poll()).isNotNull();
         assertThat(file.readCount()).isEqualTo(1);
 
         ChunkHandle prefetched = new ChunkHandle(file, 10, 10, "next", tasks);
         prefetched.startSpeculative();
         assertThat(file.readCount()).isEqualTo(2);
-        RangeRead raised = prefetched.issue();
-        assertThat(raised.priority()).isEqualTo(RangeRead.Priority.DEMAND);
+        RangeRead joined = prefetched.issue();
+        assertThat(prefetched.issue()).isSameAs(joined);
         assertThat(prefetched.poll()).isNotNull();
         assertThat(file.readCount()).as("no read issued past the prefetch").isEqualTo(2);
     }
