@@ -48,7 +48,7 @@ public class PageInfo {
     public static final int UNKNOWN_RECORDS = -1;
 
     /// The one page of a column that is not read in a row group. See [SkippedColumnFetchPlan].
-    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL, 0);
+    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL, 0, 0, 0);
 
     private final ByteBuffer pageData;
     private final ColumnSchema columnSchema;
@@ -57,17 +57,42 @@ public class PageInfo {
     private final int placeholderNumValues;
     private final PageRowMask mask;
     private final int records;
+    /// The values the page's header declares, `0` where the page carries no header.
+    private final int declaredValues;
+    /// The page's uncompressed size from its header, `0` where it carries no header.
+    private final int uncompressedSize;
 
+    /// A page without bytes, which no task decodes: the tests of placement build them.
+    ///
     /// @param records the records the page contributes after `mask`, or [#UNKNOWN_RECORDS]
+    /// @throws IllegalArgumentException if `pageData` is not `null`: a page with bytes carries the
+    ///         sizes its task is admitted by
     public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                     ColumnMetaData columnMetaData, Dictionary dictionary,
                     PageRowMask mask, int records) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, records);
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, records, 0, 0);
+        if (pageData != null) {
+            throw new IllegalArgumentException("A page with bytes needs the sizes its header declares");
+        }
+    }
+
+    /// A data page whose header its fetch plan has parsed, so that what decoding it takes is
+    /// known before it is submitted.
+    ///
+    /// @param records the records the page contributes after `mask`, or [#UNKNOWN_RECORDS]
+    /// @param declaredValues the values the page's header declares
+    /// @param uncompressedSize the page's uncompressed size from its header
+    public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
+                    ColumnMetaData columnMetaData, Dictionary dictionary,
+                    PageRowMask mask, int records, int declaredValues, int uncompressedSize) {
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, records, declaredValues,
+                uncompressedSize);
     }
 
     private PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                      ColumnMetaData columnMetaData, Dictionary dictionary,
-                     int placeholderNumValues, PageRowMask mask, int records) {
+                     int placeholderNumValues, PageRowMask mask, int records, int declaredValues,
+                     int uncompressedSize) {
         if (mask == null) {
             throw new IllegalArgumentException("mask must not be null; use PageRowMask.ALL");
         }
@@ -81,6 +106,8 @@ public class PageInfo {
         this.placeholderNumValues = placeholderNumValues;
         this.mask = mask;
         this.records = records;
+        this.declaredValues = declaredValues;
+        this.uncompressedSize = uncompressedSize;
     }
 
     /// Creates a null-placeholder `PageInfo` representing `numValues` rows whose
@@ -94,7 +121,7 @@ public class PageInfo {
         if (numValues <= 0) {
             throw new IllegalArgumentException("placeholder numValues must be positive: " + numValues);
         }
-        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL, records);
+        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL, records, 0, 0);
     }
 
     /// Returns the page data buffer (header + compressed data), or `null` if this
@@ -113,6 +140,16 @@ public class PageInfo {
 
     public Dictionary dictionary() {
         return dictionary;
+    }
+
+    /// The buffers the task decoding the page takes ([WorkingSet.Column#pageBuffers]): from the
+    /// header's sizes for a page with bytes, whatever value count it declares; from the values it
+    /// stands for for a null placeholder; `0` for a page without either, which no task decodes.
+    long taskBytes() {
+        if (isNullPlaceholder()) {
+            return WorkingSet.Column.pageBuffers(columnSchema, placeholderNumValues, 0);
+        }
+        return pageData == null ? 0 : WorkingSet.Column.pageBuffers(columnSchema, declaredValues, uncompressedSize);
     }
 
     public boolean isNullPlaceholder() {
@@ -139,5 +176,15 @@ public class PageInfo {
     /// with repetition. `0` for the [#BOUNDARY_MARKER].
     public int records() {
         return records;
+    }
+
+    /// The values the page's header declares; `0` for a page without bytes.
+    int declaredValues() {
+        return declaredValues;
+    }
+
+    /// The page's uncompressed size from its header; `0` for a page without bytes.
+    int uncompressedSize() {
+        return uncompressedSize;
     }
 }

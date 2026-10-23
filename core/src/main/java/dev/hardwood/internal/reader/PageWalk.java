@@ -30,9 +30,10 @@ public interface PageWalk {
     /// @throws IOException if a read the walk needs failed
     PageInfo advance() throws IOException;
 
-    /// The bytes the last [#advance] stopped on, or `null` when it returned a page or ended the
-    /// walk.
-    ByteNeed pending();
+    /// What the last [#advance] stopped on, or `null` when it returned a page or ended the walk:
+    /// bytes not present ([ByteNeed]), or a task of the read ending, before the dictionary page
+    /// it reached can be parsed beside the read's other tasks ([WorkingSet#admitTask]).
+    Need pending();
 
     /// Which page of the column chunk this walk is on: an ordinal,
     /// [ExceptionContext#DICTIONARY_PAGE], or [ExceptionContext#UNKNOWN_PAGE].

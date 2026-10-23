@@ -12,6 +12,9 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.thrift.PageHeaderReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
@@ -199,8 +202,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         private boolean eventEmitted;
         private int index;
         private int currentGroupIndex;
-        /// The bytes the last advance stopped on.
-        private ByteNeed pending;
+        /// What the last advance stopped on: bytes, or a task of the read ending.
+        private Need pending;
 
         @Override
         public int currentPage() {
@@ -208,7 +211,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         }
 
         @Override
-        public ByteNeed pending() {
+        public Need pending() {
             return pending;
         }
 
@@ -225,13 +228,26 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 if (pending != null) {
                     return null;
                 }
+                long tasksEnded = workingSet.tasksEnded();
+                long admission = dictRegion == null ? 0
+                        : workingSet.admitTask(PageHeaderReader.read(new ThriftCompactReader(dictRegion, 0))
+                                .uncompressedPageSize());
+                if (admission == WorkingSet.REFUSED) {
+                    pending = workingSet.taskEnds(tasksEnded);
+                    return null;
+                }
                 // Set the flag *before* parsing so a throw from the parse
                 // doesn't cause a retry loop. This is safe because a throw
                 // propagates to the column's fetch step (ScheduledColumn.runFetchStep), which
                 // calls signalError → done=true → the pipeline stops; advance() is
                 // never re-entered on the same walk.
                 dictionaryParsed = true;
-                dictionary = parseDictionary(dictRegion);
+                try {
+                    dictionary = parseDictionary(dictRegion);
+                }
+                finally {
+                    workingSet.taskEnded(admission);
+                }
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 
@@ -257,8 +273,12 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             }
             index++;
             ByteBuffer pageData = handle.slice(groupBytes, loc.offset(), loc.compressedPageSize());
+            // The header gives the buffers decoding the page takes, which the read admits before
+            // it submits the page
+            PageHeader header = PageHeaderReader.read(new ThriftCompactReader(pageData, 0));
             PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(),
-                    dictionary, needed.mask(), keptRecords(needed));
+                    dictionary, needed.mask(), keptRecords(needed), declaredValues(header),
+                    header.uncompressedPageSize());
 
             if (!eventEmitted && index >= neededPages.size()) {
                 emitEvent();
@@ -291,6 +311,15 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 return PageInfo.UNKNOWN_RECORDS;
             }
             return needed.mask().isAll() ? needed.rows() : needed.mask().totalRecords();
+        }
+
+        /// The values a data page's header declares; `0` for another page, which its decode
+        /// refuses.
+        private static int declaredValues(PageHeader header) {
+            if (header.dataPageHeader() != null) {
+                return header.dataPageHeader().numValues();
+            }
+            return header.dataPageHeaderV2() != null ? header.dataPageHeaderV2().numValues() : 0;
         }
 
         private Dictionary parseDictionary(ByteBuffer dictRegion) throws IOException {

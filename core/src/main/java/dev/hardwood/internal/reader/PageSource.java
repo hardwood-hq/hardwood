@@ -59,6 +59,11 @@ public class PageSource {
         // pulls them one at a time as this column advances. See #1107.
     }
 
+    /// The working set of the read this column is part of.
+    WorkingSet readWorkingSet() {
+        return rowGroupIterator.workingSet();
+    }
+
     /// The read's working-set handle for this column, whose chunk's schema is `schema`.
     WorkingSet.Column workingSet(ColumnSchema schema) {
         return rowGroupIterator.workingSet().column(projectedColumnIndex, schema);

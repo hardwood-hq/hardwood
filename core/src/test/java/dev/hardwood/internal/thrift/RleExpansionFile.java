@@ -25,7 +25,9 @@ import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageEncodingStats;
+import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -93,6 +95,13 @@ public final class RleExpansionFile {
     /// stats record, so that pruning can read the dictionary. The dictionary pages take a few KiB
     /// each on disk whatever they declare.
     public static byte[] buildWide(int columns, int rowGroups, int dictionaryBytes, int pageValues) {
+        return buildWide(columns, rowGroups, dictionaryBytes, pageValues, false);
+    }
+
+    /// The file [#buildWide(int, int, int, int)] builds, with an offset index for every chunk when
+    /// `indexed`, so that a read walks its pages from the index.
+    public static byte[] buildWide(int columns, int rowGroups, int dictionaryBytes, int pageValues,
+                                   boolean indexed) {
         byte[] dictionary = gzipZeros(dictionaryBytes);
         byte[] body = dataPageBody(pageValues);
         byte[] compressedBody = gzip(body);
@@ -119,12 +128,23 @@ public final class RleExpansionFile {
                 out.writeBytes(compressedBody);
                 long chunkSize = out.size() - dictionaryOffset;
                 groupSize += chunkSize;
+                Long indexOffset = null;
+                Integer indexLength = null;
+                if (indexed) {
+                    ThriftCompactWriter index = new ThriftCompactWriter();
+                    OffsetIndexWriter.write(index, new OffsetIndex(
+                            List.of(new PageLocation(dataOffset, Math.toIntExact(out.size() - dataOffset), 0)),
+                            null));
+                    indexOffset = (long) out.size();
+                    indexLength = index.toByteArray().length;
+                    out.writeBytes(index.toByteArray());
+                }
 
                 ColumnMetaData metaData = new ColumnMetaData(PhysicalType.INT64,
                         List.of(Encoding.PLAIN, Encoding.RLE_DICTIONARY), FieldPath.of("c" + c),
                         CompressionCodec.GZIP, pageValues, chunkSize, chunkSize, Map.of(), dataOffset,
                         dictionaryOffset, null, null, null, null, DICTIONARY_ENCODED, null);
-                chunks.add(new ColumnChunk(metaData, null, null, null, null, null));
+                chunks.add(new ColumnChunk(metaData, indexOffset, indexLength, null, null, null));
             }
             groups.add(new RowGroup(chunks, groupSize, pageValues));
         }

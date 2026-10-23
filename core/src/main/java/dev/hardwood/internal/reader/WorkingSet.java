@@ -8,9 +8,11 @@
 package dev.hardwood.internal.reader;
 
 import java.util.ArrayDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
@@ -42,7 +44,19 @@ import dev.hardwood.schema.ColumnSchema;
 /// The limit is per read and nothing waits for it. Working-set memory is released only as the
 /// consumer reads, so a read that waited for another's could wait for a consumer blocked on
 /// itself.
+///
+/// The tasks of a read that run beside the one its working set counts hold their buffers by the
+/// reader's choice, and the context's [ReadAheadBuffer] holds them ([#admitTask]): a task whose
+/// buffers exceed the retention size starts as the read's one task while no other such task of
+/// the read runs, beside it only while its buffers fit the buffer, and otherwise once a task ends.
+/// A task within the retention size starts at once, as a context keeps that much per thread
+/// anyway.
 public final class WorkingSet {
+
+    /// [#admitTask] admitted the task as the read's one task its working set counts.
+    static final long OWN_TASK = -1;
+    /// [#admitTask] did not admit the task: it waits for a task to end ([#whenTaskEnds]).
+    static final long REFUSED = -2;
 
     static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
 
@@ -58,14 +72,21 @@ public final class WorkingSet {
     /// The largest buffers a task has needed, in a one-element array to share [#raise].
     private final AtomicLongArray task = new AtomicLongArray(1);
     private final AtomicLong total = new AtomicLong();
+    /// Holds the buffers of the read's tasks beside its one task; `null` outside a read, whose
+    /// tasks are not admitted.
+    private final ReadAheadBuffer readAhead;
+    /// Raised while a task of the read whose buffers exceed the retention size runs as its one task.
+    private final AtomicBoolean ownTask = new AtomicBoolean();
 
-    /// A working set of `columns` decoded columns, held to [#maxWorkingSetBytes].
-    public WorkingSet(int columns) {
-        this(columns, maxWorkingSetBytes());
+    /// A working set of `columns` decoded columns, held to [#maxWorkingSetBytes], whose tasks
+    /// beside its one task `readAhead` holds.
+    public WorkingSet(int columns, ReadAheadBuffer readAhead) {
+        this(columns, maxWorkingSetBytes(), readAhead);
     }
 
-    WorkingSet(int columns, long limit) {
+    WorkingSet(int columns, long limit, ReadAheadBuffer readAhead) {
         this.limit = limit;
+        this.readAhead = readAhead;
         this.dictionaries = new AtomicLongArray(columns);
         this.windows = new DictionaryWindow[columns];
         for (int i = 0; i < columns; i++) {
@@ -78,7 +99,7 @@ public final class WorkingSet {
     /// outside a read: the metadata tools and the dictionaries a filter parses to prune row
     /// groups.
     public static Column standalone(ColumnSchema schema) {
-        return new WorkingSet(1).column(0, schema);
+        return new WorkingSet(1, null).column(0, schema);
     }
 
     /// The handle through which the decoded column at `index` charges its dictionaries and
@@ -137,6 +158,54 @@ public final class WorkingSet {
         }
     }
 
+    /// Admits a task of the read whose buffers take `bytes`, to start now: at once, uncharged, if
+    /// they are within the retention size ([DecodeBuffers#RETAINED_BYTES]) or the task runs
+    /// outside a read; as the read's one task while no other larger one runs; beside it while
+    /// they fit the context's read-ahead buffer, which they are charged to.
+    ///
+    /// @return the admission to hand to [#taskEnded] when the task's buffers are released:
+    ///         [#OWN_TASK], the bytes charged to the read-ahead buffer, or `0`; or [#REFUSED],
+    ///         after which the task waits for [#whenTaskEnds]
+    long admitTask(long bytes) {
+        if (readAhead == null || bytes <= DecodeBuffers.RETAINED_BYTES) {
+            return 0;
+        }
+        if (ownTask.compareAndSet(false, true)) {
+            return OWN_TASK;
+        }
+        return readAhead.tryCharge(bytes) ? bytes : REFUSED;
+    }
+
+    /// Releases what [#admitTask] admitted a task under, which runs what waits for a task to end.
+    void taskEnded(long admission) {
+        if (admission == OWN_TASK) {
+            ownTask.set(false);
+            readAhead.wake();
+        }
+        else if (admission > 0) {
+            readAhead.release(admission);
+        }
+    }
+
+    /// The count to hand to [#whenTaskEnds], taken before the [#admitTask] it follows.
+    long tasksEnded() {
+        return readAhead == null ? 0 : readAhead.releases();
+    }
+
+    /// Runs `retry` once a task ended or released read-ahead after the [#tasksEnded] count
+    /// `seen`; at once if one has. A refused task always has one to wait for: it was refused only
+    /// while the read's own task ran.
+    void whenTaskEnds(long seen, Runnable retry) {
+        readAhead.whenReleased(seen, retry);
+    }
+
+    /// Drops `retry` if it still waits for a task to end.
+    void cancelWait(Runnable retry) {
+        if (readAhead != null) {
+            readAhead.cancel(retry);
+        }
+    }
+
     /// Raises `slots`' entry at `slot` to `bytes` if it is lower, and returns by how much.
     private static long raise(AtomicLongArray slots, int slot, long bytes) {
         long previous;
@@ -165,6 +234,30 @@ public final class WorkingSet {
             this.set = set;
             this.index = index;
             this.schema = schema;
+        }
+
+        /// Admits the task about to decode a page or parse a dictionary page whose buffers take
+        /// `bytes` ([WorkingSet#admitTask]).
+        ///
+        /// @return the admission to hand to [#taskEnded], or [WorkingSet#REFUSED]
+        public long admitTask(long bytes) {
+            return set.admitTask(bytes);
+        }
+
+        /// Releases what [#admitTask] admitted a task under.
+        public void taskEnded(long admission) {
+            set.taskEnded(admission);
+        }
+
+        /// The count to hand to [#taskEnds], taken before the [#admitTask] it follows.
+        public long tasksEnded() {
+            return set.tasksEnded();
+        }
+
+        /// What a task [#admitTask] refused waits for: a task of the read ending, or read-ahead
+        /// released, after the [#tasksEnded] count `seen`.
+        public Need taskEnds(long seen) {
+            return retry -> set.whenTaskEnds(seen, retry);
         }
 
         /// Charges a dictionary page before it is decompressed and parsed: the entries the column
@@ -215,9 +308,7 @@ public final class WorkingSet {
             if (!isNumeric(schema.type())) {
                 batches += uncompressedSize;
             }
-            int intArrays = 1 + (schema.maxDefinitionLevel() > 0 ? 1 : 0)
-                    + (schema.maxRepetitionLevel() > 0 ? 1 : 0);
-            long buffers = uncompressedSize + (long) numValues * Integer.BYTES * intArrays + valueBytes;
+            long buffers = pageBuffers(schema, numValues, uncompressedSize) + valueBytes;
             if (kept) {
                 batches += (long) numValues * Integer.BYTES * NESTED_BATCH_INTS;
                 set.charge(set.pages, index, batches + buffers, 0, batches + buffers, "Data page");
@@ -225,6 +316,14 @@ public final class WorkingSet {
             else {
                 set.charge(set.pages, index, batches, buffers, batches + buffers, "Data page");
             }
+        }
+
+        /// The buffers the task decoding a data page of `schema`'s column takes: its decompressed
+        /// bytes and an `int` per value for each level array and for the dictionary ids.
+        static long pageBuffers(ColumnSchema schema, int numValues, int uncompressedSize) {
+            int intArrays = 1 + (schema.maxDefinitionLevel() > 0 ? 1 : 0)
+                    + (schema.maxRepetitionLevel() > 0 ? 1 : 0);
+            return uncompressedSize + (long) numValues * Integer.BYTES * intArrays;
         }
 
         private static boolean isNumeric(PhysicalType type) {

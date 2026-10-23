@@ -438,8 +438,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// page are touched rather than after they parse, because a header that will not
         /// parse is exactly the case with no [PageInfo] to carry it.
         private int currentPage = ExceptionContext.UNKNOWN_PAGE;
-        /// The bytes the last [#advance] stopped on.
-        private ByteNeed pending;
+        /// What the last [#advance] stopped on: bytes, or a task of the read ending.
+        private Need pending;
 
         // The page under way, reset by clearPage() once the walk is done with it
         /// The header of the page at [#position], `null` until it is parsed.
@@ -475,7 +475,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         }
 
         @Override
-        public ByteNeed pending() {
+        public Need pending() {
             return pending;
         }
 
@@ -680,15 +680,36 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
                 int compressedSize = header.compressedPageSize();
                 int dictTotalSize = headerSize + compressedSize;
-                ByteBuffer dictPage = readBytes(position, dictTotalSize, false);
+                // Admitted before its bytes are read: a refused page read now would be read again
+                // when it is admitted
+                long tasksEnded = workingSet.tasksEnded();
+                long admission = workingSet.admitTask(header.uncompressedPageSize());
+                if (admission == WorkingSet.REFUSED) {
+                    pending = workingSet.taskEnds(tasksEnded);
+                    return false;
+                }
+                ByteBuffer dictPage;
+                try {
+                    dictPage = readBytes(position, dictTotalSize, false);
+                }
+                catch (IOException | RuntimeException e) {
+                    workingSet.taskEnded(admission);
+                    throw e;
+                }
                 if (dictPage == null) {
+                    workingSet.taskEnded(admission);
                     return false;
                 }
                 initialized = true;
-                // The header is already parsed, so hand it over rather than a region the
-                // parser would have to open and read the same header out of again.
-                dictionary = DictionaryParser.parsePage(header, dictPage.slice(headerSize, compressedSize),
-                        columnSchema, metaData, context, workingSet);
+                try {
+                    // The header is already parsed, so hand it over rather than a region the
+                    // parser would have to open and read the same header out of again.
+                    dictionary = DictionaryParser.parsePage(header, dictPage.slice(headerSize, compressedSize),
+                            columnSchema, metaData, context, workingSet);
+                }
+                finally {
+                    workingSet.taskEnded(admission);
+                }
                 position += dictTotalSize;
                 clearPage();
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
@@ -811,7 +832,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                         return null;
                     }
                     pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask,
-                            keptRecords(mask, numValues));
+                            keptRecords(mask, numValues), numValues, header.uncompressedPageSize());
                 }
                 donePage(numValues, pageRecords, totalPageSize);
                 return pageInfo;
