@@ -10,6 +10,7 @@ package dev.hardwood.internal.compression;
 import java.nio.ByteBuffer;
 
 import com.github.luben.zstd.Zstd;
+import com.github.luben.zstd.ZstdDecompressCtx;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
@@ -25,8 +26,7 @@ public class ZstdDecompressor implements Decompressor {
                     // Heap to heap, bounded to the declared size
                     ? Math.toIntExact(Zstd.decompressByteArray(output, 0, uncompressedSize, compressed.array(),
                             compressed.arrayOffset() + compressed.position(), compressed.remaining()))
-                    // zstd-jni advances the position of the buffer it reads
-                    : Zstd.decompress(output, DirectBuffers.ensureDirect(compressed).duplicate());
+                    : decompressDirect(DirectBuffers.ensureDirect(compressed), uncompressedSize, output);
         }
         catch (RuntimeException e) {
             // zstd-jni reports a frame it cannot read, or one decoding past the bound, by throwing
@@ -40,6 +40,14 @@ public class ZstdDecompressor implements Decompressor {
         }
 
         return output;
+    }
+
+    /// Direct to heap, bounded to the declared size
+    private static int decompressDirect(ByteBuffer compressed, int uncompressedSize, byte[] output) {
+        try (ZstdDecompressCtx ctx = new ZstdDecompressCtx()) {
+            return ctx.decompressDirectByteBufferToByteArray(output, 0, uncompressedSize, compressed,
+                    compressed.position(), compressed.remaining());
+        }
     }
 
     @Override

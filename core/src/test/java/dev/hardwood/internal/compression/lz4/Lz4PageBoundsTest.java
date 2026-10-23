@@ -24,8 +24,8 @@ import dev.hardwood.reader.ParquetReadException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// lz4-java bounds a read by the buffer's capacity, not its limit; the LZ4 decompressors hold a
-/// page to its limit, so bytes past it (the next page of an unsliced chunk) never complete a block.
+/// The LZ4 decompressors hold a page to its buffer's limit, so bytes past it (the next page of an
+/// unsliced chunk) never complete a block.
 class Lz4PageBoundsTest {
 
     private static byte[] body(int seed) {
@@ -71,11 +71,10 @@ class Lz4PageBoundsTest {
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
         String message = codec == CompressionCodec.LZ4
-                ? "LZ4 decompression failed (tried both raw and Hadoop formats): raw: LZ4 raw block ends at byte "
-                        + page.length + " of a " + (page.length - 5) + "-byte page; Hadoop: "
+                ? "LZ4 decompression failed (tried both raw and Hadoop formats): raw: LZ4 raw block is malformed; "
+                        + "Hadoop: "
                         + "Invalid LZ4 Hadoop block sizes: uncompressed=-251658364, compressed=1818388327"
-                : "LZ4_RAW decompression did not consume all input: expected " + (page.length - 5)
-                        + " bytes, consumed " + page.length;
+                : "LZ4_RAW decompression failed: malformed block";
         assertThatThrownBy(() -> decompressor.decompress(truncated, body.length, new byte[body.length], TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage(message);

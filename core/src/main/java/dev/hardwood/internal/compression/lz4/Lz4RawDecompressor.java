@@ -13,37 +13,41 @@ import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.reader.ParquetReadException;
 import net.jpountz.lz4.LZ4Factory;
-import net.jpountz.lz4.LZ4FastDecompressor;
+import net.jpountz.lz4.LZ4SafeDecompressor;
 
 /// Decompressor for LZ4_RAW compressed data (standard LZ4 block format).
 ///
 /// This is used for the LZ4_RAW codec which uses standard LZ4 block compression
 /// without any framing or headers.
+///
+/// The safe decompressor bounds its reads by the page and its writes by the declared size. The
+/// fast one stops only once it has written the declared size, and the native implementation
+/// some lz4-java releases give it reads past the page wherever the header overstates it.
 public class Lz4RawDecompressor implements Decompressor {
 
-    private final LZ4FastDecompressor decompressor;
+    private final LZ4SafeDecompressor decompressor;
 
     public Lz4RawDecompressor() {
-        this.decompressor = LZ4Factory.fastestInstance().fastDecompressor();
+        this.decompressor = LZ4Factory.fastestInstance().safeDecompressor();
     }
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
-        int compressedLength = compressed.remaining();
-        int consumedLength;
+        int actualSize;
         try {
-            consumedLength = decompressor.decompress(compressed, compressed.position(), ByteBuffer.wrap(dest), 0,
-                    uncompressedSize);
+            actualSize = decompressor.decompress(compressed, compressed.position(), compressed.remaining(),
+                    ByteBuffer.wrap(dest), 0, uncompressedSize);
         }
-        catch (Exception e) {
-            throw new ParquetReadException("LZ4_RAW decompression failed: " + e.getMessage(), e);
+        catch (RuntimeException e) {
+            // An LZ4Exception's message gives an offset into the buffer's backing array, which
+            // differs with where the page lies rather than with the page; some lz4-java releases
+            // raise IndexOutOfBoundsException instead
+            throw new ParquetReadException("LZ4_RAW decompression failed: malformed block", e);
         }
 
-        // The decompressor bounds its reads by the buffer's capacity, not its limit
-        if (consumedLength != compressedLength) {
+        if (actualSize != uncompressedSize) {
             throw new ParquetReadException(
-                    "LZ4_RAW decompression did not consume all input: expected " + compressedLength +
-                            " bytes, consumed " + consumedLength);
+                    "LZ4_RAW decompression size mismatch: expected " + uncompressedSize + ", got " + actualSize);
         }
 
         return dest;

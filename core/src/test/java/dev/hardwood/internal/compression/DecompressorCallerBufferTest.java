@@ -19,6 +19,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.xerial.snappy.Snappy;
 
+import com.github.luben.zstd.ZstdCompressCtx;
+
 import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.reader.ParquetReadException;
@@ -113,6 +115,12 @@ class DecompressorCallerBufferTest {
         byte[] gzip = compressors.getCompressor(CompressionCodec.GZIP).compress(body, 0, body.length);
         byte[] lz4Raw = compressors.getCompressor(CompressionCodec.LZ4_RAW).compress(body, 0, body.length);
         byte[] brotli = compressors.getCompressor(CompressionCodec.BROTLI).compress(body, 0, body.length);
+        byte[] zstd = compressors.getCompressor(CompressionCodec.ZSTD).compress(body, 0, body.length);
+        byte[] zstdWithoutContentSize;
+        try (ZstdCompressCtx ctx = new ZstdCompressCtx()) {
+            // As a streaming writer leaves it, so the frame does not say how far it decodes
+            zstdWithoutContentSize = ctx.setContentSize(false).compress(body);
+        }
         byte[] hadoop = Lz4HadoopFrames.frame(body, 1_500);
         return Stream.of(
                 Arguments.of("GZIP longer", CompressionCodec.GZIP, gzip, 1_000,
@@ -120,38 +128,52 @@ class DecompressorCallerBufferTest {
                 Arguments.of("GZIP shorter", CompressionCodec.GZIP, gzip, 5_000,
                         "Decompressed size mismatch: expected 5000, got 4000"),
                 Arguments.of("LZ4_RAW longer", CompressionCodec.LZ4_RAW, lz4Raw, 1_000,
-                        "LZ4_RAW decompression failed: Malformed input at 432"),
+                        "LZ4_RAW decompression failed: malformed block"),
                 Arguments.of("LZ4_RAW shorter", CompressionCodec.LZ4_RAW, lz4Raw, 5_000,
-                        "LZ4_RAW decompression failed: Malformed input at 3964"),
+                        "LZ4_RAW decompression size mismatch: expected 5000, got 4000"),
                 Arguments.of("LZ4 raw longer", CompressionCodec.LZ4, lz4Raw, 1_000,
-                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 432; Hadoop: "
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: LZ4 raw block is malformed; Hadoop: "
                                 + "Invalid LZ4 Hadoop block sizes: uncompressed=-251685780, compressed=1818715243"),
                 Arguments.of("LZ4 raw shorter", CompressionCodec.LZ4, lz4Raw, 5_000,
-                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 3964; Hadoop: "
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: LZ4 raw block decompresses to 4000 bytes, not the expected 5000; Hadoop: "
                                 + "Invalid LZ4 Hadoop block sizes: uncompressed=-251685780, compressed=1818715243"),
                 Arguments.of("LZ4 Hadoop longer", CompressionCodec.LZ4, hadoop, 2_000,
-                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 3; Hadoop: "
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: LZ4 raw block is malformed; Hadoop: "
                                 + "LZ4 Hadoop block ends at byte 3000, past the expected 2000 bytes"),
                 Arguments.of("LZ4 Hadoop shorter", CompressionCodec.LZ4, hadoop, 5_000,
-                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 3; Hadoop: "
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: LZ4 raw block is malformed; Hadoop: "
                                 + "LZ4 Hadoop decompression size mismatch: expected 5000, got 4000"),
                 Arguments.of("BROTLI longer", CompressionCodec.BROTLI, brotli, 1_000,
                         "Brotli decompression produced more than the expected 1000 bytes"),
                 Arguments.of("BROTLI shorter", CompressionCodec.BROTLI, brotli, 5_000,
-                        "Brotli decompression size mismatch: expected 5000, got 4000"));
+                        "Brotli decompression size mismatch: expected 5000, got 4000"),
+                Arguments.of("ZSTD longer", CompressionCodec.ZSTD, zstd, 1_000,
+                        "ZSTD decompression failed: Destination buffer is too small"),
+                Arguments.of("ZSTD shorter", CompressionCodec.ZSTD, zstd, 5_000,
+                        "ZSTD decompression size mismatch: expected 5000, got 4000"),
+                Arguments.of("ZSTD longer, no content size", CompressionCodec.ZSTD, zstdWithoutContentSize, 1_000,
+                        "ZSTD decompression failed: Destination buffer is too small"),
+                Arguments.of("ZSTD shorter, no content size", CompressionCodec.ZSTD, zstdWithoutContentSize, 5_000,
+                        "ZSTD decompression size mismatch: expected 5000, got 4000"))
+                .flatMap(arguments -> Stream.of(PageBuffer.values()).map(pageBuffer -> {
+                    Object[] values = arguments.get();
+                    return Arguments.of(values[0] + ", " + pageBuffer, values[1], pageBuffer.wrap((byte[]) values[2]),
+                            values[3], values[4]);
+                }));
     }
 
     /// A stream that decodes to more or fewer bytes than the page declares is refused, and nothing
-    /// is written past the declared size.
+    /// is written past the declared size, even where the caller's buffer, sized for an earlier
+    /// page, would hold the whole stream.
     @ParameterizedTest(name = "{0}")
     @MethodSource("streamsOfAnotherLength")
-    void refusesAStreamOfAnotherLengthThanThePageDeclares(String label, CompressionCodec codec, byte[] page,
+    void refusesAStreamOfAnotherLengthThanThePageDeclares(String label, CompressionCodec codec, ByteBuffer page,
                                                           int declared, String message) {
-        byte[] dest = new byte[declared + 64];
+        byte[] dest = new byte[declared + 8_192];
         Arrays.fill(dest, SENTINEL);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
-        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(page), declared, dest, TestDecodeBuffers.create()))
+        assertThatThrownBy(() -> decompressor.decompress(page, declared, dest, TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage(message);
         assertThat(Arrays.copyOfRange(dest, declared, dest.length)).as("past the declared size")

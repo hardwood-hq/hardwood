@@ -14,7 +14,6 @@ import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.reader.ParquetReadException;
 import net.jpountz.lz4.LZ4Factory;
-import net.jpountz.lz4.LZ4FastDecompressor;
 import net.jpountz.lz4.LZ4SafeDecompressor;
 
 /// Decompressor for LZ4 compressed data.
@@ -25,13 +24,12 @@ import net.jpountz.lz4.LZ4SafeDecompressor;
 /// Format: [4-byte uncompressed_len, BE][4-byte compressed_len, BE][compressed data]...
 public class Lz4Decompressor implements Decompressor {
 
-    private final LZ4FastDecompressor fastDecompressor;
+    /// Bounded by the page and the declared size, unlike the fast decompressor (see
+    /// [Lz4RawDecompressor])
     private final LZ4SafeDecompressor safeDecompressor;
 
     public Lz4Decompressor() {
-        LZ4Factory factory = LZ4Factory.fastestInstance();
-        this.fastDecompressor = factory.fastDecompressor();
-        this.safeDecompressor = factory.safeDecompressor();
+        this.safeDecompressor = LZ4Factory.fastestInstance().safeDecompressor();
     }
 
     @Override
@@ -135,13 +133,20 @@ public class Lz4Decompressor implements Decompressor {
 
     /// Decompress using raw LZ4 block format (no framing).
     private byte[] decompressRaw(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
-        int consumed = fastDecompressor.decompress(compressed, compressed.position(), ByteBuffer.wrap(dest), 0,
-                uncompressedSize);
-        // The decompressor bounds its reads by the buffer's capacity, not its limit, so a block
-        // ending anywhere but at the limit is not a raw block of this page
-        if (consumed != compressed.remaining()) {
-            throw new ParquetReadException("LZ4 raw block ends at byte " + consumed + " of a "
-                    + compressed.remaining() + "-byte page");
+        int actualSize;
+        try {
+            actualSize = safeDecompressor.decompress(compressed, compressed.position(), compressed.remaining(),
+                    ByteBuffer.wrap(dest), 0, uncompressedSize);
+        }
+        catch (RuntimeException e) {
+            // An LZ4Exception's message gives an offset into the buffer's backing array, which
+            // differs with where the page lies rather than with the page; some lz4-java releases
+            // raise IndexOutOfBoundsException instead
+            throw new ParquetReadException("LZ4 raw block is malformed", e);
+        }
+        if (actualSize != uncompressedSize) {
+            throw new ParquetReadException("LZ4 raw block decompresses to " + actualSize + " bytes, not the expected "
+                    + uncompressedSize);
         }
         return dest;
     }
