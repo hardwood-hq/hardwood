@@ -40,11 +40,18 @@ public class InfoCommand implements Command<CommandInvocation> {
     @Mixin
     FileMixin fileMixin;
 
+    @Mixin
+    LogFileMixin logFileMixin;
+
     @Option(name = "kv-key", description = "Print only the full, untruncated value of this key-value metadata entry.")
     String kvKey;
 
     @Override
     public CommandResult execute(CommandInvocation ci) {
+        return logFileMixin.run(this::run);
+    }
+
+    private CommandResult run() {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
             return CommandResult.FAILURE;

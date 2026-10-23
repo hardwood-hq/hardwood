@@ -36,9 +36,15 @@ The handler writes to the `System.err` current when a record is published, where
 
 The configuration is code rather than a `logging.properties` resource, so it needs no resource or reflection registration in the native image. An explicit `java.util.logging.config.file` or `java.util.logging.config.class` system property, given to the JVM or the native binary, takes precedence and `configure` leaves the configuration untouched.
 
+## Log file
+
+Every command that reads a file takes `--log-file <path>` through `LogFileMixin`. The file receives records in a timestamped one-line format, `time LEVEL [logger] message`: Hardwood's from `FINE`, which includes every S3 fetch, and every other source's from `WARNING`. It is opened before the command runs, truncated, and closed when the command ends; a file that cannot be opened fails the command before it reads anything.
+
+A non-interactive command keeps its stderr as it is without the option. `CliLogging.forCommand` adds the file handler to the root logger and lowers Hardwood's logger to `FINE`; since Hardwood's records reach every root handler, it raises the stderr handler's own level to the root level for the command, so the `FINE` records go to the file only. Closing the session restores both levels.
+
 ## dive
 
-The TUI owns the terminal, so no record reaches stderr while it runs. `CliLogging.forTui` removes the root logger's handlers for the session and restores them when `dive` exits. With `--log-file`, one file handler on the root logger receives the session's records in a timestamped one-line format: Hardwood's from `FINE`, which includes every S3 fetch, and every other source's from `WARNING`. Without it, the session's records are discarded.
+The TUI owns the terminal, so no record reaches stderr while it runs. `CliLogging.forTui` removes the root logger's handlers for the session and restores them when `dive` exits. With `--log-file`, the file handler is the only one on the root logger and receives the session's records as above. Without it, the session's records are discarded.
 
 ## Obtaining loggers
 

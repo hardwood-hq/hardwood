@@ -34,8 +34,15 @@ public class InspectRowGroupsCommand implements Command<CommandInvocation> {
     @Mixin
     FileMixin fileMixin;
 
+    @Mixin
+    LogFileMixin logFileMixin;
+
     @Override
     public CommandResult execute(CommandInvocation ci) {
+        return logFileMixin.run(this::run);
+    }
+
+    private CommandResult run() {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
             return CommandResult.FAILURE;

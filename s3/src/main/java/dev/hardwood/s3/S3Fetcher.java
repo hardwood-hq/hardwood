@@ -201,9 +201,9 @@ final class S3Fetcher implements InputFile {
     /// fetch, no nested structure.
     ///
     /// Logged at `System.Logger.Level.DEBUG`, which the platform logger
-    /// finder maps to JUL `Level.FINE` — `DiveCommand` configures the
-    /// JUL handler at `Level.FINE`, so a refactor that lowers the level
-    /// here would silently drop dive's `--log-file` output.
+    /// finder maps to JUL `Level.FINE` — the CLI's `--log-file` handler
+    /// takes records from `Level.FINE`, so a refactor that lowers the level
+    /// here would silently drop the fetches from the log file.
     private void logFetch(String reason, long offset, int length, long requestNo, long totalBytes) {
         LOG.get().log(System.Logger.Level.DEBUG,
                 "[{0}] fetch #{1} reason={2} offset={3} length={4} range=[{3},{5}) totalBytes={6}",

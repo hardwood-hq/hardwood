@@ -35,11 +35,18 @@ public class SchemaCommand implements Command<CommandInvocation> {
     @Mixin
     FileMixin fileMixin;
 
+    @Mixin
+    LogFileMixin logFileMixin;
+
     @Option(shortName = 'F', name = "format", defaultValue = "NATIVE", description = "Output format: NATIVE (default), AVRO, PROTO.")
     Format format;
 
     @Override
     public CommandResult execute(CommandInvocation ci) {
+        return logFileMixin.run(this::run);
+    }
+
+    private CommandResult run() {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
             return CommandResult.FAILURE;

@@ -45,6 +45,9 @@ public class PrintCommand implements Command<CommandInvocation> {
     @Mixin
     FileMixin fileMixin;
 
+    @Mixin
+    LogFileMixin logFileMixin;
+
     @Option(shortName = 's', name = "sample-size", defaultValue = "10", description = "Max number of lines used to auto-adjust the column width.")
     int sampleSize;
 
@@ -77,6 +80,10 @@ public class PrintCommand implements Command<CommandInvocation> {
 
     @Override
     public CommandResult execute(CommandInvocation ci) {
+        return logFileMixin.run(this::run);
+    }
+
+    private CommandResult run() {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
             return CommandResult.FAILURE;

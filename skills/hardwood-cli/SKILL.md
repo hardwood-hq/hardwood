@@ -334,6 +334,10 @@ Notes and edge cases:
   tail. `tail` works correctly across multiple row groups.
 - All commands work over `s3://` URIs; `dive` additionally caches fetched byte
   ranges locally so repeat navigation over S3 stays fast.
+- Every command accepts `--log-file PATH`, which writes Hardwood's debug records
+  (one line per S3 byte-range fetch, among others) and other libraries'
+  warnings to `PATH`. Use it to see what a slow S3 read actually fetched;
+  stdout and stderr are unchanged.
 - When you only need to confirm one column, always pass `-c` to `inspect pages`
   — it keeps the output small for files with hundreds of columns.
 

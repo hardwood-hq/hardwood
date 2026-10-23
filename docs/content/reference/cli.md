@@ -316,7 +316,7 @@ hardwood dive -f data.parquet
 
 `dive` requires an interactive terminal. When stdin or stdout is not a TTY (e.g., a `docker run` without `-it`, or output piped to a file), it exits with an error instead of launching the UI.
 
-`dive` writes no warnings to the terminal while it runs. `--log-file <path>` writes them to `<path>` instead, together with a trace of the session's reads, replacing the file's contents; `dive` exits with an error when it cannot create the file.
+`dive` writes no warnings to the terminal while it runs. [`--log-file <path>`](#log-file) writes them to `<path>` instead, together with a trace of the session's reads.
 
 <link rel="stylesheet" href="../../stylesheets/asciinema-player.css">
 <div id="dive-player"></div>
@@ -496,6 +496,14 @@ hardwood -Djavax.net.ssl.trustStore=/path/to/cacerts -Djavax.net.ssl.trustStoreP
 ```
 
 The file replaces the built-in root certificates entirely; the certificates in `blocked.certs` stay rejected. It can be a PKCS12 or JKS keystore, such as a JDK's `lib/security/cacerts` or, on Fedora and RHEL, `/etc/pki/ca-trust/extracted/java/cacerts`. A path that does not exist makes every HTTPS connection fail with an error. With the [Docker image](../getting-started.md#docker), mount the file into the container and pass its path inside the container.
+
+## Log file
+
+Every command that reads a file accepts `--log-file <path>`, which writes the command's log records to `<path>`, replacing the file's contents: Hardwood's from `FINE`, including one line per byte range fetched from S3, and other libraries' warnings, each with a timestamp and the name of its logger. Warnings still go to standard error as they do without the option, and the extra records go to the file only. The command exits with an error when it cannot create the file.
+
+```shell
+hardwood info -f s3://my-bucket/data.parquet --log-file hardwood.log
+```
 
 ## Compression libraries
 

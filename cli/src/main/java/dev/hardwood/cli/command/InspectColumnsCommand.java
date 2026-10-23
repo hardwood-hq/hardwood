@@ -54,6 +54,9 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     @Mixin
     FileMixin fileMixin;
 
+    @Mixin
+    LogFileMixin logFileMixin;
+
     @Option(shortName = 'c', name = "column", description = "Print per-row-group detail and level histograms for a single column.")
     String column;
 
@@ -62,6 +65,10 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
 
     @Override
     public CommandResult execute(CommandInvocation ci) {
+        return logFileMixin.run(this::run);
+    }
+
+    private CommandResult run() {
         if (rowGroup != null && column == null) {
             System.err.println("--row-group requires --column");
             return CommandResult.FAILURE;

@@ -58,37 +58,71 @@ public final class CliLogging {
     /// @param logFile the file to write the session's records to, or `null`
     /// @return the session, whose `close` restores the handlers it took off
     /// @throws IOException if `logFile` cannot be opened, in which case nothing has changed
-    public static TuiSession forTui(Path logFile) throws IOException {
-        Handler fileHandler = null;
-        if (logFile != null) {
-            fileHandler = new FlushingStreamHandler(Files.newOutputStream(logFile,
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE),
-                    new TimestampedFormatter());
-            fileHandler.setLevel(Level.FINE);
-        }
-        return new TuiSession(fileHandler);
+    public static Session forTui(Path logFile) throws IOException {
+        return new Session(openLogFile(logFile), false);
     }
 
-    /// The logging of one TUI session. Closing it closes the log file and puts the terminal's
-    /// handlers back.
-    public static final class TuiSession implements AutoCloseable {
+    /// Copies a non-interactive command's records to `logFile` as well, when one is given. The
+    /// file receives the same records as under [#forTui], while stderr keeps printing exactly
+    /// what it prints without a log file: Hardwood's `FINE` records go to the file only.
+    ///
+    /// @param logFile the file to write the command's records to, or `null` to change nothing
+    /// @return the session, whose `close` closes the file and restores the stderr threshold
+    /// @throws IOException if `logFile` cannot be opened, in which case nothing has changed
+    public static Session forCommand(Path logFile) throws IOException {
+        return new Session(openLogFile(logFile), true);
+    }
+
+    private static Handler openLogFile(Path logFile) throws IOException {
+        if (logFile == null) {
+            return null;
+        }
+        Handler fileHandler = new FlushingStreamHandler(Files.newOutputStream(logFile,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE),
+                new TimestampedFormatter());
+        fileHandler.setLevel(Level.FINE);
+        return fileHandler;
+    }
+
+    /// The logging of one command or TUI session. Closing it closes the log file and puts the
+    /// terminal's handlers back as they were.
+    public static final class Session implements AutoCloseable {
 
         private final Logger root = Logger.getLogger("");
         private final Logger hardwood = Logger.getLogger(HARDWOOD);
         private final Handler[] terminalHandlers;
+        private final Level[] terminalLevels;
         private final Level hardwoodLevel;
         private final Handler fileHandler;
+        private final boolean keepTerminal;
 
-        private TuiSession(Handler fileHandler) {
+        private Session(Handler fileHandler, boolean keepTerminal) {
             this.fileHandler = fileHandler;
+            this.keepTerminal = keepTerminal;
             this.terminalHandlers = root.getHandlers();
+            this.terminalLevels = new Level[terminalHandlers.length];
             this.hardwoodLevel = hardwood.getLevel();
-            for (Handler handler : terminalHandlers) {
-                root.removeHandler(handler);
+            for (int i = 0; i < terminalHandlers.length; i++) {
+                terminalLevels[i] = terminalHandlers[i].getLevel();
+                if (!keepTerminal) {
+                    root.removeHandler(terminalHandlers[i]);
+                }
+                else if (fileHandler != null) {
+                    // Hardwood's level drops to FINE below, and its records reach every root
+                    // handler; raising the terminal's own threshold to the root level keeps them
+                    // off stderr.
+                    raiseTo(terminalHandlers[i], root.getLevel());
+                }
             }
             if (fileHandler != null) {
                 root.addHandler(fileHandler);
                 hardwood.setLevel(Level.FINE);
+            }
+        }
+
+        private static void raiseTo(Handler handler, Level level) {
+            if (level != null && handler.getLevel().intValue() < level.intValue()) {
+                handler.setLevel(level);
             }
         }
 
@@ -99,8 +133,11 @@ public final class CliLogging {
                 fileHandler.close();
             }
             hardwood.setLevel(hardwoodLevel);
-            for (Handler handler : terminalHandlers) {
-                root.addHandler(handler);
+            for (int i = 0; i < terminalHandlers.length; i++) {
+                terminalHandlers[i].setLevel(terminalLevels[i]);
+                if (!keepTerminal) {
+                    root.addHandler(terminalHandlers[i]);
+                }
             }
         }
     }

@@ -45,6 +45,9 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
     @Mixin
     FileMixin fileMixin;
 
+    @Mixin
+    LogFileMixin logFileMixin;
+
     @Option(shortName = 'c', name = "column", required = true, description = "Column name to inspect.")
     String column;
 
@@ -59,6 +62,10 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
 
     @Override
     public CommandResult execute(CommandInvocation ci) {
+        return logFileMixin.run(this::run);
+    }
+
+    private CommandResult run() {
         if (fileMixin.toInputFile() == null) {
             return CommandResult.FAILURE;
         }

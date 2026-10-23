@@ -52,6 +52,9 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
     @Mixin
     FileMixin fileMixin;
 
+    @Mixin
+    LogFileMixin logFileMixin;
+
     @Option(shortName = 'c', name = "column", description = "Restrict output to a single column.")
     String column;
 
@@ -66,6 +69,10 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
 
     @Override
     public CommandResult execute(CommandInvocation ci) {
+        return logFileMixin.run(this::run);
+    }
+
+    private CommandResult run() {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
             return CommandResult.FAILURE;

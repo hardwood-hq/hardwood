@@ -71,7 +71,7 @@ class CliLoggingTest {
         Path logFile = tempDir.resolve("dive.log");
 
         String duringSession = captureStderr(() -> {
-            try (CliLogging.TuiSession ignored = CliLogging.forTui(logFile)) {
+            try (CliLogging.Session ignored = CliLogging.forTui(logFile)) {
                 LOG.log(Level.DEBUG, "hardwood debug");
                 OTHER.log(Level.INFO, "library info");
                 OTHER.log(Level.WARNING, "library warning");
@@ -97,7 +97,7 @@ class CliLoggingTest {
     void logFileIsAPathNotAPattern(@TempDir Path tempDir) throws IOException {
         Path logFile = tempDir.resolve("dive-%g-%u.log");
 
-        try (CliLogging.TuiSession ignored = CliLogging.forTui(logFile)) {
+        try (CliLogging.Session ignored = CliLogging.forTui(logFile)) {
             OTHER.log(Level.WARNING, "recorded");
         }
 
@@ -114,13 +114,59 @@ class CliLoggingTest {
         CliLogging.configure();
 
         assertThat(captureStderr(() -> {
-            try (CliLogging.TuiSession ignored = CliLogging.forTui(null)) {
+            try (CliLogging.Session ignored = CliLogging.forTui(null)) {
                 OTHER.log(Level.ERROR, "not shown");
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
         })).isEmpty();
+    }
+
+    /// A command's log file receives Hardwood's records from `FINE` and other sources' from
+    /// `WARNING`, while stderr prints only what it prints without one; both are back as before once
+    /// the session closes.
+    @Test
+    void commandSessionCopiesRecordsToTheLogFileAndKeepsStderr(@TempDir Path tempDir) throws IOException {
+        CliLogging.configure();
+        Path logFile = tempDir.resolve("command.log");
+
+        String duringSession = captureStderr(() -> {
+            try (CliLogging.Session ignored = CliLogging.forCommand(logFile)) {
+                LOG.log(Level.DEBUG, "hardwood debug");
+                OTHER.log(Level.INFO, "library info");
+                OTHER.log(Level.WARNING, "library warning");
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+
+        assertThat(duringSession).isEqualTo("WARNING: library warning" + System.lineSeparator());
+        assertThat(Files.readAllLines(logFile))
+                .satisfiesExactly(
+                        line -> assertThat(line).endsWith(" FINE [dev.hardwood.cli.internal.CliLoggingTest] hardwood debug"),
+                        line -> assertThat(line).endsWith(" WARNING [org.example.Library] library warning"));
+        assertThat(captureStderr(() -> LOG.log(Level.DEBUG, "not shown after"))).isEmpty();
+        assertThat(captureStderr(() -> OTHER.log(Level.WARNING, "after")))
+                .isEqualTo("WARNING: after" + System.lineSeparator());
+        assertThat(Files.readAllLines(logFile)).hasSize(2);
+    }
+
+    /// Without a log file, a command's records reach stderr exactly as without a session.
+    @Test
+    void commandSessionWithoutALogFileChangesNothing() throws IOException {
+        CliLogging.configure();
+
+        assertThat(captureStderr(() -> {
+            try (CliLogging.Session ignored = CliLogging.forCommand(null)) {
+                LOG.log(Level.DEBUG, "not shown");
+                OTHER.log(Level.WARNING, "shown");
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        })).isEqualTo("WARNING: shown" + System.lineSeparator());
     }
 
     private static String captureStderr(Runnable action) {
