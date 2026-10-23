@@ -84,7 +84,7 @@ public class SchemaElementReader {
                     break;
                 case 5: // num_children (optional)
                     if (reader.acceptField(header, Codes.I32)) {
-                        numChildren = reader.readI32();
+                        numChildren = reader.readNonNegativeI32();
                     }
                     break;
                 case 6: // converted_type (optional)

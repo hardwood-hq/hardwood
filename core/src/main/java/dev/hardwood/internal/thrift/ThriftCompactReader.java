@@ -81,6 +81,12 @@ public class ThriftCompactReader {
     /// The token's struct half, biased by one so that zero means "no struct".
     private static final int NO_SAVED_STRUCT = 0;
 
+    /// How deeply a skipped value may nest: the struct, list, set and map values on the path to
+    /// its innermost value, that value included. A skip recurses once per level, so the bound
+    /// keeps a file from exhausting the stack; `parquet.thrift` nests a few levels deep, and
+    /// Apache Thrift's own readers default to the same limit.
+    static final int MAX_SKIP_DEPTH = 64;
+
     private final ByteBuffer buffer;
     private final int startPosition;
     private short lastFieldId = 0;
@@ -92,6 +98,12 @@ public class ThriftCompactReader {
     /// Per-decode cache of repeated column paths, created on first use so the page-header path —
     /// which has none — never allocates one.
     private RepeatedPathCache pathCache;
+    /// The values [#skipField] is inside of, the one it is skipping included.
+    private int skipDepth;
+    /// The struct and field the outermost skip started on, which a failure deeper in the skip
+    /// names: the structs it walks through have no name.
+    private ThriftStruct skipStruct;
+    private short skipFieldId;
 
     /// Creates a reader that reads directly from a ByteBuffer.
     ///
@@ -776,7 +788,29 @@ public class ThriftCompactReader {
     ///
     /// Elements of a collection are skipped through [#skipElement], not through a recursive
     /// call to this method — see there for why the two differ.
+    ///
+    /// @throws ParquetReadException if the value nests deeper than [#MAX_SKIP_DEPTH]
     public void skipField(byte type) {
+        if (skipDepth == 0) {
+            skipStruct = currentStruct;
+            skipFieldId = lastFieldId;
+        }
+        else if (skipDepth == MAX_SKIP_DEPTH) {
+            String message = "Skipped value nests deeper than the maximum depth of " + MAX_SKIP_DEPTH;
+            throw new ParquetReadException(skipStruct == null
+                    ? message
+                    : skipStruct.describe(skipFieldId) + " — " + message);
+        }
+        skipDepth++;
+        try {
+            skipValue(type);
+        }
+        finally {
+            skipDepth--;
+        }
+    }
+
+    private void skipValue(byte type) {
         switch (type) {
             case TYPE_BOOLEAN_TRUE:
             case TYPE_BOOLEAN_FALSE:

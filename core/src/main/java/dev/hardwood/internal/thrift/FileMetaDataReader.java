@@ -46,6 +46,11 @@ public class FileMetaDataReader {
         }
     }
 
+    /// How deeply the schema's groups may nest below its root. Building the schema tree recurses
+    /// once per level, so the bound keeps a file from exhausting the stack; no writer's schema
+    /// comes near it.
+    static final int MAX_SCHEMA_DEPTH = 500;
+
     /// Ids of the fields the format requires of a `FileMetaData`.
     private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4 };
 
@@ -94,6 +99,7 @@ public class FileMetaDataReader {
                     List<SchemaElementReader.ReadElement> elements =
                             reader.readStructList(SchemaElementReader::readElement);
                     schema = elements(elements);
+                    checkSchemaDepth(reader, schema);
                     logicalTypeUnread = logicalTypeUnread(elements);
                     seen |= 1L << fieldId;
                     break;
@@ -146,6 +152,41 @@ public class FileMetaDataReader {
             schema.add(element.element());
         }
         return Collections.unmodifiableList(schema);
+    }
+
+    /// Rejects a schema whose groups nest deeper than [#MAX_SCHEMA_DEPTH], walking the flat
+    /// element list without recursing. Elements past the root's last child are left to the
+    /// schema's own checks.
+    private static void checkSchemaDepth(ThriftCompactReader reader, List<SchemaElement> schema) {
+        if (schema.isEmpty()) {
+            return;
+        }
+        // The children still to come of each group on the path to the current element; the
+        // root is at depth 0
+        int[] remaining = new int[MAX_SCHEMA_DEPTH + 1];
+        int depth = 0;
+        remaining[0] = childCount(schema.get(0));
+        for (int i = 1; i < schema.size(); i++) {
+            while (depth > 0 && remaining[depth] == 0) {
+                depth--;
+            }
+            if (remaining[depth] == 0) {
+                return;
+            }
+            remaining[depth]--;
+            SchemaElement element = schema.get(i);
+            if (!element.isPrimitive()) {
+                if (depth == MAX_SCHEMA_DEPTH) {
+                    throw reader.malformed("groups must not nest deeper than " + MAX_SCHEMA_DEPTH
+                            + " levels, but group '" + element.name() + "' is at level " + (depth + 1));
+                }
+                remaining[++depth] = childCount(element);
+            }
+        }
+    }
+
+    private static int childCount(SchemaElement element) {
+        return element.numChildren() != null ? element.numChildren() : 0;
     }
 
     /// The leaf ordinals of the elements whose logical type went unread, counting primitive

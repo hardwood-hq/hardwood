@@ -76,7 +76,7 @@ A length or offset from the file reaches an allocation, an array index or a `Byt
 
 | Value | Rule |
 |---|---|
-| the offsets, sizes and row and value counts of `FileMetaData`, `RowGroup`, `ColumnChunk`, `ColumnMetaData`, the page headers, `PageLocation` and `BloomFilterHeader` | read with `readNonNegativeI32` / `readNonNegativeI64`; `SchemaElement.type_length` is checked by `FixedWidthValidator` instead, for the columns a read touches and for a dictionary parsed outside a read ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#an-annotation-the-reader-cannot-use-is-dropped-not-raised)) |
+| the offsets, sizes and row and value counts of `FileMetaData`, `RowGroup`, `ColumnChunk`, `ColumnMetaData`, the page headers, `PageLocation` and `BloomFilterHeader`, and `SchemaElement.num_children` | read with `readNonNegativeI32` / `readNonNegativeI64`; `SchemaElement.type_length` is checked by `FixedWidthValidator` instead, for the columns a read touches and for a dictionary parsed outside a read ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#an-annotation-the-reader-cannot-use-is-dropped-not-raised)) |
 | map size, and list or set element count in the long form | at most the bytes remaining, since every element occupies at least one byte on the wire; a count past the `int` range is rejected, never truncated. A short-form list or set count (at most 14) is left to the element reads to catch |
 | binary or string length | at most the bytes remaining, checked before the allocation |
 | varint | at most ten bytes |
@@ -85,6 +85,17 @@ A length or offset from the file reaches an allocation, an array index or a `Byt
 A count or length that exceeds the remaining bytes raises `ThriftTruncatedException`, the internal `ParquetReadException` subclass the page-header readers use to grow their peek ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md)).
 
 Statistical counts (`null_count`, `distinct_count`, `nan_count`, `unencoded_byte_array_data_bytes`, histogram entries and the page index's per-page counts) reach no allocation or slice and are carried as the file records them.
+
+### Nesting depth is bounded where it is read
+
+Two walks recurse once per level of nesting the file declares: `skipField` through a value it skips, and the schema tree's construction (`BareRepeatedGroups`, `FileSchema.fromSchemaElements`) through nested groups. Unbounded, a few kilobytes of footer exhaust the stack, and the `StackOverflowError` names neither field nor file. Both depths are bounded, each well above what any writer produces and well below the stack depth of a default platform or virtual thread, and a value past the bound fails with `ParquetReadException`. The structs a skip walks through have no name, so a skip past its bound names the field the outermost skip started on:
+
+| Nesting | Bound |
+|---|---|
+| a skipped value: the structs, lists, sets and maps on the path to its innermost value, that value included | 64 (`ThriftCompactReader.MAX_SKIP_DEPTH`), Apache Thrift's default recursion limit |
+| the schema's groups below the root | 500 (`FileMetaDataReader.MAX_SCHEMA_DEPTH`), checked as `FileMetaData.schema` is read, by a walk over the flat element list that does not recurse, so no schema walk downstream meets a deeper tree |
+
+Tests: `NestingDepthBoundTest`.
 
 ### Enum values the reader does not know
 

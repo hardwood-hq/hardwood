@@ -12,7 +12,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] STRING, ENUM, UUID, DATE, TIME, TIMESTAMP, DECIMAL, JSON, BSON
   - [x] INT_8, INT_16, INT_32, INT_64 (signed integers)
   - [x] UINT_8, UINT_16, UINT_32, UINT_64 (unsigned integers)
-  - [x] LIST (nested list support with arbitrary depth)
+  - [x] LIST (nested list support with up to 500 nested groups)
   - [x] MAP (map<key, value> with nested maps and struct values)
   - [x] INTERVAL
   - [x] FLOAT16, NULL (the format's `UNKNOWN`)
@@ -267,9 +267,9 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Definition level interpretation
 - [x] Repetition level interpretation
 - [x] Null value handling
-- [x] Nested structure reconstruction (structs within structs, arbitrary depth)
+- [x] Nested structure reconstruction (structs within structs, up to 500 nested groups)
 - [x] List assembly from repeated fields (simple lists, list of structs)
-- [x] Nested list assembly (list<list<T>>, list<list<list<T>>>, arbitrary depth)
+- [x] Nested list assembly (list<list<T>>, list<list<list<T>>>, up to 500 nested groups)
 - [x] Record completion detection
 
 ### 7.4 Logical Type Support
@@ -296,10 +296,10 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] JSON (tested with PyArrow 22+ which writes JSON logical type via `pa.json_()`)
   - [x] BSON (tested; fixture is post-processed to set the BSON annotation since PyArrow cannot emit it natively)
 - [x] Nested types (tested)
-  - [x] Nested structs (arbitrary depth, e.g., Customer → Account → Organization → Address)
+  - [x] Nested structs (up to 500 nested groups, e.g., Customer → Account → Organization → Address)
   - [x] Lists of primitives (list<int>, list<string>, etc.)
   - [x] Lists of structs (list<struct>)
-  - [x] Nested lists (list<list<T>>, list<list<list<T>>>, arbitrary depth)
+  - [x] Nested lists (list<list<T>>, list<list<list<T>>>, up to 500 nested groups)
   - [x] Logical type conversion within nested lists (e.g., list<list<timestamp>>)
   - [x] Maps (map<string, int>, map<string, struct>, etc.)
   - [x] Nested maps (map<string, map<string, int>>)
@@ -507,9 +507,9 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Definition/repetition levels
 - [x] Logical type parsing and conversion (STRING, DATE, TIMESTAMP, TIME, DECIMAL, INT types)
 - [x] Nested schema support (Dremel algorithm for reading)
-  - [x] Nested structs (arbitrary depth)
+  - [x] Nested structs (up to 500 nested groups)
   - [x] Lists of primitives and structs
-  - [x] Nested lists (arbitrary depth)
+  - [x] Nested lists (up to 500 nested groups)
 - [x] **Validate**: Read nested structures (AddressBook example from Dremel paper)
 
 ### Milestone 4: Compression ✓

@@ -109,6 +109,20 @@ class SchemaElementReaderTest {
     }
 
     @Test
+    void aNegativeChildCountIsAReadFailure() {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        writer.writeFieldBegin(4, FieldType.BINARY);
+        writer.writeString("g");
+        writer.writeFieldBegin(5, FieldType.I32);
+        writer.writeI32(-1);
+        writer.writeFieldStop();
+
+        assertThatThrownBy(() -> read(writer))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("SchemaElement.num_children — must be non-negative but was -1");
+    }
+
+    @Test
     void aLegacyDecimalWithAnAdmittedPairParses() throws Exception {
         SchemaElement element = read(legacyDecimal(null, 9, Union.NONE));
         assertThat(element.precision()).isEqualTo(9);
