@@ -8,12 +8,12 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.predicate.BloomFilterColumnRecorder;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.LogContext;
@@ -58,27 +58,41 @@ final class RowGroupPruning {
     }
 
     /// Sharpens the decisions planning recorded with the row group's bloom filters, then with its
-    /// dictionaries for every leaf they leave undecided.
-    Arrival probeOnArrival(WorkItem workItem) throws IOException {
+    /// dictionaries for every leaf they leave undecided, over the bytes the read holds: the
+    /// window's bloom filters (`bloomFilterBytes`, one per column), and what `bytes` holds of
+    /// filters without a length and of dictionary pages. A filter or dictionary `bytes` does not
+    /// hold counts as absent; the caller sees from `bytes` whether any was, and only a drop then
+    /// stands. `probe` keeps the dictionaries read and the leaves decided across evaluations.
+    Arrival probeOnArrival(WorkItem workItem, ByteBuffer[] bloomFilterBytes, ByteSource bytes, Probe probe)
+            throws IOException {
         RowGroupFilterEvaluator.LeafDecisions leafDecisions = workItem.leafDecisions();
         if (!workItem.bloomFilterColumns().isEmpty()) {
             RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
-            if (refineWithBloomFilters(workItem, refined) == FilterDecision.CANNOT_MATCH) {
+            RowGroupBloomFilterSource bloomFilters = new RowGroupBloomFilterSource(workItem.inputFile(), bytes,
+                    workItem.rowGroup(), bloomFilterBytes);
+            if (RowGroupFilterEvaluator.refineWithBloomFilters(workItem.columnOrdinals().filter(),
+                    workItem.rowGroup(), workItem.leafDecisions(), bloomFilters, refined) == FilterDecision.CANNOT_MATCH) {
                 return new Arrival(true, null, bloomFilterDropEvent(workItem));
             }
             leafDecisions = refined;
         }
-        RowGroupDictionaryFilterSource dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(),
-                workItem.rowGroup(), workItem.fileSchema(), context);
-        FilterDecision decision;
-        try (FetchReason.Scope pruning = FetchReason.set("rg=" + workItem.rowGroupIndex() + " pruning")) {
-            decision = RowGroupFilterEvaluator.refineWithDictionaries(
-                    workItem.columnOrdinals().filter(), workItem.rowGroup(), leafDecisions, dictionaries);
+        if (probe.dictionaries == null) {
+            probe.dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(), bytes,
+                    workItem.rowGroup(), workItem.fileSchema(), context);
         }
-        if (decision == FilterDecision.CANNOT_MATCH) {
+        if (RowGroupFilterEvaluator.refineWithDictionaries(workItem.columnOrdinals().filter(), workItem.rowGroup(),
+                leafDecisions, probe.dictionaries, probe.decided) == FilterDecision.CANNOT_MATCH) {
             return new Arrival(true, null, dictionaryDropEvent(workItem));
         }
-        return new Arrival(false, dictionaries, null);
+        return new Arrival(false, probe.dictionaries, null);
+    }
+
+    /// What the passes of one row group's probe on arrival keep between them: the dictionaries
+    /// read, and each leaf's decision once a dictionary has made it.
+    static final class Probe {
+
+        private RowGroupDictionaryFilterSource dictionaries;
+        private final RowGroupFilterEvaluator.LeafDecisions decided = new RowGroupFilterEvaluator.LeafDecisions();
     }
 
     /// What a row group's bloom filters and dictionaries decided once the read reached it.
@@ -108,20 +122,6 @@ final class RowGroupPruning {
             ResolvedPredicate.collectColumnIndices(workItem.columnOrdinals().filter(), columns);
         }
         return columns;
-    }
-
-    /// Sharpens the work item's planned decision with its bloom filters: those its window fetched,
-    /// and any other a probe reaches, read from the file.
-    ///
-    /// @param refined receives the leaf decisions after the bloom filters
-    private FilterDecision refineWithBloomFilters(WorkItem workItem,
-            RowGroupFilterEvaluator.LeafDecisions refined) throws IOException {
-        RowGroupBloomFilterSource bloomFilters = new RowGroupBloomFilterSource(workItem.inputFile(),
-                workItem.rowGroup(), workItem.indexWindow().bloomFiltersFor(workItem.workItemIndex()));
-        try (FetchReason.Scope pruning = FetchReason.set("rg=" + workItem.rowGroupIndex() + " pruning")) {
-            return RowGroupFilterEvaluator.refineWithBloomFilters(workItem.columnOrdinals().filter(),
-                    workItem.rowGroup(), workItem.leafDecisions(), bloomFilters, refined);
-        }
     }
 
     /// The report of a row group its bloom filters dropped.

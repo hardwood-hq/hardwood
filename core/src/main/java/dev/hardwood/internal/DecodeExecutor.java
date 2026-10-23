@@ -87,16 +87,6 @@ public final class DecodeExecutor {
         return withBuffers(work);
     }
 
-    /// Runs `task` on the pool, at the head of the queue, and waits for its result: work a thread
-    /// off the pool waits for, which another thread may also run, as a [FutureTask] runs once. A
-    /// failure is thrown as [#decode] throws it.
-    ///
-    /// @throws RejectedExecutionException if the pool is shut down
-    public <T> T awaitFirst(FutureTask<T> task) {
-        pool().execute(new First(task));
-        return await(task);
-    }
-
     /// Runs `work` on the pool with a set of buffers and waits for its result. A failure of `work`
     /// is thrown as it was thrown, with the waiting thread's stack attached as a suppressed
     /// exception, so that its trace shows who asked for the decode. A task of the pool must not

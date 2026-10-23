@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -82,7 +83,15 @@ final class FetchSequence {
 
         /// Drops the tail of `fileIndex`, which the read is done with.
         void drop(int fileIndex);
+
+        /// Told, outside the lock, that the read has reached `fileIndex`, and so every file before
+        /// it.
+        default void reached(int fileIndex) {
+        }
     }
+
+    /// The work item of an entry planning reads ([#plannedEntry]), which no work item holds.
+    private static final int PLANNING = -1;
 
     private final PrefetchTasks tasks;
     private final ReadAheadBuffer readAhead;
@@ -120,9 +129,25 @@ final class FetchSequence {
     /// Guarded by `lock`: the last work item whose first entry is the read's next unit.
     private int nextUnit = -1;
     /// Guarded by `lock`: the last work item a column has asked to plan, `-1` before the read
-    /// starts, and the next one the planning chain plans ahead of the read.
+    /// starts, and the next one the planning chain plans.
     private int requested = -1;
     private int planFrom;
+    /// Guarded by `lock`: whether the planning chain plans nothing more, at the end of the work list
+    /// or after a failure.
+    private boolean planningEnded;
+    /// Guarded by `lock`: the file the planning chain is listing, `-1` while none, and the work item
+    /// it lists it for, which makes the file one the read has reached once the next unit or a
+    /// column's request reaches the work item.
+    private int listingFile = -1;
+    private int listingFor;
+    /// Guarded by `lock`: the file of each work item the planning chain has listed, by the first
+    /// work item of the file, and the work item after the last one listed.
+    private final TreeMap<Integer, Integer> filesByFirstItem = new TreeMap<>();
+    private int listedEnd;
+    /// Guarded by `lock`: the last file the read has been told it reached ([Footers#reached]).
+    private int toldReached = -1;
+    /// Guarded by `lock`: the columns and callers waiting for a work item to be planned.
+    private final List<PlanWaiter> planWaiters = new ArrayList<>();
     /// Guarded by `lock`: the last file the read has reached.
     private int reachedFile;
     /// Guarded by `lock`: the next file whose footer is to start.
@@ -260,6 +285,26 @@ final class FetchSequence {
         return entry;
     }
 
+    /// An entry of `length` bytes at `start` that the read's planning reads, released once each of
+    /// its `holders` has released it: a window's request, a dictionary page, a probe. It is neither
+    /// queued nor kept by work item: it starts when planning demands it ([Entry#issue]), and is
+    /// charged to neither F nor R. For a file in memory, an entry sliced in place.
+    Entry plannedEntry(InputFile inputFile, long start, int length, String reason, int holders) {
+        Span span = new Span(start, length, reason, holders);
+        if (RangeRead.inMemory(inputFile)) {
+            return new Entry(null, inputFile, span, PLANNING);
+        }
+        Entry entry = new Entry(this, inputFile, span, PLANNING);
+        lock.lock();
+        try {
+            entry.released = closed;
+        }
+        finally {
+            lock.unlock();
+        }
+        return entry;
+    }
+
     /// The entries inserted for work item `workItemIndex`, `null` when it has none.
     List<Entry> entries(int workItemIndex) {
         lock.lock();
@@ -276,6 +321,7 @@ final class FetchSequence {
     /// not started.
     void nextUnit(int workItemIndex) {
         RangeRead first;
+        int reached;
         lock.lock();
         try {
             if (closed) {
@@ -283,11 +329,80 @@ final class FetchSequence {
             }
             nextUnit = Math.max(nextUnit, workItemIndex);
             first = startFirst(workItemIndex);
+            reached = fileOf(workItemIndex);
+            if (reached < 0 && listingFile >= 0 && workItemIndex >= listingFor) {
+                reached = listingFile;
+            }
         }
         finally {
             lock.unlock();
         }
         started(first);
+        if (reached >= 0) {
+            reachedFile(reached);
+        }
+    }
+
+    /// Records that the planning chain lists file `fileIndex` for work item `forIndex`, `-1` for a
+    /// caller waiting on it: the file is one the read has reached, now if the work item is within
+    /// the next unit or requested, otherwise once it is ([#nextUnit]).
+    void listing(int fileIndex, int forIndex) {
+        boolean reached;
+        lock.lock();
+        try {
+            listingFile = fileIndex;
+            listingFor = forIndex;
+            reached = forIndex <= Math.max(nextUnit, requested);
+        }
+        finally {
+            lock.unlock();
+        }
+        if (reached) {
+            reachedFile(fileIndex);
+        }
+    }
+
+    /// Records that the planning chain has listed `count` work items of file `fileIndex` from work
+    /// item `firstIndex` on, or, for `count` zero, that the file has none.
+    void listed(int firstIndex, int count, int fileIndex) {
+        boolean reached;
+        lock.lock();
+        try {
+            if (count > 0) {
+                filesByFirstItem.put(firstIndex, fileIndex);
+                listedEnd = firstIndex + count;
+            }
+            listingFile = -1;
+            reached = fileIndex <= toldReached;
+        }
+        finally {
+            lock.unlock();
+        }
+        if (reached && footers != null) {
+            // Told again now that the file is planned
+            footers.reached(fileIndex);
+        }
+    }
+
+    /// Records that the read has reached work item `workItemIndex`, and so its file, once listed.
+    void reachedItem(int workItemIndex) {
+        int file;
+        lock.lock();
+        try {
+            file = fileOf(workItemIndex);
+        }
+        finally {
+            lock.unlock();
+        }
+        if (file >= 0) {
+            reachedFile(file);
+        }
+    }
+
+    /// The file of a listed work item, `-1` for one not listed. Called under `lock`.
+    private int fileOf(int workItemIndex) {
+        Map.Entry<Integer, Integer> file = filesByFirstItem.floorEntry(workItemIndex);
+        return file != null && workItemIndex < listedEnd ? file.getValue() : -1;
     }
 
     /// Records that a column asks to plan work item `workItemIndex`: its first entry starts as the
@@ -317,8 +432,10 @@ final class FetchSequence {
             if (requested < 0) {
                 return -1;
             }
-            planFrom = Math.max(planFrom, requested + 1);
-            if (planFrom <= nextUnit
+            if (planningEnded) {
+                return -1;
+            }
+            if (planFrom <= requested || planFrom <= nextUnit
                     || deep && queuedBytes < fetchAheadBytes && planFrom <= lastStarted + 1) {
                 return planFrom;
             }
@@ -329,15 +446,87 @@ final class FetchSequence {
         }
     }
 
-    /// Records that the planning chain has planned work item `workItemIndex`.
+    /// Records that the planning chain has planned work item `workItemIndex`, and runs the waiters
+    /// it meets.
     void planned(int workItemIndex) {
+        List<Runnable> met = new ArrayList<>();
         lock.lock();
         try {
             planFrom = Math.max(planFrom, workItemIndex + 1);
+            planWaiters.removeIf(waiter -> waiter.index() < planFrom && met.add(waiter.resume()));
         }
         finally {
             lock.unlock();
         }
+        met.forEach(Runnable::run);
+    }
+
+    /// Records that the planning chain plans nothing more, and runs every waiter.
+    void planningEnded() {
+        List<Runnable> met = new ArrayList<>();
+        lock.lock();
+        try {
+            planningEnded = true;
+            planWaiters.forEach(waiter -> met.add(waiter.resume()));
+            planWaiters.clear();
+        }
+        finally {
+            lock.unlock();
+        }
+        met.forEach(Runnable::run);
+    }
+
+    /// Whether a column waits for a work item the planning chain has not planned.
+    boolean demanded() {
+        lock.lock();
+        try {
+            return requested >= planFrom && !planningEnded;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    /// The next work item the planning chain plans.
+    int planFrom() {
+        lock.lock();
+        try {
+            return planFrom;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    /// Whether the planning chain has planned work item `workItemIndex` or plans nothing more.
+    boolean isPlanned(int workItemIndex) {
+        lock.lock();
+        try {
+            return workItemIndex < planFrom || planningEnded;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    /// What a column waits for until work item `workItemIndex` is planned ([#isPlanned]).
+    Need whenPlanned(int workItemIndex) {
+        return resume -> {
+            lock.lock();
+            try {
+                if (workItemIndex >= planFrom && !planningEnded) {
+                    planWaiters.add(new PlanWaiter(workItemIndex, resume));
+                    return;
+                }
+            }
+            finally {
+                lock.unlock();
+            }
+            resume.run();
+        };
+    }
+
+    private record PlanWaiter(int index, Runnable resume) {
     }
 
     /// Starts, uncharged, the first entry of `workItemIndex` if it is not started. Called under `lock`.
@@ -458,17 +647,24 @@ final class FetchSequence {
     /// Records that the read has reached `fileIndex`, and starts the footers the move brings within
     /// reach.
     void reachedFile(int fileIndex) {
+        boolean tell;
+        boolean moved;
         lock.lock();
         try {
-            if (fileIndex <= reachedFile) {
-                return;
-            }
-            reachedFile = fileIndex;
+            tell = fileIndex > toldReached;
+            toldReached = Math.max(toldReached, fileIndex);
+            moved = fileIndex > reachedFile;
+            reachedFile = Math.max(reachedFile, fileIndex);
         }
         finally {
             lock.unlock();
         }
-        pump();
+        if (tell && footers != null) {
+            footers.reached(fileIndex);
+        }
+        if (moved) {
+            pump();
+        }
     }
 
     /// Records that the read is done with every file before `fileIndex`: their tails are dropped
@@ -593,6 +789,22 @@ final class FetchSequence {
         lock.lock();
         try {
             if (entry.released || --entry.holders > 0) {
+                return;
+            }
+            uncharge = drop(entry);
+        }
+        finally {
+            lock.unlock();
+        }
+        uncharge(uncharge);
+    }
+
+    /// Releases `entry` whatever its holders.
+    void discard(Entry entry) {
+        long uncharge;
+        lock.lock();
+        try {
+            if (entry.released) {
                 return;
             }
             uncharge = drop(entry);
@@ -854,6 +1066,13 @@ final class FetchSequence {
         void release() {
             if (sequence != null) {
                 sequence.release(this);
+            }
+        }
+
+        /// Releases the entry whatever its holders, as the read closes.
+        void discard() {
+            if (sequence != null) {
+                sequence.discard(this);
             }
         }
 

@@ -117,8 +117,8 @@ class DecodeThreadTest {
         ReadScheduler.submissionObserver = null;
     }
 
-    /// The calling thread probes the dictionary of the file's one row group before the read
-    /// starts.
+    /// The dictionary probe of the file's one row group that the calling thread waits for before
+    /// the read starts runs on the read's planning chain, on the pool.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void theCallingThreadsDictionaryProbeDecodesOnThePool() throws Exception {
@@ -130,7 +130,7 @@ class DecodeThreadTest {
         }
 
         assertThat(offPool).isEmpty();
-        assertThat(callers).as("the calling thread's probe").contains(Thread.currentThread());
+        assertThat(callers).as("the calling thread's probe").doesNotContain(Thread.currentThread());
     }
 
     /// Each column's fetch step parses the dictionary of every chunk it reads, and under a filter

@@ -558,10 +558,10 @@ public final class FetchPlanBuilder {
     /// OffsetIndex column to detect v1 vs v2; files where every decoded
     /// column has an OffsetIndex (parquet-mr default since 1.11) pay no I/O
     /// here.
-    public static boolean masksApplicableForRowGroup(ProjectedSchema projectedSchema,
-                                                      RowGroup rowGroup, FileSchema fileSchema,
-                                                      FileColumnOrdinals columnOrdinals,
-                                                      InputFile inputFile) throws IOException {
+    public static Parsed<Boolean> masksApplicableForRowGroup(ProjectedSchema projectedSchema,
+                                                             RowGroup rowGroup, FileSchema fileSchema,
+                                                             FileColumnOrdinals columnOrdinals,
+                                                             ByteSource bytes) throws IOException {
         int projectedCount = projectedSchema.getProjectedColumnCount();
         for (int p = 0; p < projectedCount; p++) {
             int fileOrdinal = columnOrdinals.fileOrdinal(projectedSchema.toOriginalIndex(p));
@@ -573,13 +573,16 @@ public final class FetchPlanBuilder {
             if (columnSchema.maxRepetitionLevel() == 0) {
                 continue;
             }
-            if (PageFormatProbe.firstDataPageType(inputFile, columnChunk)
-                    == PageType.DATA_PAGE_V2) {
+            Parsed<PageType> type = PageFormatProbe.firstDataPageType(bytes, columnChunk);
+            if (type.needsBytes()) {
+                return type.asNeed();
+            }
+            if (type.value() == PageType.DATA_PAGE_V2) {
                 continue;
             }
-            return false;
+            return Parsed.of(false);
         }
-        return true;
+        return Parsed.of(true);
     }
 
     /// Truncates a page list to cover at most `maxRows` rows. `maxRows <= 0`

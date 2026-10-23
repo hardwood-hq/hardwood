@@ -13,9 +13,11 @@ import java.util.function.Predicate;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.reader.ByteSource;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.Parsed;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
@@ -32,6 +34,8 @@ import dev.hardwood.schema.FileSchema;
 public final class RowGroupDictionaryFilterSource {
 
     private final InputFile inputFile;
+    /// Where the dictionary pages are read from.
+    private final ByteSource bytes;
     private final RowGroup rowGroup;
     private final FileSchema fileSchema;
     private final HardwoodContextImpl context;
@@ -42,7 +46,15 @@ public final class RowGroupDictionaryFilterSource {
 
     public RowGroupDictionaryFilterSource(InputFile inputFile, RowGroup rowGroup,
                                           FileSchema fileSchema, HardwoodContextImpl context) {
+        this(inputFile, ByteSource.of(inputFile), rowGroup, fileSchema, context);
+    }
+
+    /// As [#RowGroupDictionaryFilterSource(InputFile, RowGroup, FileSchema, HardwoodContextImpl)],
+    /// reading the dictionary pages from `bytes`.
+    public RowGroupDictionaryFilterSource(InputFile inputFile, ByteSource bytes, RowGroup rowGroup,
+                                          FileSchema fileSchema, HardwoodContextImpl context) {
         this.inputFile = inputFile;
+        this.bytes = bytes;
         this.rowGroup = rowGroup;
         this.fileSchema = fileSchema;
         this.context = context;
@@ -58,19 +70,29 @@ public final class RowGroupDictionaryFilterSource {
         }
 
         if (!read[columnIndex]) {
-            dictionaries[columnIndex] = readDictionary(columnIndex);
+            Parsed<Dictionary> dictionary = readDictionary(columnIndex);
+            if (dictionary.needsBytes()) {
+                // No dictionary for this evaluation, and none recorded: once `bytes` holds it, the
+                // next evaluation reads it
+                return null;
+            }
+            dictionaries[columnIndex] = dictionary.value();
             read[columnIndex] = true;
         }
         return dictionaries[columnIndex];
     }
 
+    /// Whether the column's dictionary has been read, or found not to exist, so that a decision
+    /// made with it is final.
+    public boolean decided(int columnIndex) {
+        return columnIndex < 0 || columnIndex >= read.length || read[columnIndex];
+    }
+
     /// Whether `check` proves a literal absent from the column's dictionary, reading the
-    /// dictionary first, on the calling thread; `false` where the column has none it can use. The
-    /// check scans every entry, up to milliseconds for a large dictionary, so it runs on the
-    /// context's pool, which bounds a read's CPU.
+    /// dictionary first; `false` where the column has none it can use.
     public boolean absent(int columnIndex, Predicate<Dictionary> check) throws IOException {
         Dictionary dictionary = forColumn(columnIndex);
-        return dictionary != null && context.compute("dictionary check", () -> check.test(dictionary));
+        return dictionary != null && check.test(dictionary);
     }
 
     /// The column's dictionary if [#forColumn] has read it, or `null` without reading anything.
@@ -117,12 +139,12 @@ public final class RowGroupDictionaryFilterSource {
         return hasDictionaryPage && hasDataPage;
     }
 
-    private Dictionary readDictionary(int columnIndex) throws IOException {
+    private Parsed<Dictionary> readDictionary(int columnIndex) throws IOException {
         ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
         ColumnMetaData metaData = columnChunk.metaData();
 
         if (!isFullyDictionaryEncoded(metaData)) {
-            return null;
+            return Parsed.of(null);
         }
 
         // Reading this chunk's dictionary from the file being read would decode bytes belonging
@@ -135,15 +157,19 @@ public final class RowGroupDictionaryFilterSource {
         // `dictionary_page_offset` points it at the dictionary page instead, which the page's own
         // header tells apart. A first data page preceding the dictionary page cannot be read at
         // all, so that fails rather than degrading to "no dictionary".
-        ByteBuffer page = DictionaryParser.readPage(inputFile, columnChunk, columnPrefix(metaData));
+        Parsed<ByteBuffer> read = DictionaryParser.readPage(bytes, columnChunk, columnPrefix(metaData));
+        if (read.needsBytes()) {
+            return read.asNeed();
+        }
+        ByteBuffer page = read.value();
         if (page == null) {
-            return null;
+            return Parsed.of(null);
         }
         ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
         long pageEnd = columnChunk.chunkStartOffset() + page.remaining();
         Dictionary dictionary = DictionaryParser.parse(page, columnSchema, metaData, context);
         pageEnds[columnIndex] = pageEnd;
-        return dictionary;
+        return Parsed.of(dictionary);
     }
 
     /// Fails unless this chunk stores its data in the file being read.

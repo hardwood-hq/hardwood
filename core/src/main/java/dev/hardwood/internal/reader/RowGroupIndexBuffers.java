@@ -24,6 +24,13 @@ import dev.hardwood.metadata.RowGroup;
 /// [#addRanges] and [#slice] let one pair of [CoalescedRanges] serve several row groups.
 public class RowGroupIndexBuffers {
 
+    /// Takes a range from the requests of one structure.
+    @FunctionalInterface
+    interface Slices {
+
+        ByteBuffer slice(long offset, int length) throws IOException;
+    }
+
     private final ColumnIndexBuffers[] columns;
     private final BitSet fetched;
 
@@ -68,12 +75,22 @@ public class RowGroupIndexBuffers {
         CoalescedRanges.Builder offsetIndexes = CoalescedRanges.builder();
         CoalescedRanges.Builder columnIndexes = CoalescedRanges.builder();
         addRanges(rowGroup, offsetIndexColumns, columnIndexColumns, offsetIndexes, columnIndexes);
-        CoalescedRanges offsetIndexRanges = offsetIndexes.build();
-        CoalescedRanges columnIndexRanges = columnIndexes.build();
-        offsetIndexRanges.fetch(inputFile);
-        columnIndexRanges.fetch(inputFile);
-        return slice(rowGroup, offsetIndexColumns, columnIndexColumns, offsetIndexRanges,
-                columnIndexRanges);
+        return slice(rowGroup, offsetIndexColumns, columnIndexColumns, fetch(inputFile, offsetIndexes.build()),
+                fetch(inputFile, columnIndexes.build()));
+    }
+
+    /// Reads every request of `ranges` from `inputFile`, and takes the ranges from them.
+    private static Slices fetch(InputFile inputFile, CoalescedRanges ranges) throws IOException {
+        ByteBuffer[] buffers = new ByteBuffer[ranges.requestCount()];
+        for (int r = 0; r < buffers.length; r++) {
+            buffers[r] = inputFile.readRange(ranges.requestStart(r),
+                    Math.toIntExact(ranges.requestEnd(r) - ranges.requestStart(r)));
+        }
+        return (offset, length) -> {
+            int request = ranges.requestHolding(offset, length);
+            ByteBuffer buffer = buffers[request];
+            return buffer.slice(buffer.position() + Math.toIntExact(offset - ranges.requestStart(request)), length);
+        };
     }
 
     /// Adds the slices a row group needs to the builders of the two structures.
@@ -96,9 +113,9 @@ public class RowGroupIndexBuffers {
         }
     }
 
-    /// Takes a row group's slices from the fetched ranges its [#addRanges] call planned.
+    /// Takes a row group's slices from the requests its [#addRanges] call planned.
     static RowGroupIndexBuffers slice(RowGroup rowGroup, BitSet offsetIndexColumns,
-            BitSet columnIndexColumns, CoalescedRanges offsetIndexes, CoalescedRanges columnIndexes) {
+            BitSet columnIndexColumns, Slices offsetIndexes, Slices columnIndexes) throws IOException {
         List<ColumnChunk> chunks = rowGroup.columns();
         ColumnIndexBuffers[] result = new ColumnIndexBuffers[chunks.size()];
         BitSet fetched = (BitSet) offsetIndexColumns.clone();

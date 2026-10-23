@@ -7,16 +7,10 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-
 import org.junit.jupiter.api.Test;
-
-import dev.hardwood.InputFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.tuple;
 
 class CoalescedRangesTest {
 
@@ -24,8 +18,7 @@ class CoalescedRangesTest {
     private static final long MAX = CoalescingPolicy.maxSpanBytes();
 
     @Test
-    void rangesWithinTheGapAreFetchedInOneRequest() throws IOException {
-        CountingInputFile file = countingFile(4096);
+    void rangesWithinTheGapAreFetchedInOneRequest() {
         CoalescedRanges ranges = CoalescedRanges.builder()
                 .add(2000, 100)
                 .add(100, 50)
@@ -34,13 +27,10 @@ class CoalescedRangesTest {
 
         assertThat(ranges.requestCount()).isEqualTo(1);
         assertThat(ranges.fetchedBytes()).isEqualTo(2000);
-
-        ranges.fetch(file);
-
-        assertThat(file.reads()).extracting(CountingInputFile.Read::offset, CountingInputFile.Read::length)
-                .containsExactly(tuple(100L, 2000));
-        assertThat(ranges.slice(1000, 10).get(0)).isEqualTo(byteAt(1000));
-        assertThat(ranges.slice(2000, 100).get(99)).isEqualTo(byteAt(2099));
+        assertThat(ranges.requestStart(0)).isEqualTo(100);
+        assertThat(ranges.requestEnd(0)).isEqualTo(2100);
+        assertThat(ranges.requestHolding(1000, 10)).isZero();
+        assertThat(ranges.requestHolding(2000, 100)).isZero();
     }
 
     @Test
@@ -102,8 +92,7 @@ class CoalescedRangesTest {
     }
 
     @Test
-    void overlappingAndTouchingRangesAreOneRequest() throws IOException {
-        CountingInputFile file = countingFile(8192);
+    void overlappingAndTouchingRangesAreOneRequest() {
         // [0, 150) overlaps [50, 60) and [100, 200), which touches [200, 300): one request.
         CoalescedRanges ranges = CoalescedRanges.builder()
                 .add(100, 100)
@@ -114,69 +103,25 @@ class CoalescedRangesTest {
 
         assertThat(ranges.requestCount()).isEqualTo(1);
         assertThat(ranges.fetchedBytes()).isEqualTo(300);
-
-        ranges.fetch(file);
-
-        assertThat(file.bytesRead()).isEqualTo(300);
-        assertThat(ranges.slice(50, 10).get(0)).isEqualTo(byteAt(50));
-        assertThat(ranges.slice(0, 300).get(299)).isEqualTo(byteAt(299));
+        assertThat(ranges.requestHolding(50, 10)).isZero();
+        assertThat(ranges.requestHolding(0, 300)).isZero();
     }
 
     @Test
-    void anEmptySetFetchesNothing() throws IOException {
-        CountingInputFile file = countingFile(16);
-        CoalescedRanges ranges = CoalescedRanges.builder().build();
-
-        ranges.fetch(file);
-
-        assertThat(ranges.requestCount()).isZero();
-        assertThat(file.readCount()).isZero();
+    void anEmptySetHasNoRequest() {
+        assertThat(CoalescedRanges.builder().build().requestCount()).isZero();
     }
 
     @Test
-    void sliceBeforeFetchFails() {
-        CoalescedRanges ranges = CoalescedRanges.builder().add(0, 10).build();
-
-        assertThatThrownBy(() -> ranges.slice(0, 10))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Ranges not fetched yet");
-    }
-
-    @Test
-    void aRangeNoRequestHoldsIsRejected() throws IOException {
+    void aRangeNoRequestHoldsIsRejected() {
         CoalescedRanges ranges = CoalescedRanges.builder().add(100, 10).build();
-        ranges.fetch(countingFile(256));
 
-        assertThatThrownBy(() -> ranges.slice(105, 10))
+        assertThatThrownBy(() -> ranges.requestHolding(105, 10))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("No request holds the range [105, 115)");
-        assertThatThrownBy(() -> ranges.slice(50, 10))
+        assertThatThrownBy(() -> ranges.requestHolding(50, 10))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("No request holds the range [50, 60)");
-    }
-
-    @Test
-    void fetchingTwiceFails() throws IOException {
-        CoalescedRanges ranges = CoalescedRanges.builder().add(0, 10).build();
-        ranges.fetch(countingFile(16));
-
-        assertThatThrownBy(() -> ranges.fetch(countingFile(16)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Ranges already fetched");
-    }
-
-    @Test
-    void aFailedFetchCanBeRepeated() throws IOException {
-        CoalescedRanges ranges = CoalescedRanges.builder().add(0, 10).add(10 + GAP + 1, 10).build();
-        // The second request lies past the end of this file and fails.
-        assertThatThrownBy(() -> ranges.fetch(countingFile(64)))
-                .isInstanceOf(IndexOutOfBoundsException.class)
-                .hasMessage("[<memory>] readRange(" + (10 + GAP + 1) + ", 10) out of bounds (64 bytes)");
-        assertThat(ranges.isFetched()).isFalse();
-
-        ranges.fetch(countingFile(GAP + 64));
-
-        assertThat(ranges.slice(10 + GAP + 1, 10).get(0)).isEqualTo(byteAt(10 + GAP + 1));
     }
 
     @Test
@@ -187,20 +132,5 @@ class CoalescedRangesTest {
         assertThatThrownBy(() -> CoalescedRanges.builder().add(0, -1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid range: offset 0, length -1");
-    }
-
-    /// A file whose byte at offset `i` is `byteAt(i)`.
-    private static CountingInputFile countingFile(int size) throws IOException {
-        ByteBuffer buffer = ByteBuffer.allocate(size);
-        for (int i = 0; i < size; i++) {
-            buffer.put(i, byteAt(i));
-        }
-        CountingInputFile file = new CountingInputFile(InputFile.of(buffer));
-        file.open();
-        return file;
-    }
-
-    private static byte byteAt(long offset) {
-        return (byte) (offset * 31);
     }
 }

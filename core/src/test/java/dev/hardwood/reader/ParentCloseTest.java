@@ -284,10 +284,10 @@ class ParentCloseTest {
         assertThat(file.violations).isEmpty();
     }
 
-    /// A tail read probes the row groups' offset indexes on the building thread; the test
-    /// holds that read while the parent closes on another thread. The close waits for the
-    /// build before closing the file; the build, finding the parent closed, closes the
-    /// child it made and fails.
+    /// A tail read probes the row groups' offset indexes, which the building thread waits for; the
+    /// test holds that read while the parent closes on another thread. The close waits for the
+    /// build before closing the file; the build, finding the parent closed, closes the child it
+    /// made and fails.
     @Test
     void closeDuringABuildClosesTheChildAndFailsTheBuild() throws Exception {
         GatedInputFile file = new GatedInputFile(Files.readAllBytes(INDEXED_FILE));
@@ -301,7 +301,9 @@ class ParentCloseTest {
                 buildFailure.set(t);
             }
         });
-        file.arm(t -> t == builder);
+        // Every read from here on is the build's: its planning reads them as entries, off the
+        // building thread
+        file.arm(t -> true);
         builder.start();
         file.awaitHeldRead();
 

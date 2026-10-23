@@ -63,12 +63,22 @@ public final class DictionaryParser {
     /// @throws ParquetReadException if the offsets or the page header contradict the chunk
     public static ByteBuffer readPage(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
             throws IOException {
+        return readPage(ByteSource.of(inputFile), columnChunk, messagePrefix).get();
+    }
+
+    /// As [#readPage(InputFile, ColumnChunk, String)], over the bytes `bytes` holds: the page, or
+    /// the range it needs, the opening read or then the whole page.
+    public static Parsed<ByteBuffer> readPage(ByteSource bytes, ColumnChunk columnChunk, String messagePrefix)
+            throws IOException {
         Extent extent = extent(columnChunk, messagePrefix);
-        ByteBuffer region = inputFile.readRange(extent.start(),
-                Math.toIntExact(Math.min(extent.openingRead(), extent.availableBytes())));
+        int openingRead = Math.toIntExact(Math.min(extent.openingRead(), extent.availableBytes()));
+        ByteBuffer region = bytes.read(extent.start(), openingRead);
+        if (region == null) {
+            return Parsed.need(extent.start(), openingRead);
+        }
         int pageLength = pageLength(region);
         if (pageLength < 0) {
-            return null;
+            return Parsed.of(null);
         }
         if (pageLength > extent.availableBytes()) {
             throw new ParquetReadException(messagePrefix
@@ -76,9 +86,11 @@ public final class DictionaryParser {
                     + pageLength + " bytes but only " + extent.availableBytes()
                     + " bytes remain in the chunk");
         }
-        return pageLength > region.remaining()
-                ? inputFile.readRange(extent.start(), pageLength)
-                : region.slice(0, pageLength);
+        if (pageLength <= region.remaining()) {
+            return Parsed.of(region.slice(0, pageLength));
+        }
+        ByteBuffer page = bytes.read(extent.start(), pageLength);
+        return page != null ? Parsed.of(page) : Parsed.need(extent.start(), pageLength);
     }
 
     /// Reads the header of a column chunk's dictionary page, or returns `null` when the chunk's

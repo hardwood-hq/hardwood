@@ -135,19 +135,15 @@ public class PageSource {
                 currentBatches = null;
             }
 
-            WorkItemPlanning planning = rowGroupIterator.planning(workItemCursor);
-            if (!planning.isDone()) {
-                pending = planning;
+            if (!rowGroupIterator.isPlanned(workItemCursor)) {
+                pending = rowGroupIterator.whenPlanned(workItemCursor);
                 return null;
             }
-            if (planning.failed()) {
-                // A failure planning the row group is reported against its work item, one planning
-                // the file against none. Taken from the planning: asking the iterator would take
-                // the planning lock on the pool, which a planning holds while it waits for the pool
-                currentWorkItem = planning.failedWorkItem();
-                currentPlan = null;
-            }
-            RowGroupIterator.WorkItem workItem = planning.workItem();
+            // A failure planning the row group is reported against its work item, one planning the
+            // file against none
+            currentWorkItem = rowGroupIterator.failedWorkItem(workItemCursor);
+            currentPlan = null;
+            RowGroupIterator.WorkItem workItem = rowGroupIterator.plannedWorkItem(workItemCursor);
             if (workItem == null) {
                 return null;
             }

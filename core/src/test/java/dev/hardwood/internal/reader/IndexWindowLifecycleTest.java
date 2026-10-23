@@ -104,55 +104,36 @@ class IndexWindowLifecycleTest {
         assertThat(indexReasons(file)).containsExactly("rg=0-11 indexes");
     }
 
-    /// With no room for speculative data (F of zero), so that planning goes no further than the next
-    /// unit and the windows read are those the test names.
+    /// A window read that fails while planning reads ahead of the read ends planning there: the
+    /// read fails at the row group, with the failure planning met, and is not read again.
     @Test
-    void aWindowWhosePrefetchFailedIsFetchedByTheDemandPath() throws Exception {
+    void aWindowThatFailedAheadFailsTheReadAtItsRowGroup() throws Exception {
         System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
-        try {
-            fetchAWindowWhosePrefetchFailed();
-        }
-        finally {
-            System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
-        }
-    }
-
-    private static void fetchAWindowWhosePrefetchFailed() throws Exception {
-        CountDownLatch prefetchFailed = new CountDownLatch(1);
-        CountDownLatch nextPrefetched = new CountDownLatch(1);
         AtomicBoolean failed = new AtomicBoolean();
         CountingInputFile file = countingFile(new FailingInputFile(InputFile.of(FIXTURE)) {
             @Override
             boolean fails() {
-                if (FetchReason.current().equals("rg=2 indexes")) {
-                    nextPrefetched.countDown();
-                }
-                if (FetchReason.current().equals("rg=1 indexes") && !failed.getAndSet(true)) {
-                    prefetchFailed.countDown();
-                    return true;
-                }
-                return false;
+                return FetchReason.current().equals("rg=1 indexes") && !failed.getAndSet(true);
             }
         });
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             RowGroupIterator iterator = iterator(file, context, ONE_ROW_GROUP_PER_WINDOW);
             try {
                 iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                assertThat(prefetchFailed.await(10, TimeUnit.SECONDS)).isTrue();
+                RowGroupIterator.WorkItem second = iterator.workItemAt(1);
 
-                FetchPlan plan = iterator.getColumnPlan(iterator.workItemAt(1), 0);
-
-                assertThat(plan.isEmpty()).isFalse();
-                // Reaching row group 1 prefetches row group 2; closing at once would race it.
-                assertThat(nextPrefetched.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> iterator.getColumnPlan(second, 0))
+                        .isInstanceOf(IOException.class)
+                        .hasMessage("[page_index_windows.parquet] Failed to fetch metadata for row group 1")
+                        .rootCause()
+                        .hasMessage("injected");
             }
             finally {
                 iterator.close();
+                System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
             }
         }
-        // The prefetch's failed attempt, then the demand path's.
-        assertThat(indexReasons(file)).containsExactlyInAnyOrder(
-                "rg=0 indexes", "rg=1 indexes", "rg=1 indexes", "rg=2 indexes");
+        assertThat(indexReasons(file)).containsExactlyInAnyOrder("rg=0 indexes", "rg=1 indexes");
     }
 
     @Test
@@ -172,7 +153,7 @@ class IndexWindowLifecycleTest {
                 assertThatThrownBy(() -> iterator.getColumnPlan(second, 0))
                         .isInstanceOf(IOException.class)
                         .hasMessage("[page_index_windows.parquet] Failed to fetch metadata for row group 1")
-                        .cause()
+                        .rootCause()
                         .hasMessage("injected");
             }
             finally {
@@ -245,7 +226,8 @@ class IndexWindowLifecycleTest {
             int index = workItem.workItemIndex();
             assertThatThrownBy(() -> workItem.indexWindow().buffersFor(index))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("Page index of work item " + index + " requested after its release");
+                    .hasMessage("Page index of work item " + index
+                            + " is not present: the window was not read, or was released");
         }
     }
 

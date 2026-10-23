@@ -31,6 +31,7 @@ CLASSES=(
   reader/RowGroupIndexBuffers reader/ReadAheadBuffer reader/ReadExecutor DecodeExecutor
   reader/HardwoodContextImpl reader/SchemaCompatibility reader/RowGroupPruning reader/FetchPlanBuilder
   reader/ReadTasks reader/FetchSequence reader/EntryCursor reader/TailedInputFile reader/InternalProperty
+  reader/PlanningChain reader/PlanningReads reader/Parsed reader/ByteSource
 )
 
 REF=${1:-}

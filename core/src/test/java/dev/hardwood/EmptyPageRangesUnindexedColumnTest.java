@@ -13,6 +13,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.predicate.BoundsReadability;
+import dev.hardwood.internal.reader.ByteSource;
 import dev.hardwood.internal.reader.CountingInputFile;
 import dev.hardwood.internal.reader.FetchPlanBuilder;
 import dev.hardwood.internal.reader.FileColumnOrdinals;
@@ -52,9 +53,9 @@ class EmptyPageRangesUnindexedColumnTest {
             RowGroup rowGroup = meta.rowGroups().get(0);
 
             assertThat(FetchPlanBuilder.masksApplicableForRowGroup(
-                    ProjectedSchema.create(schema, FLAT), rowGroup, schema, ordinals, file)).isTrue();
+                    ProjectedSchema.create(schema, FLAT), rowGroup, schema, ordinals, ByteSource.of(file)).get()).isTrue();
             assertThat(FetchPlanBuilder.masksApplicableForRowGroup(
-                    ProjectedSchema.create(schema, ColumnProjection.all()), rowGroup, schema, ordinals, file))
+                    ProjectedSchema.create(schema, ColumnProjection.all()), rowGroup, schema, ordinals, ByteSource.of(file)).get())
                     .isFalse();
         }
     }

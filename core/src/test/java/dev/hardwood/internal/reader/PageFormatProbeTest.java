@@ -56,7 +56,7 @@ class PageFormatProbeTest {
             FileMetaData meta = ParquetMetadataReader.readMetadata(file);
             RowGroup rg = meta.rowGroups().get(0);
             for (int c = 0; c < rg.columns().size(); c++) {
-                PageType type = PageFormatProbe.firstDataPageType(file, rg.columns().get(c));
+                PageType type = PageFormatProbe.firstDataPageType(ByteSource.of(file), rg.columns().get(c)).get();
                 assertThat(type)
                         .as("column %d (path=%s)", c, rg.columns().get(c).metaData().pathInSchema())
                         .isEqualTo(PageType.DATA_PAGE);
@@ -71,7 +71,7 @@ class PageFormatProbeTest {
             FileMetaData meta = ParquetMetadataReader.readMetadata(file);
             RowGroup rg = meta.rowGroups().get(0);
             for (int c = 0; c < rg.columns().size(); c++) {
-                PageType type = PageFormatProbe.firstDataPageType(file, rg.columns().get(c));
+                PageType type = PageFormatProbe.firstDataPageType(ByteSource.of(file), rg.columns().get(c)).get();
                 assertThat(type)
                         .as("column %d (path=%s)", c, rg.columns().get(c).metaData().pathInSchema())
                         .isEqualTo(PageType.DATA_PAGE_V2);
@@ -100,7 +100,7 @@ class PageFormatProbeTest {
             FileMetaData meta = ParquetMetadataReader.readMetadata(file);
             RowGroup rg = meta.rowGroups().get(0);
             int readsBefore = file.readCount();
-            assertThat(PageFormatProbe.firstDataPageType(file, rg.columns().get(1))).isEqualTo(expected);
+            assertThat(PageFormatProbe.firstDataPageType(ByteSource.of(file), rg.columns().get(1)).get()).isEqualTo(expected);
             assertThat(file.readCount() - readsBefore).as("reads").isEqualTo(reads);
         }
     }
@@ -113,7 +113,7 @@ class PageFormatProbeTest {
         try (InputFile file = InputFile.of(ByteBuffer.wrap(dictionaryPage))) {
             file.open();
 
-            assertThatThrownBy(() -> PageFormatProbe.firstDataPageType(file, chunk(dictionaryPage.length)))
+            assertThatThrownBy(() -> PageFormatProbe.firstDataPageType(ByteSource.of(file), chunk(dictionaryPage.length)).get())
                     .isExactlyInstanceOf(ParquetReadException.class)
                     .hasMessage("Column chunk at offset 0 has no data page");
         }
@@ -128,7 +128,7 @@ class PageFormatProbeTest {
         try (InputFile file = InputFile.of(ByteBuffer.allocate(chunkLength).put(header).rewind())) {
             file.open();
 
-            assertThatThrownBy(() -> PageFormatProbe.firstDataPageType(file, chunk(chunkLength)))
+            assertThatThrownBy(() -> PageFormatProbe.firstDataPageType(ByteSource.of(file), chunk(chunkLength)).get())
                     .isExactlyInstanceOf(ParquetReadException.class)
                     .hasMessage("Page at offset 0 ends at offset " + (header.length + 100)
                             + ", past the end of the column chunk at offset " + chunkLength);

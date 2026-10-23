@@ -120,11 +120,30 @@ public class RowGroupFilterEvaluator {
     /// holds its literal in every row, so its dictionary cannot prove the literal absent.
     public static FilterDecision refineWithDictionaries(ResolvedPredicate predicate, RowGroup rowGroup,
             LeafDecisions leafDecisions, RowGroupDictionaryFilterSource dictionaries) throws IOException {
+        return refineWithDictionaries(predicate, rowGroup, leafDecisions, dictionaries, new LeafDecisions());
+    }
+
+    /// As [#refineWithDictionaries(ResolvedPredicate, RowGroup, LeafDecisions, RowGroupDictionaryFilterSource)],
+    /// keeping in `decided` each leaf's decision once final, its dictionary read or found absent
+    /// ([RowGroupDictionaryFilterSource#decided]), and starting from those it holds, so a
+    /// refinement run again once a dictionary its source lacked has been fetched checks no
+    /// dictionary twice.
+    public static FilterDecision refineWithDictionaries(ResolvedPredicate predicate, RowGroup rowGroup,
+            LeafDecisions leafDecisions, RowGroupDictionaryFilterSource dictionaries, LeafDecisions decided)
+            throws IOException {
         return fold(predicate, rowGroup, leaf -> {
+            FilterDecision known = decided.decisions.get(leaf);
+            if (known != null) {
+                return known;
+            }
             FilterDecision planned = leafDecisions.get(leaf);
-            return planned == FilterDecision.MIGHT_MATCH && absent(leaf, null, dictionaries)
+            FilterDecision decision = planned == FilterDecision.MIGHT_MATCH && absent(leaf, null, dictionaries)
                     ? FilterDecision.CANNOT_MATCH
                     : planned;
+            if (planned != FilterDecision.MIGHT_MATCH || dictionaries.decided(ResolvedPredicate.leafColumnIndex(leaf))) {
+                decided.put(leaf, decision);
+            }
+            return decision;
         });
     }
 

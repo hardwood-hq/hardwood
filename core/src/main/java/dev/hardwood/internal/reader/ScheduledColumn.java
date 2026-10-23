@@ -603,6 +603,10 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     /// not catch every file rewritten since the footer was read.
     static Exception placeFailure(Exception e, ColumnSchema column, boolean footersSupplied,
                                   String fileName, int rowGroup, int page) {
+        if (isContextClosed(e)) {
+            // The context's, not the file's, whichever thread of the read met the refusal first
+            return e;
+        }
         Exception typed = asReadFailure(e);
         if (fileName == null || fileName.isEmpty()) {
             return typed;
@@ -624,8 +628,17 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     /// The failure of a read whose decode pool refused a task: its context was closed while it
     /// was reading. It is not the file's, so it is not placed.
     static IllegalStateException contextClosed(RejectedExecutionException e) {
-        return new IllegalStateException("The HardwoodContext was closed while a reader using it was reading", e);
+        return new IllegalStateException(CONTEXT_CLOSED, e);
     }
+
+    /// Whether `e` is the failure [#contextClosed] makes, which a fetch step and the read's planning
+    /// chain each meet when the pool refuses them.
+    static boolean isContextClosed(Throwable e) {
+        return e instanceof IllegalStateException && CONTEXT_CLOSED.equals(e.getMessage())
+                && e.getCause() instanceof RejectedExecutionException;
+    }
+
+    private static final String CONTEXT_CLOSED = "The HardwoodContext was closed while a reader using it was reading";
 
     /// Delegates runtime-failure classification; checked transport failures pass through unchanged.
     static Exception asReadFailure(Exception e) {

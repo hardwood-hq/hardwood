@@ -12,8 +12,12 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -120,6 +124,35 @@ class RowGroupIteratorPlanningFailureTest {
             assertThat(iterator.workItemAt(1).rowGroupIndex()).isEqualTo(1);
             assertThat(iterator.workItemAt(2).rowGroupIndex()).isEqualTo(2);
             assertThatThrownBy(() -> iterator.workItemAt(3))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessage(ERROR_MESSAGE);
+        }
+    }
+
+    /// A failure the planning meets outside a stage, here a waiter for a work item past the end
+    /// that throws as planning ends, ends planning rather than leaving its claim held: the close
+    /// returns, and raises the `Error` nothing took. On a pool, since a read of files in memory
+    /// plans no next unit on a context of zero threads, so nothing plans past the end.
+    @Test
+    @Tag("pool")
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void aFailureOutsideAStageEndsPlanningInsteadOfHangingTheRead() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(InputFile.of(ORDER_AB)), context);
+            iterator.openFirst();
+            iterator.initialize(ReadProjection.of(
+                    ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.all())), null, true);
+            CountDownLatch thrown = new CountDownLatch(1);
+            iterator.whenPlanned(1).whenMet(() -> {
+                thrown.countDown();
+                throw new AssertionError(ERROR_MESSAGE);
+            });
+
+            // Entering the only row group makes the next work item, past the end, the next unit
+            iterator.getColumnPlan(iterator.workItemAt(0), 0);
+            assertThat(thrown.await(10, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(iterator::close)
                     .isInstanceOf(AssertionError.class)
                     .hasMessage(ERROR_MESSAGE);
         }

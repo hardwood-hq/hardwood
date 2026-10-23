@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
@@ -58,10 +59,12 @@ class IndexWindowBloomFilterTest {
         BitSet[] columns = { new BitSet(), column(CODE), column(CODE) };
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, rowGroups().subList(0, 3).toArray(new RowGroup[0]),
                 indexes(3), repeat(new BitSet(), 3), repeat(new BitSet(), 3), columns).getFirst();
+        window.insertEntries(FetchSequence.demandOnly(context));
 
         assertThat(window.bloomFiltersFor(0)).containsOnlyNulls();
         assertThat(file.reads()).isEmpty();
 
+        IndexWindowTest.awaitMet(window.bloomFiltersNeed());
         ByteBuffer first = window.bloomFiltersFor(1)[CODE];
         ByteBuffer second = window.bloomFiltersFor(2)[CODE];
 
@@ -77,6 +80,8 @@ class IndexWindowBloomFilterTest {
         RowGroup withoutLength = withoutBloomFilterLength(rowGroups().get(0), CODE);
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, new RowGroup[] { withoutLength },
                 indexes(1), repeat(new BitSet(), 1), repeat(new BitSet(), 1), repeat(column(CODE), 1)).getFirst();
+        window.insertEntries(FetchSequence.demandOnly(context));
+        assertThat(window.bloomFiltersNeed()).isNull();
 
         ByteBuffer[] fetched = window.bloomFiltersFor(0);
 
@@ -85,6 +90,13 @@ class IndexWindowBloomFilterTest {
         BloomFilter filter = new RowGroupBloomFilterSource(file, withoutLength, fetched).forColumn(CODE);
         assertThat(filter).isNotNull();
         assertThat(file.reads()).isNotEmpty();
+    }
+
+    private final HardwoodContextImpl context = HardwoodContextImpl.create(0);
+
+    @AfterEach
+    void closeContext() {
+        context.close();
     }
 
     private static List<IndexWindow> plan(long budget, List<RowGroup> rowGroups, BitSet[] bloomFilterColumns)

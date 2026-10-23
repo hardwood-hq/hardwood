@@ -7,34 +7,20 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 
-import dev.hardwood.InputFile;
-
-/// Byte ranges a read needs from one [InputFile], merged into as few requests as
-/// [CoalescingPolicy] allows and fetched together, each range then served as a view of the
-/// request that holds it.
-///
-/// The requests are planned when the instance is built, so [#requestCount] and [#fetchedBytes]
-/// are known before anything is read. [#fetch] issues them, once; [#slice] hands out a range.
+/// Byte ranges a read needs from one file, merged into as few requests as [CoalescingPolicy]
+/// allows, each range then served from the request that holds it ([#requestHolding]).
 ///
 /// Ranges that overlap are first joined into extents, so every range lies within exactly one
 /// request and no byte is fetched twice. Consecutive extents, touching ones included, are then
 /// merged under [CoalescingPolicy]: a request spans more than [CoalescingPolicy#MAX_SPAN_BYTES]
 /// only when one extent alone is longer than that, which takes a range longer than that or ranges
 /// overlapping each other across it.
-///
-/// Not thread-safe: callers serialise [#fetch] and the [#slice] calls that follow it through
-/// their own monitor.
 final class CoalescedRanges {
-
-    private static final ByteBuffer[] NOT_FETCHED = new ByteBuffer[0];
 
     private final long[] requestStarts;
     private final long[] requestEnds;
-    private ByteBuffer[] buffers = NOT_FETCHED;
 
     private CoalescedRanges(long[] requestStarts, long[] requestEnds) {
         this.requestStarts = requestStarts;
@@ -45,12 +31,20 @@ final class CoalescedRanges {
         return new Builder();
     }
 
-    /// The number of `readRange` calls [#fetch] issues.
+    /// The number of requests.
     int requestCount() {
         return requestStarts.length;
     }
 
-    /// The bytes [#fetch] reads: the ranges plus the gaps the merges bridge between them.
+    long requestStart(int request) {
+        return requestStarts[request];
+    }
+
+    long requestEnd(int request) {
+        return requestEnds[request];
+    }
+
+    /// The bytes the requests read: the ranges plus the gaps the merges bridge between them.
     long fetchedBytes() {
         long bytes = 0;
         for (int i = 0; i < requestStarts.length; i++) {
@@ -59,48 +53,17 @@ final class CoalescedRanges {
         return bytes;
     }
 
-    /// Issues one `readRange` per request. A failure leaves the instance unfetched, so a later
-    /// call fetches again.
+    /// The request holding the range `[offset, offset + length)`.
     ///
-    /// @throws IllegalStateException if the ranges were already fetched
-    void fetch(InputFile inputFile) throws IOException {
-        if (isFetched()) {
-            throw new IllegalStateException("Ranges already fetched");
-        }
-        ByteBuffer[] fetched = new ByteBuffer[requestStarts.length];
-        for (int i = 0; i < fetched.length; i++) {
-            fetched[i] = inputFile.readRange(requestStarts[i],
-                    Math.toIntExact(requestEnds[i] - requestStarts[i]));
-        }
-        buffers = fetched;
-    }
-
-    boolean isFetched() {
-        return buffers != NOT_FETCHED;
-    }
-
-    /// The bytes `[offset, offset + length)`, as a view of the request holding them.
-    ///
-    /// @throws IllegalStateException if the ranges were not fetched yet
     /// @throws IllegalArgumentException if no request holds the range
-    ByteBuffer slice(long offset, int length) {
-        if (!isFetched()) {
-            throw new IllegalStateException("Ranges not fetched yet");
-        }
-        int request = requestHolding(offset);
+    int requestHolding(long offset, int length) {
+        int found = Arrays.binarySearch(requestStarts, offset);
+        int request = found >= 0 ? found : -found - 2;
         if (request < 0 || offset + length > requestEnds[request]) {
             throw new IllegalArgumentException("No request holds the range [" + offset + ", "
                     + (offset + length) + ")");
         }
-        ByteBuffer buffer = buffers[request];
-        return buffer.slice(buffer.position() + Math.toIntExact(offset - requestStarts[request]),
-                length);
-    }
-
-    /// The last request starting at or before `offset`, or `-1` if there is none.
-    private int requestHolding(long offset) {
-        int found = Arrays.binarySearch(requestStarts, offset);
-        return found >= 0 ? found : -found - 2;
+        return request;
     }
 
     /// Collects the ranges, in any order, and plans the requests for them.

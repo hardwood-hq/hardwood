@@ -14,11 +14,9 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
@@ -78,8 +76,8 @@ class IndexWindowTest {
         CountingInputFile file = countingFile(InputFile.of(FIXTURE));
         IndexWindow window = window(file, 3, column(0), column(0));
 
-        RowGroupIndexBuffers second = window.buffersFor(1);
-        RowGroupIndexBuffers first = window.buffersFor(0);
+        RowGroupIndexBuffers second = buffers(window, 1);
+        RowGroupIndexBuffers first = buffers(window, 0);
 
         assertThat(file.readCount()).isEqualTo(2);
         assertThat(first.forColumn(0).offsetIndex()).isNotNull();
@@ -90,87 +88,50 @@ class IndexWindowTest {
     }
 
     @Test
-    void concurrentRequestsFetchTheWindowOnce() throws Exception {
-        CountDownLatch bothAsked = new CountDownLatch(2);
-        // The fetch waits until both threads have asked, so the second asks while it runs.
+    void aFailedReadFailsEveryMember() throws Exception {
         CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE)) {
             @Override
             public ByteBuffer readRange(long offset, int length) throws IOException {
-                try {
-                    bothAsked.await();
-                }
-                catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException(e);
-                }
-                return super.readRange(offset, length);
+                throw new IOException("injected");
             }
         };
         file.open();
         IndexWindow window = window(file, 2, column(0), new BitSet());
 
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        try {
-            Future<RowGroupIndexBuffers> a = executor.submit(() -> {
-                bothAsked.countDown();
-                return window.buffersFor(0);
-            });
-            Future<RowGroupIndexBuffers> b = executor.submit(() -> {
-                bothAsked.countDown();
-                return window.buffersFor(1);
-            });
-            assertThat(a.get().forColumn(0).offsetIndex()).isNotNull();
-            assertThat(b.get().forColumn(0).offsetIndex()).isNotNull();
-        }
-        finally {
-            executor.shutdownNow();
-        }
-        assertThat(file.readCount()).isEqualTo(1);
+        awaitMet(window.indexNeed());
+
+        assertThatThrownBy(() -> window.buffersFor(0)).isInstanceOf(IOException.class)
+                .rootCause().hasMessage("injected");
+        assertThatThrownBy(() -> window.buffersFor(1)).isInstanceOf(IOException.class)
+                .rootCause().hasMessage("injected");
     }
 
     @Test
-    void aFailedFetchIsRepeatedByTheNextRequest() throws Exception {
-        AtomicBoolean fail = new AtomicBoolean(true);
-        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE)) {
-            @Override
-            public ByteBuffer readRange(long offset, int length) throws IOException {
-                if (fail.getAndSet(false)) {
-                    throw new IOException("injected");
-                }
-                return super.readRange(offset, length);
-            }
-        };
-        file.open();
-        IndexWindow window = window(file, 2, column(0), new BitSet());
-
-        assertThatThrownBy(() -> window.buffersFor(0))
-                .isInstanceOf(IOException.class)
-                .hasMessage("injected");
-        RowGroupIndexBuffers buffers = window.buffersFor(0);
-
-        // The failed attempt threw before reaching the file; the second one read it.
-        assertThat(buffers.forColumn(0).offsetIndex()).isNotNull();
-        assertThat(file.readCount()).isEqualTo(1);
-    }
-
-    @Test
-    void aReleasedMemberIsNotServed() throws Exception {
+    void aWindowIsDroppedOnceEveryMemberIsReleased() throws Exception {
         IndexWindow window = window(countingFile(InputFile.of(FIXTURE)), 2, column(0), new BitSet());
-        window.buffersFor(0);
+        buffers(window, 0);
 
         window.release(0);
-        window.release(0);
 
-        assertThatThrownBy(() -> window.buffersFor(0))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Page index of work item 0 requested after its release");
         assertThat(window.buffersFor(1).forColumn(0).offsetIndex()).isNotNull();
 
-        window.releaseAll();
+        window.release(1);
 
         assertThatThrownBy(() -> window.buffersFor(1))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Page index of work item 1 requested after its release");
+                .hasMessage("Page index of work item 1 is not present: the window was not read, or was released");
+    }
+
+    @Test
+    void closingTheReadDropsTheWindow() throws Exception {
+        IndexWindow window = window(countingFile(InputFile.of(FIXTURE)), 2, column(0), new BitSet());
+        buffers(window, 0);
+
+        window.releaseAll();
+
+        assertThatThrownBy(() -> window.buffersFor(0))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Page index of work item 0 is not present: the window was not read, or was released");
     }
 
     @Test
@@ -182,15 +143,43 @@ class IndexWindowTest {
                 .hasMessage("Work item 2 is not in the index window of work items 0 to 1");
     }
 
-    /// One window over the first `count` row groups of the fixture.
-    private static IndexWindow window(InputFile file, int count, BitSet offsetIndexColumns,
+    /// One window over the first `count` row groups of the fixture, its entries in a sequence that
+    /// starts them on demand.
+    private IndexWindow window(InputFile file, int count, BitSet offsetIndexColumns,
             BitSet columnIndexColumns) throws Exception {
         List<RowGroup> members = rowGroups().subList(0, count);
-        return IndexWindow.plan(Long.MAX_VALUE, file, 0, members.toArray(new RowGroup[0]),
+        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, members.toArray(new RowGroup[0]),
                 indexes(count), repeat(offsetIndexColumns, count), repeat(columnIndexColumns, count),
                 repeat(new BitSet(), count))
                 .getFirst();
+        window.insertEntries(FetchSequence.demandOnly(context));
+        return window;
     }
+
+    /// The index buffers of `workItem`, once the window's page index has arrived: each need names
+    /// one request not present, so it is asked again until none is, as the planning chain does.
+    private static RowGroupIndexBuffers buffers(IndexWindow window, int workItem) throws Exception {
+        for (Need need = window.indexNeed(); need != null; need = window.indexNeed()) {
+            awaitMet(need);
+        }
+        return window.buffersFor(workItem);
+    }
+
+    /// Waits until `need` is met; `null` is met already.
+    static void awaitMet(Need need) throws InterruptedException {
+        if (need != null) {
+            CountDownLatch met = new CountDownLatch(1);
+            need.whenMet(met::countDown);
+            assertThat(met.await(10, TimeUnit.SECONDS)).as("need met").isTrue();
+        }
+    }
+
+    @AfterEach
+    void closeContext() {
+        context.close();
+    }
+
+    private final HardwoodContextImpl context = HardwoodContextImpl.create(0);
 
     private static List<IndexWindow> plan(long budget, List<RowGroup> rowGroups,
             BitSet offsetIndexColumns, BitSet columnIndexColumns) throws Exception {

@@ -64,9 +64,11 @@ class MetadataParseThreadTest {
         }
 
         assertThat(rows).isEqualTo(20);
-        assertThat(computed).extracting(Computed::what).contains("footer", "page filter", "fetch plans");
+        // The second file's footer is parsed by the read's planning chain, in place on the pool;
+        // the rest of planning runs there too, with no computation handed over
+        assertThat(computed).extracting(Computed::what).contains("footer");
         assertRanOnThePool();
-        assertThat(computed).as("computations a fetch step ran in place").anySatisfy(
+        assertThat(computed).as("computations the planning chain ran in place").anySatisfy(
                 c -> assertThat(c.caller()).isSameAs(c.runner()));
     }
 
@@ -88,7 +90,6 @@ class MetadataParseThreadTest {
         }
 
         assertThat(rows).isZero();
-        assertThat(computed).extracting(Computed::what).contains("dictionary check");
         assertRanOnThePool();
     }
 

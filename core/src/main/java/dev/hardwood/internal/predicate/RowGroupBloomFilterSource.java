@@ -14,6 +14,8 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
+import dev.hardwood.internal.reader.ByteSource;
+import dev.hardwood.internal.reader.Parsed;
 import dev.hardwood.internal.thrift.BloomFilterHeaderReader;
 import dev.hardwood.internal.thrift.BloomFilterReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -39,6 +41,8 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     private static final int HEADER_PROBE_BYTES = 64;
 
     private final InputFile inputFile;
+    /// Where a filter the read has not fetched is read from.
+    private final ByteSource bytes;
     private final RowGroup rowGroup;
     /// Per-column filter bytes fetched ahead of this source, or `null` for a column read from the
     /// file.
@@ -59,12 +63,19 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     ///        bloom_filter_length)` of its filter where the read fetched them, `null` elsewhere
     /// @throws IllegalArgumentException if `fetched` does not have one entry per column
     public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup, ByteBuffer[] fetched) {
+        this(inputFile, ByteSource.of(inputFile), rowGroup, fetched);
+    }
+
+    /// As [#RowGroupBloomFilterSource(InputFile, RowGroup, ByteBuffer[])], reading a filter not
+    /// fetched from `bytes`.
+    public RowGroupBloomFilterSource(InputFile inputFile, ByteSource bytes, RowGroup rowGroup, ByteBuffer[] fetched) {
         int columnCount = rowGroup.columns().size();
         if (fetched.length != columnCount) {
             throw new IllegalArgumentException("Expected fetched bloom filter bytes for "
                     + columnCount + " columns, got " + fetched.length);
         }
         this.inputFile = inputFile;
+        this.bytes = bytes;
         this.rowGroup = rowGroup;
         this.fetched = fetched;
         this.filters = new BloomFilter[columnCount];
@@ -89,18 +100,24 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             return null;
         }
         if (!read[columnIndex]) {
-            filters[columnIndex] = readFilter(columnIndex);
+            Parsed<BloomFilter> filter = readFilter(columnIndex);
+            if (filter.needsBytes()) {
+                // No filter for this evaluation, and none recorded: once `bytes` holds it, the next
+                // evaluation reads it
+                return null;
+            }
+            filters[columnIndex] = filter.value();
             read[columnIndex] = true;
         }
         return filters[columnIndex];
     }
 
-    private BloomFilter readFilter(int columnIndex) throws IOException {
+    private Parsed<BloomFilter> readFilter(int columnIndex) throws IOException {
         ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
         ColumnMetaData metaData = columnChunk.metaData();
         Long offset = metaData.bloomFilterOffset();
         if (offset == null) {
-            return null;
+            return Parsed.of(null);
         }
         // The offset addresses the file named by file_path, not this one. Pruning on whatever
         // sits there would drop row groups that match.
@@ -113,11 +130,11 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             LOG.get().log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
                     + "Ignoring invalid bloom_filter_offset " + offset
                     + "; keeping the row group (statistics still apply)");
-            return null;
+            return Parsed.of(null);
         }
         try {
             if (fetched[columnIndex] != null) {
-                return BloomFilterReader.read(new ThriftCompactReader(fetched[columnIndex]));
+                return Parsed.of(BloomFilterReader.read(new ThriftCompactReader(fetched[columnIndex])));
             }
             return readFilter(offset, metaData.bloomFilterLength());
         }
@@ -133,7 +150,7 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             LOG.get().log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
                     + "Cannot evaluate the bloom filter: " + e.getMessage()
                     + "; keeping the row group (statistics still apply)");
-            return null;
+            return Parsed.of(null);
         }
     }
 
@@ -148,28 +165,38 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
     /// Reads the filter at `offset`. When `length` is known the whole region is read in one call;
     /// otherwise the header is probed first to derive the total length.
-    private BloomFilter readFilter(long offset, Integer length) throws IOException {
+    private Parsed<BloomFilter> readFilter(long offset, Integer length) throws IOException {
         if (length != null) {
-            ByteBuffer buffer = inputFile.readRange(offset, length);
-            return BloomFilterReader.read(new ThriftCompactReader(buffer));
+            return parse(offset, length);
         }
         // Legacy writers omit bloom_filter_length. Over-read a fixed window — large enough to
         // hold the header (a fixed-shape struct: an i32 plus three single-variant unions, ~19
         // bytes at most), clamped so it never runs past EOF — and parse just the header to learn
         // the region's total length.
         int probe = Math.toIntExact(Math.min(fileLength() - offset, HEADER_PROBE_BYTES));
-        ByteBuffer window = inputFile.readRange(offset, probe);
+        ByteBuffer window = bytes.read(offset, probe);
+        if (window == null) {
+            return Parsed.need(offset, probe);
+        }
         ThriftCompactReader windowReader = new ThriftCompactReader(window);
         BloomFilterHeader header = BloomFilterHeaderReader.read(windowReader);
         int totalLength = Math.addExact(windowReader.getBytesRead(), header.numBytes());
         if (totalLength <= probe) {
             // The probe window already covers the whole filter; slice the bitset straight from
             // where the header parse ended, reusing the parsed header instead of decoding it again.
-            return BloomFilterReader.readBitset(header, windowReader);
+            return Parsed.of(BloomFilterReader.readBitset(header, windowReader));
         }
         // The bitset extends past the probe window: re-fetch the exact region and parse it in full.
-        ByteBuffer buffer = inputFile.readRange(offset, totalLength);
-        return BloomFilterReader.read(new ThriftCompactReader(buffer));
+        return parse(offset, totalLength);
+    }
+
+    /// Parses the filter of `length` bytes at `offset`, or returns the range when the source
+    /// does not hold it.
+    private Parsed<BloomFilter> parse(long offset, int length) throws IOException {
+        ByteBuffer buffer = bytes.read(offset, length);
+        return buffer == null
+                ? Parsed.need(offset, length)
+                : Parsed.of(BloomFilterReader.read(new ThriftCompactReader(buffer)));
     }
 
     /// File length, fetched at most once. Only the legacy length-absent path needs it, so it is

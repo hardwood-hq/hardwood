@@ -22,7 +22,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
@@ -102,13 +101,11 @@ class FileMetadataCacheTest {
         }
     }
 
-    /// A thread of the pool that waits for a load a thread off the pool registered runs the load's
-    /// parse in place: the waiting thread is the pool's only one, so a parse handed to the pool
-    /// would never run.
-    @Tag("pool")
+    /// The read's planning chain never waits for a footer: a load another thread has registered is
+    /// a need, met once the load completes, after which the chain takes the file without waiting.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void aPoolThreadWaitingForALoadRegisteredOffThePoolRunsItsParse() throws Exception {
+    void theChainYieldsOnALoadAnotherThreadRegistered() throws Exception {
         LatchInputFile inputFile = LatchInputFile.blocked(LATER_FILE);
         HardwoodContextImpl context = HardwoodContextImpl.create(1);
         contexts.add(context);
@@ -117,20 +114,18 @@ class FileMetadataCacheTest {
         try (ExecutorService callers = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<FileMetaData> offPool = callers.submit(() -> cache.getFileMetaData(0));
             assertThat(inputFile.awaitFooterRead()).isTrue();
-            AtomicReference<Thread> poolThread = new AtomicReference<>();
-            Future<PreparedFile> onPool = context.executor().submit(() -> {
-                poolThread.set(Thread.currentThread());
-                return cache.getFile(0);
-            });
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
-            while (poolThread.get() == null || poolThread.get().getState() != Thread.State.WAITING) {
-                assertThat(System.nanoTime()).as("the pool thread waits for the load").isLessThan(deadline);
-                Thread.sleep(1);
-            }
-            inputFile.releaseFooterRead();
 
+            Need need = cache.fileNeed(0);
+            assertThat(need).as("the load under way").isNotNull();
+            CountDownLatch met = new CountDownLatch(1);
+            need.whenMet(met::countDown);
+            assertThat(met.getCount()).as("met before the load completes").isOne();
+
+            inputFile.releaseFooterRead();
             FileMetaData metadata = offPool.get(WAIT_SECONDS, TimeUnit.SECONDS);
-            assertThat(onPool.get(WAIT_SECONDS, TimeUnit.SECONDS).metaData()).isSameAs(metadata);
+            assertThat(met.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+            assertThat(cache.fileNeed(0)).isNull();
+            assertThat(cache.getFile(0).metaData()).isSameAs(metadata);
         }
         finally {
             inputFile.releaseFooterRead();

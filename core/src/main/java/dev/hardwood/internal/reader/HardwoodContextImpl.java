@@ -12,7 +12,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -304,19 +303,6 @@ public class HardwoodContextImpl implements HardwoodContext {
     /// context's pool, or the context has none.
     boolean runsInPlace() {
         return executor == null || poolThreads.contains(Thread.currentThread());
-    }
-
-    /// Runs `task`, work a thread off the pool waits for and another thread may run as well, on
-    /// the context's pool, at the head of its queue, and waits for its result.
-    ///
-    /// @throws IllegalStateException if the context is closed
-    <T> T awaitFirst(FutureTask<T> task) {
-        try {
-            return decodeExecutor.awaitFirst(task);
-        }
-        catch (RejectedExecutionException e) {
-            throw ScheduledColumn.contextClosed(e);
-        }
     }
 
     /// Checks that the calling thread is not one of the context's pool: a read, and a decode it

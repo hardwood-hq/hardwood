@@ -20,11 +20,9 @@ import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.reader.ParquetReadException;
 
-/// The tasks one [RowGroupIterator]'s read starts on one executor: on the context's I/O executor
-/// ([HardwoodContextImpl#ioExecutor()]), every read of a file not in memory ([RangeRead]), demand
-/// reads a fetch step yields on as well as the speculative ones (the next row group's index
-/// window and first chunk, the one-ahead chunk and region prefetches); at the tail of the read's
-/// executor ([ReadExecutor#executePlanning]), the next row group's planning.
+/// The reads one [RowGroupIterator]'s read starts on the context's I/O executor
+/// ([HardwoodContextImpl#ioExecutor()]): every read of a file not in memory ([RangeRead]), demand
+/// reads a step yields on as well as speculative ones.
 ///
 /// Each reads the input file, so whoever closes the file must first wait for the ones already
 /// running. [#awaitAll()] stops admitting new tasks, makes those not yet started skip their work
@@ -35,18 +33,12 @@ import dev.hardwood.reader.ParquetReadException;
 /// reaches the step waiting for it, and a speculative read's leaves its bytes to a demand read.
 /// Any other task's failure does not fail the read, since the demand path repeats the work and
 /// reports what fails there ([#report]). [#awaitAll()] rethrows an `Error` a task raised, and one
-/// a read or a work item's planning failed with that no step took ([#recordUntaken]).
-///
-/// The tasks on the I/O executor include the planning of the work items of a read whose files are
-/// not in memory ([WorkItemPlanning]), which waits for the planning's reads.
+/// a read failed with that no step took ([#recordUntaken]).
 public final class PrefetchTasks {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(PrefetchTasks.class.getName()));
 
     private final Executor executor;
-    /// The read's queue the tasks run on, which [#awaitAll()] runs while it waits; `null` for an
-    /// executor with threads of its own.
-    private final ReadQueue queue;
     private final Set<CompletableFuture<Void>> running = ConcurrentHashMap.newKeySet();
     /// Written under `this`, so no task is admitted after [#awaitAll()] has taken its snapshot;
     /// read by each task as it starts.
@@ -68,17 +60,6 @@ public final class PrefetchTasks {
     /// @param executor where the tasks run
     public PrefetchTasks(Executor executor) {
         this.executor = executor;
-        this.queue = null;
-    }
-
-    /// The planning a read runs ahead of its columns, at the tail of its executor
-    /// ([ReadExecutor#executePlanning]).
-    ///
-    /// @param readExecutor the read's executor; where it is the read's own queue, [#awaitAll()]
-    ///        runs the queue while it waits for the tasks
-    PrefetchTasks(ReadExecutor readExecutor) {
-        this.executor = readExecutor::executePlanning;
-        this.queue = readExecutor instanceof ReadQueue readQueue ? readQueue : null;
     }
 
     /// Runs `task` on the executor, carrying the caller's [FetchReason], unless
@@ -171,10 +152,6 @@ public final class PrefetchTasks {
             started = List.copyOf(running);
         }
         for (CompletableFuture<Void> future : started) {
-            if (queue != null) {
-                // Nothing else may run the read's queue: the task runs here, dropping its work
-                queue.tasks().await(future::isDone, queue);
-            }
             // A task catches its own failures, so the join returns normally.
             future.join();
         }
