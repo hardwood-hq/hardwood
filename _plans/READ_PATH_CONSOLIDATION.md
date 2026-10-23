@@ -312,7 +312,11 @@ re-reads become steps that insert their longer entries (rule 5).
 
 The decision to start it is taken after stage 2, on its measures: stage 3 is expected to remove
 about 450 lines and add a comparable amount, and pays only if the constructs and the modes it
-removes outweigh that. Two questions are settled in it if it runs:
+removes outweigh that. Weighed with the lines: after stage 3, virtual threads run only the
+blocking `InputFile.readRange` of an entry in flight, which holds no lock and does no CPU work.
+Planning on virtual threads is what needs today's workarounds: the planning modes, the `compute`
+hops that send planning CPU back to the pool, the footer-parse hand-off, and `OnceCache` and
+`ReentrantLock`s in place of monitors so that JDK 21 does not pin a carrier. Two questions are settled in it if it runs:
 
 - Whether a dictionary parse whose buffers exceed `DecodeBuffers.RETAINED_BYTES` still needs
   admission to R beside the read's own task, or W alone bounds it.
