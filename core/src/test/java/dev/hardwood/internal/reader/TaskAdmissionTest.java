@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -176,6 +177,7 @@ class TaskAdmissionTest {
     /// one ending resumes the other's submission on its thread. Every submission of read A made
     /// while a release runs the waiters fails: A ends with the failure, and B reads every row.
     @Test
+    @Tag("pool")
     void failureResumingOneReadDoesNotReachAnother(@TempDir Path dir) throws Exception {
         System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Integer.toString(40 * 1024 * 1024));
         int pageValues = 5 * 1024 * 1024;
