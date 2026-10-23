@@ -208,9 +208,8 @@ other shape is kept.
   starts wait on their caller.
 - A `MetadataSource` call and S3's `InputFile.open()` (whose suffix GET reads the footer) block;
   they run as footer entries on virtual threads of the I/O executor.
-- `PageIterator` and the CLI's direct calls (`DictionaryParser.readPage`,
-  `RowGroupIndexBuffers.fetch`, `PageFormatProbe`) keep blocking variants for callers outside a
-  read.
+- The CLI's direct calls (`DictionaryParser.readPage`, `RowGroupIndexBuffers.fetch`,
+  `PageFormatProbe`) keep blocking variants for callers outside a read.
 - Until stage 3, planning waits for its entries: on a virtual thread on a pool, and on the thread
   driving the read on a context of zero threads, as today (#1649). Goal 2's last point holds for
   planning only after stage 3.
@@ -321,6 +320,8 @@ Its PRs, in order:
    its chunk, as `SequentialFetchPlan`'s walk does today: a page straddling the cut between two
    entries is copied from both into one buffer, at most once per cut, and under a row limit the
    rest of the chunk is inserted as a demanded entry only when the walk reaches it.
+   `FetchPlan.pages()` and `PageIterator` go with the walk they wrap: no main code calls them,
+   and the tests and benchmarks that walk a plan with them move to driving the sequence.
 2. **Footers.** Footer reads, `MetadataSource` calls and S3's open become footer entries, with the
    files-ahead rule. This replaces `FileOpenAhead`'s footers and `FileMetadataCache`'s prefetch
    maps. #1399 lands here, after #1629, through an internal interface in core that `S3InputFile`
