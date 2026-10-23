@@ -37,7 +37,8 @@ size the mechanism.
    plan before the PR continues.
 6. **Iteration stays fast:** a gate of the build plus seconds per PR, minutes per stage.
 7. **Building out remote reads changes parameters, not mechanisms.**
-8. **Complexity measurably drops:** see [Measures](#measures).
+8. **Complexity measurably drops:** one mechanism per concern (stage 3's decision rule), with the
+   lines and constructs of [Measures](#measures) reported alongside.
 
 ## Where the complexity is
 
@@ -279,7 +280,7 @@ not cover. Each PR updates the design documents its change alters (`READ_PIPELIN
 | 0 | Gate script, measures script, baseline | — | low |
 | 1 | Deletions and moves | dead code, hand-written waits, `RowGroupIterator` down to its work list | low |
 | 2 | The fetch sequence | `SharedRegion`, `CoalescableFirstChunk`, the chunk chains, `FetchedAhead`, `FileOpenAhead`, `plannedSpan`, `prefetchNextRowGroup`, `RangeRead.servedBy`, the `FileMetadataCache` prefetch maps | medium |
-| 3 | Planning as steps, with planning reads as entries (go/no-go) | `PlanningMode`, `WorkItemPlanning`, the planning `PrefetchTasks`, `executePlanning`, the planning `compute` hops, the load hand-off, `awaitFirst`, `CoalescedRanges`, the next unit's read on a virtual thread of its own | high |
+| 3 | Planning as steps, with planning reads as entries (go/no-go) | `PlanningMode`, `WorkItemPlanning`, `OnceCache`, `LazyMaskCapability`, `planLock`, the planning `PrefetchTasks`, the planning `compute` hops, the load hand-off, `awaitFirst`, the next unit's read on a virtual thread of its own | high |
 | 4 | Fold into the design documents | this plan | low |
 
 Stages run in order, one PR each or more, every commit keyed to #1662. Stopping after stage 2 is
@@ -357,34 +358,107 @@ smallest of 2 S, 3 S and 4 S that is not.
 
 ### Stage 3: planning as steps (go/no-go)
 
-The planning chain becomes steps that yield on entries, on the pool or the read's queue, so
-planning no longer needs a virtual thread. Its reads become entries first: the Bloom window,
-pruning dictionaries, page-index window and mask probe, at the positions above. This replaces
-`CoalescedRanges` and the direct `readRange` calls of `IndexWindow`, `DictionaryParser`,
-`RowGroupBloomFilterSource` and `PageFormatProbe` within a read; their blocking variants stay for
-callers outside a read. #1659 lands here: a page-index window is inserted once a member survives
-its Bloom filters and dictionaries, so a window whose members they all drop costs no index read.
-These reads were stage 2's third item. They move here because, while planning blocks, an entry
-for a planning read only adds a wait on it where `readRange` waits today; as an entry a step
-yields on, it removes the wait and the next unit's read on a virtual thread of its own. This removes `PlanningMode`, `WorkItemPlanning`, the
-planning `PrefetchTasks`, `executePlanning`, the planning `compute` hops,
-`FileMetadataCache`'s load hand-off and `DecodeExecutor.awaitFirst`, and checks whether
-`OnceCache` and the `ReentrantLock`s still need their JDK 21 reasons. The probes' adaptive
-re-reads become steps that insert their longer entries (rule 5).
+The planning chain becomes one step on the read's executor, and planning stops reading the file
+itself: every byte planning needs is an entry of the sequence, and every parse of file structure is
+a function of the bytes the read holds. Planning then needs no thread of its own, and the
+mechanisms that work around a blocking planner go. #1659 lands here.
 
-The decision to start it is taken after stage 2, by a spike of at most one day: stage 3 starts
-if the spike removes both remaining planning modes and at least 15 concurrency constructs, at a
-net of no more lines than today. Weighed with the lines: after stage 3, virtual threads run only the
-blocking `InputFile.readRange` of an entry in flight, which holds no lock and does no CPU work.
-Planning on virtual threads is what needs today's workarounds: the planning modes, the `compute`
-hops that send planning CPU back to the pool, the footer-parse hand-off, and `OnceCache` and
-`ReentrantLock`s in place of monitors so that JDK 21 does not pin a carrier.
+The rules below are the spike's specification, as settled with the maintainer during the spike. A
+decision a later PR forces that they do not settle is written here before it continues.
 
-Two questions are settled in it if it runs:
+**Planning reads as entries.**
 
-- Whether a dictionary parse whose buffers exceed `DecodeBuffers.RETAINED_BYTES` still needs
-  admission to R beside the read's own task, or W alone bounds it.
-- Whether the bookkeeping that raises an untaken `Error` exactly once can go.
+- **S1. Kinds and starts.** A row group's planning entries are its Bloom window's, its pruning
+  dictionaries', its page-index window's and its mask probe's. The chain inserts each when a stage
+  needs it and demands it at once; planning entries are never speculative, so they are outside F
+  and uncharged to R. The chain's depth (rule 7) and the index-window budget bound what they hold.
+  A row group's pruning dictionaries are read one at a time, as the filter's fold reaches each
+  leaf a dictionary can decide, so a dictionary the fold never reaches is never read.
+- **S2. One holder.** `PlanningReads` holds every planning entry of one file: a window's requests,
+  inserted as the file is planned and held by every member, and a work item's dictionary pages,
+  filters without a length and probes, held by the work item. A range inside the file's tail, or
+  of a file in memory, is sliced in place and needs no entry. Entries are released with the work
+  items holding them, or on close. A window's slices are merged into requests by
+  `CoalescedRanges`, which only plans them.
+- **S3. Page-index windows (#1659).** A window's page-index requests start when the chain plans
+  the first member its Bloom filters and dictionaries keep. A window whose members are all dropped
+  costs no index read.
+- **S4. Sans-I/O parses.** The Bloom filter, dictionary page and page-format probe parses read
+  through a `ByteSource` and never read the file: a range the source does not hold is `null`, and
+  the parse returns the range it needs (`Parsed`). Within a read the source is the read's
+  `PlanningReads`; outside one (the CLI's calls) it reads the file and holds every range, so one
+  parser serves both. A parse that finds its bytes short (a Bloom filter without a length, a
+  dictionary page longer than its opening read, a probe's longer peek) returns the longer range,
+  which is rule 5.
+
+**Planning as a step.**
+
+- **S5. One chain.** Each read has one planning chain, run as a step under one claim. It plans
+  work items once each, in work-list order, files included, through stages: the file's footer and
+  plan for a file's first work item, Bloom filters and dictionaries, page index and page filter,
+  the mask probe when its plans would apply a mask, and the plans. Each work item's planned state
+  is written once, by the chain, before it is published planned, and read without a lock after.
+- **S6. Need and resume.** A stage that needs what the read does not hold returns it: a footer's
+  read or another read's load of it, a window's entries, a range of the file. The chain demands it,
+  registers to run again once it is met, and lets its thread go, keeping the claim. It resumes by
+  running the stage again over what the read now holds. The dictionary fold keeps each leaf's
+  decision once final, so no dictionary check runs twice. A filter or dictionary not held yet
+  counts as absent for one evaluation: a drop stands, a keep is evaluated again once the first
+  range the evaluation missed has arrived; the fold reaches the same leaves in the same order as a
+  blocking read would, so it reads the same dictionaries.
+- **S7. Where it runs.** On the read's executor: at the tail while it plans ahead, at the head
+  while a column or caller waits for it, and in place by a fetch step that needs a work item
+  planned and finds the chain idle. A read of files in memory, whose chain never waits, therefore
+  plans on the step, as it did with planning modes. Planning CPU runs where the chain runs, so the
+  planning `compute` hops go; a footer a caller outside a read loads keeps its hop.
+- **S8. Depth, not modes.** `PlanningMode` goes. The chain plans the work items the columns asked
+  for, the read's next unit, and further as rule 7 allows: past the next unit by F for a read of
+  files not all in memory without a row limit, and no next unit at all for a read of files in
+  memory on a context of zero threads.
+- **S9. Columns and callers wait for one cursor per stage.** A column waits for "work item i
+  planned", a need the sequence keeps. A caller outside the read that needs a work item taken only
+  part of the way before the read starts (`workItemAt`, `getWorkItems`, `hasLiveWorkItem`,
+  `canFastSkipAllRowGroups`) asks for it to be taken through a stage (listed, arrival, mask) and
+  waits for that stage's published cursor: parked on a pool, running the read's queue on a
+  context of zero threads.
+- **S10. Reaching a file.** The sequence alone decides when the read has reached a file: the file
+  of the work item a column asks for, of the read's next unit, or a file listed for a caller. It
+  learns each listed work item's file from the chain, and a file the chain is listing for a work
+  item that becomes the next unit later is reached then. Reaching a file moves the footers ahead
+  (rule 4) and commits the file's `RowGroupFilterEvent`.
+- **S11. Footers.** The chain takes a footer without waiting: it yields on the footer's read, or on
+  another thread's load of it, and once the footer has been read loads it in place. A caller
+  outside a read registers the load itself and waits for it, so a close waits for that load.
+- **S12. Priority.** A demanded entry starts at once (rule 1); the next unit's planning entries
+  start only when the first column enters the row group before it (rule 2), after that row group's
+  data entries are demanded or started; planning past the next unit is bounded by rule 7. Nothing
+  preempts a request in flight, and a fetch step's work runs at the head of the executor while the
+  chain planning ahead runs at its tail.
+- **S13. Failure and close.** A failure planning a file or a work item ends planning there: the
+  work item it hit and every one after it take the same instance, and so do the columns that reach
+  them. A planning entry fails once, ahead of demand or not; it is not read again (a transient
+  failure of a planning read ahead of demand fails the read at that row group, where stage 2 read
+  it again). An `Error` that ended planning and that no column took is raised once, by close. A
+  pruning dictionary keeps its admission to R beside the read's own task. Close ends the chain,
+  waits for a step of it that runs, and discards the planning entries.
+
+**Decision rule.** Stage 3 starts if the spike reduces every concern below to one mechanism, or
+to two where the table says why, with every gate passing. Lines and constructs are reported, not
+gated.
+
+| Concern | Stage 2 | After the spike |
+| --- | --- | --- |
+| Issue a byte request | sequence entries, `CoalescedRanges`, `readRange` in `DictionaryParser`, `RowGroupBloomFilterSource`, `PageFormatProbe` and the footer read | sequence entries |
+| Plan a row group | on demand on a virtual thread or the step, ahead, the next unit's read, two caller paths | the chain |
+| Keep a row group's planned state | three `OnceCache`s, the plannings map, the next-unit set | one `Planning` per work item |
+| Wait for planning | `WorkItemPlanning`, blocking `OnceCache`, the load's join and hand-off, `IndexWindow`'s lock | a need for steps, `ReadTasks` for callers |
+| Run planning CPU on the pool | four `compute` hops, `awaitFirst`, the hand-off | where the chain runs |
+| Fail planning | sticky for files, re-planned for row groups, swallowed ahead, untaken `Error`s | sticky, one instance |
+| Order planning | `planLock`, `IndexWindow`'s lock, `OnceCache`, the chain's claim | the chain's claim |
+| Get a footer | the load, the read ahead, the hand-off, `awaitFirst` | the chain's need and a caller's load (a caller may block, the chain may not) |
+| Decide the read has reached a file | the planning lock's callers | the sequence |
+
+The spike measured 5,719 lines of code and 76 concurrency constructs, against stage 2's 5,401 and 86.
 
 ### Stage 4: fold into the design documents
 
