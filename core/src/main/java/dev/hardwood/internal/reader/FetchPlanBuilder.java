@@ -186,7 +186,8 @@ public final class FetchPlanBuilder {
         if (entries == null) {
             ranges.sort(Comparator.comparingLong(Range::start));
             entries = sequence.insert(workItem.workItemIndex(), inputFile,
-                    coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan));
+                    coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan,
+                            TailedInputFile.tailOffset(inputFile)));
         }
         for (Extent extent : extents) {
             ColumnRead read = reads[extent.column()];
@@ -290,7 +291,8 @@ public final class FetchPlanBuilder {
                 ranges.add(new Range(extent.column(), piece, Math.min(extent.end(), piece + maxSpan)));
             }
         }
-        return coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan);
+        return coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan,
+                TailedInputFile.tailOffset(workItem.inputFile()));
     }
 
     /// What one decoded column of a row group reads: an indexed column its needed pages and
@@ -363,8 +365,13 @@ public final class FetchPlanBuilder {
     /// the span before it when [CoalescingPolicy#merges] allows, so a span bridges gaps of at most
     /// G and is at most S long unless one range alone is longer. Each span is held by every column
     /// whose extent overlaps it, and its reason names every column whose range it holds.
+    ///
+    /// No span crosses `tailOffset`, where the tail the file's footer entry read begins
+    /// ([TailedInputFile]): a span inside the tail is sliced from it, so a range that straddles
+    /// the tail's start is cut there, and the part before it is all that is requested.
     static List<FetchSequence.Span> coalesce(List<Range> ranges, Extent[] extents, String[] names,
-                                             int rowGroupIndex, int maxSpan) {
+                                             int rowGroupIndex, int maxSpan, long tailOffset) {
+        ranges = cutAt(ranges, tailOffset);
         List<FetchSequence.Span> spans = new ArrayList<>();
         int firstExtent = 0;
         long start = -1;
@@ -373,7 +380,8 @@ public final class FetchPlanBuilder {
         List<Integer> servedOrder = new ArrayList<>();
         for (int i = 0; i <= ranges.size(); i++) {
             Range range = i < ranges.size() ? ranges.get(i) : null;
-            if (range != null && start >= 0 && CoalescingPolicy.merges(start, end, range.start(), range.end(), maxSpan)) {
+            if (range != null && start >= 0 && CoalescingPolicy.merges(start, end, range.start(), range.end(), maxSpan)
+                    && (start >= tailOffset || range.end() <= tailOffset)) {
                 end = Math.max(end, range.end());
             }
             else {
@@ -407,6 +415,20 @@ public final class FetchPlanBuilder {
             }
         }
         return spans;
+    }
+
+    /// `ranges`, in offset order, with the one that straddles `offset` cut in two there.
+    private static List<Range> cutAt(List<Range> ranges, long offset) {
+        for (int i = 0; i < ranges.size(); i++) {
+            Range range = ranges.get(i);
+            if (range.start() < offset && range.end() > offset) {
+                List<Range> cut = new ArrayList<>(ranges);
+                cut.set(i, new Range(range.column(), range.start(), offset));
+                cut.add(i + 1, new Range(range.column(), offset, range.end()));
+                return cut;
+            }
+        }
+        return ranges;
     }
 
     /// The names of the columns `reads` holds, by decoded column.

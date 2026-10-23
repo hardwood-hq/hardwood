@@ -37,7 +37,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// `tail-only.parquet` likewise except for the suffix range.
 class S3FetcherStatusTest {
 
-    private static final int OBJECT_SIZE = 200 * 1024;
+    /// Larger than the open-time suffix, so a range read at `100_000` lies outside it.
+    private static final int OBJECT_SIZE = 1024 * 1024;
     private static final String ACCESS_DENIED = "<Error><Code>AccessDenied</Code></Error>";
 
     private final byte[] object = new byte[OBJECT_SIZE];
@@ -88,7 +89,8 @@ class S3FetcherStatusTest {
         int from = 0;
         int status = 200;
         if (range != null && range.startsWith("bytes=-") && !ignoreSuffixRange) {
-            from = OBJECT_SIZE - Integer.parseInt(range.substring("bytes=-".length()));
+            // A suffix longer than the object returns the whole object, as S3 answers it
+            from = Math.max(0, OBJECT_SIZE - Integer.parseInt(range.substring("bytes=-".length())));
             status = 206;
             exchange.getResponseHeaders().add("Content-Range",
                     "bytes " + from + "-" + (OBJECT_SIZE - 1) + "/" + OBJECT_SIZE);

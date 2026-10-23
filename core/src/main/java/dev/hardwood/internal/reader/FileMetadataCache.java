@@ -31,22 +31,23 @@ import dev.hardwood.schema.FileSchema;
 /// Lazily opens input files and caches each parsed footer for one
 /// [dev.hardwood.reader.ParquetFileReader].
 ///
-/// A footer a caller asks for is loaded on the caller's thread, and the load registers first, so
-/// a later request for the same file joins it and [#close()] waits for it. [#prefetch] reads a
-/// footer ahead of the read on the context's I/O executor, as far as I/O goes
-/// ([ParquetMetadataReader#readFooter]); the load of that file then parses what it read. A
-/// caller of the load may be a task of the context's pool, which must not wait for a parse
-/// queued behind it on that pool, so the prefetch does no parsing. A prefetch that failed and
-/// that no load took is reported by [#close()], as [PrefetchTasks] reports a failed task.
+/// Each file has one footer entry: the read of its footer, which opens the file and takes its tail
+/// ([ParquetMetadataReader#readFooter]), and the load that parses it. A footer a caller asks for is
+/// loaded on the caller's thread, and the load registers first, so a later request for the same
+/// file joins it and [#close()] waits for it. [#prefetch] starts the read ahead of the load on the
+/// context's I/O executor; the load of that file then parses what it read. A caller of the load
+/// may be a task of the context's pool, which must not wait for a parse queued behind it on that
+/// pool, so the read does no parsing. A read's failure is kept by its entry and raised by the load
+/// of the file, when a read reaches it; a failed read that no load took is reported by
+/// [#close()], as [PrefetchTasks] reports a failed task.
 public final class FileMetadataCache {
 
     private final List<InputFile> inputFiles;
     private final MetadataSource metadataSource;
     private final HardwoodContextImpl context;
     private final Object lifecycleLock = new Object();
-    private final Map<Integer, Load> loads = new HashMap<>();
-    /// Footer reads [#prefetch] started that no load has taken yet. Guarded by `lifecycleLock`.
-    private final Map<Integer, CompletableFuture<OpenedFooter>> prefetched = new HashMap<>();
+    /// The footer entries, by file. Guarded by `lifecycleLock`.
+    private final Map<Integer, Footer> footers = new HashMap<>();
     private final CompletableFuture<Void> closeCompletion = new CompletableFuture<>();
     private boolean closeStarted;
 
@@ -64,10 +65,12 @@ public final class FileMetadataCache {
     /// Seeds the first file's footer, already loaded by the owning
     /// [dev.hardwood.reader.ParquetFileReader], so that opening the reader and
     /// inspecting index `0` never load it twice.
-    public FileMetadataCache(List<InputFile> inputFiles, FileFooter firstFileFooter,
+    ///
+    /// @param firstFile the first file as its footer read left it, with its tail
+    public FileMetadataCache(List<InputFile> inputFiles, InputFile firstFile, FileFooter firstFileFooter,
                              HardwoodContextImpl context) {
         this(inputFiles, context);
-        loads.put(0, Load.of(PreparedFile.of(this.inputFiles.getFirst(), firstFileFooter)));
+        footers.put(0, Footer.of(PreparedFile.of(firstFile, firstFileFooter)));
     }
 
     List<InputFile> inputFiles() {
@@ -75,8 +78,8 @@ public final class FileMetadataCache {
     }
 
     /// Whether a [MetadataSource] supplied the footers rather than each being read from its file.
-    /// It supplies every file's footer or none: [ParquetMetadataReader#load] takes the footer from
-    /// a source it is given and fails the file when the source returns none.
+    /// It supplies every file's footer or none: [ParquetMetadataReader#readFooter] takes the footer
+    /// from a source it is given and fails the file when the source returns none.
     boolean footersSupplied() {
         return metadataSource != ParquetMetadataReader.FROM_FILE;
     }
@@ -87,7 +90,7 @@ public final class FileMetadataCache {
 
     /// Gets a prepared file, loading it on the calling thread unless a load is registered, which
     /// it waits for. A thread of the context's pool that waits for a load runs the load's parse
-    /// in place unless a thread has started it ([Load]).
+    /// in place unless a thread has started it ([Footer]).
     ///
     /// A failed load arrives twice-wrapped and leaves as neither. The loader cannot
     /// declare `IOException`, since its outcome goes to every caller through a future, so it wraps;
@@ -95,16 +98,25 @@ public final class FileMetadataCache {
     /// [CompletionException]. This is the frame that can say what went wrong, so
     /// both are undone here and the original failure is what a caller catches.
     PreparedFile getFile(int fileIndex) throws IOException {
-        Registration registration = registerLoad(fileIndex);
-        Load load = registration.load();
-        if (registration.isNew()) {
-            load(fileIndex, load);
+        Footer footer;
+        boolean loads;
+        synchronized (lifecycleLock) {
+            if (closeStarted) {
+                throw new IllegalStateException("FileMetadataCache is closed");
+            }
+            Objects.checkIndex(fileIndex, inputFiles.size());
+            footer = footers.computeIfAbsent(fileIndex, i -> new Footer());
+            loads = !footer.loading;
+            footer.loading = true;
+        }
+        if (loads) {
+            load(fileIndex, footer);
         }
         else if (context.runsInPlace()) {
-            load.runHandedOffParse();
+            footer.runHandedOffParse();
         }
         try {
-            return load.outcome.join();
+            return footer.outcome.join();
         }
         catch (CompletionException e) {
             Throwable cause = e.getCause();
@@ -121,42 +133,43 @@ public final class FileMetadataCache {
         }
     }
 
-    /// Starts reading the footer of `fileIndex` on the I/O executor, unless a load or a read is
-    /// registered, the index is past the last file, the cache is closed, or the file's bytes are in
-    /// memory and the footer is read from the file or the context has no pool. A footer a
-    /// [MetadataSource] supplies is prefetched on a context with a pool, since the source may wait
+    /// Starts reading the footer of `fileIndex` on the I/O executor, unless its entry has started
+    /// or loaded it, the index is past the last file, the cache is closed, or the file's bytes are
+    /// in memory and the footer is read from the file or the context has no pool. A footer a
+    /// [MetadataSource] supplies is read ahead on a context with a pool, since the source may wait
     /// for a remote store.
     void prefetch(int fileIndex) {
         prefetch(fileIndex, () -> {});
     }
 
     /// As [#prefetch(int)], and runs `whenRead` once the footer has been read, by the read this
-    /// starts or by a load or read already registered, on the thread that completes it, or at once
-    /// on the caller's where it is read in place or already read. Not run once the cache is closed
-    /// or for an index past the last file.
+    /// starts or by the entry's read or load already under way, on the thread that completes it, or
+    /// at once on the caller's where it is read in place or already read. Not run once the cache is
+    /// closed or for an index past the last file.
     ///
-    /// @return whether it started a read
-    boolean prefetch(int fileIndex, Runnable whenRead) {
+    /// @return the read this started, which completes once it has, whether or not it failed;
+    ///         `null` when it started none
+    CompletableFuture<?> prefetch(int fileIndex, Runnable whenRead) {
         if (readsInPlace(fileIndex)) {
             // Its read waits for nothing, so the load on the thread that asks for the file reads it
             whenRead.run();
-            return false;
+            return null;
         }
         CompletableFuture<OpenedFooter> read = new CompletableFuture<>();
         CompletableFuture<?> registered;
         synchronized (lifecycleLock) {
             if (closeStarted || fileIndex < 0 || fileIndex >= inputFiles.size()) {
-                return false;
+                return null;
             }
-            Load load = loads.get(fileIndex);
-            registered = load != null ? load.outcome : prefetched.get(fileIndex);
+            Footer footer = footers.computeIfAbsent(fileIndex, i -> new Footer());
+            registered = footer.loading ? footer.outcome : footer.read;
             if (registered == null) {
-                prefetched.put(fileIndex, read);
+                footer.read = read;
             }
         }
         if (registered != null) {
             registered.whenComplete((ignored, failure) -> whenRead.run());
-            return false;
+            return null;
         }
         read.whenComplete((ignored, failure) -> whenRead.run());
         InputFile inputFile = inputFiles.get(fileIndex);
@@ -174,27 +187,45 @@ public final class FileMetadataCache {
             // A read that never starts must not leave its load, and close, waiting forever. The
             // failure goes to this caller, so close does not report it again.
             synchronized (lifecycleLock) {
-                prefetched.remove(fileIndex);
+                footers.get(fileIndex).read = null;
             }
             read.completeExceptionally(e);
             throw e;
         }
-        return true;
+        return read.handle((ignored, failure) -> null);
     }
 
-    /// Whether the footer of `fileIndex` has been read, so that a load of it waits for no I/O: a
-    /// load or a prefetched read of it has completed, or the file's footer is read in place.
+    /// Whether the footer of `fileIndex` has been read, so that a load of it waits for no I/O: its
+    /// load or the read of its entry has completed, or the file's footer is read in place.
     boolean footerRead(int fileIndex) {
         if (readsInPlace(fileIndex)) {
             return true;
         }
         synchronized (lifecycleLock) {
-            Load load = loads.get(fileIndex);
-            if (load != null) {
-                return load.outcome.isDone();
+            Footer footer = footers.get(fileIndex);
+            if (footer == null) {
+                return false;
             }
-            CompletableFuture<OpenedFooter> read = prefetched.get(fileIndex);
-            return read != null && read.isDone();
+            return footer.loading ? footer.outcome.isDone() : footer.read != null && footer.read.isDone();
+        }
+    }
+
+    /// Drops the tail of `fileIndex` once its footer has been read ([TailedInputFile#dropTail]), for
+    /// a read that is done with the file or will not reach it.
+    void dropTail(int fileIndex) {
+        Footer footer;
+        synchronized (lifecycleLock) {
+            footer = footers.get(fileIndex);
+        }
+        if (footer == null) {
+            return;
+        }
+        if (footer.outcome.isDone() && !footer.outcome.isCompletedExceptionally()) {
+            TailedInputFile.dropTail(footer.outcome.join().inputFile());
+        }
+        CompletableFuture<OpenedFooter> read = footer.read;
+        if (read != null && read.isDone() && !read.isCompletedExceptionally()) {
+            TailedInputFile.dropTail(read.join().read().inputFile());
         }
     }
 
@@ -210,56 +241,49 @@ public final class FileMetadataCache {
     /// Prevents new loads, waits for every admitted load, and releases cached
     /// results. Input-file ownership remains with the caller.
     ///
-    /// A prefetched read no load took that failed is reported as [PrefetchTasks] reports a task's
+    /// A footer read no load took that failed is reported as [PrefetchTasks] reports a task's
     /// failure: a `RuntimeException` is logged, and an `Error` thrown once the cache is released.
     ///
     /// @throws Error the `Error` of the first such read, the others suppressed beneath it
     public void close() {
-        List<Load> registeredLoads;
+        List<Footer> registered;
         synchronized (lifecycleLock) {
             if (closeStarted) {
-                registeredLoads = null;
+                registered = null;
             }
             else {
                 closeStarted = true;
-                registeredLoads = List.copyOf(loads.values());
+                registered = List.copyOf(footers.values());
             }
         }
 
-        if (registeredLoads == null) {
+        if (registered == null) {
             closeCompletion.join();
             return;
         }
 
         Error failure = null;
         try {
-            for (Load load : registeredLoads) {
+            for (Footer footer : registered) {
                 try {
-                    load.outcome.join();
+                    if (footer.loading) {
+                        // A load reports its failure to the caller that asked for it
+                        footer.outcome.join();
+                    }
+                    else if (footer.read != null) {
+                        footer.read.join();
+                    }
                 }
                 catch (CompletionException e) {
-                    // A load reported its failure to the caller that asked for it
-                }
-            }
-            // After the loads, each of which took its read off the map: the reads left over hold
-            // their files, and no load reported their failures
-            List<CompletableFuture<OpenedFooter>> untakenReads;
-            synchronized (lifecycleLock) {
-                untakenReads = List.copyOf(prefetched.values());
-            }
-            for (CompletableFuture<OpenedFooter> read : untakenReads) {
-                try {
-                    read.join();
-                }
-                catch (CompletionException e) {
-                    failure = PrefetchTasks.report(e.getCause(), failure);
+                    if (!footer.loading) {
+                        failure = PrefetchTasks.report(e.getCause(), failure);
+                    }
                 }
             }
         }
         finally {
             synchronized (lifecycleLock) {
-                loads.clear();
-                prefetched.clear();
+                footers.clear();
             }
             closeCompletion.complete(null);
         }
@@ -268,57 +292,40 @@ public final class FileMetadataCache {
         }
     }
 
-    /// Returns the load registered for `fileIndex`, registering a new one, which the caller
-    /// runs, if there is none.
-    private Registration registerLoad(int fileIndex) {
-        synchronized (lifecycleLock) {
-            if (closeStarted) {
-                throw new IllegalStateException("FileMetadataCache is closed");
-            }
-            Objects.checkIndex(fileIndex, inputFiles.size());
-            Load registered = loads.get(fileIndex);
-            if (registered != null) {
-                return new Registration(registered, false);
-            }
-            Load load = new Load();
-            loads.put(fileIndex, load);
-            return new Registration(load, true);
-        }
-    }
-
-    /// Runs the load of `fileIndex` and completes `load` with its outcome.
-    private void load(int fileIndex, Load load) {
+    /// Runs the load of `fileIndex` and completes `footer` with its outcome.
+    private void load(int fileIndex, Footer footer) {
         try {
-            load.outcome.complete(loadFile(fileIndex, load));
+            footer.outcome.complete(loadFile(fileIndex, footer));
         }
         catch (RuntimeException | Error e) {
-            load.outcome.completeExceptionally(e);
+            footer.outcome.completeExceptionally(e);
         }
         finally {
-            load.handOff.complete(null);
+            footer.handOff.complete(null);
         }
     }
 
-    /// A file's registered load, and whether this registration created it.
-    private record Registration(Load load, boolean isNew) {
-    }
-
-    /// A file's load: its outcome, and the parse of its footer a thread off the context's pool
-    /// handed to the pool. A thread of the pool may wait for the load, such as a column's fetch
-    /// step reaching the file; the pool may then have no other thread to run the parse, so the
-    /// waiting thread runs it in place unless a thread has started it.
-    private static final class Load {
+    /// A file's footer entry: the read of its footer, once [#prefetch] started it, and its load,
+    /// once a caller asked for the file. A thread of the pool may wait for the load, such as a
+    /// column's fetch step reaching the file; the pool may then have no other thread to run the
+    /// parse, so the waiting thread runs it in place unless a thread has started it.
+    private static final class Footer {
 
         final CompletableFuture<PreparedFile> outcome = new CompletableFuture<>();
         /// The parse handed to the pool, once the load has read the footer; `null` when the load
         /// hands none over.
         final CompletableFuture<FutureTask<FileFooter>> handOff = new CompletableFuture<>();
+        /// The read [#prefetch] started; `null` when none was. Written under `lifecycleLock`.
+        volatile CompletableFuture<OpenedFooter> read;
+        /// Whether a load has taken the entry. Guarded by `lifecycleLock`.
+        boolean loading;
 
-        static Load of(PreparedFile file) {
-            Load load = new Load();
-            load.outcome.complete(file);
-            load.handOff.complete(null);
-            return load;
+        static Footer of(PreparedFile file) {
+            Footer footer = new Footer();
+            footer.loading = true;
+            footer.outcome.complete(file);
+            footer.handOff.complete(null);
+            return footer;
         }
 
         /// Waits until the load has read the footer and runs the parse it handed over, unless a
@@ -331,40 +338,28 @@ public final class FileMetadataCache {
         }
     }
 
-    /// The footer read [#prefetch] started for `fileIndex`, once it completed; `null` if none was
-    /// started. A failed read fails the load with its failure.
-    private OpenedFooter takePrefetched(int fileIndex) {
-        CompletableFuture<OpenedFooter> read;
-        synchronized (lifecycleLock) {
-            read = prefetched.remove(fileIndex);
-        }
-        return read == null ? null : read.join();
-    }
-
-    private PreparedFile loadFile(int fileIndex, Load load) {
+    private PreparedFile loadFile(int fileIndex, Footer footer) {
         InputFile inputFile = inputFiles.get(fileIndex);
+        CompletableFuture<OpenedFooter> read = footer.read;
         OpenedFooter opened;
         try {
-            opened = takePrefetched(fileIndex);
+            opened = read != null ? read.join() : readFooter(inputFile);
         }
         catch (CompletionException e) {
             // Thrown as the read threw it; getFile unwraps it again
             throw e.getCause() instanceof RuntimeException runtime ? runtime : e;
         }
-        if (opened == null) {
-            opened = readFooter(inputFile);
-        }
-        FileFooter footer = parse(opened.read(), load);
+        FileFooter parsed = parse(opened.read(), footer);
         FileOpenedEvent event = opened.event();
 
         try {
             event.file = inputFile.name();
             event.fileSize = inputFile.length();
-            event.rowGroupCount = footer.metaData().rowGroups().size();
-            event.columnCount = footer.schema().getColumnCount();
+            event.rowGroupCount = parsed.metaData().rowGroups().size();
+            event.columnCount = parsed.schema().getColumnCount();
             event.commit();
 
-            return PreparedFile.of(inputFile, footer);
+            return PreparedFile.of(opened.read().inputFile(), parsed);
         }
         catch (IOException e) {
             throw new UncheckedIOException(
@@ -376,13 +371,13 @@ public final class FileMetadataCache {
     }
 
     /// Parses `read` on the context's pool: in place on a thread of the pool or on a context
-    /// without one, and otherwise as a task `load` hands over ([Load]).
-    private FileFooter parse(FooterRead read, Load load) {
+    /// without one, and otherwise as a task `footer` hands over ([Footer]).
+    private FileFooter parse(FooterRead read, Footer footer) {
         if (read.supplied() != null || context.runsInPlace()) {
             return read.parse(context);
         }
         FutureTask<FileFooter> parse = new FutureTask<>(() -> read.parse(context));
-        load.handOff.complete(parse);
+        footer.handOff.complete(parse);
         return context.awaitFirst(parse);
     }
 

@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
@@ -45,12 +46,43 @@ import dev.hardwood.InputFile;
 /// A file whose bytes are in memory gets no entries in the sequence: its entries are sliced from the
 /// mapping in place ([#insert]).
 ///
+/// The sequence also starts the read's footer entries: the footer of the file after the one the
+/// read has reached, uncharged, and of the files after that up to [#maxFilesAhead] files past the
+/// one reached while the planning chain has room to plan them (the entries planned and not started
+/// are below F), each charged to R
+/// at the tail a footer read takes ([TailedInputFile#tailBytes()]) from its start until the read
+/// is done with the file ([#filesDoneBefore]), which also drops the file's tail. Footers are
+/// outside F, and start whether or not the read speculates. A footer that does not fit R starts on
+/// a later release. The read's [FileMetadataCache] holds each footer entry, so another read of the
+/// same reader may take it; one in flight when the read closes keeps its charge until it completes.
+///
 /// One lock guards the entries and their positions. It is held across no I/O, no waiter and no
 /// completion of a read: reads are submitted, waiters registered and charges released after it is
 /// let go. A walk polls an entry without it.
 final class FetchSequence {
 
     static final String FETCH_AHEAD_BYTES_PROPERTY = "hardwood.internal.fetchAheadBytes";
+
+    static final String MAX_FILES_AHEAD_PROPERTY = "hardwood.internal.maxFilesAhead";
+
+    /// The files after the one a read has reached, the next one included, whose footers it reads
+    /// ahead without the override, while its planning chain has room under F: a bound on the
+    /// footer requests a read has in flight for files it has not reached. A read of many small
+    /// files, whose data never fills F, is bound by round trips, and overlaps as many files as
+    /// this lets it; a read of larger files fills F first and reads no footer past the next.
+    static final int DEFAULT_MAX_FILES_AHEAD = 64;
+
+    /// Where a read's footer entries are read and dropped: its [FileMetadataCache].
+    interface Footers {
+
+        /// Starts the footer read of `fileIndex` unless it has started or is read in place.
+        ///
+        /// @return the read started, which completes once it has, failed or not; `null` if none
+        CompletableFuture<?> start(int fileIndex);
+
+        /// Drops the tail of `fileIndex`, which the read is done with.
+        void drop(int fileIndex);
+    }
 
     private final PrefetchTasks tasks;
     private final ReadAheadBuffer readAhead;
@@ -62,6 +94,13 @@ final class FetchSequence {
     private final Runnable onStarted;
     /// Registered with R while a speculative entry did not fit; one instance, so [#close] can cancel it.
     private final Runnable onRelease = this::onRelease;
+    /// The read's footer entries; `null` for a sequence that reads no footer.
+    private final Footers footers;
+    /// The files after the one the read has reached whose footers start ahead of it, `0` for none.
+    private final int filesAhead;
+    private final int fileCount;
+    /// What each footer started past the next file is charged to R: the tail its read takes.
+    private final long footerCharge;
 
     private final ReentrantLock lock = new ReentrantLock();
     /// Guarded by `lock`: the entries inserted and not yet started, in position order. An entry
@@ -84,6 +123,16 @@ final class FetchSequence {
     /// starts, and the next one the planning chain plans ahead of the read.
     private int requested = -1;
     private int planFrom;
+    /// Guarded by `lock`: the last file the read has reached.
+    private int reachedFile;
+    /// Guarded by `lock`: the next file whose footer is to start.
+    private int nextFooter = 1;
+    /// Guarded by `lock`: the files before this one the read is done with.
+    private int doneBefore;
+    /// Guarded by `lock`: the footers started and charged to R, by file, with their reads.
+    private final Map<Integer, CompletableFuture<?>> chargedFooters = new HashMap<>();
+    /// Guarded by `lock`: whether footers start no more, since the read plans no further file.
+    private boolean footersStopped;
     /// Guarded by `lock`: whether [#onRelease] is registered with R.
     private boolean waitingForRoom;
     private boolean closed;
@@ -96,11 +145,32 @@ final class FetchSequence {
     /// @param onStarted run outside the lock whenever an entry has started
     FetchSequence(PrefetchTasks tasks, ReadAheadBuffer readAhead, long fetchAheadBytes, boolean speculates,
                   Runnable onStarted) {
+        this(tasks, readAhead, fetchAheadBytes, speculates, onStarted, null, 0, 0);
+    }
+
+    /// @param footers where the read's footer entries are read and dropped
+    /// @param filesAhead the files after the one the read has reached whose footers start ahead of
+    ///        it, the next one included; `0` for none
+    /// @param fileCount the read's files
+    FetchSequence(PrefetchTasks tasks, ReadAheadBuffer readAhead, long fetchAheadBytes, boolean speculates,
+                  Runnable onStarted, Footers footers, int filesAhead, int fileCount) {
         this.tasks = tasks;
         this.readAhead = readAhead;
         this.fetchAheadBytes = fetchAheadBytes;
         this.speculates = speculates;
         this.onStarted = onStarted;
+        this.footers = footers;
+        this.filesAhead = filesAhead;
+        this.fileCount = fileCount;
+        this.footerCharge = footers != null ? TailedInputFile.tailBytes() : 0;
+    }
+
+    /// The files after the one it has reached a read reads footers of ahead: [#DEFAULT_MAX_FILES_AHEAD] unless
+    /// overridden through [#MAX_FILES_AHEAD_PROPERTY], read for each read. A value that is not a
+    /// positive count is rejected rather than replaced by the default; `1` reads only the next
+    /// file's footer ahead.
+    static int maxFilesAhead() {
+        return InternalProperty.intValue(MAX_FILES_AHEAD_PROPERTY, DEFAULT_MAX_FILES_AHEAD, 1, "a positive count");
     }
 
     /// A sequence whose entries start on demand only, for plans built outside a read.
@@ -112,23 +182,7 @@ final class FetchSequence {
     /// [#FETCH_AHEAD_BYTES_PROPERTY]. A value that is not a non-negative byte count is rejected
     /// rather than replaced by the default.
     static long fetchAheadBytes(int maxSpanBytes) {
-        String override = System.getProperty(FETCH_AHEAD_BYTES_PROPERTY);
-        if (override == null) {
-            return 2L * maxSpanBytes;
-        }
-        long bytes;
-        try {
-            bytes = Long.parseLong(override);
-        }
-        catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    FETCH_AHEAD_BYTES_PROPERTY + " must be a non-negative byte count, but was: " + override, e);
-        }
-        if (bytes < 0) {
-            throw new IllegalArgumentException(
-                    FETCH_AHEAD_BYTES_PROPERTY + " must be a non-negative byte count, but was: " + override);
-        }
-        return bytes;
+        return InternalProperty.longValue(FETCH_AHEAD_BYTES_PROPERTY, 2L * maxSpanBytes, 0, "a non-negative byte count");
     }
 
     /// A range of the file a planned row group reads as one entry: `length` bytes at `start`,
@@ -327,13 +381,14 @@ final class FetchSequence {
         return read;
     }
 
-    /// Starts every speculative entry that fits, in position order, and registers for a release of
-    /// R when the next one does not fit R.
+    /// Starts the footers within reach and every speculative entry that fits, in position order,
+    /// and registers for a release of R when the next one does not fit R.
     void pump() {
-        if (!speculates) {
+        if (!speculates && footers == null) {
             return;
         }
         List<RangeRead> reads = new ArrayList<>();
+        List<Integer> footersToStart = new ArrayList<>();
         boolean register = false;
         long releasesSeen;
         lock.lock();
@@ -342,8 +397,9 @@ final class FetchSequence {
                 return;
             }
             releasesSeen = readAhead.releases();
+            boolean blocked = footers != null && startFooters(footersToStart);
             Entry next;
-            while ((next = queued.peek()) != null) {
+            while (speculates && !blocked && (next = queued.peek()) != null) {
                 if (!next.queued) {
                     // Started on demand, or released, since it was queued
                     queued.poll();
@@ -353,8 +409,7 @@ final class FetchSequence {
                     break;
                 }
                 if (!readAhead.tryCharge(next.length)) {
-                    register = !waitingForRoom;
-                    waitingForRoom = true;
+                    blocked = true;
                     break;
                 }
                 queued.poll();
@@ -362,9 +417,20 @@ final class FetchSequence {
                 speculativeBytes += next.length;
                 reads.add(begin(next, true));
             }
+            if (!blocked && footers != null && !reads.isEmpty()) {
+                // The entries started left the planning chain room for more files
+                blocked = startFooters(footersToStart);
+            }
+            if (blocked) {
+                register = !waitingForRoom;
+                waitingForRoom = true;
+            }
         }
         finally {
             lock.unlock();
+        }
+        for (int fileIndex : footersToStart) {
+            startFooter(fileIndex);
         }
         for (RangeRead read : reads) {
             read.submit();
@@ -387,6 +453,138 @@ final class FetchSequence {
             lock.unlock();
         }
         pump();
+    }
+
+    /// Records that the read has reached `fileIndex`, and starts the footers the move brings within
+    /// reach.
+    void reachedFile(int fileIndex) {
+        lock.lock();
+        try {
+            if (fileIndex <= reachedFile) {
+                return;
+            }
+            reachedFile = fileIndex;
+        }
+        finally {
+            lock.unlock();
+        }
+        pump();
+    }
+
+    /// Records that the read is done with every file before `fileIndex`: their tails are dropped
+    /// and their footers' charges released.
+    void filesDoneBefore(int fileIndex) {
+        if (footers == null) {
+            return;
+        }
+        int from;
+        long uncharge = 0;
+        lock.lock();
+        try {
+            from = doneBefore;
+            if (fileIndex <= from) {
+                return;
+            }
+            doneBefore = fileIndex;
+            for (int i = from; i < fileIndex; i++) {
+                if (chargedFooters.remove(i) != null) {
+                    uncharge += footerCharge;
+                }
+            }
+        }
+        finally {
+            lock.unlock();
+        }
+        for (int i = from; i < fileIndex; i++) {
+            footers.drop(i);
+        }
+        uncharge(uncharge);
+    }
+
+    /// Starts no further footer, since the read plans no further file, and releases the charges of
+    /// the footers started ahead.
+    void stopFooters() {
+        Map<Integer, CompletableFuture<?>> charged;
+        lock.lock();
+        try {
+            footersStopped = true;
+            charged = takeFooterCharges();
+        }
+        finally {
+            lock.unlock();
+        }
+        releaseFooterCharges(charged);
+    }
+
+    /// The footers started and charged, by file, with their reads, which the caller releases. Called
+    /// under `lock`.
+    private Map<Integer, CompletableFuture<?>> takeFooterCharges() {
+        Map<Integer, CompletableFuture<?>> charged = new HashMap<>(chargedFooters);
+        chargedFooters.clear();
+        return charged;
+    }
+
+    /// Releases the charge of each footer in `charged`, and drops its file's tail, once its read
+    /// has completed, at once for one that has: the reader's cache shares the entry, so a footer in
+    /// flight keeps its charge until it completes, whichever read started it. Called outside `lock`.
+    private void releaseFooterCharges(Map<Integer, CompletableFuture<?>> charged) {
+        charged.forEach((fileIndex, read) -> read.whenComplete((ignored, failure) -> {
+            footers.drop(fileIndex);
+            readAhead.release(footerCharge);
+        }));
+    }
+
+    /// Adds to `toStart` the footers within reach, in file order, charging R for each past the next
+    /// file, which starts only while the planning chain has room to plan it: the entries planned
+    /// and not started are below F. Called under `lock`.
+    ///
+    /// @return whether R had no room for one
+    private boolean startFooters(List<Integer> toStart) {
+        if (footersStopped) {
+            return false;
+        }
+        int last = Math.min(reachedFile + filesAhead, fileCount - 1);
+        while (nextFooter <= last) {
+            int fileIndex = nextFooter;
+            if (fileIndex > reachedFile + 1) {
+                if (queuedBytes >= fetchAheadBytes) {
+                    // The planning chain has no room to plan the file, so its footer would wait
+                    return false;
+                }
+                if (!readAhead.tryCharge(footerCharge)) {
+                    return true;
+                }
+                chargedFooters.put(fileIndex, CompletableFuture.completedFuture(null));
+            }
+            nextFooter++;
+            if (fileIndex > reachedFile) {
+                toStart.add(fileIndex);
+            }
+        }
+        return false;
+    }
+
+    /// Starts the footer read of `fileIndex`, outside `lock`, and releases its charge at once when
+    /// it started none: its entry was read or loaded already, or is read in place.
+    private void startFooter(int fileIndex) {
+        CompletableFuture<?> read = footers.start(fileIndex);
+        long uncharge = 0;
+        lock.lock();
+        try {
+            if (chargedFooters.containsKey(fileIndex)) {
+                if (read == null) {
+                    chargedFooters.remove(fileIndex);
+                    uncharge = footerCharge;
+                }
+                else {
+                    chargedFooters.put(fileIndex, read);
+                }
+            }
+        }
+        finally {
+            lock.unlock();
+        }
+        uncharge(uncharge);
     }
 
     /// Records that a column holding `entry` has passed it; the last one releases it.
@@ -432,12 +630,16 @@ final class FetchSequence {
     /// read's [PrefetchTasks], which its owner waits for next.
     void close() {
         long uncharge = 0;
+        Map<Integer, CompletableFuture<?>> charged;
+        int footersUpTo;
         lock.lock();
         try {
             if (closed) {
                 return;
             }
             closed = true;
+            charged = takeFooterCharges();
+            footersUpTo = nextFooter;
             for (List<Entry> ofWorkItem : entries.values()) {
                 for (Entry entry : ofWorkItem) {
                     if (!entry.released) {
@@ -454,6 +656,12 @@ final class FetchSequence {
         readAhead.cancel(onRelease);
         if (uncharge > 0) {
             readAhead.release(uncharge);
+        }
+        releaseFooterCharges(charged);
+        if (footers != null) {
+            for (int i = 0; i < footersUpTo; i++) {
+                footers.drop(i);
+            }
         }
     }
 
@@ -533,10 +741,14 @@ final class FetchSequence {
         return entry.length;
     }
 
-    /// Returns `bytes` to R and starts what then fits. Called outside `lock`.
+    /// Returns `bytes` to R and starts what then fits, and for a read with footer entries the
+    /// footers an entry dropped from the queue leaves the planning chain room for. Called outside
+    /// `lock`.
     private void uncharge(long bytes) {
         if (bytes > 0) {
             readAhead.release(bytes);
+        }
+        if (bytes > 0 || footers != null) {
             pump();
         }
     }

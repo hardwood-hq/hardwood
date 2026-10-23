@@ -38,13 +38,15 @@ import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A multi-file read over files whose bytes are not in memory opens up to
-/// `hardwood.internal.maxFilesAhead` files ahead of the one it waits for: their footers are in
-/// flight together, a file statistics keep has its first data fetched ahead in one request, a
-/// run of files statistics prune is opened ahead rather than one file after another, and what is
-/// fetched beyond the next file stays within the context's read-ahead buffer (#1665).
-class FileOpenAheadTest {
+/// A multi-file read over files whose bytes are not in memory reads the footers of up to
+/// `hardwood.internal.maxFilesAhead` files ahead of the one it waits for (READ_PATH_CONSOLIDATION.md,
+/// rules 4 and 9): their footers are in flight together, a file statistics keep has its first data
+/// fetched ahead in one request, a run of files statistics prune is opened ahead rather than one
+/// file after another, what is fetched beyond the next file stays within the context's read-ahead
+/// buffer, and a footer that fails ahead fails the read only at its file.
+class FilesAheadTest {
 
     private static final int ROWS = 4_000;
     private static final String MAX_FILES_AHEAD = "hardwood.internal.maxFilesAhead";
@@ -139,6 +141,40 @@ class FileOpenAheadTest {
                     .hasSize(2)
                     .allSatisfy(read -> assertThat(read.reason()).isEqualTo("rg=0 col=id col=v"));
         }
+    }
+
+    /// Rule 9: a footer that fails while read ahead fails the read only when it reaches that file:
+    /// the rows of every file before it are returned first.
+    @Test
+    void aFooterThatFailsAheadFailsTheReadAtItsFile() throws Exception {
+        ReadGate firstData = new ReadGate(reason -> reason.startsWith("rg=0 col="));
+        List<InputFile> files = new ArrayList<>();
+        files.add(new GatedFile(InputFile.of(ByteBuffer.wrap(writeFile(0))), firstData));
+        files.add(new RemoteLike(InputFile.of(ByteBuffer.wrap(writeFile(1)))));
+        UnreadableFooter unreadable = new UnreadableFooter(InputFile.of(ByteBuffer.wrap(writeFile(2))));
+        files.add(unreadable);
+        files.add(new RemoteLike(InputFile.of(ByteBuffer.wrap(writeFile(3)))));
+        AtomicLong rows = new AtomicLong();
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
+             ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
+            firstData.arm();
+            ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build();
+            for (int i = 0; i < 100 && unreadable.footerReads.get() == 0; i++) {
+                Thread.sleep(50);
+            }
+            assertThat(unreadable.footerReads.get()).as("footer reads of the file ahead").isPositive();
+            firstData.release();
+
+            assertThatThrownBy(() -> {
+                try (cols) {
+                    while (cols.nextBatch()) {
+                        rows.addAndGet(cols.getRecordCount());
+                    }
+                }
+            }).isInstanceOf(IOException.class)
+                    .hasMessage("[unreadable] Failed to read metadata");
+        }
+        assertThat(rows.get()).isEqualTo(2L * ROWS);
     }
 
     /// Eight small files, the first of which holds its data read at `firstData`.
@@ -442,6 +478,30 @@ class FileOpenAheadTest {
         @Override
         public void close() throws IOException {
             delegate.close();
+        }
+    }
+
+    /// A remote-like file every footer read of which fails.
+    private static final class UnreadableFooter extends RemoteLike {
+
+        final AtomicInteger footerReads = new AtomicInteger();
+
+        UnreadableFooter(InputFile delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            if (FetchReason.current().startsWith("footer-")) {
+                footerReads.incrementAndGet();
+                throw new IOException("Device not ready");
+            }
+            return super.readRange(offset, length);
+        }
+
+        @Override
+        public String name() {
+            return "unreadable";
         }
     }
 

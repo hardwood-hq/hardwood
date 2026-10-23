@@ -60,6 +60,7 @@ class CoalescingPolicyTest {
         FetchPlanBuilder.Extent[] extents = {
                 new FetchPlanBuilder.Extent(0, "a", 4, aEnd),
                 new FetchPlanBuilder.Extent(1, "b", aEnd, aEnd + 100) };
-        return FetchPlanBuilder.coalesce(ranges, extents, new String[] { "a", "b" }, 7, CoalescingPolicy.maxSpanBytes());
+        return FetchPlanBuilder.coalesce(ranges, extents, new String[] { "a", "b" }, 7, CoalescingPolicy.maxSpanBytes(),
+                Long.MAX_VALUE);
     }
 }

@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.TailedInputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -52,6 +53,39 @@ class S3InputFileIT {
     static void tearDown() {
         source.close();
         bucket.delete();
+    }
+
+    /// At the default tail a small object arrives whole in the request that opens it, and its
+    /// footer and data are sliced from it.
+    @Test
+    void aSmallObjectIsReadInTheRequestThatOpensIt() throws Exception {
+        String tailBytes = System.getProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+        System.clearProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+        try {
+            S3InputFile file = source.inputFile(bucket.name(), "plain_uncompressed.parquet");
+            try (ParquetFileReader reader = ParquetFileReader.open(file);
+                    RowReader rows = reader.rowReader()) {
+                int count = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    count++;
+                }
+                assertThat(count).isEqualTo(3);
+            }
+            assertThat(file.networkRequestCount()).isEqualTo(1);
+        }
+        finally {
+            restoreTail(tailBytes);
+        }
+    }
+
+    private static void restoreTail(String tailBytes) {
+        if (tailBytes == null) {
+            System.clearProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+        }
+        else {
+            System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, tailBytes);
+        }
     }
 
     @Test
@@ -222,12 +256,19 @@ class S3InputFileIT {
 
     @Test
     void openingAFileLargerThanTheTailCacheTakesOneRequest() throws Exception {
-        // column_index_pushdown.parquet is larger than the 64 KB tail cache, so a read of its
-        // first bytes would be a request of its own; the footer comes from the tail read.
-        S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
-        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
-            assertThat(reader.getFileMetaData().numRows()).isEqualTo(10_000);
-            assertThat(file.networkRequestCount()).isEqualTo(1);
+        // column_index_pushdown.parquet is larger than a 64 KiB tail, so a read of its first
+        // bytes would be a request of its own; the footer comes from the tail read.
+        String tailBytes = System.getProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+        System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, Integer.toString(64 * 1024));
+        try {
+            S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
+            try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+                assertThat(reader.getFileMetaData().numRows()).isEqualTo(10_000);
+                assertThat(file.networkRequestCount()).isEqualTo(1);
+            }
+        }
+        finally {
+            restoreTail(tailBytes);
         }
     }
 

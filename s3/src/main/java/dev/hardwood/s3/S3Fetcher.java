@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.reader.ReadRanges;
+import dev.hardwood.internal.reader.TailedInputFile;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.s3.internal.RangeBody;
 import dev.hardwood.s3.internal.S3Api;
@@ -27,8 +28,11 @@ import dev.hardwood.s3.internal.S3Api;
 /// discovers the file length from the `Content-Range` response header
 /// and pre-fetches the Parquet footer (which sits at the end of the file)
 /// in the same round-trip — eliminating a separate HEAD request per file.
-/// The fetched tail is retained and serves any subsequent read that falls
-/// entirely within it.
+/// The tail's size is the one a read takes ([TailedInputFile#tailBytes()]), so a
+/// file up to that size arrives whole. The fetched tail is retained and serves
+/// any subsequent read that falls entirely within it, until a read of the whole
+/// tail takes it: the reader holds the tail from then on and releases it once
+/// it is done with the file, so the fetcher holds none for the file's lifetime.
 ///
 /// This class is unaware of [RangeBacking]. Under
 /// [RangeBacking#SPARSE_TEMPFILE] the mmap-backed range cache wraps an
@@ -40,17 +44,6 @@ final class S3Fetcher implements InputFile {
 
     private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(S3Fetcher.class.getName()));
 
-    /// Number of bytes to fetch from the tail of the file during [#open()].
-    /// Sized so that the round-trip discovering the file length usually
-    /// carries the Parquet footer with it, saving a second request.
-    ///
-    /// A cost heuristic, not an assumption about file layout. Footer size
-    /// grows with row groups × columns and with the size of the per-column
-    /// statistics, so wide schemas, heavily split files, or long min/max
-    /// values can push it past 64 KB. A footer that does not fit is read by
-    /// a second range request: [#readRange] serves only reads fully
-    /// contained in the fetched tail and goes to the network otherwise.
-    static final int TAIL_SIZE = 64 * 1024;
 
     private static final int HTTP_UNAUTHORIZED = 401;
     private static final int HTTP_FORBIDDEN = 403;
@@ -59,7 +52,8 @@ final class S3Fetcher implements InputFile {
     private final String bucket;
     private final String key;
     private long fileLength = -1;
-    private ByteBuffer tailCache;
+    /// The tail fetched by [#open()], until a read of all of it takes it.
+    private volatile ByteBuffer tailCache;
     private long tailCacheOffset;
     /// The object's `ETag` from the response to the suffix-range `GET` in [#open()].
     private Optional<String> identity;
@@ -77,7 +71,7 @@ final class S3Fetcher implements InputFile {
         if (fileLength >= 0) {
             return;
         }
-        String suffixRange = "bytes=-" + TAIL_SIZE;
+        String suffixRange = "bytes=-" + TailedInputFile.tailBytes();
         HttpResponse<byte[]> response = api.getBytes(bucket, key, suffixRange);
         int status = response.statusCode();
         if (status != 206 && status != 200) {
@@ -111,13 +105,18 @@ final class S3Fetcher implements InputFile {
             return ByteBuffer.allocateDirect(0);
         }
         // Serve from the tail cache if the requested range falls within it
-        if (tailCache != null && offset >= tailCacheOffset
-                && offset + length <= tailCacheOffset + tailCache.capacity()) {
+        ByteBuffer tail = tailCache;
+        if (tail != null && offset >= tailCacheOffset
+                && offset + length <= tailCacheOffset + tail.capacity()) {
             int relOffset = Math.toIntExact(offset - tailCacheOffset);
             LOG.get().log(System.Logger.Level.DEBUG,
                     "[{0}] readRange offset={1} length={2} reason={3} (tail cache hit)",
                     name(), offset, length, FetchReason.current());
-            return tailCache.slice(relOffset, length);
+            if (length == tail.capacity()) {
+                // The reader takes the whole tail and holds it from now on
+                tailCache = null;
+            }
+            return tail.slice(relOffset, length);
         }
 
         long requestNo = networkRequestCount.incrementAndGet();
@@ -214,7 +213,7 @@ final class S3Fetcher implements InputFile {
     ///
     /// For suffix-range requests, S3 returns a `Content-Range` header like
     /// `bytes 1000-1999/2000` where the number after `/` is the total
-    /// object size. If the header is absent (e.g. file smaller than TAIL_SIZE),
+    /// object size. If the header is absent (e.g. file smaller than the tail),
     /// falls back to `Content-Length`.
     private static long parseFileLength(HttpResponse<?> response) throws IOException {
         String contentRange = response.headers().firstValue("Content-Range").orElse(null);

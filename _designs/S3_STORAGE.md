@@ -1,6 +1,6 @@
 # S3 Storage
 
-Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and anonymous access, the optional `hardwood-aws-auth` bridge and the CLI's credential fallback, `S3Source` and its configuration, `S3InputFile` with its suffix-range open and its `ETag` identity, `S3OutputFile` and its multipart upload, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
+Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and anonymous access, the optional `hardwood-aws-auth` bridge and the CLI's credential fallback, `S3Source` and its configuration, `S3InputFile` with its suffix-range open, the tail it hands to the reader, and its `ETag` identity, `S3OutputFile` and its multipart upload, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
 
 Related documents:
 
@@ -93,9 +93,9 @@ Tests: `Aws4SignerTest` (s3), which runs the SigV4 conformance vectors of `awsla
 
 ### Open: suffix-range tail fetch
 
-`S3Fetcher.open()` issues one `GET` with `Range: bytes=-65536` instead of a `HEAD`. The response carries the object size in `Content-Range` (`bytes a-b/size`), falling back to `Content-Length` when the object is smaller than the window and the server answers `200` with the whole body. The same round-trip returns the last 64 KB of the object, which usually contains the Parquet footer and its length field, so opening a file costs one request instead of two. The window size is a cost heuristic, not an assumption about file layout: a footer larger than the window is read by a second range request, because the tail serves only reads that lie entirely inside it. Opening is idempotent.
+`S3Fetcher.open()` issues one `GET` with `Range: bytes=-n` instead of a `HEAD`, where `n` is the tail a read takes of each file (`TailedInputFile.tailBytes`, 256 KiB). The response carries the object size in `Content-Range` (`bytes a-b/size`), falling back to `Content-Length` when the object is smaller than the window and the server answers `200` with the whole body. The same round-trip returns the last `n` bytes of the object, which usually contain the Parquet footer, its length field and the page index, and a file up to `n` bytes whole, so opening a file costs one request instead of two, and reading a small file costs that one. The window size is a cost heuristic, not an assumption about file layout: a footer larger than the window is read by a second range request, because the tail serves only reads that lie entirely inside it. Opening is idempotent.
 
-The tail bytes are held in a direct buffer for as long as the file is open, so slices handed to FFM-based decompressors are native memory. Any `readRange` wholly inside the tail window is answered from it without a request, in both backing modes.
+The tail bytes are held in a direct buffer, so slices handed to FFM-based decompressors are native memory. Any `readRange` wholly inside the tail window is answered from it without a request, in both backing modes, until a read of the whole tail takes it: the core's footer entry reads the tail right after the open ([FETCH_PLANNING.md](FETCH_PLANNING.md#the-files-tail)), which holds it from then on, charges it to the context's read-ahead buffer while it reads ahead, and drops it once the read is done with the file, so the fetcher holds no tail for the file's lifetime. The fetcher needs no hook into the core for this: the hand-over is the full-tail read through `readRange`. `S3InputFile` is opened and read by the engine alone.
 
 ### Object identity
 
@@ -163,7 +163,7 @@ The mode is set on `S3Source`, not per file, because it follows the workload: in
 
 Composition with the layers around it:
 
-- The tail sits below the cache, in the fetcher. Under `SPARSE_TEMPFILE` a footer read fills the mapping from the tail buffer, and neither layer counts it as network traffic.
+- The tail sits below the cache, in the fetcher. Under `SPARSE_TEMPFILE` the core's read of the tail fills the mapping from the tail buffer, and neither layer counts it as network traffic.
 - The read's fetch sequence sits above it ([FETCH_PLANNING.md](FETCH_PLANNING.md)). An entry's bytes are released once every column has passed it; the same bytes stay in the file-level cache, so a later entry covering the same range is a cache hit.
 - Local files do not use it: `MappedInputFile` already is a whole-file mapping ([INPUT_FILES.md](INPUT_FILES.md)).
 

@@ -25,9 +25,9 @@ import dev.hardwood.internal.reader.RangeBackedInputFile;
 /// discovers the file length from the `Content-Range` response header
 /// and pre-fetches the Parquet footer (which sits at the end of the file) in
 /// the same round-trip — eliminating a separate HEAD request per file.
-/// Those tail bytes are retained for as long as the file is open, and a
-/// read falling entirely inside that window is answered from them
-/// without a request.
+/// A read falling entirely inside those tail bytes is answered from them
+/// without a request, until a read of the whole tail hands them to the
+/// reader, which then holds them.
 ///
 /// When the owning [S3Source] is configured with
 /// [RangeBacking#SPARSE_TEMPFILE], an internal mmap-backed range cache

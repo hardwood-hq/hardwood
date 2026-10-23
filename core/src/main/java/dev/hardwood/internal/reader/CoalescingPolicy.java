@@ -36,23 +36,7 @@ final class CoalescingPolicy {
     /// positive byte count is rejected rather than replaced by the default: a span limit that does
     /// not take effect produces a plausible read with the wrong requests.
     static int maxSpanBytes() {
-        String override = System.getProperty(MAX_SPAN_BYTES_PROPERTY);
-        if (override == null) {
-            return DEFAULT_MAX_SPAN_BYTES;
-        }
-        int bytes;
-        try {
-            bytes = Integer.parseInt(override);
-        }
-        catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    MAX_SPAN_BYTES_PROPERTY + " must be a positive byte count, but was: " + override, e);
-        }
-        if (bytes < 1) {
-            throw new IllegalArgumentException(
-                    MAX_SPAN_BYTES_PROPERTY + " must be a positive byte count, but was: " + override);
-        }
-        return bytes;
+        return InternalProperty.intValue(MAX_SPAN_BYTES_PROPERTY, DEFAULT_MAX_SPAN_BYTES, 1, "a positive byte count");
     }
 
     /// Whether the range `[nextStart, nextEnd)` joins a request spanning `[start, end)` under the

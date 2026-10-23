@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /// The memory a context's reads hold by choice rather than because a file forces it, R: the buffers
 /// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admitTask]), the
 /// speculative entries of a read's [FetchSequence], and the footers a multi-file read reads for the
-/// files past the next one ([FileOpenAhead]).
+/// files past the next one, each charged the tail it reads until the read is done with the file.
 ///
 /// Such a task, entry or footer read starts only while it fits; one that does not fit is not started
 /// and is considered again on a later release, whose waiters run in registration order. Nothing
@@ -50,23 +50,8 @@ public final class ReadAheadBuffer {
     /// overridden through [#READ_AHEAD_BYTES_PROPERTY]. A value that is not a non-negative byte
     /// count is rejected rather than replaced by the default.
     static long readAheadBytes() {
-        String override = System.getProperty(READ_AHEAD_BYTES_PROPERTY);
-        if (override == null) {
-            return Runtime.getRuntime().maxMemory() / 100 * DEFAULT_HEAP_PERCENT;
-        }
-        long bytes;
-        try {
-            bytes = Long.parseLong(override);
-        }
-        catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    READ_AHEAD_BYTES_PROPERTY + " must be a non-negative byte count, but was: " + override, e);
-        }
-        if (bytes < 0) {
-            throw new IllegalArgumentException(
-                    READ_AHEAD_BYTES_PROPERTY + " must be a non-negative byte count, but was: " + override);
-        }
-        return bytes;
+        return InternalProperty.longValue(READ_AHEAD_BYTES_PROPERTY,
+                Runtime.getRuntime().maxMemory() / 100 * DEFAULT_HEAP_PERCENT, 0, "a non-negative byte count");
     }
 
     /// The releases so far, to hand to [#releaseAfter] or [#whenReleased] once a charge did not fit.

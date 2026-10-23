@@ -93,6 +93,10 @@
          failure. A module needing more appends to this property; CI overrides it to run the
          integration tests without the Vector API as well. -->
     <test.argLine>--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector</test.argLine>
+    <!-- hardwood.internal.tailBytes: every test JVM reads a file's tail as the eight bytes of its
+         trailer, the footer then in a request of its own. At the default size (256 KiB) the tail
+         holds a fixture of a few KB whole, and a test of what a read requests of a file larger
+         than its tail would see no request at all. Tests of the tail set its size. -->
   </properties>
 
   <build>
@@ -205,6 +209,10 @@
           <version>3.6.0</version>
           <configuration>
             <argLine>${test.argLine}</argLine>
+            <systemPropertyVariables>
+              <!-- See hardwood.internal.tailBytes below -->
+              <hardwood.internal.tailBytes>8</hardwood.internal.tailBytes>
+            </systemPropertyVariables>
             <excludedGroups>${failsafe.excludedGroups}</excludedGroups>
           </configuration>
           <executions>
@@ -282,6 +290,10 @@
           <version>3.6.0</version>
           <configuration>
             <argLine>${test.argLine}</argLine>
+            <systemPropertyVariables>
+              <!-- See hardwood.internal.tailBytes below -->
+              <hardwood.internal.tailBytes>8</hardwood.internal.tailBytes>
+            </systemPropertyVariables>
           </configuration>
         </plugin>
         <plugin>

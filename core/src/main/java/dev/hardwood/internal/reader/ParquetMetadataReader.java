@@ -86,7 +86,7 @@ public final class ParquetMetadataReader {
     }
 
     /// A footer's bytes as read from the file, before they are parsed.
-    private record FooterBytes(ByteBuffer body, int footerLength, long fileSize) {
+    record FooterBytes(ByteBuffer body, int footerLength, long fileSize) {
     }
 
     private static FooterBytes fetch(InputFile inputFile) throws IOException {
@@ -128,30 +128,31 @@ public final class ParquetMetadataReader {
         }
     }
 
-    /// The footer of an opened file: read from the file for [#FROM_FILE], otherwise taken from
-    /// `source` and checked against the file.
+    /// The I/O of a footer load: the opened file's tail ([TailedInputFile#take]), and the bytes
+    /// of the footer read from it, or the footer `source` supplies, checked against the file.
+    /// [FooterRead#parse] completes the load.
     ///
     /// @param inputFile the opened input file
     /// @param source the context's source, [#FROM_FILE] when none is installed
     /// @throws StaleMetadataException if the supplied footer does not describe the file
-    public static FileFooter load(InputFile inputFile, MetadataSource source) throws IOException {
-        return source == FROM_FILE ? read(inputFile) : supplied(inputFile, source);
-    }
-
-    /// The I/O of [#load(InputFile, MetadataSource)]: the bytes of a footer read from the file,
-    /// or the footer `source` supplies, checked against the file. [FooterRead#parse] completes
-    /// the load.
-    ///
-    /// @throws StaleMetadataException if the supplied footer does not describe the file
-    static FooterRead readFooter(InputFile inputFile, MetadataSource source) throws IOException {
+    public static FooterRead readFooter(InputFile inputFile, MetadataSource source) throws IOException {
+        InputFile tailed;
+        try {
+            tailed = TailedInputFile.take(inputFile);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(inputFile.name(), ExceptionContext.asReadFailure(e));
+        }
         return source == FROM_FILE
-                ? new FooterRead(inputFile, fetch(inputFile), null)
-                : new FooterRead(inputFile, null, supplied(inputFile, source));
+                ? new FooterRead(tailed, fetch(tailed), null)
+                : new FooterRead(tailed, null, supplied(inputFile, tailed, source));
     }
 
     /// A footer as [#readFooter] read it: the bytes of a footer read from the file, not yet
     /// parsed, or a supplied footer.
-    record FooterRead(InputFile inputFile, FooterBytes bytes, FileFooter supplied) {
+    ///
+    /// @param inputFile the file the read uses from then on: the file with its tail
+    public record FooterRead(InputFile inputFile, FooterBytes bytes, FileFooter supplied) {
 
         /// The footer, its bytes parsed on `context`'s pool, which bounds the CPU a read takes: a
         /// footer costs about a microsecond to parse per column chunk, tens of milliseconds for a
@@ -161,10 +162,17 @@ public final class ParquetMetadataReader {
                     ? supplied
                     : context.compute("footer", () -> ParquetMetadataReader.parse(inputFile, bytes));
         }
+
+        /// The footer, its bytes parsed on the calling thread.
+        public FileFooter parse() {
+            return supplied != null ? supplied : ParquetMetadataReader.parse(inputFile, bytes);
+        }
     }
 
-    /// The footer `source` supplies for an opened file, checked against the file.
-    private static FileFooter supplied(InputFile inputFile, MetadataSource source) throws IOException {
+    /// The footer `source` supplies for an opened file, checked against the file through
+    /// `tailed`, the file with its tail.
+    private static FileFooter supplied(InputFile inputFile, InputFile tailed, MetadataSource source)
+            throws IOException {
         ParsedFooter supplied;
         try {
             supplied = source.footerOf(inputFile);
@@ -179,9 +187,9 @@ public final class ParquetMetadataReader {
         FileFooter footer = ((ParsedFooterImpl) supplied).fileFooter();
         try {
             StaleCheck stale = new StaleCheck(inputFile.name(), supplied.sourceIdentity(), inputFile.identity());
-            long fileSize = inputFile.length();
+            long fileSize = tailed.length();
             checkIdentity(stale);
-            checkTrailer(inputFile, fileSize, footer, stale);
+            checkTrailer(tailed, fileSize, footer, stale);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(inputFile.name(), ExceptionContext.asReadFailure(e));

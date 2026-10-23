@@ -125,23 +125,8 @@ public final class WorkingSet {
     /// replaced by the default: an override that does not take effect leaves the reader refusing
     /// the very file it was set for.
     static long maxWorkingSetBytes() {
-        String override = System.getProperty(MAX_WORKING_SET_BYTES_PROPERTY);
-        if (override == null) {
-            return Runtime.getRuntime().maxMemory() / 100 * DEFAULT_HEAP_PERCENT;
-        }
-        long bytes;
-        try {
-            bytes = Long.parseLong(override);
-        }
-        catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    MAX_WORKING_SET_BYTES_PROPERTY + " must be a positive byte count, but was: " + override, e);
-        }
-        if (bytes <= 0) {
-            throw new IllegalArgumentException(
-                    MAX_WORKING_SET_BYTES_PROPERTY + " must be a positive byte count, but was: " + override);
-        }
-        return bytes;
+        return InternalProperty.longValue(MAX_WORKING_SET_BYTES_PROPERTY,
+                Runtime.getRuntime().maxMemory() / 100 * DEFAULT_HEAP_PERCENT, 1, "a positive byte count");
     }
 
     /// Charges a page or dictionary page needing `needed` bytes: raises `slots`' entry at `slot`

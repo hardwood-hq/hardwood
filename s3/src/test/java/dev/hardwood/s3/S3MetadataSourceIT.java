@@ -13,11 +13,14 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.MetadataSource;
+import dev.hardwood.internal.reader.TailedInputFile;
 import dev.hardwood.metadata.ParsedFooter;
 import dev.hardwood.reader.ParquetFileReader;
 
@@ -42,6 +45,8 @@ class S3MetadataSourceIT {
 
     static S3Source source;
 
+    private String tailBytes;
+
     @BeforeAll
     static void setup() {
         bucket.create();
@@ -52,6 +57,23 @@ class S3MetadataSourceIT {
                 .build();
     }
 
+    /// The tail these fixtures' footers are sized for: one inside it, one outside.
+    @BeforeEach
+    void setTail() {
+        tailBytes = System.getProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+        System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, Integer.toString(64 * 1024));
+    }
+
+    @AfterEach
+    void restoreTail() {
+        if (tailBytes == null) {
+            System.clearProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+        }
+        else {
+            System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, tailBytes);
+        }
+    }
+
     @AfterAll
     static void tearDown() {
         source.close();
@@ -60,7 +82,7 @@ class S3MetadataSourceIT {
 
     @Test
     void aSuppliedFooterInsideThePrefetchedTailCostsNoRequest() throws Exception {
-        assertThat(footerOf(SMALL_FOOTER).footerLength()).isLessThan(S3Fetcher.TAIL_SIZE - 8);
+        assertThat(footerOf(SMALL_FOOTER).footerLength()).isLessThan(TailedInputFile.tailBytes() - 8);
 
         assertThat(requestsToOpen(SMALL_FOOTER, null)).isEqualTo(1);
         assertThat(requestsToOpen(SMALL_FOOTER, cachingSource())).isEqualTo(1);
@@ -68,7 +90,7 @@ class S3MetadataSourceIT {
 
     @Test
     void aSuppliedFooterOutsideThePrefetchedTailSavesItsRequest() throws Exception {
-        assertThat(footerOf(LARGE_FOOTER).footerLength()).isGreaterThan(S3Fetcher.TAIL_SIZE);
+        assertThat(footerOf(LARGE_FOOTER).footerLength()).isGreaterThan(TailedInputFile.tailBytes());
 
         assertThat(requestsToOpen(LARGE_FOOTER, null)).isEqualTo(2);
         assertThat(requestsToOpen(LARGE_FOOTER, cachingSource())).isEqualTo(1);

@@ -32,6 +32,7 @@ import dev.hardwood.internal.reader.InputFileCloser;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.ParquetMetadataReader.FooterRead;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -126,12 +127,12 @@ public class ParquetFileReader implements Closeable {
     /// by the write lock of [#lifecycleLock].
     private boolean tornDown;
 
-    private ParquetFileReader(List<InputFile> inputFiles, FileFooter firstFileFooter,
+    private ParquetFileReader(List<InputFile> inputFiles, InputFile firstFile, FileFooter firstFileFooter,
                               HardwoodContextImpl context, boolean fixedListFastPathEnabled,
                               boolean metadataFilteringEnabled, boolean ownsContext, boolean ownsInputFiles) {
         this.inputFiles = inputFiles;
         this.firstFileMetaData = firstFileFooter.metaData();
-        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, context);
+        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFile, firstFileFooter, context);
         this.schema = firstFileFooter.schema();
         this.context = context;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
@@ -277,7 +278,8 @@ public class ParquetFileReader implements Closeable {
         FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
         fileOpenedEvent.begin();
         ParquetMetadataReader.open(first, context.metadataSource());
-        FileFooter firstFileFooter = ParquetMetadataReader.load(first, context.metadataSource());
+        FooterRead firstFooterRead = ParquetMetadataReader.readFooter(first, context.metadataSource());
+        FileFooter firstFileFooter = firstFooterRead.parse();
 
         fileOpenedEvent.file = first.name();
         fileOpenedEvent.fileSize = first.length();
@@ -285,8 +287,8 @@ public class ParquetFileReader implements Closeable {
         fileOpenedEvent.columnCount = firstFileFooter.schema().getColumnCount();
         fileOpenedEvent.commit();
 
-        return new ParquetFileReader(files, firstFileFooter, context, fixedListFastPathEnabled,
-                metadataFilteringEnabled, ownsContext, true);
+        return new ParquetFileReader(files, firstFooterRead.inputFile(), firstFileFooter, context,
+                fixedListFastPathEnabled, metadataFilteringEnabled, ownsContext, true);
     }
 
     /// Closes every input file the failed open took ownership of, and the context

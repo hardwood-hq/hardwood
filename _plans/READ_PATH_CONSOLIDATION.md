@@ -133,18 +133,21 @@ when the read reaches it, as today.
    planning failed) starts its first data entry the same way. These start without F and are not
    charged to R, which is today's rule for a read's own task and its next file. The next unit's
    planning reads (their I/O; the parse stays with the chain) start when the first column enters
-   k, whatever the planning chain is planning: until planning reads are entries (stage 2, item 3)
+   k, whatever the planning chain is planning: until planning reads are entries (stage 3)
    on a virtual thread of the read's own, and from then on as entries the sequence starts itself.
 3. **Data further ahead.** Every other data entry is speculative. It starts, in position order,
    while the read's started speculative data bytes stay within F and the context's R has room for
    them. Nothing waits for R: an entry that does not fit starts on a later release. A release of
    R wakes its waiters in registration order, decode tasks and entries alike, as today. An idle
    read holds what it has started, at most F, until it is released or closed.
-4. **Files ahead.** Up to 32 files beyond the next one (today's `maxFilesAhead`) have their footer
-   entries started ahead, each charged to R at the footer request size until its file is planned,
-   and at the S3 suffix's size while S3 holds the suffix. Footers are outside F. Under a row
-   limit, no footer beyond the next file is inserted, and no data beyond the next unit starts, as
-   a read with a row limit opens only the next file today.
+4. **Files ahead.** The next file's footer entry starts with the next unit. A footer past it starts
+   only while the planning chain has room to plan its file (the entries planned and not started are
+   below F), for at most `maxFilesAhead` (64) files after the one the read has reached, the next
+   file included, a cap on the footer requests in flight rather than on how far planning goes. Each
+   past the next file is charged to R at the tail's size from its start until the read is done with
+   the file, which drops the tail. Footers are outside F. Under a row limit, no footer beyond the
+   next file is inserted, and no data beyond the next unit starts, as a read with a row limit opens
+   only the next file today.
 5. **Requests found during a parse.** A step may insert a demanded entry at its position: the
    header of a Bloom filter without a length and its rest, a dictionary longer than its first
    read, a page-format probe's longer peek, the rest of a column chunk a row limit left out. A
@@ -198,7 +201,7 @@ when the read reaches it, as today.
 | R | the speculative bytes of all reads of a context | 25 % of the heap | `hardwood.internal.readAheadBytes` | unchanged |
 | W | the working set of one read, a hard limit | the heap | `hardwood.internal.maxWorkingSetBytes` | unchanged |
 
-Also kept as they are: the files ahead (32, `hardwood.internal.maxFilesAhead`), the page-index
+Also kept as they are: the files ahead (64 since stage 2, `hardwood.internal.maxFilesAhead`), the page-index
 window budget (16 MiB, `hardwood.internal.indexWindowBytes`, which bounds index bytes held across
 row groups and caps a window's requests at S), the footer request size, the probe sizes and the
 row-limit estimate. Tests that shrink `sequentialChunkSize` to force small pieces shrink S
@@ -240,8 +243,13 @@ stages move code into or add):
 - concurrency constructs: lines containing `ReentrantLock`, `synchronized`, `Atomic*`,
   `CompletableFuture`, `volatile` and `tryLock`.
 
-The baseline on `4fbba14e7` is 5,314 lines of code and 96 concurrency constructs. Each stage's last PR reports both. Expected after stage 2: about −20 % lines
-and −40 % constructs. A stage that falls well short says why in its PR before the next one starts.
+The baseline on `4fbba14e7` is 5,314 lines of code and 96 concurrency constructs. Each stage's last PR reports both. Stage 2 ends near
+line-neutral (5,393 lines and 86 constructs after its two items): the fetch sequence implements
+the whole rule set, F, R, release by overlapping extent, the re-read of a failed read and the
+footers ahead, which each mechanism it replaced did only in part, and stage 2 keeps planning as
+blocking code, with its two carriers and the transitional next-unit read. The structural
+deletions are stage 3's; its spike states the reduction it expects, measured, before it starts. A
+stage that falls well short says why in its PR before the next one starts.
 
 ## Gates
 
@@ -270,8 +278,8 @@ not cover. Each PR updates the design documents its change alters (`READ_PIPELIN
 | --- | --- | --- | --- |
 | 0 | Gate script, measures script, baseline | — | low |
 | 1 | Deletions and moves | dead code, hand-written waits, `RowGroupIterator` down to its work list | low |
-| 2 | The fetch sequence | `SharedRegion`, `CoalescableFirstChunk`, the chunk chains, `FetchedAhead`, `FileOpenAhead`, `plannedSpan`, `prefetchNextRowGroup`, `CoalescedRanges`, `RangeRead.servedBy`, the `FileMetadataCache` prefetch maps | medium |
-| 3 | Planning as steps (go/no-go) | `PlanningMode`, `WorkItemPlanning`, the planning `PrefetchTasks`, `executePlanning`, the planning `compute` hops, the load hand-off, `awaitFirst` | high |
+| 2 | The fetch sequence | `SharedRegion`, `CoalescableFirstChunk`, the chunk chains, `FetchedAhead`, `FileOpenAhead`, `plannedSpan`, `prefetchNextRowGroup`, `RangeRead.servedBy`, the `FileMetadataCache` prefetch maps | medium |
+| 3 | Planning as steps, with planning reads as entries (go/no-go) | `PlanningMode`, `WorkItemPlanning`, the planning `PrefetchTasks`, `executePlanning`, the planning `compute` hops, the load hand-off, `awaitFirst`, `CoalescedRanges`, the next unit's read on a virtual thread of its own | high |
 | 4 | Fold into the design documents | this plan | low |
 
 Stages run in order, one PR each or more, every commit keyed to #1662. Stopping after stage 2 is
@@ -334,27 +342,31 @@ Its PRs, in order:
    and the tests and benchmarks that walk a plan with them move to driving the sequence.
 2. **Footers.** Footer reads, `MetadataSource` calls and S3's open become footer entries, with the
    files-ahead rule. This replaces `FileOpenAhead`'s footers and `FileMetadataCache`'s prefetch
-   maps. #1399 lands here, after #1629, through an internal interface in core that `S3InputFile`
-   implements: the core sets the suffix size before `open()` (64 KiB when a `MetadataSource`
-   supplies the footers), the footer entry slices data inside the suffix (rule 5), so a file up
-   to that size costs one request, and the core tells S3 to drop the suffix when the footer
-   entry is released (rule 6). That settles #100's memory concern without closing files early;
-   #100's early close stays out of this plan. The size is tuned on real S3 (#1671).
-3. **Planning reads.** The Bloom window, pruning dictionaries, page-index window and mask probe
-   become entries, at the positions above. This replaces `CoalescedRanges` and the direct
-   `readRange` calls of `IndexWindow`, `DictionaryParser`, `RowGroupBloomFilterSource` and
-   `PageFormatProbe` within a read; their blocking variants stay for callers outside a read.
-   #1659 lands here: a page-index window is inserted once a member survives its Bloom filters and
-   dictionaries, so a window whose members they all drop costs no index read.
-
-F's default is confirmed at stage 2's last PR, once footers and planning reads are in the
-sequence: 2 S unless a gate contender is slower than the baseline there, in which case the
+   maps. #1399 lands here, after #1629. A footer entry reads the file's tail, its last 256 KiB
+   (an internal property), in one request, and every read inside the tail is sliced from it: the
+   footer, the page index, and data, whose ranges coalescing cuts at the tail's start (rule 5), so
+   a file up to that size costs one request. `S3InputFile` is opened by the engine alone and
+   needs no hook into the core: its open fetches a suffix of that same size, and the footer
+   entry's read of the whole tail takes it, so S3 holds no tail from then on. The read drops the
+   tail when it is done with the file. That settles #100's memory concern without closing files
+   early; #100's early close stays out of this plan. Reads whose footers a `MetadataSource`
+   supplies take the same tail. Core's tests read an eight-byte tail, so a fixture of a few
+   kilobytes still reads as a file larger than its tail. The size is tuned on real S3 (#1671).
+F's default is confirmed at stage 2's last PR, once footers are in the sequence: 2 S unless a gate contender is slower than the baseline there, in which case the
 smallest of 2 S, 3 S and 4 S that is not.
 
 ### Stage 3: planning as steps (go/no-go)
 
 The planning chain becomes steps that yield on entries, on the pool or the read's queue, so
-planning no longer needs a virtual thread. This removes `PlanningMode`, `WorkItemPlanning`, the
+planning no longer needs a virtual thread. Its reads become entries first: the Bloom window,
+pruning dictionaries, page-index window and mask probe, at the positions above. This replaces
+`CoalescedRanges` and the direct `readRange` calls of `IndexWindow`, `DictionaryParser`,
+`RowGroupBloomFilterSource` and `PageFormatProbe` within a read; their blocking variants stay for
+callers outside a read. #1659 lands here: a page-index window is inserted once a member survives
+its Bloom filters and dictionaries, so a window whose members they all drop costs no index read.
+These reads were stage 2's third item. They move here because, while planning blocks, an entry
+for a planning read only adds a wait on it where `readRange` waits today; as an entry a step
+yields on, it removes the wait and the next unit's read on a virtual thread of its own. This removes `PlanningMode`, `WorkItemPlanning`, the
 planning `PrefetchTasks`, `executePlanning`, the planning `compute` hops,
 `FileMetadataCache`'s load hand-off and `DecodeExecutor.awaitFirst`, and checks whether
 `OnceCache` and the `ReentrantLock`s still need their JDK 21 reasons. The probes' adaptive
