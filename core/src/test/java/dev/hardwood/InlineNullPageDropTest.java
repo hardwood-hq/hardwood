@@ -17,13 +17,13 @@ import java.util.stream.LongStream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.PageWalks;
-import dev.hardwood.internal.reader.RowRanges;
-import dev.hardwood.internal.reader.SequentialFetchPlan;
+import dev.hardwood.internal.reader.fetch.PageWalks;
+import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
+import dev.hardwood.internal.reader.select.RowRanges;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ColumnReader;

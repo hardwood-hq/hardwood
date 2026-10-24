@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.ints;
 
 import dev.hardwood.internal.predicate.IntBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 public final class IntLtEqBatchMatcher implements IntBatchMatcher {
 

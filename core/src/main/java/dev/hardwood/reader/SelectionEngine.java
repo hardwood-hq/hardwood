@@ -12,10 +12,10 @@ import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BatchMatchMerger;
-import dev.hardwood.internal.reader.NestedBatch;
-import dev.hardwood.internal.reader.PredicateView;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.NestedBatch;
+import dev.hardwood.internal.reader.row.BatchMatchMerger;
+import dev.hardwood.internal.reader.row.PredicateView;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.FileSchema;
 

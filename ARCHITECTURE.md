@@ -125,3 +125,21 @@ Each decoded column (the projection plus any filter-only predicate columns) fetc
 | `test-support` | Test helpers shared across modules |
 | `error-prone-checks` | The project's Error Prone checks |
 | `tools/predicate-audit` | Audit of the predicate literal rule against an oracle, parquet-java and DuckDB (enable with `-Ppredicate-audit`) |
+
+## Read Path Packages
+
+The read path in `core` is split into packages by responsibility. Each package depends only on the packages above it in this table, which `ReadPathLayersTest` checks. Two packages sit beside the table: `HardwoodContextImpl` (`dev.hardwood.internal`), which every layer is handed, and `internal.predicate`, which the layers from `footer` up use and which uses the batch model, dictionary parsing, the step types, row selection, the page-index buffers of `plan` and the accessors of `row`.
+
+| Package | Responsibility | Design document |
+|---|---|---|
+| `internal.io` | `InputFile` implementations and the validation of requested ranges | [INPUT_FILES.md](_designs/INPUT_FILES.md) |
+| `internal.reader.select` | Row selection: `RowRanges` and per-page `PageRowMask`s | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
+| `internal.reader.step` | How a read's work runs without blocking: its executor, the needs a step waits on, the parses over bytes a step holds | [THREADING.md](_designs/THREADING.md) |
+| `internal.reader.batch` | The batches a read hands its consumers: `BatchExchange`, `NestedBatch`, `BinaryBatchValues`, `Dictionary`, the layers `NestedLevelComputer` derives from levels | [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) |
+| `internal.reader.memory` | The working-set limit and the context's read-ahead buffer | [VALUE_DECODE.md](_designs/VALUE_DECODE.md#page-decode) |
+| `internal.reader.decode` | Page bytes to page values: `PageDecoder`, the page values, dictionary parsing | [VALUE_DECODE.md](_designs/VALUE_DECODE.md) |
+| `internal.reader.fetch` | The bytes a read requests from its files (`FetchSequence`) and the walks of a column chunk's pages (`FetchPlan`) | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
+| `internal.reader.footer` | Reading and parsing a file's footer | [FILE_METADATA.md](_designs/FILE_METADATA.md) |
+| `internal.reader.plan` | The planning of a read: work items, pruning, fetch plans per row group, the batch plan | [READ_PIPELINE.md](_designs/READ_PIPELINE.md), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) |
+| `internal.reader.pipeline` | Decoded pages into batches: the scheduler, scheduled columns, cells, segments and fills | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) |
+| `internal.reader.row` | The row readers, their flyweights and accessors, record filtering | [ROW_READER.md](_designs/ROW_READER.md), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) |

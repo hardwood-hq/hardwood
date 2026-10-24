@@ -7,7 +7,7 @@
  */
 package dev.hardwood.row;
 
-import dev.hardwood.internal.reader.PqFileImpl;
+import dev.hardwood.internal.reader.row.PqFileImpl;
 
 /// Value of a Parquet column annotated with the `FILE` logical type: a reference to a range of
 /// bytes, stored inline in the value or in an external object named by a URI.

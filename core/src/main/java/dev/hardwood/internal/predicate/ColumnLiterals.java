@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
-import dev.hardwood.internal.reader.TimestampAccessorKind;
+import dev.hardwood.internal.reader.row.TimestampAccessorKind;
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;

@@ -16,8 +16,8 @@ import java.util.List;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.CountingInputFile;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;

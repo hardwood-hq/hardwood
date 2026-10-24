@@ -34,9 +34,9 @@ import dev.hardwood.internal.predicate.matcher.longs.LongGtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BinaryBatchValues;
-import dev.hardwood.internal.reader.BinaryBatchValuesFixtures;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.BinaryBatchValuesFixtures;
 
 import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;

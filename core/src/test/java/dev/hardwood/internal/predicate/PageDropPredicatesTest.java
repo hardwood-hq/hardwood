@@ -21,7 +21,7 @@ import dev.hardwood.reader.FilterPredicate.Operator;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The inline-page-statistics drop path used by
-/// [dev.hardwood.internal.reader.SequentialFetchPlan] when a file carries no page index:
+/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] when a file carries no page index:
 /// which AND-necessary leaves reach a column, and whether a page's own statistics prove it
 /// holds no matching row.
 class PageDropPredicatesTest {

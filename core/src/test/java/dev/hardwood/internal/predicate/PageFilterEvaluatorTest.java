@@ -25,9 +25,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.RowGroupIndexBuffers;
-import dev.hardwood.internal.reader.RowRanges;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
+import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
+import dev.hardwood.internal.reader.select.RowRanges;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.internal.thrift.ThriftStructBuilder;
 import dev.hardwood.metadata.ColumnChunk;

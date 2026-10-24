@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.longs;
 
 import dev.hardwood.internal.predicate.LongBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 public final class LongLtEqBatchMatcher implements LongBatchMatcher {
 

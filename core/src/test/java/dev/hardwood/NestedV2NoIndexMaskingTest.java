@@ -12,7 +12,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -23,7 +23,7 @@ import dev.hardwood.row.PqList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Drives the rep-level walk path in
-/// [dev.hardwood.internal.reader.SequentialFetchPlan] against a
+/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] against a
 /// `DATA_PAGE_V2` nested column without OffsetIndex. The fixture pairs a
 /// flat `narrow` INT32 with a nested `tags` LIST&lt;STRING&gt; whose pages
 /// flush at different rows than the flat column. Filter pushdown and

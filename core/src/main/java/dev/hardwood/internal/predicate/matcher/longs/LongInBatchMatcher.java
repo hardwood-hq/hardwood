@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.longs;
 
 import dev.hardwood.internal.predicate.LongBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// IN-list matcher for `long` columns. Linear scan over the value list — IN lists
 /// in practice have only a handful of entries.

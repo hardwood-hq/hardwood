@@ -20,7 +20,7 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;

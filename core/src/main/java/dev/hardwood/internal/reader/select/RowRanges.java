@@ -1,0 +1,270 @@
+/*
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Copyright The original authors
+ *
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
+package dev.hardwood.internal.reader.select;
+
+import java.util.Arrays;
+import java.util.List;
+
+import dev.hardwood.metadata.PageLocation;
+
+/// A sorted, non-overlapping set of `[startRow, endRow)` intervals representing
+/// rows that might match a filter predicate.
+///
+/// Used by page-level Column Index filtering to translate per-page filter results
+/// into row ranges that can be checked against any column's Offset Index.
+public class RowRanges {
+
+    /// Sentinel representing all rows — used when no page-level filtering is active.
+    public static final RowRanges ALL = new RowRanges(new long[0], true);
+
+    private final long[] ranges; // [start0, end0, start1, end1, ...]
+    private final boolean all;
+
+    private RowRanges(long[] ranges, boolean all) {
+        this.ranges = ranges;
+        this.all = all;
+    }
+
+    /// Creates a RowRanges that matches all rows in a row group.
+    /// Used as a conservative fallback when Column Index is absent.
+    public static RowRanges all(long rowGroupRowCount) {
+        return new RowRanges(new long[]{ 0, rowGroupRowCount }, true);
+    }
+
+    /// Creates a RowRanges containing the single half-open interval `[start, end)`.
+    ///
+    /// Unlike [#all(long)], the result is *not* the all-rows sentinel — `isAll()`
+    /// returns `false` and per-page mask computation will discard rows outside
+    /// the interval. Used by the tail-read fast path to express the "skip the
+    /// leading `start` rows of this row group" range.
+    public static RowRanges range(long start, long end) {
+        if (start < 0 || start >= end) {
+            throw new IllegalArgumentException("range must satisfy 0 <= start < end, got ["
+                    + start + ", " + end + ")");
+        }
+        return new RowRanges(new long[]{ start, end }, false);
+    }
+
+    /// Returns `true` if this instance represents all rows (no filtering).
+    public boolean isAll() {
+        return all;
+    }
+
+    /// Returns `true` if no row can match: no row of the row group survived page
+    /// filtering.
+    public boolean isEmpty() {
+        return !all && ranges.length == 0;
+    }
+
+    /// Returns the exclusive end of the last matching row range. Used as a
+    /// short-circuit cursor by sequential page scanners: once the iterator's
+    /// row cursor has crossed `endRow()`, no later page can produce a non-null
+    /// per-page mask and scanning further is wasted work.
+    ///
+    /// Returns `Long.MAX_VALUE` only for the row-count-less [#ALL] sentinel.
+    /// [#all(long)] returns its supplied row-group row count — both forms
+    /// match every row, but the bounded form has a known end and exposing it
+    /// lets callers short-circuit correctly without having to special-case the
+    /// sentinel separately.
+    ///
+    /// Returns `0` for an empty set, where no row survived page filtering: a
+    /// scanner then stops before its first page.
+    public long endRow() {
+        if (ranges.length == 0) {
+            return all ? Long.MAX_VALUE : 0;
+        }
+        return ranges[ranges.length - 1];
+    }
+
+    /// Creates RowRanges from page locations and a keep bitmap.
+    ///
+    /// For each page where `keep[i]` is true, the row range
+    /// `[firstRowIndex[i], firstRowIndex[i+1])` is included. The last page's
+    /// end is `rowGroupRowCount`. Adjacent kept ranges are merged.
+    ///
+    /// @param pages page locations from the Offset Index
+    /// @param keep bitmap indicating which pages to keep
+    /// @param rowGroupRowCount total number of rows in the row group
+    public static RowRanges fromPages(List<PageLocation> pages, boolean[] keep, long rowGroupRowCount) {
+        long[] result = new long[pages.size() * 2];
+        int pos = 0;
+
+        // Iterate through all the available pages
+        for (int i = 0; i < pages.size(); i++) {
+            // Ignore pages that do not need to be kept
+            if (!keep[i]) {
+                continue;
+            }
+
+            long rangeStart = pages.get(i).firstRowIndex();
+            long rangeEnd = (i + 1 < pages.size()) ? pages.get(i + 1).firstRowIndex() : rowGroupRowCount;
+
+            // Merge with previous interval if adjacent
+            if (pos > 0 && result[pos - 1] >= rangeStart) {
+                result[pos - 1] = Math.max(result[pos - 1], rangeEnd);
+            }
+            else {
+                result[pos++] = rangeStart;
+                result[pos++] = rangeEnd;
+            }
+        }
+
+        return new RowRanges(pos == result.length ? result : Arrays.copyOf(result, pos), false);
+    }
+
+    /// Returns `true` if a page with the given row range overlaps any matching interval.
+    public boolean overlapsPage(long pageFirstRow, long pageLastRow) {
+        for (int i = 0; i < ranges.length; i += 2) {
+            if (pageLastRow <= ranges[i]) {
+                return false;
+            }
+            if (pageFirstRow < ranges[i + 1]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Returns this RowRanges intersected with `other` (to support AND predicates).
+    public RowRanges intersect(RowRanges other) {
+        if (this.all) {
+            return other;
+        }
+        if (other.all) {
+            return this;
+        }
+
+        long[] result = new long[this.ranges.length + other.ranges.length];
+        int pos = 0;
+        int i = 0;
+        int j = 0;
+        while (i < this.ranges.length && j < other.ranges.length) {
+            long rangeStart = Math.max(this.ranges[i], other.ranges[j]);
+            long rangeEnd = Math.min(this.ranges[i + 1], other.ranges[j + 1]);
+            if (rangeStart < rangeEnd) {
+                result[pos++] = rangeStart;
+                result[pos++] = rangeEnd;
+            }
+
+            // Advance the interval that ends first
+            if (this.ranges[i + 1] < other.ranges[j + 1]) {
+                i += 2;
+            }
+            else {
+                j += 2;
+            }
+        }
+
+        return new RowRanges(pos == result.length ? result : Arrays.copyOf(result, pos), false);
+    }
+
+    /// Returns the union of this RowRanges with `other` (to support OR predicates).
+    /// Both inputs are already sorted and non-overlapping, so a single-pass merge suffices.
+    public RowRanges union(RowRanges other) {
+        if (this.all || other.all) {
+            return this.all ? this : other;
+        }
+
+        long[] result = new long[this.ranges.length + other.ranges.length];
+        int pos = 0;
+        int i = 0;
+        int j = 0;
+        while (i < this.ranges.length || j < other.ranges.length) {
+            // Pick the interval with the smaller start from either input
+            long start;
+            long end;
+            if (j >= other.ranges.length || (i < this.ranges.length && this.ranges[i] <= other.ranges[j])) {
+                start = this.ranges[i];
+                end = this.ranges[i + 1];
+                i += 2;
+            }
+            else {
+                start = other.ranges[j];
+                end = other.ranges[j + 1];
+                j += 2;
+            }
+
+            // Merge with previous interval if overlapping or adjacent
+            if (pos > 0 && result[pos - 1] >= start) {
+                result[pos - 1] = Math.max(result[pos - 1], end);
+            }
+            else {
+                result[pos++] = start;
+                result[pos++] = end;
+            }
+        }
+
+        return new RowRanges(pos == result.length ? result : Arrays.copyOf(result, pos), false);
+    }
+
+    /// Returns the number of rows this set keeps of a row group of `rowGroupRowCount` rows.
+    public long rowCount(long rowGroupRowCount) {
+        if (all) {
+            return rowGroupRowCount;
+        }
+        long count = 0;
+        for (int i = 0; i < ranges.length; i += 2) {
+            long end = Math.min(ranges[i + 1], rowGroupRowCount);
+            if (end > ranges[i]) {
+                count += end - ranges[i];
+            }
+        }
+        return count;
+    }
+
+    /// Returns the number of intervals in this set.
+    public int intervalCount() {
+        return ranges.length / 2;
+    }
+
+    /// Returns the per-page [PageRowMask] for the page covering rows
+    /// `[pageFirstRow, pageLastRow)`.
+    ///
+    /// - [PageRowMask#ALL] when this is [#isAll()], or when a single matching range covers the
+    ///   whole page — keep every row in the page.
+    /// - `null` when no matching range overlaps the page — caller drops the page.
+    /// - Otherwise a mask whose intervals are the intersections of the matching
+    ///   ranges with `[pageFirstRow, pageLastRow)`, expressed as page-relative
+    ///   offsets.
+    public PageRowMask maskForPage(long pageFirstRow, long pageLastRow) {
+        if (all) {
+            return PageRowMask.ALL;
+        }
+        if (pageLastRow <= pageFirstRow) {
+            return null;
+        }
+        int[] result = new int[ranges.length];
+        int pos = 0;
+        for (int i = 0; i < ranges.length; i += 2) {
+            long rangeStart = ranges[i];
+            long rangeEnd = ranges[i + 1];
+            if (rangeEnd <= pageFirstRow) {
+                continue;
+            }
+            if (rangeStart >= pageLastRow) {
+                break;
+            }
+            long start = Math.max(rangeStart, pageFirstRow) - pageFirstRow;
+            long end = Math.min(rangeEnd, pageLastRow) - pageFirstRow;
+            result[pos++] = Math.toIntExact(start);
+            result[pos++] = Math.toIntExact(end);
+        }
+        if (pos == 0) {
+            return null;
+        }
+        if (pos == 2 && result[0] == 0 && result[1] == pageLastRow - pageFirstRow) {
+            return PageRowMask.ALL;
+        }
+        if (pos != result.length) {
+            int[] trimmed = new int[pos];
+            System.arraycopy(result, 0, trimmed, 0, pos);
+            return PageRowMask.of(trimmed);
+        }
+        return PageRowMask.of(result);
+    }
+}

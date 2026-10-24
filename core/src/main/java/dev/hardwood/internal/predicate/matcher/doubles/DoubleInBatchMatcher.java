@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.doubles;
 
 import dev.hardwood.internal.predicate.DoubleBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// IN-list matcher for `double` columns. Linear scan over the value list — IN lists
 /// in practice have only a handful of entries. Compares with [Double#compare] to implement

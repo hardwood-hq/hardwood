@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.floats;
 
 import dev.hardwood.internal.predicate.FloatBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// IN-list matcher for `float` columns. Compares with [Float#compare] to implement the total
 /// order, equating all NaNs and distinguishing `-0.0` from `+0.0`.

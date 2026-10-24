@@ -548,10 +548,10 @@ class RecordFilterBenchmarkTest {
         return fileSchema;
     }
 
-    /// Probes whether `filter` is batch-eligible by calling [BatchFilterCompiler.tryCompile]
-    /// once against the file schema and the contender's projection. Mirrors the gate in
-    /// [dev.hardwood.internal.reader.FlatRowReader]: `tryCompile` returns `null` → consumer-side;
-    /// all-null matcher array → consumer-side; otherwise → batch-matcher.
+    /// Probes whether `filter` is batch-eligible by calling [BatchFilterCompiler.tryCompile] once
+    /// against the file schema and the contender's projection. Mirrors the gate in
+    /// [dev.hardwood.internal.reader.row.FlatRowReader]: `tryCompile` returns `null` →
+    /// consumer-side; all-null matcher array → consumer-side; otherwise → batch-matcher.
     private String probePath(FilterPredicate filter, ColumnProjection projection) throws IOException {
         FileSchema schema = fileSchema();
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);

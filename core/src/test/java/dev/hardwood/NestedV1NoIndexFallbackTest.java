@@ -13,10 +13,10 @@ import java.nio.file.Paths;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.reader.ByteSource;
-import dev.hardwood.internal.reader.FetchPlanBuilder;
-import dev.hardwood.internal.reader.FileColumnOrdinals;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
+import dev.hardwood.internal.reader.plan.FetchPlanBuilder;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;

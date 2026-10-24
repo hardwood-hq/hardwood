@@ -65,7 +65,7 @@ Two byte ranges are fetched as one request when the gap between them is at most 
 
 | Merge | Where |
 |---|---|
-| A row group's needed data ranges, of every column at once, into its entries | `FetchPlanBuilder.coalesce` |
+| A row group's needed data ranges, of every column at once, into its entries | `CoalescingPolicy.coalesce` |
 | Page-index and bloom-filter slices of one structure | `CoalescedRanges` |
 
 A merge bridges the gap between two needed ranges. It never extends a request before the first needed byte or past the last one. A range longer than the span limit is a request of its own.
@@ -117,7 +117,7 @@ Tests: `PageRangeIoTest`, `DictionaryPrefixFetchTest`, `SequentialFetchPlanEarly
 
 ### Coalescing a row group
 
-A row group's entries are built from every decoded column's needed ranges at once (`FetchPlanBuilder.coalesce`): page groups, the dictionary page, a column without an OffsetIndex whole or its first part. Sorted by offset, a range joins the entry before it when the gap policy merges it, so one request may serve the pages of several columns across a gap of at most G, and is at most S long unless one range alone is longer. Each entry is held by every column whose chunk extent overlaps it, and its fetch reason names every column whose range it holds ([fetch reasons](#io-budget)).
+A row group's entries are built from every decoded column's needed ranges at once (`CoalescingPolicy.coalesce`): page groups, the dictionary page, a column without an OffsetIndex whole or its first part. Sorted by offset, a range joins the entry before it when the gap policy merges it, so one request may serve the pages of several columns across a gap of at most G, and is at most S long unless one range alone is longer. Each entry is held by every column whose chunk extent overlaps it, and its fetch reason names every column whose range it holds ([fetch reasons](#io-budget)).
 
 A row group whose rows are all read and that no Bloom filter or dictionary can drop (`PlanningChain.readsAllRows`: no page filtering, no tail or row limit cutting it, its chunks in this file) has its entries built from its chunks' extents in the footer instead (`FetchPlanBuilder.chunkSpans`), cut into pieces of at most S and coalesced the same way, before its page index is read, so they start while it is read. Its plans then locate their pages in those entries; a page that straddles a cut is copied as above.
 

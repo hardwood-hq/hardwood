@@ -10,17 +10,17 @@ package dev.hardwood.reader;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.NestedBatch;
-import dev.hardwood.internal.reader.NestedIndexMode;
-import dev.hardwood.internal.reader.NestedLevelComputer;
-import dev.hardwood.internal.reader.PageSource;
-import dev.hardwood.internal.reader.ReadScheduler;
-import dev.hardwood.internal.reader.RowGroupIterator;
-import dev.hardwood.internal.reader.ScheduledColumn;
-import dev.hardwood.internal.reader.ScheduledFlatColumn;
-import dev.hardwood.internal.reader.ScheduledNestedColumn;
+import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.NestedBatch;
+import dev.hardwood.internal.reader.batch.NestedIndexMode;
+import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.pipeline.ReadScheduler;
+import dev.hardwood.internal.reader.pipeline.ScheduledColumn;
+import dev.hardwood.internal.reader.pipeline.ScheduledFlatColumn;
+import dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn;
+import dev.hardwood.internal.reader.plan.PageSource;
+import dev.hardwood.internal.reader.plan.RowGroupIterator;
 import dev.hardwood.schema.ColumnSchema;
 
 /// The decode pipeline of one column in a [ColumnScan]: the column's scheduled column, the
@@ -59,12 +59,12 @@ final class ColumnCursor {
         return layers.count() > 0 || column.maxRepetitionLevel() > 0;
     }
 
-    /// Builds the pipeline for `column`, which sits at `projectedColumnIndex` in the
-    /// projection `rowGroupIterator` was initialised with. Batches are published
-    /// detached, so every batch the cursor hands out is fresh and never reused. The batches
-    /// close where the batch plan of `rowGroupIterator` closes them. The column is a
-    /// [dev.hardwood.internal.reader.ScheduledColumn] added to `scheduler`, which starts it;
-    /// `scheduler` must not be `null`.
+    /// Builds the pipeline for `column`, which sits at `projectedColumnIndex` in the projection
+    /// `rowGroupIterator` was initialised with. Batches are published detached, so every batch the
+    /// cursor hands out is fresh and never reused. The batches close where the batch plan of
+    /// `rowGroupIterator` closes them. The column is a
+    /// [dev.hardwood.internal.reader.pipeline.ScheduledColumn] added to `scheduler`, which starts
+    /// it; `scheduler` must not be `null`.
     static ColumnCursor create(ColumnSchema column, NestedLevelComputer.Layers layers,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,

@@ -7,12 +7,12 @@
  */
 package dev.hardwood.internal.predicate;
 
-import dev.hardwood.internal.reader.BinaryValueTest;
+import dev.hardwood.internal.reader.batch.BinaryValueTest;
 
 /// Marker for `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` typed [ColumnBatchMatcher]s. Implementations
-/// cast `batch.values` to [dev.hardwood.internal.reader.BinaryBatchValues] and compare each value's
-/// `bytes()[starts()[i], ends()[i])` view against the literal in place, without materialising a
-/// `byte[]` per row.
+/// cast `batch.values` to [dev.hardwood.internal.reader.batch.BinaryBatchValues] and compare each
+/// value's `bytes()[starts()[i], ends()[i])` view against the literal in place, without
+/// materialising a `byte[]` per row.
 ///
 /// A null row's slot holds no value — an empty slice for `BYTE_ARRAY`, undefined scratch bytes for
 /// `FIXED_LEN_BYTE_ARRAY` — so its answer must never reach the output. The byte-wise matchers skip

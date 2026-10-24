@@ -14,7 +14,7 @@ import java.nio.file.Path;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.benchmarks.BenchmarkData;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;

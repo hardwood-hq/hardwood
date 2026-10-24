@@ -17,7 +17,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.TailedInputFile;
+import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;

@@ -75,7 +75,7 @@ Tests: `MultiFileRowReaderTest`, `FileMetadataCacheTest`, `ParentCloseTest`, `Pa
 
 ## Local files: memory mapping
 
-`InputFile.of(Path)` returns a `MappedInputFile` (`dev.hardwood.internal.reader`). The reader targets Java 21, so the backend maps through `FileChannel.map` into `MappedByteBuffer`s and does not use the FFM API. `open()` reads the file's size and picks one of two modes. A `MappedByteBuffer` is addressed with `int` indices and `FileChannel.map` takes an `int`-bounded size but a `long` position, and the two modes follow from that.
+`InputFile.of(Path)` returns a `MappedInputFile` (`dev.hardwood.internal.io`). The reader targets Java 21, so the backend maps through `FileChannel.map` into `MappedByteBuffer`s and does not use the FFM API. `open()` reads the file's size and picks one of two modes. A `MappedByteBuffer` is addressed with `int` indices and `FileChannel.map` takes an `int`-bounded size but a `long` position, and the two modes follow from that.
 
 | | File ≤ `Integer.MAX_VALUE` bytes | File > `Integer.MAX_VALUE` bytes |
 |---|---|---|
@@ -104,7 +104,7 @@ Tests: `ByteBufferInputFileTest`.
 
 ## Range-backed input
 
-`RangeBackedInputFile` (`dev.hardwood.internal.reader`) is a decorator that caches the ranges it reads from a delegate `InputFile` in a sparse, memory-mapped temp file and serves reads as slices of that mapping. It knows nothing about the delegate's transport; `S3InputFile` is its only user, and its design is in [S3_STORAGE.md](S3_STORAGE.md#rangebackedinputfile).
+`RangeBackedInputFile` (`dev.hardwood.internal.io`) is a decorator that caches the ranges it reads from a delegate `InputFile` in a sparse, memory-mapped temp file and serves reads as slices of that mapping. It knows nothing about the delegate's transport; `S3InputFile` is its only user, and its design is in [S3_STORAGE.md](S3_STORAGE.md#rangebackedinputfile).
 
 ## Size and offset limits
 

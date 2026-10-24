@@ -13,7 +13,7 @@ import java.util.function.Predicate;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
-import dev.hardwood.internal.reader.PageFormatProbe;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.thrift.ThriftTruncatedException;

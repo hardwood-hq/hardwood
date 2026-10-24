@@ -25,9 +25,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.internal.predicate.BinaryBatchMatcher;
 import dev.hardwood.internal.predicate.DictionaryBinaryBatchMatcher;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BinaryBatchValues;
-import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;

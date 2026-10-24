@@ -24,7 +24,7 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.bloomfilter.XxHash64;
-import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.thrift.BloomFilterReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;

@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.booleans;
 
 import dev.hardwood.internal.predicate.BooleanBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 public final class BooleanNotEqBatchMatcher implements BooleanBatchMatcher {
 

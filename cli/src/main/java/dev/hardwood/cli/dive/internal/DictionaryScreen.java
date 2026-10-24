@@ -20,7 +20,7 @@ import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.ValueFormatter;
-import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;

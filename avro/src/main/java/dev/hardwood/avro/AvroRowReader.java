@@ -23,7 +23,7 @@ import org.apache.avro.generic.GenericRecord;
 
 import dev.hardwood.avro.internal.AvroPlanNode;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.reader.FileAwareRowReader;
+import dev.hardwood.internal.reader.row.FileAwareRowReader;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;

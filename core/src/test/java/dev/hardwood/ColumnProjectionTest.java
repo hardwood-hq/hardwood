@@ -14,8 +14,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.FlatRowReader;
-import dev.hardwood.internal.reader.NestedRowReader;
+import dev.hardwood.internal.reader.row.FlatRowReader;
+import dev.hardwood.internal.reader.row.NestedRowReader;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;

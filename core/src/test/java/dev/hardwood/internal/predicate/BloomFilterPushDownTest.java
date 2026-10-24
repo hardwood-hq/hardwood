@@ -36,7 +36,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.XxHash64;
-import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;

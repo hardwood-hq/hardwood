@@ -17,7 +17,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.SchemaElement;

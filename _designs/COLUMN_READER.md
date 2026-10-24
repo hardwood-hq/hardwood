@@ -81,7 +81,7 @@ Tests: `ValidityTest`, `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
 
 ### Variable-length
 
-`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves are carried as `BinaryBatchValues` (`internal.reader`): a list of buffers and, per value, a buffer id and a view `[starts[i], ends[i])` into that buffer, instead of one `byte[]` per value. `getBinaryValues()` exposes them as a `BinaryValues`, read by value index:
+`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves are carried as `BinaryBatchValues` (`internal.reader.batch`): a list of buffers and, per value, a buffer id and a view `[starts[i], ends[i])` into that buffer, instead of one `byte[]` per value. `getBinaryValues()` exposes them as a `BinaryValues`, read by value index:
 
 - **A per-value window.** Value `i` is `[start(i), end(i))` of `buffer(i)`, for `i` in `[0, size())` with `size() == getValueCount()`. A null value's range is empty. A caller reads a value's bytes from its own window; the window is the public shape so that the storage behind it stays the reader's to choose. `buffer(i)` promises no sharing between values, no identity across calls and no zero copy: storage the window cannot point into is served from a copy, and an off-heap accessor can be added beside it.
 - **No per-byte accessor.** A per-byte read checked against the value's length keeps its check inside the caller's loop; an unchecked one reads past the value into its neighbour. A loop over the window compiles as one over a raw array.

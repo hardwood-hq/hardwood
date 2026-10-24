@@ -153,7 +153,7 @@ The mode is set on `S3Source`, not per file, because it follows the workload: in
 
 ### RangeBackedInputFile
 
-`RangeBackedInputFile` (`dev.hardwood.internal.reader`, in `core`) is an `InputFile` decorator that knows nothing about S3; any remote `InputFile` can sit beneath it. Its structure is the remote analogue of `MappedInputFile`: a buffer of the file's size that the rest of the pipeline slices into, without knowing whether the pages behind it came from the kernel's page cache or from the network.
+`RangeBackedInputFile` (`dev.hardwood.internal.io`, in `core`) is an `InputFile` decorator that knows nothing about S3; any remote `InputFile` can sit beneath it. Its structure is the remote analogue of `MappedInputFile`: a buffer of the file's size that the rest of the pipeline slices into, without knowing whether the pages behind it came from the kernel's page cache or from the network.
 
 - `open()` opens the delegate (for S3, the tail fetch), creates a temp file in `tempDir`, truncates it to the file length and maps it whole, read-write. A failure after the temp file exists deletes it. On filesystems with sparse files the untouched holes take neither disk nor memory, so the real footprint is the bytes fetched, while the virtual reservation is the file length.
 - `readRange()` asks a `RangeSet` (a sorted map of disjoint, non-touching intervals, merged on insert) for the gaps in the requested range, fetches each gap from the delegate, writes it at its absolute offset, marks it populated, and returns a slice of the mapping. A read spanning a hole fetches only the hole. Reads outside `[0, length)` are rejected.

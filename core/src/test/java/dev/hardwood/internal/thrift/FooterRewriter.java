@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.function.UnaryOperator;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;

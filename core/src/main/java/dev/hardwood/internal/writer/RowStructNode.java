@@ -17,7 +17,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 import dev.hardwood.Validity;
-import dev.hardwood.internal.reader.PqFileImpl;
+import dev.hardwood.internal.reader.row.PqFileImpl;
 import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.row.PqFile;

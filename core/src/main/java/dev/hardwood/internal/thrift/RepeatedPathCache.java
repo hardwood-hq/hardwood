@@ -18,7 +18,7 @@ import dev.hardwood.metadata.FieldPath;
 /// 100,000 columns and ten row groups, a million paths of which only 100,000 are distinct, each
 /// otherwise costing a `String`, its bytes, a list and a `FieldPath`.
 ///
-/// The cache is keyed by position, the way [dev.hardwood.internal.reader.Dictionary] keys its
+/// The cache is keyed by position, the way [dev.hardwood.internal.reader.batch.Dictionary] keys its
 /// interned strings by dictionary index: chunks appear in schema order within a row group, so
 /// the n-th path of one row group is the n-th path of the next. That is a convention rather
 /// than a rule the format enforces, so it is a **prediction**, checked by comparing the cached

@@ -15,7 +15,7 @@ import java.util.Map;
 import dev.hardwood.metadata.Statistics;
 
 /// Collects leaf predicates safe to use for per-page drop decisions in
-/// [dev.hardwood.internal.reader.SequentialFetchPlan] when only inline page
+/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] when only inline page
 /// statistics are available.
 ///
 /// A leaf is **AND-necessary** — i.e. falsifying it falsifies the whole

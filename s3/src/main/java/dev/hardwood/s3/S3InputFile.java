@@ -13,7 +13,7 @@ import java.util.Optional;
 
 import dev.hardwood.Experimental;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.RangeBackedInputFile;
+import dev.hardwood.internal.io.RangeBackedInputFile;
 
 /// [InputFile] backed by an object in Amazon S3 (or an S3-compatible service).
 ///

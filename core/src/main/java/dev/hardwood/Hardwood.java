@@ -10,7 +10,7 @@ package dev.hardwood;
 import java.io.IOException;
 import java.util.List;
 
-import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.reader.ParquetFileReader;
 
 /// Entry point for reading Parquet files with a shared thread pool.

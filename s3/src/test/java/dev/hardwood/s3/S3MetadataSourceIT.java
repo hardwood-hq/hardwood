@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.MetadataSource;
-import dev.hardwood.internal.reader.TailedInputFile;
+import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.metadata.ParsedFooter;
 import dev.hardwood.reader.ParquetFileReader;
 

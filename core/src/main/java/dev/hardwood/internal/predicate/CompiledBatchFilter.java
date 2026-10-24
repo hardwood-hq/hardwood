@@ -16,7 +16,7 @@ import java.util.Objects;
 ///   column `i`, or `null` if the column has no filter contribution. Workers
 ///   run this matcher against every published batch.
 /// - `mergePlan` is the consumer-side [MergePlan] walked by
-///   [dev.hardwood.internal.reader.FlatRowReader] to combine the per-column
+///   [dev.hardwood.internal.reader.row.FlatRowReader] to combine the per-column
 ///   bitmaps into one per-batch survivor mask.
 public record CompiledBatchFilter(ColumnBatchMatcher[] columnMatchers, MergePlan mergePlan) {
 

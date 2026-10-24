@@ -14,9 +14,9 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.ColumnIndexBuffers;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.RowGroupIndexBuffers;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
+import dev.hardwood.internal.reader.plan.ColumnIndexBuffers;
+import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.FileMetaData;

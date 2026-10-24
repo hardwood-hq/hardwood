@@ -52,7 +52,7 @@ import dev.hardwood.row.PqList;
 /// three representations a decode starts from — `INT32`, `INT64` and a fixed-width byte
 /// array — because they do not cost the same: the first two carried a box that naming
 /// the type removes, while the byte-array types instead carried a copy of the payload,
-/// which [dev.hardwood.internal.reader.BinaryBatchValues] now reads in place.
+/// which [dev.hardwood.internal.reader.batch.BinaryBatchValues] now reads in place.
 ///
 /// Generate the corpus first (also done on demand from `@Setup`):
 /// ```

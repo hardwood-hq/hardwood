@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.longs;
 
 import dev.hardwood.internal.predicate.LongBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// [LongLtBatchMatcher] for a column annotated `INT(64, isSigned = false)`, whose values order by
 /// unsigned magnitude. Both sides are biased by `Long.MIN_VALUE`, which moves the sign bit

@@ -11,7 +11,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;

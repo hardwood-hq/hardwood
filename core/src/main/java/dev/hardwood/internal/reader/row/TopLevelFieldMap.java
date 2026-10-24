@@ -1,0 +1,398 @@
+/*
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Copyright The original authors
+ *
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
+package dev.hardwood.internal.reader.row;
+
+import java.util.List;
+
+import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.internal.variant.ShredLevel;
+import dev.hardwood.metadata.ConvertedType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
+
+/// Maps each top-level field in the root schema to its leaf column(s) within a projection.
+final class TopLevelFieldMap {
+
+    sealed interface FieldDesc {
+
+        default String name() {
+            return switch (this) {
+                case Primitive p -> p.schema().name();
+                case Struct s -> s.schema().name();
+                case ListOf l -> l.schema().name();
+                case MapOf m -> m.schema().name();
+                case Variant v -> v.schema().name();
+            };
+        }
+
+        record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
+
+        /// Variant logical-type group. Holds the `metadata` column index plus
+        /// a [ShredLevel] tree describing the shape of `value` / `typed_value`
+        /// (and, for shredded files, their nested sub-levels). The
+        /// [ShredLevel] root's `valueCol` is the variant group's `value` column;
+        /// its `typed` component is non-null iff the writer emitted a
+        /// `typed_value` sibling.
+        ///
+        /// @param schema the Variant-annotated GroupNode
+        /// @param metadataCol projected column index of the `metadata` binary child
+        /// @param nullDefLevel def level below which the Variant group itself is null
+        /// @param root top-level shredded tree for this Variant column
+        record Variant(SchemaNode.GroupNode schema,
+                       int metadataCol, int nullDefLevel,
+                       ShredLevel root) implements FieldDesc {
+
+            /// Shorthand for the top-level `value` column index.
+            int valueCol() {
+                return root.valueCol();
+            }
+        }
+
+        /// @param nameToIndex       name → child ordinal (boundary lookup)
+        /// @param children          ordinal → descriptor (internal lookup)
+        /// @param firstPrimitiveCol projected column of first primitive child, or -1 if none
+        /// @param firstLeafProjCol  projected column of first leaf at any depth under this
+        ///                          struct (same as `firstPrimitiveCol` when the struct has
+        ///                          a direct primitive child), or -1 if no leaf is projected
+        record Struct(SchemaNode.GroupNode schema,
+                      StringToIntMap nameToIndex,
+                      FieldDesc[] children,
+                      int firstPrimitiveCol,
+                      int firstLeafProjCol) implements FieldDesc {
+
+            FieldDesc getChild(String name) {
+                int idx = nameToIndex.get(name);
+                return idx >= 0 ? children[idx] : null;
+            }
+
+            FieldDesc getChild(int ordinal) {
+                return children[ordinal];
+            }
+        }
+
+        /// @param nullDefLevel     def level below which the list itself is null
+        /// @param elementDefLevel  def level at or above which an actual element exists
+        /// @param elementDesc      pre-built descriptor for struct/list/map elements, null for primitives
+        record ListOf(SchemaNode.GroupNode schema, SchemaNode elementSchema,
+                      int firstLeafProjCol, int leafColCount,
+                      int nullDefLevel, int elementDefLevel,
+                      FieldDesc elementDesc) implements FieldDesc {}
+
+        /// @param nullDefLevel   def level below which the map itself is null
+        /// @param entryDefLevel  def level at or above which an actual entry exists
+        /// @param valueDesc      pre-built descriptor for struct/list/map values, null for primitives
+        record MapOf(SchemaNode.GroupNode schema, int keyProjCol, int valueProjCol,
+                     int nullDefLevel, int entryDefLevel,
+                     FieldDesc valueDesc) implements FieldDesc {}
+    }
+
+    private final StringToIntMap nameToIndex;
+    private final FieldDesc[] byIndex;
+    private final FieldDesc[] byOriginalIndex;
+
+    private TopLevelFieldMap(StringToIntMap nameToIndex, FieldDesc[] byIndex, FieldDesc[] byOriginalIndex) {
+        this.nameToIndex = nameToIndex;
+        this.byIndex = byIndex;
+        this.byOriginalIndex = byOriginalIndex;
+    }
+
+    FieldDesc getByName(String name) {
+        int idx = nameToIndex.get(name);
+        if (idx < 0) {
+            throw new IllegalArgumentException("Field '" + name + "' not in projection");
+        }
+        return byIndex[idx];
+    }
+
+    FieldDesc getByOriginalIndex(int originalFieldIndex) {
+        if (originalFieldIndex < 0 || originalFieldIndex >= byOriginalIndex.length) {
+            return null;
+        }
+        return byOriginalIndex[originalFieldIndex];
+    }
+
+    static TopLevelFieldMap build(FileSchema schema, ProjectedSchema projectedSchema) {
+        List<SchemaNode> rootChildren = schema.getRootNode().children();
+        int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
+
+        int fieldCount = projectedFieldIndices.length;
+        StringToIntMap nameToIndex = new StringToIntMap(fieldCount);
+        FieldDesc[] byIndex = new FieldDesc[fieldCount];
+
+        int maxOriginalIndex = rootChildren.size();
+        FieldDesc[] byOriginalIndex = new FieldDesc[maxOriginalIndex];
+
+        for (int i = 0; i < fieldCount; i++) {
+            int projFieldIdx = projectedFieldIndices[i];
+            SchemaNode topLevelNode = rootChildren.get(projFieldIdx);
+            FieldDesc desc = topLevelNode.repetitionType() == RepetitionType.REPEATED
+                    ? buildBareRepeatedListDesc(topLevelNode, schema, projectedSchema)
+                    : buildDesc(topLevelNode, schema, projectedSchema);
+            nameToIndex.put(topLevelNode.name(), i);
+            byIndex[i] = desc;
+            byOriginalIndex[projFieldIdx] = desc;
+        }
+
+        return new TopLevelFieldMap(nameToIndex, byIndex, byOriginalIndex);
+    }
+
+    private static FieldDesc buildDesc(SchemaNode node, FileSchema schema, ProjectedSchema projectedSchema) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> {
+                int projCol = projectedSchema.toProjectedIndex(prim.columnIndex());
+                yield new FieldDesc.Primitive(projCol, prim);
+            }
+            case SchemaNode.GroupNode group -> {
+                if (group.isVariant()) {
+                    yield buildVariantDesc(group, projectedSchema);
+                }
+                else if (group.isList()) {
+                    yield buildListDesc(group, schema, projectedSchema);
+                }
+                else if (group.isMap()) {
+                    yield buildMapDesc(group, schema, projectedSchema);
+                }
+                else {
+                    yield buildStructDesc(group, schema, projectedSchema);
+                }
+            }
+        };
+    }
+
+    static FieldDesc.Variant buildVariantDesc(SchemaNode.GroupNode group, ProjectedSchema projectedSchema) {
+        SchemaNode.PrimitiveNode metadataNode = (SchemaNode.PrimitiveNode) group.children().get(0);
+        int metadataCol = projectedSchema.toProjectedIndex(metadataNode.columnIndex());
+        ShredLevel root = ShredLevel.build(group, projectedSchema);
+        return new FieldDesc.Variant(group, metadataCol, group.maxDefinitionLevel(), root);
+    }
+
+    static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,
+                                            FileSchema schema,
+                                            ProjectedSchema projectedSchema) {
+        // Children sit at the position the projection requested them in
+        List<SchemaNode> projectedChildren = projectedSchema.projectedChildren(group);
+        StringToIntMap nameToIndex = new StringToIntMap(projectedChildren.size());
+        FieldDesc[] children = new FieldDesc[projectedChildren.size()];
+        for (int idx = 0; idx < children.length; idx++) {
+            SchemaNode child = projectedChildren.get(idx);
+            children[idx] = child.repetitionType() == RepetitionType.REPEATED
+                    ? buildBareRepeatedListDesc(child, schema, projectedSchema)
+                    : buildDescForChild(child, schema, projectedSchema);
+            nameToIndex.put(child.name(), idx);
+        }
+        // The first primitive child in schema order, independent of the request order
+        int firstPrimitiveCol = -1;
+        for (SchemaNode child : group.children()) {
+            if (child instanceof SchemaNode.PrimitiveNode prim && child.repetitionType() != RepetitionType.REPEATED) {
+                int projCol = projectedSchema.toProjectedIndex(prim.columnIndex());
+                if (projCol >= 0) {
+                    firstPrimitiveCol = projCol;
+                    break;
+                }
+            }
+        }
+        int firstLeafProjCol = firstPrimitiveCol >= 0
+                ? firstPrimitiveCol
+                : findFirstLeafProjCol(group, projectedSchema);
+        return new FieldDesc.Struct(group, nameToIndex, children, firstPrimitiveCol, firstLeafProjCol);
+    }
+
+    static FieldDesc.ListOf buildListDesc(SchemaNode.GroupNode listGroup,
+                                          FileSchema schema,
+                                          ProjectedSchema projectedSchema) {
+        SchemaNode elementSchema = listGroup.getListElement();
+
+        // Compute defLevel thresholds
+        int nullDefLevel = listGroup.maxDefinitionLevel();
+        // The inner repeated group's def level = threshold for element existence
+        SchemaNode innerRepeated = listGroup.children().get(0);
+        int elementDefLevel = innerRepeated.maxDefinitionLevel();
+
+        int[] range = new int[] { Integer.MAX_VALUE, -1 };
+        collectLeafRange(elementSchema, projectedSchema, range);
+        int firstProjCol = range[0];
+        int lastProjCol = range[1];
+        int leafCount = (firstProjCol <= lastProjCol) ? (lastProjCol - firstProjCol + 1) : 0;
+
+        // Pre-build element descriptor for nested types
+        FieldDesc elementDesc = null;
+        if (elementSchema instanceof SchemaNode.GroupNode group) {
+            elementDesc = buildDescForChild(elementSchema, schema, projectedSchema);
+        }
+
+        return new FieldDesc.ListOf(listGroup, elementSchema, firstProjCol, leafCount,
+                nullDefLevel, elementDefLevel, elementDesc);
+    }
+
+    /// Builds a list descriptor for a `REPEATED` field outside `LIST`/`MAP`
+    /// scaffolding. Per the Parquet format spec, a repeated field that is neither
+    /// contained by a `LIST`/`MAP`-annotated group nor itself `LIST`/`MAP`-annotated
+    /// is a required list of required elements whose element type is the type of
+    /// the field (see
+    /// [Nested Types](https://parquet.apache.org/docs/file-format/types/logicaltypes/#nested-types)).
+    /// The field is wrapped in a synthetic required `LIST` group and surfaced
+    /// through the same machinery as an explicitly annotated list. The element is
+    /// the field itself — a repeated primitive yields list-of-scalar, a repeated
+    /// group list-of-struct, or list-of-map where the group reads as a legacy `MAP`
+    /// — and is never unwrapped the way the
+    /// `LIST`-annotated backward-compatibility rules in
+    /// [SchemaNode.GroupNode#getListElement()] unwrap a single-field repeated group.
+    ///
+    /// Returns `null` when no leaf under `node` is part of the projection, so a
+    /// caller can treat it the same as [#buildDescForChild] for projection filtering.
+    static FieldDesc.ListOf buildBareRepeatedListDesc(SchemaNode node,
+                                                      FileSchema schema,
+                                                      ProjectedSchema projectedSchema) {
+        if (!isChildProjected(node, projectedSchema)) {
+            return null;
+        }
+        SchemaNode.GroupNode listGroup = syntheticListWrapper(node);
+
+        // The synthetic wrapper carries the levels "outside" the list, so the
+        // list is null exactly when its enclosing parent is absent; an element
+        // exists at or above the field's own definition level.
+        int nullDefLevel = listGroup.maxDefinitionLevel();
+        int elementDefLevel = node.maxDefinitionLevel();
+
+        int[] range = new int[] { Integer.MAX_VALUE, -1 };
+        collectLeafRange(node, projectedSchema, range);
+        int firstProjCol = range[0];
+        int lastProjCol = range[1];
+        int leafCount = (firstProjCol <= lastProjCol) ? (lastProjCol - firstProjCol + 1) : 0;
+
+        // A group that reads as a MAP (a legacy MAP inferred from a sole MAP_KEY_VALUE
+        // child) is a list of maps; any other group, its annotation dropped at footer
+        // read (BareRepeatedGroups), a list of structs.
+        FieldDesc elementDesc = null;
+        if (node instanceof SchemaNode.GroupNode group) {
+            elementDesc = group.isMap()
+                    ? buildMapDesc(group, schema, projectedSchema)
+                    : buildStructDesc(group, schema, projectedSchema);
+        }
+
+        return new FieldDesc.ListOf(listGroup, node, firstProjCol, leafCount,
+                nullDefLevel, elementDefLevel, elementDesc);
+    }
+
+    /// Synthesizes the required `LIST`-annotated container wrapping an
+    /// unannotated `REPEATED` field. Its definition/repetition levels are one
+    /// below the field's own (the levels outside the list), leaving the field as
+    /// the list element.
+    private static SchemaNode.GroupNode syntheticListWrapper(SchemaNode node) {
+        return new SchemaNode.GroupNode(
+                node.name(),
+                RepetitionType.REQUIRED,
+                ConvertedType.LIST,
+                null,
+                List.of(node),
+                node.maxDefinitionLevel() - 1,
+                node.maxRepetitionLevel() - 1);
+    }
+
+    static FieldDesc.MapOf buildMapDesc(SchemaNode.GroupNode mapGroup,
+                                        FileSchema schema,
+                                        ProjectedSchema projectedSchema) {
+        // Compute defLevel thresholds
+        int nullDefLevel = mapGroup.maxDefinitionLevel();
+        // The inner repeated key_value group
+        SchemaNode.GroupNode keyValueGroup = (SchemaNode.GroupNode) mapGroup.children().get(0);
+        int entryDefLevel = keyValueGroup.maxDefinitionLevel();
+
+        SchemaNode keyNode = mapGroup.getMapKey();
+        SchemaNode valueNode = mapGroup.getMapValue();
+
+        int keyProjCol = findFirstLeafProjCol(keyNode, projectedSchema);
+        int valueProjCol = (valueNode != null) ? findFirstLeafProjCol(valueNode, projectedSchema) : -1;
+
+        // Pre-build value descriptor for nested types
+        FieldDesc valueDesc = null;
+        if (valueNode instanceof SchemaNode.GroupNode) {
+            valueDesc = buildDescForChild(valueNode, schema, projectedSchema);
+        }
+
+        return new FieldDesc.MapOf(mapGroup, keyProjCol, valueProjCol, nullDefLevel, entryDefLevel, valueDesc);
+    }
+
+    private static FieldDesc buildDescForChild(SchemaNode node, FileSchema schema,
+                                               ProjectedSchema projectedSchema) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> {
+                int projCol = projectedSchema.toProjectedIndex(prim.columnIndex());
+                if (projCol < 0) {
+                    yield null;
+                }
+                yield new FieldDesc.Primitive(projCol, prim);
+            }
+            case SchemaNode.GroupNode group -> {
+                if (!isChildProjected(group, projectedSchema)) {
+                    yield null;
+                }
+                if (group.isVariant()) {
+                    yield buildVariantDesc(group, projectedSchema);
+                }
+                else if (group.isList()) {
+                    yield buildListDesc(group, schema, projectedSchema);
+                }
+                else if (group.isMap()) {
+                    yield buildMapDesc(group, schema, projectedSchema);
+                }
+                else {
+                    yield buildStructDesc(group, schema, projectedSchema);
+                }
+            }
+        };
+    }
+
+    private static boolean isChildProjected(SchemaNode node, ProjectedSchema projectedSchema) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> projectedSchema.toProjectedIndex(prim.columnIndex()) >= 0;
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    if (isChildProjected(child, projectedSchema)) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
+        };
+    }
+
+    private static void collectLeafRange(SchemaNode node, ProjectedSchema projectedSchema, int[] range) {
+        switch (node) {
+            case SchemaNode.PrimitiveNode prim -> {
+                int projCol = projectedSchema.toProjectedIndex(prim.columnIndex());
+                if (projCol >= 0) {
+                    range[0] = Math.min(range[0], projCol);
+                    range[1] = Math.max(range[1], projCol);
+                }
+            }
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    collectLeafRange(child, projectedSchema, range);
+                }
+            }
+        }
+    }
+
+    private static int findFirstLeafProjCol(SchemaNode node, ProjectedSchema projectedSchema) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> projectedSchema.toProjectedIndex(prim.columnIndex());
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    int result = findFirstLeafProjCol(child, projectedSchema);
+                    if (result >= 0) {
+                        yield result;
+                    }
+                }
+                yield -1;
+            }
+        };
+    }
+}

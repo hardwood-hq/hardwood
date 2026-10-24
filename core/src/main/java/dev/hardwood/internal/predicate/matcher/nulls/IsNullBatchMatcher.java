@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.nulls;
 
 import dev.hardwood.internal.predicate.NullBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// IS NULL: bit `i` is set iff row `i` is null. Bulk-inverts the validity
 /// bitmap (set bit = present) across the live range.

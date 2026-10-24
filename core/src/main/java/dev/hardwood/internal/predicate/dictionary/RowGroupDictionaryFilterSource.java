@@ -13,11 +13,11 @@ import java.util.function.Predicate;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.reader.ByteSource;
-import dev.hardwood.internal.reader.Dictionary;
-import dev.hardwood.internal.reader.DictionaryParser;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.Parsed;
+import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DictionaryParser;
+import dev.hardwood.internal.reader.step.ByteSource;
+import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;

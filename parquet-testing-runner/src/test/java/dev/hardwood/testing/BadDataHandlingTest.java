@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
