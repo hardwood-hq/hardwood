@@ -18,7 +18,6 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -106,25 +105,9 @@ public final class DictionaryParser {
     public static PageHeader readPageHeader(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
             throws IOException {
         Extent extent = extent(columnChunk, messagePrefix);
-        int ceiling = Math.min(PageFormatProbe.MAX_PEEK_SIZE, extent.availableBytes());
-        int probe = Math.min(HEADER_PROBE_BYTES, ceiling);
-        while (true) {
-            try {
-                PageHeader header = PageHeaderReader.read(
-                        new ThriftCompactReader(inputFile.readRange(extent.start(), probe)));
-                return header.type() == PageType.DICTIONARY_PAGE ? header : null;
-            }
-            catch (ThriftTruncatedException e) {
-                if (probe >= extent.availableBytes()) {
-                    throw e;
-                }
-                if (probe >= ceiling) {
-                    throw new ParquetReadException(messagePrefix + "Page header at offset " + extent.start()
-                            + " exceeds maximum peek size (" + ceiling + " bytes)", e);
-                }
-                probe = Math.min(2 * probe, ceiling);
-            }
-        }
+        PageHeader header = PageFormatProbe.readHeader(ByteSource.of(inputFile), extent.start(),
+                extent.availableBytes(), HEADER_PROBE_BYTES, messagePrefix).get().header();
+        return header.type() == PageType.DICTIONARY_PAGE ? header : null;
     }
 
     /// Where a chunk's first page starts, how many bytes the chunk leaves it, and how much to read

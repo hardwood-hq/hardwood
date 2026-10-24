@@ -21,9 +21,7 @@ import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.internal.thrift.ThriftTruncatedException;
+import dev.hardwood.internal.reader.PageFormatProbe.HeaderAt;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -281,7 +279,7 @@ public final class SequentialFetchPlan implements FetchPlan {
         /// The header of the page at [#position], `null` until it is parsed.
         private PageHeader header;
         private int headerSize;
-        /// The bytes the header is parsed from, `0` until the page's first attempt sets it.
+        /// The peek the header is read from, `0` until the page's first attempt sets it.
         private int peekSize;
         /// The page's top-level records, [#UNKNOWN] until its repetition levels are read.
         private int recordsInPage = UNKNOWN;
@@ -336,38 +334,22 @@ public final class SequentialFetchPlan implements FetchPlan {
         ///
         /// @return whether the header is parsed; `false` when its bytes are pending
         private boolean parseHeader() throws IOException {
-            int remaining = columnChunkLength - position;
             if (peekSize == 0) {
-                peekSize = Math.min(PageFormatProbe.INITIAL_PEEK_SIZE, remaining);
+                peekSize = PageFormatProbe.INITIAL_PEEK_SIZE;
                 // No later read starts before this header
                 cursor.releaseBefore(columnChunkOffset + position);
             }
-            while (true) {
-                ByteBuffer headerBuf = readBytes(position, peekSize);
-                if (headerBuf == null) {
-                    return false;
-                }
-                ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
-                try {
-                    header = PageHeaderReader.read(headerReader);
-                    headerSize = headerReader.getBytesRead();
-                    return true;
-                }
-                catch (ThriftTruncatedException truncated) {
-                    if (peekSize >= remaining) {
-                        throw new ParquetReadException("Page header for column '"
-                                + columnSchema.name() + "' exceeds the full column chunk remainder ("
-                                + remaining + " bytes) — the file is likely corrupt", truncated);
-                    }
-                    if (peekSize >= PageFormatProbe.MAX_PEEK_SIZE) {
-                        throw new ParquetReadException("Page header for column '"
-                                + columnSchema.name() + "' exceeds maximum peek size ("
-                                + PageFormatProbe.MAX_PEEK_SIZE + " bytes)", truncated);
-                    }
-                    peekSize = Math.min(remaining,
-                            Math.min(peekSize * 2, PageFormatProbe.MAX_PEEK_SIZE));
-                }
+            Parsed<HeaderAt> read = PageFormatProbe.readHeader(cursor, columnChunkOffset + position,
+                    columnChunkLength - position, peekSize, "");
+            if (read.needsBytes()) {
+                // Resumed from the peek reached, so no peek is read twice
+                peekSize = read.needLength();
+                pending = cursor.pending();
+                return false;
             }
+            header = read.value().header();
+            headerSize = read.value().length();
+            return true;
         }
 
         /// The `length` bytes at chunk-relative `relPos`: a slice of the entry holding them, or a

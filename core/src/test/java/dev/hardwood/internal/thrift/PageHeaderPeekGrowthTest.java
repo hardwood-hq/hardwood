@@ -20,8 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A page header that outruns the buffer it was given says so as a truncation.
 ///
-/// `SequentialFetchPlan` and `PageFormatProbe` read a page header by peeking a guessed number of
-/// bytes in front of it and doubling the guess when the header does not fit. Both catch
+/// `PageFormatProbe.readHeader` reads a page header by peeking a guessed number of bytes in front
+/// of it and doubling the guess when the header does not fit. It catches
 /// [ThriftTruncatedException] and nothing else, so every way a header can outrun the peek has to
 /// raise that type — otherwise a valid file whose header is merely longer than the guess fails
 /// instead of being read on the next, larger, attempt.

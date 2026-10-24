@@ -22,7 +22,10 @@ import java.util.List;
 /// A column without an offset index under a row limit holds entries for only the first part of its
 /// chunk; a read past them inserts the rest, up to the next entry or the chunk's end, as a demanded
 /// entry ([Rest]).
-final class EntryCursor {
+///
+/// As a [ByteSource], it serves the parsers that read file structure through one, such as a page
+/// header's peek ([PageFormatProbe#readHeader]).
+final class EntryCursor implements ByteSource {
 
     /// Inserts the entry for the part of the chunk a row limit left out that a walk has reached.
     @FunctionalInterface
@@ -55,7 +58,8 @@ final class EntryCursor {
     /// present, which [#pending] then names.
     ///
     /// @throws IOException if the demand read of an entry failed
-    ByteBuffer read(long start, int length) throws IOException {
+    @Override
+    public ByteBuffer read(long start, int length) throws IOException {
         pending = null;
         long end = start + length;
         int first = covering(start);
