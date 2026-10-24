@@ -97,8 +97,15 @@ RUN arch="$(uname -m)" \
     && ln -s "/opt/hardwood-cli-${HARDWOOD_CLI_VERSION}-linux-${arch}/bin/hardwood" /usr/local/bin/hardwood \
     && hardwood --version
 
+# Remotes are often added by their SSH URL, but the container has no SSH key; over HTTPS the
+# github-proxy service of docker-compose.yaml authenticates them.
+RUN git config --system url."https://github.com/".insteadOf git@github.com: \
+    && git config --system --add url."https://github.com/".insteadOf ssh://git@github.com/
+
 # Install Claude Code (native installer)
 RUN curl -fsSL https://claude.ai/install.sh | bash
+
+COPY etc/dev-container/claude-entrypoint.sh /usr/local/bin/claude-entrypoint
 
 ENV PATH="/root/.local/bin:$PATH"
 

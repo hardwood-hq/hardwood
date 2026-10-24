@@ -29,19 +29,45 @@ services:
     networks:
       - claude-net
 
+  # Holds the GitHub token and adds it to the claude container's requests to GitHub, so that nothing
+  # in the claude container can read the token (see etc/dev-container/github-proxy/). Its CA
+  # certificate and key stay in the github-proxy-conf volume, which the claude container does not
+  # mount.
+  github-proxy:
+    build: etc/dev-container/github-proxy
+    restart: unless-stopped
+    volumes:
+      - github-proxy-conf:/home/mitmproxy/.mitmproxy
+    environment:
+      - GH_TOKEN
+    # The proxy exits when GH_TOKEN is unset; `docker compose logs github-proxy` says so.
+    healthcheck:
+      test: [ "CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 1)" ]
+      interval: 2s
+      retries: 15
+    networks:
+      - claude-net
+
   claude:
     build: .
-    entrypoint: claude
+    entrypoint: [ "/usr/local/bin/claude-entrypoint", "claude" ]
     stdin_open: true  # -i
     tty: true         # -t
     depends_on:
-      - s3proxy
+      s3proxy:
+        condition: service_started
+      github-proxy:
+        condition: service_healthy
     volumes:
       - .:/workspace
       - claude-config:/claude-config
       - maven-repo:/root/.m2
     environment:
-      - GH_TOKEN
+      # gh refuses to run without a token; github-proxy replaces this placeholder with the real one.
+      - GH_TOKEN=placeholder-replaced-by-github-proxy
+      - HTTPS_PROXY=http://github-proxy:8080
+      # Claude Code's runtime does not read the system trust store; claude-entrypoint installs this file.
+      - NODE_EXTRA_CA_CERTS=/etc/pki/ca-trust/source/anchors/github-proxy.pem
       - COLORTERM=truecolor
       - CLAUDE_CONFIG_DIR=/claude-config
       - HARDWOOD_S3PROXY_ENDPOINT=http://s3proxy
@@ -52,6 +78,7 @@ services:
 volumes:
   claude-config:
   maven-repo:
+  github-proxy-conf:
 
 networks:
   claude-net:

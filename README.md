@@ -203,7 +203,7 @@ A Docker Compose set-up is provided for running [Claude Code](https://claude.ai/
 GH_TOKEN=<your-token> docker compose run --rm claude
 ```
 
-Set `GH_TOKEN` to a GitHub personal access token so that Claude Code can interact with issues and pull requests. The project directory is mounted into the container at `/workspace`, and Claude Code configuration is persisted in a named volume across sessions.
+Set `GH_TOKEN` to a GitHub personal access token so that Claude Code can interact with issues and pull requests. The token goes to a separate `github-proxy` service, which adds it to the requests the `claude` container sends to GitHub; the `claude` container itself never receives it. Pass the token from the shell environment rather than a `.env` file, since the project directory is readable from the `claude` container. For the same reason, a session can change `docker-compose.yaml` and `etc/dev-container/`, which define what runs with the token: review changes to them before building the images again. The project directory is mounted into the container at `/workspace`, and Claude Code configuration is persisted in a named volume across sessions.
 
 ### Creating a Release
 

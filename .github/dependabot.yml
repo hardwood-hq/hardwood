@@ -29,7 +29,7 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: docker
-    directories: [/, /cli/docker]
+    directories: [/, /cli/docker, /etc/dev-container/github-proxy]
     schedule:
       interval: weekly
     cooldown:
