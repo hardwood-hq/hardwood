@@ -154,7 +154,7 @@
                 <artifactItem>
                   <groupId>org.apache.hadoop</groupId>
                   <artifactId>hadoop-common</artifactId>
-                  <version>3.4.3</version>
+                  <version>3.5.0</version>
                 </artifactItem>
               </artifactItems>
             </configuration>
