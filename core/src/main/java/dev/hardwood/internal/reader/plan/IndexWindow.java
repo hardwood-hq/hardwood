@@ -19,7 +19,7 @@ import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
+import dev.hardwood.internal.reader.fetch.Sections;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.ColumnChunk;
@@ -208,7 +208,7 @@ final class IndexWindow {
 
     /// Inserts the window's requests into `sequence`, each held by every member. Called once, as
     /// the file is planned.
-    void insertSections(FetchSequence sequence) {
+    void insertSections(Sections sequence) {
         indexReads = new PlanningReads(sequence, inputFile, rowGroupLabel, members.size());
         indexReads.insert(offsetIndexes, PlanningReads.INDEXES);
         indexReads.insert(columnIndexes, PlanningReads.INDEXES);

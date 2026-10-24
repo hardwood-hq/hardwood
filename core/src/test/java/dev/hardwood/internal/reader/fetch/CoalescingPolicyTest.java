@@ -37,21 +37,21 @@ class CoalescingPolicyTest {
     void neededRangesFollowTheRuleAcrossColumns() {
         // Column 0's two pages, `gap` apart, then column 1's page right after: the gap decides
         // whether column 0 takes one request, and column 1 joins the second either way.
-        assertThat(spans(GAP)).extracting(FetchSequence.Span::start, FetchSequence.Span::length)
+        assertThat(spans(GAP)).extracting(Span::start, Span::length)
                 .containsExactly(tuple(4L, 300 + GAP));
-        assertThat(spans(GAP + 1)).extracting(FetchSequence.Span::start, FetchSequence.Span::length)
+        assertThat(spans(GAP + 1)).extracting(Span::start, Span::length)
                 .containsExactly(tuple(4L, 100), tuple(105L + GAP, 200));
     }
 
     @Test
     void aSpanNamesTheColumnsItServesAndCountsTheColumnsOverlappingIt() {
-        assertThat(spans(GAP + 1)).extracting(FetchSequence.Span::reason, FetchSequence.Span::holders)
+        assertThat(spans(GAP + 1)).extracting(Span::reason, Span::holders)
                 .containsExactly(tuple("rg=7 col=a", 1), tuple("rg=7 col=a col=b", 2));
     }
 
     /// The spans of column `a`'s pages `[4, 104)` and `[104 + gap, 204 + gap)` and column `b`'s
     /// page right after them.
-    private static List<FetchSequence.Span> spans(int gap) {
+    private static List<Span> spans(int gap) {
         long aEnd = 204L + gap;
         List<CoalescingPolicy.Range> ranges = List.of(
                 new CoalescingPolicy.Range(0, 4, 104),

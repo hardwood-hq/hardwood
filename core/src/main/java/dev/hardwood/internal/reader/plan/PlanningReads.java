@@ -14,8 +14,9 @@ import java.util.List;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
-import dev.hardwood.internal.reader.fetch.SectionRequest;
+import dev.hardwood.internal.reader.fetch.Section;
+import dev.hardwood.internal.reader.fetch.Sections;
+import dev.hardwood.internal.reader.fetch.Span;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.reader.step.Parsed;
@@ -44,16 +45,16 @@ final class PlanningReads implements ByteSource {
     /// The purpose of page indexes and page-format probes.
     static final String INDEXES = "indexes";
 
-    private final FetchSequence sequence;
+    private final Sections sequence;
     private final InputFile inputFile;
     /// The work items the section requests serve, such as `rg=3` or `rg=0-4`.
     private final String label;
     /// The work items each section request serves, which release it.
     private final int holders;
-    private final List<SectionRequest> sections = new ArrayList<>();
+    private final List<Section> sections = new ArrayList<>();
     private Parsed<?> missing;
 
-    PlanningReads(FetchSequence sequence, InputFile inputFile, String label, int holders) {
+    PlanningReads(Sections sequence, InputFile inputFile, String label, int holders) {
         this.sequence = sequence;
         this.inputFile = inputFile;
         this.label = label;
@@ -62,10 +63,9 @@ final class PlanningReads implements ByteSource {
 
     @Override
     public ByteBuffer read(long offset, int length) throws IOException {
-        SectionRequest section = holding(offset, length);
+        Section section = holding(offset, length);
         if (section == null) {
-            section = FetchSequence.inPlace(FetchSequence.PLANNING, inputFile,
-                    new FetchSequence.Span(offset, length, label, holders));
+            section = sequence.heldInPlace(inputFile, new Span(offset, length, label, holders));
             if (section != null) {
                 sections.add(section);
             }
@@ -97,11 +97,11 @@ final class PlanningReads implements ByteSource {
     /// What the planning waits for before it parses again: the section request holding the range
     /// `parsed` needs, inserted for `purpose` if none does, and demanded.
     Need need(Parsed<?> parsed, String purpose) {
-        SectionRequest section = holding(parsed.needOffset(), parsed.needLength());
+        Section section = holding(parsed.needOffset(), parsed.needLength());
         if (section == null) {
             section = insert(parsed.needOffset(), parsed.needLength(), purpose);
         }
-        section.issue();
+        section.demand();
         return section;
     }
 
@@ -118,9 +118,9 @@ final class PlanningReads implements ByteSource {
     /// of them, `null` when all are present.
     Need start() throws IOException {
         Need first = null;
-        for (SectionRequest section : sections) {
+        for (Section section : sections) {
             if (section.poll() == null) {
-                section.issue();
+                section.demand();
                 if (first == null) {
                     first = section;
                 }
@@ -131,7 +131,7 @@ final class PlanningReads implements ByteSource {
 
     /// Whether every section request is present.
     boolean present() throws IOException {
-        for (SectionRequest section : sections) {
+        for (Section section : sections) {
             if (section.poll() == null) {
                 return false;
             }
@@ -141,26 +141,26 @@ final class PlanningReads implements ByteSource {
 
     /// Releases the section requests for one of their holders.
     void release() {
-        for (SectionRequest section : sections) {
+        for (Section section : sections) {
             section.release();
         }
     }
 
     /// Releases the section requests whatever their holders, as the read closes.
     void discard() {
-        for (SectionRequest section : sections) {
+        for (Section section : sections) {
             section.discard();
         }
     }
 
-    private SectionRequest insert(long offset, int length, String purpose) {
-        SectionRequest section = sequence.plannedSection(inputFile, offset, length, label + " " + purpose, holders);
+    private Section insert(long offset, int length, String purpose) {
+        Section section = sequence.planned(inputFile, offset, length, label + " " + purpose, holders);
         sections.add(section);
         return section;
     }
 
-    private SectionRequest holding(long offset, int length) {
-        for (SectionRequest section : sections) {
+    private Section holding(long offset, int length) {
+        for (Section section : sections) {
             if (section.offset() <= offset && offset + length <= section.end()) {
                 return section;
             }

@@ -15,7 +15,7 @@ import java.util.List;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.step.ByteSource;
 
-/// One walk's view of the [FetchSequence] section requests that overlap its column chunk, in offset
+/// One walk's view of the [Section]s that overlap its column chunk, in offset
 /// order, fixed when the row group was planned. [#read] takes a range's bytes without waiting: a
 /// slice of the section request holding it, or a copy of the parts of the section requests a range
 /// straddles, once every one of them is present; otherwise it returns `null` and [#pending] names
@@ -37,25 +37,25 @@ public final class SectionCursor implements ByteSource {
 
         /// A section request starting at `start`, at most up to `limit`, the next section request
         /// or the chunk's end.
-        SectionRequest insert(long start, long limit);
+        Section insert(long start, long limit);
     }
 
-    private final List<SectionRequest> sections;
+    private final List<Section> sections;
     private final Rest rest;
     /// The first section request the walk has not passed.
     private int held;
-    private SectionRequest pending;
+    private Section pending;
 
     /// @param sections the section requests overlapping the column chunk, in offset order
     /// @param rest inserts the rest of the chunk, or `null` when the section requests cover every
     ///        range the walk reads
-    SectionCursor(List<SectionRequest> sections, Rest rest) {
+    SectionCursor(List<? extends Section> sections, Rest rest) {
         this.sections = new ArrayList<>(sections);
         this.rest = rest;
     }
 
     /// The section request the last [#read] stopped on, `null` when it returned bytes.
-    SectionRequest pending() {
+    Section pending() {
         return pending;
     }
 
@@ -68,7 +68,7 @@ public final class SectionCursor implements ByteSource {
         pending = null;
         long end = start + length;
         int first = covering(start);
-        SectionRequest section = sections.get(first);
+        Section section = sections.get(first);
         if (end <= section.end()) {
             ByteBuffer bytes = section.poll();
             if (bytes == null) {
@@ -81,7 +81,7 @@ public final class SectionCursor implements ByteSource {
         // copy is never left part done
         List<ByteBuffer> parts = new ArrayList<>();
         for (int i = first; ; i = covering(sections.get(i).end())) {
-            SectionRequest part = sections.get(i);
+            Section part = sections.get(i);
             ByteBuffer bytes = part.poll();
             if (bytes == null) {
                 pending = part;
@@ -96,7 +96,7 @@ public final class SectionCursor implements ByteSource {
         ByteBuffer combined = ByteBuffer.allocateDirect(length);
         long position = start;
         for (int p = 0; p < parts.size(); p++) {
-            SectionRequest part = sections.get(first + p);
+            Section part = sections.get(first + p);
             int take = Math.toIntExact(Math.min(part.end(), end) - position);
             combined.put(part.slice(parts.get(p), position, take));
             position += take;
@@ -140,7 +140,7 @@ public final class SectionCursor implements ByteSource {
     /// Inserts, as a demanded section request, the part of a column chunk ending at `chunkEnd` that
     /// a walk reaches past its section requests: from where it reads to the next section request or
     /// the chunk's end, at most `maxSpan` bytes.
-    public static Rest rest(FetchSequence sequence, int workItemIndex, InputFile inputFile, long chunkEnd,
+    public static Rest rest(Sections sequence, int workItemIndex, InputFile inputFile, long chunkEnd,
                      String reason, int maxSpan) {
         return (start, limit) -> {
             long end = Math.min(Math.min(limit, chunkEnd), start + maxSpan);

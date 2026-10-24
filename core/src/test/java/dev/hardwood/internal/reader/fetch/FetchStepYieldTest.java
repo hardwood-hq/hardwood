@@ -312,7 +312,7 @@ class FetchStepYieldTest {
 
     /// The section request of ten bytes at `offset` of `file` in `sequence`, held by one column.
     private static SectionRequest section(FetchSequence sequence, InputFile file, long offset) {
-        return sequence.insert(0, 0, file, List.of(new FetchSequence.Span(offset, 10, "chunk", 1))).getFirst();
+        return sequence.insert(0, 0, file, List.of(new Span(offset, 10, "chunk", 1))).getFirst();
     }
 
     /// `section`'s bytes, demanding them and waiting for them as a thread off the pool does.

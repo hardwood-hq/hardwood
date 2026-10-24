@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.PrefetchTasks;
+import dev.hardwood.internal.reader.fetch.Span;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 
@@ -77,7 +78,7 @@ class FooterReadAheadTest {
         FooterReadAhead readAhead = readAhead(sequence, footers, 3, 10);
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(1_000));
         // Planned, larger than F, so it does not start speculatively
-        sequence.insert(0, 5, file, List.of(new FetchSequence.Span(0, 200, "rg=0 col=a", 1)));
+        sequence.insert(0, 5, file, List.of(new Span(0, 200, "rg=0 col=a", 1)));
 
         readAhead.reached(0);
         assertThat(footers.started).containsExactly(1);

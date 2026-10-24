@@ -117,7 +117,7 @@ class FetchSequenceTest {
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         FetchSequence sequence = sequence(buffer, 1 << 20);
         SectionRequest section = sequence.insert(0, 0, file,
-                List.of(new FetchSequence.Span(0, LENGTH, "rg=0 col=a col=b", 2))).getFirst();
+                List.of(new Span(0, LENGTH, "rg=0 col=a col=b", 2))).getFirst();
         assertThat(buffer.held()).isEqualTo(LENGTH);
 
         section.release();
@@ -191,9 +191,9 @@ class FetchSequenceTest {
     /// item `workItemIndex`, each held by one column.
     private static List<SectionRequest> insert(FetchSequence sequence, InputFile file, int workItemIndex,
                                                     int count) {
-        List<FetchSequence.Span> spans = new ArrayList<>();
+        List<Span> spans = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            spans.add(new FetchSequence.Span((long) i * LENGTH, LENGTH, "rg=" + workItemIndex + " col=a", 1));
+            spans.add(new Span((long) i * LENGTH, LENGTH, "rg=" + workItemIndex + " col=a", 1));
         }
         return sequence.insert(0, workItemIndex, file, spans);
     }

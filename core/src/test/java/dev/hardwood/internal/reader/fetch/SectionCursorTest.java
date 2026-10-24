@@ -37,8 +37,8 @@ class SectionCursorTest {
         FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), new ReadAheadBuffer(0), 0,
                 () -> {});
         List<SectionRequest> held = sequence.insert(0, 0, file, List.of(
-                new FetchSequence.Span(0, 100, "rg=0 col=a", 1),
-                new FetchSequence.Span(150, 50, "rg=0 col=a col=b", 2)));
+                new Span(0, 100, "rg=0 col=a", 1),
+                new Span(150, 50, "rg=0 col=a col=b", 2)));
         List<long[]> inserted = new ArrayList<>();
         SectionCursor cursor = new SectionCursor(held, (start, limit) -> {
             inserted.add(new long[] { start, limit });
@@ -67,8 +67,8 @@ class SectionCursorTest {
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20, () -> {});
         List<SectionRequest> held = sequence.insert(0, 0, file, List.of(
-                new FetchSequence.Span(0, 100, "rg=0 col=a", 1),
-                new FetchSequence.Span(100, 100, "rg=0 col=a", 1)));
+                new Span(0, 100, "rg=0 col=a", 1),
+                new Span(100, 100, "rg=0 col=a", 1)));
         SectionCursor cursor = new SectionCursor(held, null);
         assertThat(buffer.held()).isEqualTo(200);
 
@@ -87,7 +87,7 @@ class SectionCursorTest {
             if (bytes != null) {
                 return bytes;
             }
-            cursor.pending().issue().await();
+            ((SectionRequest) cursor.pending()).issue().await();
         }
     }
 }

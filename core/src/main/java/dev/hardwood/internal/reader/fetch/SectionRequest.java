@@ -18,7 +18,7 @@ import dev.hardwood.internal.io.ReadRanges;
 /// a row group were coalesced into. A walk asks for its bytes with [#poll], which never waits
 /// and issues no read; while they are not present the section request is the [ByteNeed] the
 /// step issues ([#issue]), which starts it on demand or joins the read under way.
-public final class SectionRequest extends Request implements ByteNeed {
+public final class SectionRequest extends Request implements ByteNeed, Section {
 
     /// `null` for a section request sliced in place, which no sequence holds.
     final FetchSequence sequence;
@@ -33,7 +33,7 @@ public final class SectionRequest extends Request implements ByteNeed {
     /// poll, or inside the file's tail, sliced as it is inserted.
     private volatile ByteBuffer inPlace;
 
-    SectionRequest(FetchSequence sequence, InputFile inputFile, FetchSequence.Span span, int fileIndex,
+    SectionRequest(FetchSequence sequence, InputFile inputFile, Span span, int fileIndex,
                    int workItemIndex, ByteBuffer inPlace) {
         super(fileIndex, workItemIndex, span.start(), span.length(), true);
         this.inPlace = inPlace;
@@ -43,6 +43,7 @@ public final class SectionRequest extends Request implements ByteNeed {
         this.holders = span.holders();
     }
 
+    @Override
     public long offset() {
         return offset;
     }
@@ -51,6 +52,7 @@ public final class SectionRequest extends Request implements ByteNeed {
         return length;
     }
 
+    @Override
     public long end() {
         return offset + length;
     }
@@ -78,6 +80,7 @@ public final class SectionRequest extends Request implements ByteNeed {
     /// place.
     ///
     /// @throws IOException if the demand read failed
+    @Override
     public ByteBuffer poll() throws IOException {
         if (sequence == null) {
             ByteBuffer bytes = inPlace;
@@ -106,6 +109,7 @@ public final class SectionRequest extends Request implements ByteNeed {
     /// A slice of `length` bytes at absolute `fileOffset` from bytes [#poll] returned.
     ///
     /// @throws IllegalArgumentException if the range lies outside the section request
+    @Override
     public ByteBuffer slice(ByteBuffer polled, long fileOffset, int sliceLength) {
         if (fileOffset < offset || sliceLength < 0 || fileOffset + sliceLength > end()) {
             throw new IllegalArgumentException("Range [" + fileOffset + ", " + (fileOffset + sliceLength)
@@ -123,13 +127,20 @@ public final class SectionRequest extends Request implements ByteNeed {
     }
 
     /// Records that a column holding the section request has passed it.
+    @Override
     public void release() {
         if (sequence != null) {
             sequence.release(this);
         }
     }
 
+    @Override
+    public void demand() {
+        issue();
+    }
+
     /// Releases the section request whatever its holders, as the read closes.
+    @Override
     public void discard() {
         if (sequence != null) {
             sequence.discard(this);

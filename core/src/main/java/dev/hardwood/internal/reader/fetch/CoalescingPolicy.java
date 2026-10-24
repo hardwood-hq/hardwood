@@ -71,7 +71,7 @@ public final class CoalescingPolicy {
     /// No span crosses `tailOffset`, where the tail the file's footer entry read begins
     /// ([TailedInputFile]): a span inside the tail is sliced from it, so a range that straddles
     /// the tail's start is cut there, and the part before it is all that is requested.
-    public static List<FetchSequence.Span> coalesce(List<Range> ranges, Extent[] extents, String[] names,
+    public static List<Span> coalesce(List<Range> ranges, Extent[] extents, String[] names,
                                              int rowGroupIndex, int maxSpan, long tailOffset) {
         ranges = cutAt(ranges, tailOffset);
         CoalescedRanges.Builder builder = CoalescedRanges.builder();
@@ -79,7 +79,7 @@ public final class CoalescingPolicy {
             builder.add(range.start(), Math.toIntExact(range.end() - range.start()));
         }
         CoalescedRanges requests = builder.build(tailOffset, maxSpan);
-        List<FetchSequence.Span> spans = new ArrayList<>(requests.requestCount());
+        List<Span> spans = new ArrayList<>(requests.requestCount());
         int nextRange = 0;
         int firstExtent = 0;
         boolean[] served = new boolean[names.length];
@@ -109,7 +109,7 @@ public final class CoalescingPolicy {
                     holders++;
                 }
             }
-            spans.add(new FetchSequence.Span(start, Math.toIntExact(end - start), reason.toString(), holders));
+            spans.add(new Span(start, Math.toIntExact(end - start), reason.toString(), holders));
         }
         return spans;
     }

@@ -37,7 +37,7 @@ public final class IndexedFetchPlan implements FetchPlan {
 
     private final List<NeededPage> neededPages;
     /// The section requests overlapping the column chunk, in offset order.
-    private final List<SectionRequest> sections;
+    private final List<? extends Section> sections;
     /// Where the dictionary page starts, or `0` when the plan reads none: the chunk has no
     /// dictionary page, or pruning has read it.
     private final long dictionaryStart;
@@ -65,7 +65,7 @@ public final class IndexedFetchPlan implements FetchPlan {
     /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
     ///        the plan reads no dictionary page; `null` otherwise
     /// @param workingSet where the plan charges the dictionary it parses
-    public IndexedFetchPlan(List<NeededPage> neededPages, List<SectionRequest> sections,
+    public IndexedFetchPlan(List<NeededPage> neededPages, List<? extends Section> sections,
                      long dictionaryStart, long firstDataPageOffset,
                      ColumnSchema columnSchema, ColumnChunk columnChunk,
                      HardwoodContextImpl context, int rowGroupIndex, String fileName,

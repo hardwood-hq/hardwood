@@ -47,7 +47,7 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 /// | A section request a step yields on ([#demand]), or one a walk finds it needs while it parses ([#insertDemanded]) | at once | nothing | once every column holding it has passed it ([#release]) |
 /// | The first section request of the next unit, the work item after the one the first column has entered ([#nextUnit]) | at once | nothing | as above |
 /// | Every other section request, under no row limit | in position order, while it fits F and R | F and R | as above |
-/// | A section request planning reads: a window's request, a dictionary page, a probe ([#plannedSection]) | when planning demands it | nothing | once each of its holders has released it |
+/// | A section request planning reads: a window's request, a dictionary page, a probe ([#planned]) | when planning demands it | nothing | once each of its holders has released it |
 /// | A section request of a file in memory, or inside a file's tail the read holds ([#inPlace]) | never: sliced in place | nothing | not held |
 /// | A request another part of the read queues ([#queue]) | in position order, while it fits R; at once when started now ([#startNow]) | R; nothing when started now | when its owner discards it ([#discard]) |
 ///
@@ -65,11 +65,11 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 /// One lock guards the requests and their positions. It is held across no I/O, no waiter and no
 /// completion of a read: reads are submitted, waiters registered and charges released after it is
 /// let go. A walk polls a section request without it.
-public final class FetchSequence {
+public final class FetchSequence implements Sections {
 
     public static final String FETCH_AHEAD_BYTES_PROPERTY = "hardwood.internal.fetchAheadBytes";
 
-    /// The work item of a section request planning reads ([#plannedSection]), which no work item
+    /// The work item of a section request planning reads ([#planned]), which no work item
     /// holds.
     public static final int PLANNING = -1;
 
@@ -130,15 +130,11 @@ public final class FetchSequence {
         return InternalProperty.longValue(FETCH_AHEAD_BYTES_PROPERTY, 2L * maxSpanBytes, 0, "a non-negative byte count");
     }
 
-    /// A range of the file a planned row group reads as one section request: `length` bytes at
-    /// `start`, requested under `reason`, held by `holders` columns until each has passed it.
-    public record Span(long start, int length, String reason, int holders) {
-    }
-
     /// The section requests of work item `workItemIndex` of file `fileIndex`, `inputFile`, one per
     /// span in position order: those inserted before, if the work item has any, or new ones, which
     /// start by the rules above. For a file in memory, and for a span inside the file's tail,
     /// section requests the sequence does not start, sliced in place.
+    @Override
     public List<SectionRequest> insert(int fileIndex, int workItemIndex, InputFile inputFile, List<Span> spans) {
         if (HeldBytes.inMemory(inputFile)) {
             List<SectionRequest> inMemory = new ArrayList<>(spans.size());
@@ -184,7 +180,8 @@ public final class FetchSequence {
     /// A section request of `length` bytes at `start` that a walk of work item `workItemIndex`
     /// found it needs while it parses, such as the rest of a column chunk a row limit left out: not
     /// queued, since the walk demands it at once.
-    SectionRequest insertDemanded(int workItemIndex, InputFile inputFile, long start, int length, String reason) {
+    @Override
+    public SectionRequest insertDemanded(int workItemIndex, InputFile inputFile, long start, int length, String reason) {
         Span span = new Span(start, length, reason, 1);
         SectionRequest inPlace = inPlace(workItemIndex, inputFile, span);
         if (inPlace != null) {
@@ -207,7 +204,8 @@ public final class FetchSequence {
     /// neither queued nor kept by work item: it starts when planning demands it
     /// ([SectionRequest#issue]), and is charged to neither F nor R. For a file in memory, and for a
     /// range inside the file's tail, a section request sliced in place.
-    public SectionRequest plannedSection(InputFile inputFile, long start, int length, String reason, int holders) {
+    @Override
+    public SectionRequest planned(InputFile inputFile, long start, int length, String reason, int holders) {
         Span span = new Span(start, length, reason, holders);
         SectionRequest inPlace = inPlace(PLANNING, inputFile, span);
         if (inPlace != null) {
@@ -227,6 +225,11 @@ public final class FetchSequence {
     /// A section request for `span` that needs no read: of a file in memory, sliced on its first
     /// poll, or inside the file's tail, sliced now, since the tail may be dropped before the
     /// section request is read. `null` for any other span.
+    @Override
+    public SectionRequest heldInPlace(InputFile inputFile, Span span) {
+        return inPlace(PLANNING, inputFile, span);
+    }
+
     public static SectionRequest inPlace(int workItemIndex, InputFile inputFile, Span span) {
         if (HeldBytes.inMemory(inputFile)) {
             return new SectionRequest(null, inputFile, span, Request.UNQUEUED, workItemIndex, null);
@@ -236,6 +239,7 @@ public final class FetchSequence {
     }
 
     /// The section requests inserted for work item `workItemIndex`, `null` when it has none.
+    @Override
     public List<SectionRequest> sections(int workItemIndex) {
         lock.lock();
         try {

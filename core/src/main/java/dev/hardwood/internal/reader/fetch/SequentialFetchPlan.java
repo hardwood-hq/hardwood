@@ -98,7 +98,7 @@ public final class SequentialFetchPlan implements FetchPlan {
     private final Dictionary preloadedDictionary;
     private final WorkingSet.Column workingSet;
     /// The section requests overlapping the chunk, in offset order.
-    private final List<SectionRequest> sections;
+    private final List<? extends Section> sections;
     /// Inserts the rest of the chunk a row limit left out, or `null` when the section requests hold
     /// it all.
     private final SectionCursor.Rest rest;
@@ -116,7 +116,7 @@ public final class SequentialFetchPlan implements FetchPlan {
                         List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
                         RowRanges matchingRows, long rowGroupRowCount,
                         Dictionary preloadedDictionary, WorkingSet.Column workingSet,
-                        List<SectionRequest> sections, SectionCursor.Rest rest) {
+                        List<? extends Section> sections, SectionCursor.Rest rest) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -187,9 +187,9 @@ public final class SequentialFetchPlan implements FetchPlan {
         int firstPart = Math.min(length, computeChunkSize(length, columnChunk.metaData(), maxRows, maxSpan));
         String reason = "rg=" + rowGroupIndex + " col=" + columnSchema.name();
         FetchSequence sequence = FetchSequence.demandOnly(context);
-        List<FetchSequence.Span> spans = new ArrayList<>();
+        List<Span> spans = new ArrayList<>();
         for (long piece = start; piece < start + firstPart; piece += maxSpan) {
-            spans.add(new FetchSequence.Span(piece, Math.toIntExact(Math.min(maxSpan, start + firstPart - piece)),
+            spans.add(new Span(piece, Math.toIntExact(Math.min(maxSpan, start + firstPart - piece)),
                     reason, 1));
         }
         List<SectionRequest> sections = sequence.insert(0, 0, inputFile, spans);
