@@ -10,7 +10,7 @@ package dev.hardwood.internal.reader.plan;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -152,11 +152,8 @@ class IndexWindowTest {
     /// starts them on demand.
     private IndexWindow window(InputFile file, int count, BitSet offsetIndexColumns,
             BitSet columnIndexColumns) throws Exception {
-        List<RowGroup> members = rowGroups().subList(0, count);
-        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, members.toArray(new RowGroup[0]),
-                indexes(count), repeat(offsetIndexColumns, count), repeat(columnIndexColumns, count),
-                repeat(new BitSet(), count))
-                .getFirst();
+        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
+                members(rowGroups().subList(0, count), offsetIndexColumns, columnIndexColumns)).getFirst();
         window.insertEntries(FetchSequence.demandOnly(context));
         return window;
     }
@@ -188,10 +185,8 @@ class IndexWindowTest {
 
     private static List<IndexWindow> plan(long budget, List<RowGroup> rowGroups,
             BitSet offsetIndexColumns, BitSet columnIndexColumns) throws Exception {
-        int count = rowGroups.size();
         return IndexWindow.plan(budget, countingFile(InputFile.of(FIXTURE)), 0,
-                rowGroups.toArray(new RowGroup[0]), indexes(count), repeat(offsetIndexColumns, count),
-                repeat(columnIndexColumns, count), repeat(new BitSet(), count));
+                members(rowGroups, offsetIndexColumns, columnIndexColumns));
     }
 
     private static long offsetIndexBytes(RowGroup rowGroup) {
@@ -214,16 +209,16 @@ class IndexWindowTest {
         return columns;
     }
 
-    private static int[] indexes(int count) {
-        int[] indexes = new int[count];
-        Arrays.setAll(indexes, i -> i);
-        return indexes;
-    }
-
-    private static BitSet[] repeat(BitSet columns, int count) {
-        BitSet[] repeated = new BitSet[count];
-        Arrays.fill(repeated, columns);
-        return repeated;
+    /// The row groups as window members, each the row group of its index, needing the same
+    /// index structures and no bloom filter.
+    private static List<IndexWindow.Member> members(List<RowGroup> rowGroups, BitSet offsetIndexColumns,
+            BitSet columnIndexColumns) {
+        List<IndexWindow.Member> members = new ArrayList<>(rowGroups.size());
+        for (int i = 0; i < rowGroups.size(); i++) {
+            members.add(new IndexWindow.Member(rowGroups.get(i), i, offsetIndexColumns, columnIndexColumns,
+                    new BitSet()));
+        }
+        return members;
     }
 
     private static List<RowGroup> rowGroups() throws Exception {

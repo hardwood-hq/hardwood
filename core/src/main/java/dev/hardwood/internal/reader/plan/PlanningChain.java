@@ -618,31 +618,13 @@ final class PlanningChain {
             return List.of();
         }
         int count = planned.size();
-        RowGroup[] rowGroups = new RowGroup[count];
-        int[] rowGroupIndexes = new int[count];
-        BitSet[] offsetIndexColumns = new BitSet[count];
-        BitSet[] columnIndexColumns = new BitSet[count];
-        BitSet[] bloomFilterColumns = new BitSet[count];
-        for (int i = 0; i < count; i++) {
-            WorkItem workItem = planned.get(i);
-            rowGroups[i] = workItem.rowGroup();
-            rowGroupIndexes[i] = workItem.rowGroupIndex();
-            columnIndexColumns[i] = new BitSet();
-            offsetIndexColumns[i] = new BitSet();
-            bloomFilterColumns[i] = new BitSet();
-            // A row group with a chunk in another file fails before its page index or bloom
-            // filters are read (requireSameFile), so it asks for none: its offsets address that
-            // other file.
-            if (storedInThisFile(workItem.rowGroup())) {
-                columnIndexColumns[i] = RowGroupPruning.columnIndexColumns(workItem, pruning.pageFiltering(workItem));
-                offsetIndexColumns[i] = fetchPlanBuilder.offsetIndexColumns(workItem, columnIndexColumns[i]);
-                bloomFilterColumns[i] = workItem.bloomFilterColumns();
-            }
+        List<IndexWindow.Member> members = new ArrayList<>(count);
+        for (WorkItem workItem : planned) {
+            members.add(indexMember(workItem));
         }
         WorkItem first = planned.getFirst();
-        List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(),
-                first.workItemIndex(), rowGroups, rowGroupIndexes, offsetIndexColumns,
-                columnIndexColumns, bloomFilterColumns);
+        List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(), first.workItemIndex(),
+                members);
         List<Planning> listed = new ArrayList<>(count);
         int next = 0;
         for (IndexWindow window : windows) {
@@ -652,6 +634,21 @@ final class PlanningChain {
             }
         }
         return listed;
+    }
+
+    /// `workItem` as its index window sees it: the columns whose ColumnIndex its page filter reads,
+    /// whose OffsetIndex its plans and page filter read, and whose bloom filter its arrival may
+    /// probe. A row group with a chunk in another file fails before any of them is read
+    /// ([#chunkExtents]), so it needs none: its offsets address that other file.
+    private IndexWindow.Member indexMember(WorkItem workItem) {
+        if (!storedInThisFile(workItem.rowGroup())) {
+            return new IndexWindow.Member(workItem.rowGroup(), workItem.rowGroupIndex(), new BitSet(), new BitSet(),
+                    new BitSet());
+        }
+        BitSet columnIndexColumns = RowGroupPruning.columnIndexColumns(workItem, pruning.pageFiltering(workItem));
+        return new IndexWindow.Member(workItem.rowGroup(), workItem.rowGroupIndex(),
+                fetchPlanBuilder.offsetIndexColumns(workItem, columnIndexColumns), columnIndexColumns,
+                workItem.bloomFilterColumns());
     }
 
     private static boolean storedInThisFile(RowGroup rowGroup) {

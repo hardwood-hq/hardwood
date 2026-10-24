@@ -61,8 +61,8 @@ class IndexWindowBloomFilterTest {
     void aMemberWithoutBloomFilterColumnsFetchesNothingAndOneWithFetchesTheWindowsFiltersOnce() throws Exception {
         CountingInputFile file = countingFile();
         BitSet[] columns = { new BitSet(), column(CODE), column(CODE) };
-        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, rowGroups().subList(0, 3).toArray(new RowGroup[0]),
-                indexes(3), repeat(new BitSet(), 3), repeat(new BitSet(), 3), columns).getFirst();
+        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, members(rowGroups().subList(0, 3), columns))
+                .getFirst();
         window.insertEntries(FetchSequence.demandOnly(context));
 
         assertThat(window.bloomFiltersFor(0)).containsOnlyNulls();
@@ -82,8 +82,8 @@ class IndexWindowBloomFilterTest {
     void aFilterWithoutALengthIsLeftOutOfTheWindowAndReadByTheSource() throws Exception {
         CountingInputFile file = countingFile();
         RowGroup withoutLength = withoutBloomFilterLength(rowGroups().get(0), CODE);
-        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, new RowGroup[] { withoutLength },
-                indexes(1), repeat(new BitSet(), 1), repeat(new BitSet(), 1), repeat(column(CODE), 1)).getFirst();
+        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
+                members(List.of(withoutLength), new BitSet[] { column(CODE) })).getFirst();
         window.insertEntries(FetchSequence.demandOnly(context));
         assertThat(window.bloomFiltersNeed()).isNull();
 
@@ -105,9 +105,7 @@ class IndexWindowBloomFilterTest {
 
     private static List<IndexWindow> plan(long budget, List<RowGroup> rowGroups, BitSet[] bloomFilterColumns)
             throws Exception {
-        int count = rowGroups.size();
-        return IndexWindow.plan(budget, countingFile(), 0, rowGroups.toArray(new RowGroup[0]), indexes(count),
-                repeat(new BitSet(), count), repeat(new BitSet(), count), bloomFilterColumns);
+        return IndexWindow.plan(budget, countingFile(), 0, members(rowGroups, bloomFilterColumns));
     }
 
     private static RowGroup withoutBloomFilterLength(RowGroup rowGroup, int column) {
@@ -133,16 +131,20 @@ class IndexWindowBloomFilterTest {
         return columns;
     }
 
-    private static int[] indexes(int count) {
-        int[] indexes = new int[count];
-        Arrays.setAll(indexes, i -> i);
-        return indexes;
-    }
-
     private static BitSet[] repeat(BitSet columns, int count) {
         BitSet[] repeated = new BitSet[count];
         Arrays.fill(repeated, columns);
         return repeated;
+    }
+
+    /// The row groups as window members, each the row group of its index, needing no page index
+    /// and the bloom filters of its entry of `bloomFilterColumns`.
+    private static List<IndexWindow.Member> members(List<RowGroup> rowGroups, BitSet[] bloomFilterColumns) {
+        List<IndexWindow.Member> members = new ArrayList<>(rowGroups.size());
+        for (int i = 0; i < rowGroups.size(); i++) {
+            members.add(new IndexWindow.Member(rowGroups.get(i), i, new BitSet(), new BitSet(), bloomFilterColumns[i]));
+        }
+        return members;
     }
 
     private static List<RowGroup> rowGroups() throws Exception {
