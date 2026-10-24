@@ -103,7 +103,6 @@ public final class IndexedFetchPlan implements FetchPlan {
         private boolean dictionaryParsed;
         /// Which page this walk is on, for a failure to name.
         private int currentPage = ExceptionContext.UNKNOWN_PAGE;
-        private boolean eventEmitted;
         private int index;
         /// What the last advance stopped on: bytes, or a task of the read ending.
         private Need pending;
@@ -171,36 +170,16 @@ public final class IndexedFetchPlan implements FetchPlan {
             // The header gives the buffers decoding the page takes, which the read admits before
             // it submits the page
             PageInfo page = new PageInfo(DataPage.parse(pageData), columnSchema, columnChunk.metaData(), dictionary,
-                    needed.mask(), keptRecords(needed));
+                    needed.mask(), PageInfo.keptRecords(columnSchema, needed.mask(), needed.rows()));
 
-            if (!eventEmitted && index >= neededPages.size()) {
-                emitEvent();
+            if (index == neededPages.size()) {
+                PageWalk.scanned(fileName, rowGroupIndex, columnSchema, neededPages.size(),
+                        RowGroupScannedEvent.STRATEGY_OFFSET_INDEX);
             }
 
             return page;
         }
 
-        /// The records `needed` contributes after its mask, for [PageInfo#records()]: its row span
-        /// in the offset index for a column without repetition, whose records are its values; a
-        /// column with repetition counts its records from its repetition levels once decoded.
-        private int keptRecords(NeededPage needed) {
-            if (columnSchema.maxRepetitionLevel() > 0) {
-                return PageInfo.UNKNOWN_RECORDS;
-            }
-            return needed.mask().isAll() ? needed.rows() : needed.mask().totalRecords();
-        }
-
-        private void emitEvent() {
-            eventEmitted = true;
-            RowGroupScannedEvent event = new RowGroupScannedEvent();
-            event.begin();
-            event.file = fileName;
-            event.rowGroupIndex = rowGroupIndex;
-            event.column = columnSchema.name();
-            event.pageCount = neededPages.size();
-            event.scanStrategy = RowGroupScannedEvent.STRATEGY_OFFSET_INDEX;
-            event.commit();
-        }
     }
 
     /// A page needed for the current read paired with the [PageRowMask] selecting

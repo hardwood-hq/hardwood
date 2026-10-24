@@ -93,6 +93,17 @@ public class PageInfo {
         this.records = records;
     }
 
+    /// The records a page of `column` contributes after `mask`, for [#records()], where it holds
+    /// `records` before it: those it keeps for a column without repetition, whose records are its
+    /// values, and [#UNKNOWN_RECORDS] for a column with repetition, which counts its records from
+    /// its repetition levels once decoded.
+    public static int keptRecords(ColumnSchema column, PageRowMask mask, int records) {
+        if (column.maxRepetitionLevel() > 0) {
+            return UNKNOWN_RECORDS;
+        }
+        return mask.isAll() ? records : mask.totalRecords();
+    }
+
     /// Creates a null-placeholder `PageInfo` representing `numValues` rows whose
     /// values can be substituted with nulls because inline page stats proved they
     /// cannot match the active predicate. Only valid for columns with

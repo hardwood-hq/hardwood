@@ -325,7 +325,7 @@ public final class SequentialFetchPlan implements FetchPlan {
             exhausted = true;
             scannedPages = pageCount;
             cursor.releaseAll();
-            emitEvent();
+            PageWalk.scanned(fileName, rowGroupIndex, columnSchema, pageCount, RowGroupScannedEvent.STRATEGY_SEQUENTIAL);
             return null;
         }
 
@@ -526,7 +526,7 @@ public final class SequentialFetchPlan implements FetchPlan {
                         placeholderRecords = mask.totalRecords();
                     }
                     pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData,
-                            columnSchema.maxRepetitionLevel() == 0 ? placeholderRecords : PageInfo.UNKNOWN_RECORDS);
+                            PageInfo.keptRecords(columnSchema, PageRowMask.ALL, placeholderRecords));
                 }
                 else {
                     ByteBuffer pageData = readBytes(position, totalPageSize);
@@ -534,7 +534,7 @@ public final class SequentialFetchPlan implements FetchPlan {
                         return null;
                     }
                     pageInfo = new PageInfo(new DataPage(header, headerSize, pageData), columnSchema, metaData,
-                            dictionary, mask, keptRecords(mask, numValues));
+                            dictionary, mask, PageInfo.keptRecords(columnSchema, mask, numValues));
                 }
                 donePage(numValues, pageRecords, totalPageSize);
                 return pageInfo;
@@ -559,16 +559,6 @@ public final class SequentialFetchPlan implements FetchPlan {
             position += totalPageSize;
             pageCount++;
             clearPage();
-        }
-
-        /// The records a data page of `numValues` values contributes after `mask`, for
-        /// [PageInfo#records()]: a column without repetition has one record per value, a column
-        /// with repetition counts its records from its repetition levels once decoded.
-        private int keptRecords(PageRowMask mask, int numValues) {
-            if (columnSchema.maxRepetitionLevel() > 0) {
-                return PageInfo.UNKNOWN_RECORDS;
-            }
-            return mask.isAll() ? numValues : mask.totalRecords();
         }
 
         /// Whether the pages yielded so far cover `maxRows` records, which this
@@ -657,16 +647,6 @@ public final class SequentialFetchPlan implements FetchPlan {
             }
             return PageDropPredicates.canDropPage(dropLeaves, inline, rowCount, dropReadability,
                     logContext.withPageIndex(currentPage));
-        }
-
-        private void emitEvent() {
-            RowGroupScannedEvent event = new RowGroupScannedEvent();
-            event.file = fileName;
-            event.rowGroupIndex = rowGroupIndex;
-            event.column = columnSchema.name();
-            event.pageCount = pageCount;
-            event.scanStrategy = RowGroupScannedEvent.STRATEGY_SEQUENTIAL;
-            event.commit();
         }
 
     }
