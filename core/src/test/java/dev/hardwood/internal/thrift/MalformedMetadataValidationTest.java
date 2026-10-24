@@ -9,6 +9,8 @@ package dev.hardwood.internal.thrift;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -16,8 +18,12 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
+import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PageType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ParquetReadException;
@@ -241,6 +247,32 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void schemaElementPastTheRootsLastDescendantRejected() {
+        byte[] footer = footerOfSchema(
+                SchemaElement.root("root", 1),
+                leaf("a"),
+                leaf("b"));
+
+        assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("FileMetaData.schema \u2014 the schema holds 1 element(s) past the root's last "
+                        + "descendant, from 'b' on");
+    }
+
+
+    @Test
+    void schemaEndingBeforeAGroupsChildrenRejected() {
+        byte[] footer = footerOfSchema(
+                SchemaElement.root("root", 2),
+                SchemaElement.group("g", RepetitionType.OPTIONAL, 3),
+                leaf("a"));
+
+        assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("FileMetaData.schema \u2014 group 'g' declares 3 children, but the schema ends after 1");
+    }
+
+    @Test
     void optionalListOfWrongElementTypeIsSkipped() {
         // SizeStatistics: field2 repetition_level_histogram declared as list<i32>. The field is
         // optional, so it is reported absent — and field3 behind it still parses, which is what
@@ -451,5 +483,16 @@ class MalformedMetadataValidationTest {
         assertThat(header.type()).isEqualTo(PageType.DATA_PAGE);
         assertThat(header.uncompressedPageSize()).isEqualTo(10);
         assertThat(header.compressedPageSize()).isEqualTo(8);
+    }
+
+    private static SchemaElement leaf(String name) {
+        return SchemaElement.primitive(name, PhysicalType.INT32, RepetitionType.OPTIONAL);
+    }
+
+    private static byte[] footerOfSchema(SchemaElement... schema) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        FileMetaDataWriter.write(writer, new FileMetaData(2, List.of(schema), 0, List.of(), Map.of(), null,
+                List.of()));
+        return writer.toByteArray();
     }
 }

@@ -97,7 +97,9 @@ Two walks recurse once per level of nesting the file declares: `skipField` throu
 | a skipped value: the structs, lists, sets and maps on the path to its innermost value, that value included | 64 (`ThriftCompactReader.MAX_SKIP_DEPTH`), Apache Thrift's default recursion limit |
 | the schema's groups below the root | 500 (`FileMetaDataReader.MAX_SCHEMA_DEPTH`), checked as `FileMetaData.schema` is read, by a walk over the flat element list that does not recurse, so no schema walk downstream meets a deeper tree |
 
-Tests: `NestingDepthBoundTest`.
+The same walk checks that the flat element list is one tree under the root: by the child counts of the groups before it, every element after the root descends from the root, and the list holds every child each group counts. A list with elements past the root's last descendant, or one that ends before a group's children, fails with `ParquetReadException`. The schema tree and the per-leaf records the footer reader derives from the list, such as which leaves' logical types went unread, then count the same leaves.
+
+Tests: `NestingDepthBoundTest`, `MalformedMetadataValidationTest`.
 
 ### Enum values the reader does not know
 
