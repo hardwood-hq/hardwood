@@ -60,7 +60,7 @@ A pair the filter layer cannot compare against never becomes a typed variant. It
 | `UNKNOWN_SORT_ORDER` | `BoundsReadability` marks the column unreadable (see below) |
 | `NOT_A_NUMBER` | a floating-point bound is `NaN` |
 | `INVERTED` | `min` sorts above `max` in the column's order |
-| `NOT_THE_COLUMN_WIDTH` | a `FIXED_LEN_BYTE_ARRAY(12)` timestamp or `INT96` bound of another width |
+| `NOT_THE_COLUMN_WIDTH` | a bound of another width than the values the leaf decodes: 4 bytes for an `INT32` or `FLOAT`, 8 for an `INT64` or `DOUBLE`, 2 for a `FLOAT16`, 1 for a `BOOLEAN`, 12 for a `FIXED_LEN_BYTE_ARRAY(12)` timestamp or an `INT96` |
 | `NANOS_OUTSIDE_A_DAY` | an `INT96` bound whose nanoseconds of the day lie outside `[0, 1 day)` |
 
 A discard is reported through `reportIfDiscarded`. A pair discarded for a fault of its own is reported per unit, naming the file, row group, column and page. `UNKNOWN_SORT_ORDER` holds for the column throughout the file, so it is reported once per column and read, naming the file and column (see below). Deciding usability where the bounds are sourced keeps every comparator free of the question.

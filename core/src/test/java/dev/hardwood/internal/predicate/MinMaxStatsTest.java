@@ -73,6 +73,27 @@ class MinMaxStatsTest {
                 .isEqualTo("one of them is not the width of the column's values");
     }
 
+    /// A bound shorter or longer than the values a fixed-width leaf decodes is no value of the
+    /// column either, whichever type the leaf reads.
+    @Test
+    void aFixedWidthBoundOfAnotherWidthIsDiscarded() {
+        Statistics shortMin = new Statistics(new byte[3], intBytes(100), 0L, null, false);
+        Statistics longMax = new Statistics(new byte[8], new byte[9], 0L, null, false);
+        Statistics emptyBoolean = new Statistics(new byte[0], new byte[] { 1 }, 0L, null, false);
+
+        assertThat(MinMaxStats.of(shortMin, GT_MINUS_FIVE, BoundsReadability.ALL))
+                .extracting(MinMaxStats::discardReason)
+                .isEqualTo("one of them is not the width of the column's values");
+        assertThat(MinMaxStats.of(longMax, new ResolvedPredicate.DoublePredicate(0, Operator.GT, 0d),
+                BoundsReadability.ALL))
+                .extracting(MinMaxStats::discardReason)
+                .isEqualTo("one of them is not the width of the column's values");
+        assertThat(MinMaxStats.of(emptyBoolean, new ResolvedPredicate.BooleanPredicate(0, Operator.EQ, true),
+                BoundsReadability.ALL))
+                .extracting(MinMaxStats::discardReason)
+                .isEqualTo("one of them is not the width of the column's values");
+    }
+
     @Test
     void testNonDeprecatedMinMaxStatsReturnsValues() {
         byte[] min = intBytes(1);
