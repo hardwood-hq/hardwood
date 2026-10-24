@@ -101,6 +101,12 @@ The same walk checks that the flat element list is one tree under the root: by t
 
 Tests: `NestingDepthBoundTest`, `MalformedMetadataValidationTest`.
 
+### A column chunk carries its metadata
+
+`ColumnChunk.meta_data` is optional in `parquet.thrift`, as an encrypted column carries `encrypted_column_metadata` in its place, and the format requires every writer to set it otherwise. Every reader of a chunk reads its metadata, so `ColumnChunkReader` refuses a chunk without it: a chunk carrying `crypto_metadata` raises the internal exception an encrypted footer raises, which the footer's reader restates as `UnsupportedOperationException`, and any other chunk fails with `ParquetReadException`. A `meta_data` field of the wrong wire type is skipped as an optional field and leaves the chunk without it.
+
+Tests: `MalformedMetadataValidationTest`.
+
 ### Enum values the reader does not know
 
 | Enum | Unknown value |

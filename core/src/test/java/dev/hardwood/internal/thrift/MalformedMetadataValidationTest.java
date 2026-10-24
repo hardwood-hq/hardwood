@@ -14,10 +14,15 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.EncryptedFileException;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PageType;
@@ -196,6 +201,7 @@ class MalformedMetadataValidationTest {
         byte[] chunk = new ThriftStructBuilder()
                 .field(1, FieldType.BINARY).binary("data-2.parquet".getBytes(UTF_8))
                 .field(2, FieldType.I64).i64(0)
+                .field(3, FieldType.STRUCT).nested(columnMetaData())
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
         assertThat(columnChunk.filePath()).isEqualTo("data-2.parquet");
@@ -207,6 +213,27 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void columnChunkWithoutMetaDataRejected() {
+        byte[] chunk = new ThriftStructBuilder()
+                .field(2, FieldType.I64).i64(0)
+                .stop().build();
+        assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ColumnChunk omits meta_data, which only an encrypted column may");
+    }
+
+    @Test
+    void encryptedColumnChunkWithoutMetaDataIsEncrypted() {
+        // ColumnChunk: field8 crypto_metadata, an empty struct standing for its union
+        byte[] chunk = new ThriftStructBuilder()
+                .field(2, FieldType.I64).i64(0)
+                .field(8, FieldType.STRUCT).raw(STOP)
+                .stop().build();
+        assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
+                .isInstanceOf(EncryptedFileException.class);
+    }
+
+    @Test
     void emptyFilePathIsThisFile() {
         // An empty file_path is the writer naming the file it is writing, not a split layout.
         byte[] chunk = new ThriftStructBuilder()
@@ -214,6 +241,7 @@ class MalformedMetadataValidationTest {
                 .field(2, FieldType.I64).i64(0)
                 .field(4, FieldType.I64).i64(1000)
                 .field(5, FieldType.I32).i32(64)
+                .field(3, FieldType.STRUCT).nested(columnMetaData())
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
         assertThat(columnChunk.offsetIndexLength()).isEqualTo(64);
@@ -227,6 +255,7 @@ class MalformedMetadataValidationTest {
                 .field(2, FieldType.I64).i64(0)
                 .field(4, FieldType.I64).i64(1000)
                 .field(5, FieldType.I32).i32(64)
+                .field(3, FieldType.STRUCT).nested(columnMetaData())
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
         assertThat(columnChunk.filePath()).isEmpty();
@@ -493,6 +522,15 @@ class MalformedMetadataValidationTest {
         ThriftCompactWriter writer = new ThriftCompactWriter();
         FileMetaDataWriter.write(writer, new FileMetaData(2, List.of(schema), 0, List.of(), Map.of(), null,
                 List.of()));
+        return writer.toByteArray();
+    }
+
+    /// A `ColumnMetaData` of an `INT32` column `a` of no values.
+    private static byte[] columnMetaData() {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        ColumnMetaDataWriter.write(writer, new ColumnMetaData(PhysicalType.INT32, List.of(Encoding.PLAIN),
+                FieldPath.of("a"), CompressionCodec.UNCOMPRESSED, 0, 0, 0, null, 4, null, null, null, null, null,
+                List.of(), null));
         return writer.toByteArray();
     }
 }
