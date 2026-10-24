@@ -256,7 +256,10 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Footers of later files, page indexes and dictionary checks parsed and scanned on the context's pool, so its size bounds a read's CPU (#1589; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
 - [x] A column's fetcher run as steps on the context's pool rather than a virtual thread per column (#1597; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
 - [x] A fetch step never waits for page bytes: a page's read runs on a virtual thread and the step yields on it, while a file in memory is sliced in place (#1598; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
-- [x] Row-group planning (the next file's footer, index windows, Bloom filters, dictionaries) runs on a virtual thread, and a fetch step yields on it rather than waiting on the pool (#1598; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
+- [x] One fetch sequence per read issues every byte request: each row group's needed ranges from every column coalesced once, read ahead within a per-read budget and the context's read-ahead buffer, and released as the read passes them (#1662; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#fetch-sequence))
+- [x] Planning (footers, Bloom filters, dictionaries, page indexes) runs as one step on the read's executor that never waits for I/O, its reads entries of the fetch sequence (#1662, #1649; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#planning-ahead))
+- [x] A page-index window read only once one of its row groups survives its Bloom filters and dictionaries (#1659; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#page-index-windows))
+- [x] The next files of a multi-file read opened ahead, up to 64 files, their footers charged to the read-ahead buffer (#1665; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#opening-files-ahead))
 - [x] A context of zero threads, `HardwoodContext.create(0)`, whose reads and writes run on the threads calling them (#1022; see [`_designs/THREADING.md`](_designs/THREADING.md#a-context-of-zero-threads))
 - [x] A read's memory held to a working-set limit, checked before each dictionary and data page is decompressed, and its tasks decoding beside one another to a read-ahead buffer per context, in place of a limit on each page (#1644; see [`_designs/VALUE_DECODE.md`](_designs/VALUE_DECODE.md#page-decode))
 - [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md))
@@ -445,7 +448,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ### 11.1 S3 Support (`hardwood-s3`)
 - [x] `S3InputFile` implementation with suffix-range GET for footer pre-fetch
-- [x] Tail caching (64 KB) for Parquet footer locality
+- [x] A file's last 256 KiB read in the request that opens it, so its footer, page index and a file up to that size cost one request (#1399; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#the-files-tail))
 - [x] Range backing (`RangeBacking.SPARSE_TEMPFILE`) — mmap-backed whole-file range cache for repeat reads
 - [x] Anonymous (unsigned) requests for public buckets (#1464)
 - [x] Writing to S3: `S3Source.outputFile(...)`, a single `PUT` or a multipart upload aborted on failure (#1454)
