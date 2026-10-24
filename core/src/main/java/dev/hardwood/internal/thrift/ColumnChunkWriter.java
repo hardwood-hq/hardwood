@@ -16,6 +16,13 @@ public class ColumnChunkWriter {
     public static void write(ThriftCompactWriter writer, ColumnChunk chunk) {
         short saved = writer.pushFieldIdContext();
         try {
+            // 1: file_path, set only where the chunk's data lives in another file, which a file
+            // this writer writes never does
+            if (!chunk.filePath().isEmpty()) {
+                writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.BINARY);
+                writer.writeString(chunk.filePath());
+            }
+
             // 2: file_offset (required). For a single-page chunk with no dictionary
             // this is the offset of the data page, matching data_page_offset.
             writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.I64);

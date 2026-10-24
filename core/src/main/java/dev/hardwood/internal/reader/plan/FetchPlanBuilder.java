@@ -111,11 +111,10 @@ public final class FetchPlanBuilder {
     /// indexes, inserting the row group's entries into `sequence` unless [#chunkSpans] did. Reads
     /// nothing: the entries start by the sequence's rules.
     ///
-    /// @param fileLength the length of the work item's file, which every needed range lies within
-    /// @throws ParquetReadException if a needed range lies outside its column chunk or the file, or
-    ///         two column chunks the read reads overlap
+    /// @param chunkExtents the work item's validated chunk extents ([#extents])
+    /// @throws ParquetReadException if a needed range lies outside its column chunk
     Plans columnPlans(WorkItem workItem, SharedRowGroupMetadata shared, RowRanges matchingRows,
-                      boolean pageFilterApplied, long perRgMaxRows, FetchSequence sequence, long fileLength) {
+                      boolean pageFilterApplied, long perRgMaxRows, FetchSequence sequence, Extent[] chunkExtents) {
         int projectedCount = projection.decoded().getProjectedColumnCount();
         RowGroup rowGroup = workItem.rowGroup();
         InputFile inputFile = workItem.inputFile();
@@ -200,13 +199,13 @@ public final class FetchPlanBuilder {
             }
         }
 
-        Extent[] extents = extents(workItem, reads, fileLength);
+        Extent[] extents = read(chunkExtents, reads);
         checkWithinExtents(workItem, ranges, reads);
         List<FetchSequence.Entry> entries = sequence.entries(workItem.workItemIndex());
         if (entries == null) {
             ranges.sort(Comparator.comparingLong(Range::start));
             entries = sequence.insert(workItem.workItemIndex(), inputFile,
-                    CoalescingPolicy.coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan,
+                    CoalescingPolicy.coalesce(ranges, extents, names(workItem), workItem.rowGroupIndex(), maxSpan,
                             TailedInputFile.tailOffset(inputFile)));
         }
         for (Extent extent : extents) {
@@ -275,28 +274,15 @@ public final class FetchPlanBuilder {
     /// whole, cut into pieces of at most S and coalesced under G and S. Its plans locate their
     /// pages in them once its page index is read.
     ///
-    /// @param fileLength the length of the work item's file
-    /// @throws ParquetReadException if a column chunk lies outside the file or two overlap
-    List<FetchSequence.Span> chunkSpans(WorkItem workItem, long fileLength) {
-        int projectedCount = projection.decoded().getProjectedColumnCount();
-        ColumnRead[] reads = new ColumnRead[projectedCount];
+    /// @param chunkExtents the work item's validated chunk extents ([#extents])
+    List<FetchSequence.Span> chunkSpans(WorkItem workItem, Extent[] chunkExtents) {
         List<Range> ranges = new ArrayList<>();
-        for (int projCol = 0; projCol < projectedCount; projCol++) {
-            if (skipsColumn(workItem, projCol)) {
-                continue;
-            }
-            int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(projCol));
-            ColumnChunk chunk = workItem.rowGroup().columns().get(fileOrdinal);
-            ColumnSchema schema = workItem.fileSchema().getColumn(fileOrdinal);
-            reads[projCol] = new ColumnRead(projCol, schema, chunk, null, 0, 0, null, 0, 0, false);
-        }
-        Extent[] extents = extents(workItem, reads, fileLength);
-        for (Extent extent : extents) {
+        for (Extent extent : chunkExtents) {
             for (long piece = extent.start(); piece < extent.end(); piece += maxSpan) {
                 ranges.add(new Range(extent.column(), piece, Math.min(extent.end(), piece + maxSpan)));
             }
         }
-        return CoalescingPolicy.coalesce(ranges, extents, names(reads), workItem.rowGroupIndex(), maxSpan,
+        return CoalescingPolicy.coalesce(ranges, chunkExtents, names(workItem), workItem.rowGroupIndex(), maxSpan,
                 TailedInputFile.tailOffset(workItem.inputFile()));
     }
 
@@ -308,17 +294,25 @@ public final class FetchPlanBuilder {
                               long start, int length, boolean restLeftOut) {
     }
 
-    /// The extents of the columns that `reads` holds, in offset order.
+    /// The chunk extents of every decoded column `workItem`'s row group reads, in offset order,
+    /// validated against the file and each other. Planning takes them once, before any stage
+    /// reads the bytes of a chunk, so a chunk the footer misplaces fails as such whichever stage
+    /// reaches it first.
     ///
     /// @throws ParquetReadException if one lies outside the file or two overlap
-    private static Extent[] extents(WorkItem workItem, ColumnRead[] reads, long fileLength) {
+    Extent[] extents(WorkItem workItem) throws IOException {
+        long fileLength = workItem.inputFile().length();
         List<Extent> extents = new ArrayList<>();
-        for (ColumnRead read : reads) {
-            if (read != null) {
-                long start = read.chunk().chunkStartOffset();
-                extents.add(new Extent(read.column(), read.schema().fieldPath().toString(), start,
-                        start + read.chunk().metaData().totalCompressedSize()));
+        int projectedCount = projection.decoded().getProjectedColumnCount();
+        for (int projCol = 0; projCol < projectedCount; projCol++) {
+            if (skipsColumn(workItem, projCol)) {
+                continue;
             }
+            int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(projCol));
+            ColumnChunk chunk = workItem.rowGroup().columns().get(fileOrdinal);
+            long start = chunk.chunkStartOffset();
+            extents.add(new Extent(projCol, workItem.fileSchema().getColumn(fileOrdinal).fieldPath().toString(),
+                    start, start + chunk.metaData().totalCompressedSize()));
         }
         extents.sort(Comparator.comparingLong(Extent::start));
         Extent previous = null;
@@ -341,6 +335,17 @@ public final class FetchPlanBuilder {
         return extents.toArray(new Extent[0]);
     }
 
+    /// The extents of `chunkExtents` whose columns `reads` holds.
+    private static Extent[] read(Extent[] chunkExtents, ColumnRead[] reads) {
+        List<Extent> read = new ArrayList<>(chunkExtents.length);
+        for (Extent extent : chunkExtents) {
+            if (reads[extent.column()] != null) {
+                read.add(extent);
+            }
+        }
+        return read.toArray(new Extent[0]);
+    }
+
     /// Checks that every needed range lies within its column's chunk.
     ///
     /// @throws ParquetReadException naming the column of the first range that does not
@@ -358,13 +363,12 @@ public final class FetchPlanBuilder {
         }
     }
 
-    /// The names of the columns `reads` holds, by decoded column.
-    private static String[] names(ColumnRead[] reads) {
-        String[] names = new String[reads.length];
-        for (ColumnRead read : reads) {
-            if (read != null) {
-                names[read.column()] = read.schema().name();
-            }
+    /// The names of the decoded columns `workItem`'s row group reads, by decoded column.
+    private String[] names(WorkItem workItem) {
+        String[] names = new String[projection.decoded().getProjectedColumnCount()];
+        for (int projCol = 0; projCol < names.length; projCol++) {
+            int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(projCol));
+            names[projCol] = workItem.fileSchema().getColumn(fileOrdinal).name();
         }
         return names;
     }

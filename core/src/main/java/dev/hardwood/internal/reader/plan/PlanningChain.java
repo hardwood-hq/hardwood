@@ -30,6 +30,7 @@ import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.RangeRead;
@@ -200,6 +201,9 @@ final class PlanningChain {
         SharedRowGroupMetadata shared;
         MaskCapability mask;
         RowGroupPlans plans;
+        /// The validated chunk extents of the decoded columns, taken before any stage reads a
+        /// chunk ([#chunkExtents]).
+        Extent[] extents;
         /// The columns that took the work item and have not released it, `0` before the first takes it.
         final AtomicInteger holders = new AtomicInteger();
         final AtomicBoolean entered = new AtomicBoolean();
@@ -671,7 +675,7 @@ final class PlanningChain {
             planning.arrival = RowGroupPruning.Arrival.KEPT;
             return null;
         }
-        requireSameFile(workItem);
+        chunkExtents(planning);
         try {
             ByteBuffer[] bloomFilterBytes = new ByteBuffer[workItem.rowGroup().columns().size()];
             if (!workItem.bloomFilterColumns().isEmpty()) {
@@ -713,7 +717,7 @@ final class PlanningChain {
             planning.shared = new SharedRowGroupMetadata(null, RowRanges.ALL, null, true);
             return null;
         }
-        requireSameFile(workItem);
+        chunkExtents(planning);
         try {
             need = workItem.indexWindow().indexNeed();
             if (need != null) {
@@ -750,6 +754,7 @@ final class PlanningChain {
             return null;
         }
         WorkItem workItem = planning.workItem;
+        chunkExtents(planning);
         try {
             planning.probeReads.clearMissing();
             Parsed<Boolean> applicable = FetchPlanBuilder.masksApplicableForRowGroup(projection.decoded(),
@@ -771,10 +776,10 @@ final class PlanningChain {
             return null;
         }
         WorkItem workItem = planning.workItem;
-        long fileLength = workItem.inputFile().length();
+        chunkExtents(planning);
         // Before the page index, which the plans need and these entries do not: they start while
         // it is read
-        insertChunkEntries(workItem);
+        insertChunkEntries(planning);
         Need need = shared(planning);
         if (need != null) {
             return need;
@@ -816,7 +821,7 @@ final class PlanningChain {
         boolean pageFilterApplied = !matchingRows.isAll() && !shared.matchingRows().isAll();
 
         FetchPlanBuilder.Plans plans = fetchPlanBuilder.columnPlans(workItem, shared, matchingRows,
-                pageFilterApplied, perRgMaxRows(workItem), sequence, fileLength);
+                pageFilterApplied, perRgMaxRows(workItem), sequence, chunkExtents(planning));
 
         // Last, once nothing above can fail: the batch plan takes each row group once.
         planning.plans = new RowGroupPlans(plans.columns(),
@@ -826,12 +831,27 @@ final class PlanningChain {
 
     /// Inserts the entries of `workItem`'s row group from its chunks' extents, once, where every row
     /// of it is read and nothing can drop it, so they start before its page index is read.
-    private void insertChunkEntries(WorkItem workItem) throws IOException {
+    private void insertChunkEntries(Planning planning) throws IOException {
+        WorkItem workItem = planning.workItem;
         if (readsAllRows(workItem) && !RangeRead.inMemory(workItem.inputFile())
                 && sequence.entries(workItem.workItemIndex()) == null) {
             sequence.insert(workItem.workItemIndex(), workItem.inputFile(),
-                    fetchPlanBuilder.chunkSpans(workItem, workItem.inputFile().length()));
+                    fetchPlanBuilder.chunkSpans(workItem, chunkExtents(planning)));
         }
+    }
+
+    /// The work item's chunk extents, checked on the first call, which every stage makes before it
+    /// reads anything its row group's footer entries address: that the chunks are in this file,
+    /// and then that they lie within it and do not overlap.
+    ///
+    /// @throws UnsupportedOperationException if a chunk is stored in another file
+    /// @throws ParquetReadException if a chunk lies outside the file or two overlap
+    private Extent[] chunkExtents(Planning planning) throws IOException {
+        if (planning.extents == null) {
+            requireSameFile(planning.workItem);
+            planning.extents = fetchPlanBuilder.extents(planning.workItem);
+        }
+        return planning.extents;
     }
 
     /// Whether every row of `workItem`'s row group is read and no Bloom filter or dictionary can drop
