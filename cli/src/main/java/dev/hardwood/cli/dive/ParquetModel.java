@@ -278,7 +278,8 @@ public final class ParquetModel implements AutoCloseable {
         OffsetIndex result = null;
         if (buffers.offsetIndex() != null) {
             try {
-                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
+                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()),
+                        chunk(rowGroupIndex, columnIndex).metaData());
             }
             catch (RuntimeException e) {
                 throw placed(e, rowGroupIndex, columnIndex);

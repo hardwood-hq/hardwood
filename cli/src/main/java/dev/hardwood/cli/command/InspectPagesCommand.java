@@ -417,7 +417,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             return null;
         }
         try {
-            return OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
+            return OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)),
+                    chunk.metaData());
         }
         catch (IOException e) {
             throw placed(e, inputFile, rowGroupIndex, columnPath);

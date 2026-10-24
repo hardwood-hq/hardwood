@@ -30,4 +30,17 @@ final class DamagedFiles {
         Files.write(damaged, bytes);
         return damaged;
     }
+
+    /// Writes `damaged.parquet` into `tempDir`: a copy of `source` whose OffsetIndex at `offset`
+    /// is replaced by one listing no page, which is malformed for a chunk with values. The bytes
+    /// after its stop field are left in place and never read.
+    static Path emptyOffsetIndex(Path source, long offset, Path tempDir) throws IOException {
+        byte[] bytes = Files.readAllBytes(source);
+        // Field 1, a list, of no structs, then the stop field
+        byte[] empty = {0x19, 0x0C, 0x00};
+        System.arraycopy(empty, 0, bytes, Math.toIntExact(offset), empty.length);
+        Path damaged = tempDir.resolve("damaged.parquet");
+        Files.write(damaged, bytes);
+        return damaged;
+    }
 }
