@@ -267,8 +267,9 @@ class FilesAheadTest {
         }
         try (HardwoodContextImpl context = HardwoodContextImpl.create(4)) {
             ParquetFileReader reader = ParquetFileReader.openAll(files, context);
-            ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build();
+            // Armed before the columns start, which may read a page index at once
             indexes.arm();
+            ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build();
             Consumer consumer = Consumer.start(() -> cols);
             awaitTrue(() -> context.readAheadBuffer().held() > 0, "read-ahead held while the read waits");
 
