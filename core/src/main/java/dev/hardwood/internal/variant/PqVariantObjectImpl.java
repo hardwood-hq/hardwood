@@ -61,12 +61,25 @@ final class PqVariantObjectImpl implements PqVariantObject {
     /// at each midpoint (bytes, not the decoded String) is the next step.
     private int indexOf(String name) {
         int dictId = metadata.findField(name);
-        if (dictId < 0) {
-            return -1;
+        if (dictId >= 0) {
+            int n = layout.numElements();
+            for (int i = 0; i < n; i++) {
+                if (fieldIdAt(i) == dictId) {
+                    return i;
+                }
+            }
         }
+        return indexOfByName(name);
+    }
+
+    /// The child-array index of the field named `name`, comparing each field's own name. The
+    /// dictionary lookup of [#indexOf] misses a field the object holds where the dictionary
+    /// holds its name twice, is flagged sorted but is not, or holds bytes that are not UTF-8,
+    /// and [#getFieldName] still names that field.
+    private int indexOfByName(String name) {
         int n = layout.numElements();
         for (int i = 0; i < n; i++) {
-            if (fieldIdAt(i) == dictId) {
+            if (name.equals(metadata.getField(fieldIdAt(i)))) {
                 return i;
             }
         }
