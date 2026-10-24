@@ -122,14 +122,15 @@ final class PlanningChain {
     private boolean planningAhead;
 
     /// What the chain has published, replaced as a whole.
-    private volatile Progress progress = new Progress(new int[] {-1, -1, -1}, false, null, Integer.MAX_VALUE, 0);
+    private volatile Progress progress = new Progress(new int[] {-1, -1, -1, -1}, false, null, Integer.MAX_VALUE, 0);
     /// Whether a column or caller took the failure that ended planning, so close does not raise it.
     /// Written by the column that took it, read by close once the columns have closed.
     private boolean failureTaken;
 
-    /// The last work item callers outside the read asked to be taken through each stage before
-    /// [Stage#PLANS], raised before they run the chain ([#advance]).
-    private final AtomicIntegerArray targets = new AtomicIntegerArray(new int[] {-1, -1, -1});
+    /// The last work item asked to be taken through each stage, raised before the chain runs
+    /// ([#advance]): by callers outside the read for the stages before [Stage#PLANS], and for
+    /// [Stage#PLANS] by the read's columns ([#requested]), `-1` before the read starts.
+    private final AtomicIntegerArray targets = new AtomicIntegerArray(new int[] {-1, -1, -1, -1});
 
     // Set before the read's columns ask for plans, read by the chain after
     private long tailSkip;
@@ -141,13 +142,9 @@ final class PlanningChain {
     private volatile boolean wanted;
     private volatile boolean closed;
 
-    /// Guards the cursor: what columns asked for and wait on, and how far the read has reached.
+    /// Guards the cursor: the waiters on [Stage#PLANS] and what resumes them, and how far the read
+    /// has reached.
     private final ReentrantLock cursorLock = new ReentrantLock();
-    /// Guarded by `cursorLock`: the last work item a column asked to plan, `-1` before the read
-    /// starts.
-    private int requested = -1;
-    /// Guarded by `cursorLock`: the next work item the chain plans, every one before it planned.
-    private int planFrom;
     /// Guarded by `cursorLock`: whether the chain plans nothing more, at the end of the work list
     /// or after a failure.
     private boolean planningEnded;
@@ -158,10 +155,11 @@ final class PlanningChain {
     private int reachedItem = -1;
     private int toldFile = -1;
 
-    /// What the chain has published: for each stage before [Stage#PLANS], the last work item it
-    /// took through it for a caller; whether the work list is complete; the failure that ended
-    /// planning with the first work item it fails; and the residue of the physical skip within the
-    /// first work item.
+    /// What the chain has published: for each stage, the last work item it took through it, for a
+    /// caller before [Stage#PLANS] and, for [Stage#PLANS], every work item up to it planned
+    /// (published under `cursorLock`, with the waiters it resumes); whether the work list is
+    /// complete; the failure that ended planning with the first work item it fails; and the
+    /// residue of the physical skip within the first work item.
     private record Progress(int[] reached, boolean listed, Throwable failure, int failedFrom,
                             long firstRowGroupSkip) {
 
@@ -277,7 +275,7 @@ final class PlanningChain {
     /// a column or a caller waits for it, at the tail otherwise.
     private void submit() {
         try {
-            if (demanded() || callerWaits()) {
+            if (waitedFor()) {
                 executor.executeStep(this::run);
             }
             else {
@@ -285,16 +283,19 @@ final class PlanningChain {
             }
         }
         catch (RejectedExecutionException e) {
-            fail(HardwoodContextImpl.contextClosed(e), planFrom());
+            fail(HardwoodContextImpl.contextClosed(e), progress.reached(Stage.PLANS) + 1);
             scheduled.set(false);
             executor.tasks().signal();
         }
     }
 
-    private boolean callerWaits() {
+    /// Whether a column or a caller waits for a work item the chain has not taken through the stage
+    /// it asked for.
+    private boolean waitedFor() {
         Progress p = progress;
-        for (Stage stage : CALLER_STAGES) {
-            if (targets.get(stage.ordinal()) > p.reached(stage) && p.reached(stage) + 1 < p.failedFrom()) {
+        for (Stage stage : Stage.values()) {
+            if (targets.get(stage.ordinal()) > p.reached(stage) && p.reached(stage) + 1 < p.failedFrom()
+                    && (stage != Stage.PLANS || !ended())) {
                 return true;
             }
         }
@@ -327,7 +328,7 @@ final class PlanningChain {
         catch (RuntimeException | Error e) {
             need = null;
             try {
-                fail(e, planFrom());
+                fail(e, progress.reached(Stage.PLANS) + 1);
             }
             finally {
                 scheduled.set(false);
@@ -983,8 +984,14 @@ final class PlanningChain {
     ///
     /// @throws IOException the failure that ended planning at or before it
     private void awaitStage(int index, Stage stage) throws IOException {
-        targets.accumulateAndGet(stage.ordinal(), index, Math::max);
-        await(() -> progress.reached(stage) >= index || index >= progress.failedFrom());
+        if (stage == Stage.PLANS) {
+            requested(index);
+            await(() -> isPlanned(index));
+        }
+        else {
+            targets.accumulateAndGet(stage.ordinal(), index, Math::max);
+            await(() -> progress.reached(stage) >= index || index >= progress.failedFrom());
+        }
         plannedWorkItem(index);
     }
 
@@ -1054,9 +1061,7 @@ final class PlanningChain {
 
     /// Plans the work item at `index`, on the caller's thread, and returns its plans.
     RowGroupPlans awaitPlans(int index) throws IOException {
-        requested(index);
-        await(() -> isPlanned(index));
-        plannedWorkItem(index);
+        awaitStage(index, Stage.PLANS);
         return plans(index);
     }
 
@@ -1083,15 +1088,8 @@ final class PlanningChain {
     /// next unit's does, since the column waits for the planning that inserts it, and the read has
     /// reached it.
     void requested(int index) {
-        cursorLock.lock();
-        try {
-            if (index <= requested) {
-                return;
-            }
-            requested = index;
-        }
-        finally {
-            cursorLock.unlock();
+        if (targets.getAndAccumulate(Stage.PLANS.ordinal(), index, Math::max) >= index) {
+            return;
         }
         sequence.nextUnit(index);
         reached(index);
@@ -1110,20 +1108,14 @@ final class PlanningChain {
     /// sequence lets it plan ahead ([FetchSequence#mayPlanAhead]), which [#planningAhead] then
     /// records.
     private int nextToPlan() {
-        int next;
-        cursorLock.lock();
-        try {
-            if (requested < 0 || planningEnded) {
-                return -1;
-            }
-            next = planFrom;
-            planningAhead = false;
-            if (next <= requested) {
-                return next;
-            }
+        int requested = targets.get(Stage.PLANS.ordinal());
+        if (requested < 0 || ended()) {
+            return -1;
         }
-        finally {
-            cursorLock.unlock();
+        int next = progress.reached(Stage.PLANS) + 1;
+        planningAhead = false;
+        if (next <= requested) {
+            return next;
         }
         if (sequence.withinNextUnit(next)) {
             return next;
@@ -1138,8 +1130,9 @@ final class PlanningChain {
         List<Runnable> met = new ArrayList<>();
         cursorLock.lock();
         try {
-            planFrom = Math.max(planFrom, index + 1);
-            planWaiters.removeIf(waiter -> waiter.index() < planFrom && met.add(waiter.resume()));
+            publish(progress.withReached(Stage.PLANS, index));
+            int planned = progress.reached(Stage.PLANS);
+            planWaiters.removeIf(waiter -> waiter.index() <= planned && met.add(waiter.resume()));
         }
         finally {
             cursorLock.unlock();
@@ -1162,22 +1155,11 @@ final class PlanningChain {
         met.forEach(Runnable::run);
     }
 
-    /// Whether a column waits for a work item the chain has not planned.
-    private boolean demanded() {
+    /// Whether the chain plans nothing more.
+    private boolean ended() {
         cursorLock.lock();
         try {
-            return requested >= planFrom && !planningEnded;
-        }
-        finally {
-            cursorLock.unlock();
-        }
-    }
-
-    /// The next work item the chain plans.
-    private int planFrom() {
-        cursorLock.lock();
-        try {
-            return planFrom;
+            return planningEnded;
         }
         finally {
             cursorLock.unlock();
@@ -1197,7 +1179,7 @@ final class PlanningChain {
     boolean isPlanned(int index) {
         cursorLock.lock();
         try {
-            return index < planFrom || planningEnded;
+            return index <= progress.reached(Stage.PLANS) || planningEnded;
         }
         finally {
             cursorLock.unlock();
@@ -1209,7 +1191,7 @@ final class PlanningChain {
         return resume -> {
             cursorLock.lock();
             try {
-                if (index >= planFrom && !planningEnded) {
+                if (index > progress.reached(Stage.PLANS) && !planningEnded) {
                     planWaiters.add(new PlanWaiter(index, resume));
                     return;
                 }
