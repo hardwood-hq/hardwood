@@ -17,6 +17,8 @@ public final class QuiescentExecutor implements Executor {
 
     /// Tasks submitted and not finished. Guarded by `this`.
     private int running;
+    /// Tasks finished. Guarded by `this`.
+    private long finished;
 
     @Override
     public void execute(Runnable task) {
@@ -35,7 +37,18 @@ public final class QuiescentExecutor implements Executor {
 
     private synchronized void finished() {
         running--;
+        finished++;
         notifyAll();
+    }
+
+    /// The tasks submitted and not finished.
+    synchronized int running() {
+        return running;
+    }
+
+    /// The tasks finished so far.
+    synchronized long finishedCount() {
+        return finished;
     }
 
     /// Waits until no task is running. A task a running one submits counts from its submission,

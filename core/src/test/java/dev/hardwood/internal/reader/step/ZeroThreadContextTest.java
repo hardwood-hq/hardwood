@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -21,6 +20,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -268,7 +269,7 @@ class ZeroThreadContextTest {
              HeldRead read = HeldRead.start(context)) {
             Thread closer = Thread.ofPlatform().start(read::closeReader);
 
-            assertThat(closer.join(Duration.ofMillis(300))).as("the close returned while a read was held").isFalse();
+            awaitParkedOn(closer, "the close waits for the held read", ReadTasks.class);
             read.release();
             closer.join();
             read.consumer.join();
@@ -297,8 +298,9 @@ class ZeroThreadContextTest {
             });
             Thread readerCloser = Thread.ofPlatform().start(read::closeReader);
 
-            assertThat(columnsCloser.join(Duration.ofMillis(300))).as("the columns' close returned while a read was held")
-                    .isFalse();
+            // Whichever close claims the read's close waits for the read, the other for that close
+            awaitParkedOn(columnsCloser, "the columns' close waits for the held read or for the parent's close",
+                    ReadTasks.class, CountDownLatch.class);
             read.release();
             columnsCloser.join();
             readerCloser.join();
@@ -318,11 +320,7 @@ class ZeroThreadContextTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(0);
              HeldRead read = HeldRead.start(context)) {
             Thread readerCloser = Thread.ofPlatform().start(read::closeReader);
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (readerCloser.getState() != Thread.State.WAITING) {
-                assertThat(System.nanoTime() - deadline).as("the parent's close waits for the held read").isNegative();
-                Thread.onSpinWait();
-            }
+            awaitParkedOn(readerCloser, "the parent's close waits for the held read", ReadTasks.class);
             AtomicReference<Throwable> columnsCloseFailure = new AtomicReference<>();
             Thread columnsCloser = Thread.ofPlatform().start(() -> {
                 try {
@@ -333,9 +331,8 @@ class ZeroThreadContextTest {
                 }
             });
 
-            assertThat(columnsCloser.join(Duration.ofMillis(300)))
-                    .as("the columns' close returned while the parent's close waited for a held read")
-                    .isFalse();
+            // The parent's close holds the read's close until it is done
+            awaitParkedOn(columnsCloser, "the columns' close waits for the parent's", CountDownLatch.class);
             read.release();
             columnsCloser.join();
             readerCloser.join();
@@ -359,12 +356,14 @@ class ZeroThreadContextTest {
                 read.closeReader();
                 interruptedAfterClose.set(Thread.currentThread().isInterrupted());
             });
-            assertThat(closer.join(Duration.ofMillis(300))).isFalse();
+            awaitParkedOn(closer, "the close waits for the held read", ReadTasks.class);
 
             closer.interrupt();
 
-            assertThat(closer.join(Duration.ofMillis(300))).as("the interrupted close returned while a read was held")
-                    .isFalse();
+            // The wait clears the flag before it parks again, so a cleared flag on a parked close
+            // shows that the close took the interrupt and went on waiting
+            awaitParkedOn(closer, "the interrupted close waits for the held read", () -> !closer.isInterrupted(),
+                    ReadTasks.class);
             read.release();
             closer.join();
             read.consumer.join();
@@ -481,6 +480,37 @@ class ZeroThreadContextTest {
             inputs.add(InputFile.of(path));
         }
         return inputs;
+    }
+
+    /// Waits until `thread` is parked on a blocker of one of `blockers`, each the class of the
+    /// blocker itself or, for a lock's synchronizer, of the class it belongs to.
+    private static void awaitParkedOn(Thread thread, String what, Class<?>... blockers) throws InterruptedException {
+        awaitParkedOn(thread, what, () -> true, blockers);
+    }
+
+    /// Waits until `thread` is parked on a blocker of one of `blockers` while `also` holds.
+    private static void awaitParkedOn(Thread thread, String what, BooleanSupplier also, Class<?>... blockers)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!(parkedOn(thread, blockers) && also.getAsBoolean())) {
+            if (!thread.isAlive() || System.nanoTime() - deadline >= 0) {
+                throw new AssertionError("Expected " + what + ", but the thread is " + thread.getState());
+            }
+            Thread.sleep(1);
+        }
+    }
+
+    private static boolean parkedOn(Thread thread, Class<?>... blockers) {
+        Object current = LockSupport.getBlocker(thread);
+        if (current == null) {
+            return false;
+        }
+        for (Class<?> blocker : blockers) {
+            if (blocker.isInstance(current) || current.getClass().getEnclosingClass() == blocker) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// A read of the fixture's files, not in memory, over `v` in batches of 100, whose

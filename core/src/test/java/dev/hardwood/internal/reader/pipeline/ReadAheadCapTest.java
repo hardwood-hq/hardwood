@@ -29,6 +29,7 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.ObservedPool;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
@@ -60,8 +61,9 @@ import static org.assertj.core.api.Assertions.fail;
 /// sixteenth of one, which puts it below one batch and leaves the column only its next batch,
 /// through the pages always admitted. Each read first
 /// runs until the column has published the two batches its exchange holds and, for the flat
-/// column, has submitted its pages up to the expected lead, and then until no page is submitted
-/// for a moment; it then takes every batch, which a read that is not live never ends.
+/// column, has submitted its pages up to the expected lead, and then until every thread of the
+/// pool waits for its next task, after which it submits nothing until the consumer takes a batch;
+/// it then takes every batch, which a read that is not live never ends.
 @Tag("pool")
 class ReadAheadCapTest {
 
@@ -73,9 +75,6 @@ class ReadAheadCapTest {
     private static final long PUBLISHED_ROW = 2 * BATCH;
     /// How long the read may take to reach the state the test expects.
     private static final long STATE_NANOS = TimeUnit.SECONDS.toNanos(30);
-    /// How long no page may be submitted, once the read is in that state, for it to count as
-    /// settled there.
-    private static final long QUIET_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
 
     @AfterEach
     void removeObserver() {
@@ -117,7 +116,6 @@ class ReadAheadCapTest {
         long capRows = 8 * budgetRows;
         byte[] file = write(repeated, pageRows);
         List<String> violations = Collections.synchronizedList(new ArrayList<>());
-        AtomicLong lastSubmission = new AtomicLong(System.nanoTime());
         AtomicLong maxFirstRow = new AtomicLong(-1);
         ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
             long ahead = page.firstRow - readPublishedRow;
@@ -128,13 +126,13 @@ class ReadAheadCapTest {
                 violations.add("page at row " + page.firstRow + " with " + inFlight + " pages in flight");
             }
             maxFirstRow.accumulateAndGet(page.firstRow, Math::max);
-            lastSubmission.set(System.nanoTime());
         };
 
         long values = 0;
         long sum = 0;
         long records = 0;
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(threads);
+        ObservedPool pool = new ObservedPool(threads, "read-ahead-cap-test");
+        try (HardwoodContextImpl context = pool.context();
              RowGroupIterator iterator = iterator(context, file)) {
             iterator.planBatches(BATCH, 0);
             ColumnSchema column = iterator.referenceSchema().getColumn(0);
@@ -148,7 +146,7 @@ class ReadAheadCapTest {
                         NestedIndexMode.ALL_ITEMS, false)) {
                     scheduler.start();
                     awaitState(() -> scheduled.publishedRow() == PUBLISHED_ROW,
-                            () -> "published to " + scheduled.publishedRow(), lastSubmission);
+                            () -> "published to " + scheduled.publishedRow(), pool);
                     NestedBatch batch;
                     while ((batch = exchange.poll()) != null) {
                         long[] longs = (long[]) batch.values;
@@ -171,7 +169,7 @@ class ReadAheadCapTest {
                             && maxFirstRow.get() == PUBLISHED_ROW + expectedLead,
                             () -> "published to " + scheduled.publishedRow() + ", last page submitted at "
                                     + maxFirstRow.get(),
-                            lastSubmission);
+                            pool);
                     assertThat(maxFirstRow.get() - scheduled.publishedRow())
                             .as("lead of the last page submitted over the first unpublished row")
                             .isEqualTo(expectedLead);
@@ -192,9 +190,10 @@ class ReadAheadCapTest {
         assertThat(violations).isEmpty();
     }
 
-    /// Waits until `reached` holds, then until no page was submitted for [#QUIET_NANOS]; fails with
-    /// the `observed` state if `reached` does not hold within [#STATE_NANOS].
-    private static void awaitState(BooleanSupplier reached, Supplier<String> observed, AtomicLong lastSubmission)
+    /// Waits until `reached` holds, then until every thread of `pool` waits for its next task, after
+    /// which the read, whose consumer polls nothing meanwhile, submits nothing until it does; fails
+    /// with the `observed` state if `reached` does not hold within [#STATE_NANOS].
+    private static void awaitState(BooleanSupplier reached, Supplier<String> observed, ObservedPool pool)
             throws InterruptedException {
         long deadline = System.nanoTime() + STATE_NANOS;
         while (!reached.getAsBoolean()) {
@@ -204,9 +203,7 @@ class ReadAheadCapTest {
             }
             Thread.sleep(10);
         }
-        while (System.nanoTime() - lastSubmission.get() < QUIET_NANOS) {
-            Thread.sleep(10);
-        }
+        pool.awaitIdle("A thread of the pool is busy once the read is in the expected state");
     }
 
     /// One row group of `ROWS` rows, cut into pages of `pageRows` records: a

@@ -7,8 +7,6 @@
  */
 package dev.hardwood.jfr;
 
-import java.time.Duration;
-
 import org.junit.jupiter.api.Test;
 
 import jdk.jfr.Event;
@@ -20,10 +18,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// later events of the same type arrive in a later flush of the recording stream.
 public class RecordedEventRetentionTest extends AbstractJfrRecorderTest {
 
-    /// Longer than the recording stream's one-second flush period, so that the two
-    /// events are delivered in different flushes.
-    private static final Duration GAP = Duration.ofMillis(2500);
-
     @Name("dev.hardwood.test.RetentionMarker")
     static final class MarkerEvent extends Event {
         String label;
@@ -32,7 +26,8 @@ public class RecordedEventRetentionTest extends AbstractJfrRecorderTest {
     @Test
     void retainsEventsDeliveredInEarlierFlushes() throws Exception {
         commitMarker("first");
-        Thread.sleep(GAP);
+        // Committed once the first is delivered, so the two arrive in different flushes
+        awaitDelivered("dev.hardwood.test.RetentionMarker");
         commitMarker("second");
 
         awaitEvents();

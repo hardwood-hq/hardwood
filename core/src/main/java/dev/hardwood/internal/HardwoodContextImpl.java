@@ -127,7 +127,14 @@ public class HardwoodContextImpl implements HardwoodContext {
     /// takes as having `threads` threads, run by `poolThreads`, and shuts down when it closes;
     /// for tests that decide the order a read's tasks run in.
     public static HardwoodContextImpl create(ExecutorService executor, int threads, Set<Thread> poolThreads) {
-        return new HardwoodContextImpl(executor, threads, poolThreads, IO_EXECUTOR, createLibdeflatePoolIfAvailable(),
+        return create(executor, threads, poolThreads, IO_EXECUTOR);
+    }
+
+    /// Create a context as [#create(ExecutorService, int, Set)] does, whose I/O and speculative work
+    /// run on `ioExecutor`; for tests that wait until a read can make no progress.
+    public static HardwoodContextImpl create(ExecutorService executor, int threads, Set<Thread> poolThreads,
+                                             Executor ioExecutor) {
+        return new HardwoodContextImpl(executor, threads, poolThreads, ioExecutor, createLibdeflatePoolIfAvailable(),
                 ParquetMetadataReader.FROM_FILE);
     }
 

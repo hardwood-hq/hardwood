@@ -8,24 +8,15 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
-import java.lang.management.ThreadMXBean;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Timeout;
@@ -34,14 +25,13 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.DecodeExecutor;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.ObservedPool;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.fail;
 
 /// No thread of a context's pool waits for a read of a file whose bytes are not in memory: not in
 /// a read of its own, and not for a work item's planning, which waits for its reads on a virtual
@@ -51,7 +41,6 @@ import static org.assertj.core.api.Assertions.fail;
 class PoolWaitTest {
 
     private static final Path RESOURCES = Path.of("src/test/resources");
-    private static final long IDLE_DEADLINE_NANOS = TimeUnit.SECONDS.toNanos(5);
 
     static Stream<Arguments> reads() {
         return Stream.of(1, 2).flatMap(threads -> scenarios().map(scenario -> Arguments.of(
@@ -83,16 +72,7 @@ class PoolWaitTest {
         long expected = countRows(List.of(InputFile.of(path), InputFile.of(path), InputFile.of(path)),
                 HardwoodContextImpl.create(2), filter);
 
-        Set<Thread> pool = ConcurrentHashMap.newKeySet();
-        AtomicInteger counter = new AtomicInteger();
-        ThreadPoolExecutor executor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
-                DecodeExecutor.newWorkQueue(), r -> {
-                    Thread t = new Thread(r, "pool-wait-test-" + counter.getAndIncrement());
-                    t.setDaemon(true);
-                    pool.add(t);
-                    return t;
-                });
-        executor.prestartAllCoreThreads();
+        ObservedPool pool = new ObservedPool(threads, "pool-wait-test");
         Gate gate = new Gate();
         List<InputFile> files = List.of(new HeldInputFile(path, gate), new HeldInputFile(path, gate),
                 new HeldInputFile(path, gate));
@@ -101,7 +81,7 @@ class PoolWaitTest {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread caller = Thread.ofPlatform().name("pool-wait-test-caller").unstarted(() -> {
             try {
-                rows.set(countRows(files, HardwoodContextImpl.create(executor, threads, pool), filter));
+                rows.set(countRows(files, pool.context(), filter));
             }
             catch (Throwable e) {
                 failure.set(e);
@@ -115,7 +95,7 @@ class PoolWaitTest {
             if (!gate.awaitHeld()) {
                 continue;
             }
-            awaitIdle(pool);
+            pool.awaitIdle("A thread of the pool waits while a read is held back");
             gate.releaseOne();
             released++;
         }
@@ -141,42 +121,6 @@ class PoolWaitTest {
             }
             return count;
         }
-    }
-
-    /// Waits until every thread of `pool` is idle, waiting for its next task, and fails with the
-    /// stack of one that is not by the deadline.
-    private static void awaitIdle(Set<Thread> pool) throws InterruptedException {
-        ThreadMXBean threads = ManagementFactory.getThreadMXBean();
-        long deadline = System.nanoTime() + IDLE_DEADLINE_NANOS;
-        while (true) {
-            ThreadInfo busy = null;
-            for (Thread thread : pool) {
-                ThreadInfo info = threads.getThreadInfo(thread.threadId(), Integer.MAX_VALUE);
-                if (info != null && !idle(info)) {
-                    busy = info;
-                    break;
-                }
-            }
-            if (busy == null) {
-                return;
-            }
-            if (System.nanoTime() > deadline) {
-                fail("A thread of the pool waits while a read is held back: " + busy.getThreadName() + " "
-                        + busy.getThreadState() + "\n" + Arrays.stream(busy.getStackTrace())
-                                .map(frame -> "\tat " + frame)
-                                .collect(Collectors.joining("\n")));
-            }
-            Thread.sleep(1);
-        }
-    }
-
-    /// Whether the thread waits for the pool's next task.
-    private static boolean idle(ThreadInfo info) {
-        StackTraceElement[] stack = info.getStackTrace();
-        return info.getThreadState() != Thread.State.RUNNABLE && Arrays.stream(stack)
-                .anyMatch(frame -> frame.getClassName().equals(ThreadPoolExecutor.class.getName())
-                        && frame.getMethodName().equals("getTask"))
-                && Arrays.stream(stack).noneMatch(frame -> frame.getClassName().startsWith("dev.hardwood"));
     }
 
     /// Holds every read made off the caller's thread until the test releases it.

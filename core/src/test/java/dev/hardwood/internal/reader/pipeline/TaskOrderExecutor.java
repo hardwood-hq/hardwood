@@ -29,8 +29,10 @@ import dev.hardwood.internal.HardwoodContextImpl;
 /// - [#shuffling(long)] queues the tasks and runs them on a thread of its own, each time picking
 ///   one of the queued tasks at random from a seeded generator. Before it picks, it lets the
 ///   scheduler submit what it may: it waits until the read has as many tasks queued as it may have
-///   in flight, or until no task arrived for a moment. The tasks of one column then run in any
-///   order, not only in page order.
+///   in flight, or until the thread that created the executor, which reads, can submit no more
+///   before a task runs, being parked other than for the executor's lock, or ended; the files a
+///   test reads are in memory, so no other thread submits. The tasks of one column then run in
+///   any order, not only in page order.
 ///
 /// Every task runs to its end before the next starts, so the order of the tasks is what varies:
 /// the steps of the cell protocol that span tasks (which task measures, sizes, places, fills
@@ -57,9 +59,6 @@ final class TaskOrderExecutor extends AbstractExecutorService {
         void afterRun(ScheduledColumn<?> column, PageTask page);
     }
 
-    /// How long the shuffling thread waits for another task before it picks among those queued.
-    private static final long QUIET_NANOS = TimeUnit.MICROSECONDS.toNanos(100);
-
     /// The page each thread is about to hand to the pool, from the scheduler's observer.
     private static final ThreadLocal<Submission> SUBMITTING = new ThreadLocal<>();
 
@@ -77,7 +76,8 @@ final class TaskOrderExecutor extends AbstractExecutorService {
     private final List<Task> queued = new ArrayList<>();
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private final Thread runner;
-    private long arrivals;
+    /// The thread that created the executor, which reads through it.
+    private final Thread caller = Thread.currentThread();
     private volatile boolean shutdown;
 
     private TaskOrderExecutor(Random random, int target, Listener listener) {
@@ -139,7 +139,6 @@ final class TaskOrderExecutor extends AbstractExecutorService {
         lock.lock();
         try {
             queued.add(task);
-            arrivals++;
             arrived.signalAll();
         }
         finally {
@@ -158,23 +157,28 @@ final class TaskOrderExecutor extends AbstractExecutorService {
                 if (queued.isEmpty()) {
                     return;
                 }
-                while (queued.size() < target && !shutdown) {
-                    long seen = arrivals;
-                    arrived.awaitNanos(QUIET_NANOS);
-                    if (arrivals == seen) {
-                        break;
+                while (queued.size() < target && !shutdown && callerMaySubmit()) {
+                    lock.unlock();
+                    try {
+                        Thread.onSpinWait();
+                    }
+                    finally {
+                        lock.lock();
                     }
                 }
                 task = queued.remove(random.nextInt(queued.size()));
-            }
-            catch (InterruptedException e) {
-                return;
             }
             finally {
                 lock.unlock();
             }
             run(task);
         }
+    }
+
+    /// Whether the reading thread may yet submit a task before one runs: it runs, or waits only
+    /// for the executor's lock to submit one.
+    private boolean callerMaySubmit() {
+        return caller.isAlive() && (caller.getState() == Thread.State.RUNNABLE || lock.hasQueuedThread(caller));
     }
 
     private void run(Task task) {

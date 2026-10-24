@@ -10,6 +10,7 @@ package dev.hardwood.jfr;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -79,6 +80,9 @@ import jdk.jfr.consumer.RecordingStream;
 /// an application-level counter.
 public abstract class AbstractJfrRecorderTest {
 
+    /// How long [#awaitDelivered] waits for an event the stream flushes about once a second.
+    private static final long DELIVERY_TIMEOUT_SECONDS = 30;
+
     private RecordingStream recording;
     private List<RecordedEvent> capturedEvents;
     private boolean stopped;
@@ -88,7 +92,12 @@ public abstract class AbstractJfrRecorderTest {
         capturedEvents = Collections.synchronizedList(new ArrayList<>());
         recording = new RecordingStream();
         recording.setReuse(false);
-        recording.onEvent(capturedEvents::add);
+        recording.onEvent(event -> {
+            synchronized (capturedEvents) {
+                capturedEvents.add(event);
+                capturedEvents.notifyAll();
+            }
+        });
         recording.startAsync();
         stopped = false;
     }
@@ -120,6 +129,23 @@ public abstract class AbstractJfrRecorderTest {
         if (!stopped) {
             recording.stop();
             stopped = true;
+        }
+    }
+
+    /// Waits until the recording stream has delivered an event whose event-type name is `name`.
+    /// An event committed after this returns is delivered in a later flush than that event.
+    ///
+    /// @throws AssertionError if none is delivered within 30 seconds
+    protected final void awaitDelivered(String name) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(DELIVERY_TIMEOUT_SECONDS);
+        synchronized (capturedEvents) {
+            while (capturedEvents.stream().noneMatch(e -> name.equals(e.getEventType().getName()))) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    throw new AssertionError("No " + name + " event delivered within " + DELIVERY_TIMEOUT_SECONDS + " s");
+                }
+                TimeUnit.NANOSECONDS.timedWait(capturedEvents, remaining);
+            }
         }
     }
 

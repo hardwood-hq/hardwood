@@ -47,7 +47,7 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
 
     private static final int FILES = 6;
     private static final int ROWS = 1_000;
-    private static final long HOLD_MILLIS = 300;
+    private static final long HOLD_MILLIS = 20;
 
     /// A read held in its first file plans the files after it ahead, and closes there: only the
     /// first file and the next one, which the read resolves as its next unit, report their pruning.
@@ -74,8 +74,8 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
                     // the close ends the read
                 }
             });
-            for (int i = 0; i < 100 && dataReads(files.getLast()) == 0; i++) {
-                Thread.sleep(50);
+            for (int i = 0; i < 5_000 && dataReads(files.getLast()) == 0; i++) {
+                Thread.sleep(1);
             }
             assertThat(dataReads(files.getLast())).as("the last file planned ahead").isPositive();
 

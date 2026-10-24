@@ -30,6 +30,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.ObservedPool;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.step.ReadTasks;
 import dev.hardwood.metadata.PhysicalType;
@@ -68,7 +69,9 @@ class FilesAheadTest {
         System.setProperty(MAX_FILES_AHEAD, "4");
         ReadGate gate = footerGate();
         List<InputFile> files = gatedFiles(12, gate);
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
+        ObservedPool pool = new ObservedPool(4, "files-ahead-test");
+        QuiescentExecutor io = new QuiescentExecutor();
+        try (HardwoodContextImpl context = pool.context(io);
              ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
             // Building the readers plans the first file, which opens the files after it
             gate.arm();
@@ -76,7 +79,7 @@ class FilesAheadTest {
 
             // The file the read waits for, and the four after it
             assertThat(gate.awaitInFlight(5)).as("footer reads in flight at once").isTrue();
-            Thread.sleep(200);
+            awaitSettled(io, gate, pool);
             assertThat(gate.maxInFlight()).as("most footer reads in flight at once").isEqualTo(5);
 
             gate.release();
@@ -91,7 +94,9 @@ class FilesAheadTest {
         List<InputFile> files = gatedFiles(12, gate);
         // Only the last file holds ids from 11 * ROWS on
         FilterPredicate lastFileOnly = FilterPredicate.gtEq("id", 11L * ROWS);
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
+        ObservedPool pool = new ObservedPool(4, "files-ahead-test");
+        QuiescentExecutor io = new QuiescentExecutor();
+        try (HardwoodContextImpl context = pool.context(io);
              ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
             // Building the readers plans as far as the first row group the filter keeps
             gate.arm();
@@ -99,7 +104,7 @@ class FilesAheadTest {
                     .filter(lastFileOnly).build());
 
             assertThat(gate.awaitInFlight(5)).as("footer reads of pruned files in flight at once").isTrue();
-            Thread.sleep(200);
+            awaitSettled(io, gate, pool);
             assertThat(gate.maxInFlight()).as("most footer reads in flight at once").isEqualTo(5);
 
             gate.release();
@@ -164,8 +169,8 @@ class FilesAheadTest {
              ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
             firstData.arm();
             ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build();
-            for (int i = 0; i < 100 && unreadable.footerReads.get() == 0; i++) {
-                Thread.sleep(50);
+            for (int i = 0; i < 5_000 && unreadable.footerReads.get() == 0; i++) {
+                Thread.sleep(1);
             }
             assertThat(unreadable.footerReads.get()).as("footer reads of the file ahead").isPositive();
             firstData.release();
@@ -229,12 +234,14 @@ class FilesAheadTest {
         }
         // Armed before the read starts, which reads the first file's data at once
         firstData.arm();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(4);
+        ObservedPool pool = new ObservedPool(4, "files-ahead-test");
+        QuiescentExecutor io = new QuiescentExecutor();
+        try (HardwoodContextImpl context = pool.context(io);
              ParquetFileReader reader = ParquetFileReader.openAll(files, context);
              ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build()) {
             Consumer consumer = Consumer.start(() -> cols);
             awaitTrue(() -> !dataReads(files.get(2)).isEmpty(), "file 2 has data fetched ahead");
-            awaitQuiescence(files);
+            awaitSettled(io, firstData, pool);
 
             long fetchedPastNext = 0;
             for (int i = 2; i < files.size(); i++) {
@@ -302,18 +309,26 @@ class FilesAheadTest {
         }
     }
 
-    /// Waits until no file has been read for half a second.
-    private static void awaitQuiescence(List<CountingInputFile> files) throws InterruptedException {
-        long last = -1;
-        for (int i = 0; i < 50; i++) {
-            long reads = files.stream().mapToLong(CountingInputFile::readCount).sum();
-            if (reads == last) {
-                return;
+    /// Waits until the read can make no progress before `gate` releases what it holds: every I/O
+    /// task has finished or is held at the gate, and every thread of the pool waits for its next
+    /// task, with no I/O task finishing meanwhile, whose end could have queued work.
+    private static void awaitSettled(QuiescentExecutor io, ReadGate gate, ObservedPool pool)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            long finished = io.finishedCount();
+            if (io.running() == gate.inFlight()) {
+                pool.awaitIdle("A thread of the pool is busy while the read waits at the gate");
+                if (io.running() == gate.inFlight() && io.finishedCount() == finished) {
+                    return;
+                }
             }
-            last = reads;
-            Thread.sleep(500);
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("The read did not settle: " + io.running() + " I/O tasks running, "
+                        + gate.inFlight() + " of them held");
+            }
+            Thread.sleep(1);
         }
-        throw new AssertionError("Reads did not stop");
     }
 
     private static ReadGate footerGate() {
@@ -427,13 +442,17 @@ class FilesAheadTest {
             return maxInFlight.get();
         }
 
+        int inFlight() {
+            return inFlight.get();
+        }
+
         /// Waits at most five seconds for `count` held reads to be in flight at once.
         boolean awaitInFlight(int count) throws InterruptedException {
-            for (int i = 0; i < 100; i++) {
+            for (int i = 0; i < 5_000; i++) {
                 if (inFlight.get() >= count) {
                     return true;
                 }
-                Thread.sleep(50);
+                Thread.sleep(1);
             }
             return false;
         }
