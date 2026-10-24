@@ -54,7 +54,7 @@ class DictionaryCodecFailureTest {
             ByteBuffer dictionaryRegion = file.readRange(dictionaryStart, regionLength);
 
             assertThatThrownBy(() ->
-                    DictionaryParser.parse(dictionaryRegion, columnSchema, withCodec(present), context))
+                    DictionaryParser.parse(DataPage.parse(dictionaryRegion), columnSchema, withCodec(present), context))
                     .as("the remedy is a dependency, not a different file, so the type must say so")
                     .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessage("LZO compression is not supported");

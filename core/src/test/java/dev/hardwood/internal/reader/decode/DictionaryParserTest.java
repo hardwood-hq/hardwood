@@ -151,7 +151,7 @@ class DictionaryParserTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             Dictionary fromHeaderAndBody = DictionaryParser.parsePage(page.header(), page.body(),
                     page.columnSchema(), page.metaData(), context);
-            Dictionary fromWholeRegion = DictionaryParser.parse(page.region(),
+            Dictionary fromWholeRegion = DictionaryParser.parse(DataPage.parse(page.region()),
                     page.columnSchema(), page.metaData(), context);
 
             assertThat(fromHeaderAndBody.size())

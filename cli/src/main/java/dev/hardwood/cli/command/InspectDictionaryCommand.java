@@ -8,7 +8,6 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,6 +28,7 @@ import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
@@ -176,7 +176,7 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
     private static Dictionary readDictionary(ColumnSchema columnSchema, ColumnChunk chunk,
             HardwoodContextImpl context, InputFile inputFile, int rowGroupIndex) throws IOException {
         try {
-            ByteBuffer page = DictionaryParser.readPage(inputFile, chunk, "");
+            DataPage page = DictionaryParser.readPage(inputFile, chunk, "");
             return page != null
                     ? DictionaryParser.parse(page, columnSchema, chunk.metaData(), context)
                     : null;
