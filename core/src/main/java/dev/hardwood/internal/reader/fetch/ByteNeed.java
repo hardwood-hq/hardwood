@@ -7,16 +7,19 @@
  */
 package dev.hardwood.internal.reader.fetch;
 
+import java.nio.ByteBuffer;
+
 import dev.hardwood.internal.reader.step.Need;
 
 /// Bytes a [PageWalk] needs and does not hold, which [PageWalk#pending] returns: a chunk or a
-/// region whose read has not completed, or whose read was speculative and failed. The walk issues no read for them; the step that drives it
-/// does ([#issue]) and yields on the read, and a thread off the pool waits for it.
+/// region whose read has not completed, or whose read started ahead of demand and failed with
+/// an exception. The walk issues no read for them; the step that drives it does ([#issue]) and
+/// yields on the read, and a thread off the pool waits for it.
 public interface ByteNeed extends Need {
 
     /// The read of the bytes: the one under way, or one started as demand when none is under way
-    /// or a speculative one failed.
-    RangeRead issue();
+    /// or one started ahead of demand failed with an exception.
+    RequestAttempt<ByteBuffer> issue();
 
     /// Issues the read ([#issue]) and runs `resume` once it has completed.
     @Override

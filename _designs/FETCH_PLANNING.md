@@ -133,7 +133,7 @@ Tests: `CoalescingPolicyTest`, `CrossColumnCoalesceTest`, `FetchSequenceReadTest
 
 ## Entries
 
-A read's data requests are the entries of its `FetchSequence`, created when its `RowGroupIterator` is: each a range of the file, at a position by work item, then offset. The sequence starts each entry by one of three rules, runs it on a virtual thread of the context's I/O executor (`RangeRead`) and completes it:
+A read's data requests are the entries of its `FetchSequence`, created when its `RowGroupIterator` is: each a range of the file, at a position by work item, then offset. The sequence starts each entry by one of three rules, runs it on a virtual thread of the context's I/O executor (`RequestAttempt`) and completes it:
 
 | Rule | An entry | F and R |
 |---|---|---|
@@ -153,11 +153,11 @@ Tests: `FetchSequenceTest`, `NextRowGroupPrefetchTest`, `FetchSequenceReadTest`.
 
 An entry is released once every column whose chunk extent overlaps it has passed it; a column with no pages in the row group, or one skipped, does not hold it, and one that stops at its limit passes every entry it holds. Its charges then go back to F and R and its bytes are dropped, except as a page slice holds them; that remainder is uncharged and at most S per column. Once every column has released a work item, the sequence forgets its entries. A planning entry is released once each work item holding it has been released.
 
-A speculative or next-unit read that fails is dropped, its charges returned, and started again when demanded, and the demand read's failure goes to the step, as an `IOException` naming the file, offset and length ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#crossing-a-thread-boundary)). An `Error` no step took is thrown once, by the close of the read's `PrefetchTasks`.
+A speculative or next-unit read that fails with an exception is dropped, its charges returned, and started again when demanded, and the demand read's failure goes to the step, as an `IOException` naming the file, offset and length ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#crossing-a-thread-boundary)). One that fails with an `Error` is not started again: the step that demands it takes the `Error`, and an `Error` no step took is thrown once, by the close of the read's `PrefetchTasks`.
 
 The iterator's close closes the sequence, which drops the entries not started and returns their charges, and the planning chain, whose footer read-ahead returns the footers' ([Opening files ahead](#opening-files-ahead)), and then waits for the reads in flight without interrupting them ([READ_PIPELINE.md](READ_PIPELINE.md#cancellation-and-close)).
 
-Tests: `FetchSequenceTest`, `EntryCursorTest`, `FetchStepYieldTest` (a failed speculative read read again, a failed demand read, a step holding no thread while its read is held, its close and a closed context).
+Tests: `FetchSequenceTest`, `EntryCursorTest`, `FetchStepYieldTest` (a failed speculative read read again, or not where it failed with an `Error`, a failed demand read, a step holding no thread while its read is held, its close and a closed context).
 
 ### Planning ahead
 

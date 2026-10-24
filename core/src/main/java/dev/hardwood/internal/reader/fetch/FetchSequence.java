@@ -18,6 +18,8 @@ import java.util.PriorityQueue;
 import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.io.ReadRanges;
@@ -29,7 +31,7 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 /// its columns' needed ranges were coalesced into. Planning a row group inserts its entries
 /// ([#insert]); the columns' walks take a page's bytes as a slice of a completed entry
 /// ([Entry#poll]), through an index fixed when the row group was planned. Each entry's read runs on
-/// a virtual thread of the context's I/O executor ([RangeRead]). Other parts of the read queue
+/// a virtual thread of the context's I/O executor ([RequestAttempt]). Other parts of the read queue
 /// requests of their own ([#queue]), such as the footers of files it has not reached, and release
 /// them ([#discard]).
 ///
@@ -145,7 +147,7 @@ public final class FetchSequence {
             return inMemory;
         }
         List<Entry> inserted;
-        RangeRead first = null;
+        RequestAttempt<ByteBuffer> first = null;
         lock.lock();
         try {
             List<Entry> existing = entries.get(workItemIndex);
@@ -279,7 +281,7 @@ public final class FetchSequence {
     /// entered the one before it, or that a column asked to plan it and waits for the planning
     /// that inserts it; starts its first entry if it is inserted and not started.
     public void nextUnit(int workItemIndex) {
-        RangeRead first;
+        RequestAttempt<ByteBuffer> first;
         lock.lock();
         try {
             if (closed || workItemIndex <= nextUnit) {
@@ -329,46 +331,46 @@ public final class FetchSequence {
     /// started. Called under `lock`.
     ///
     /// @return the read to submit, `null` when there is none
-    private RangeRead startFirst(int workItemIndex) {
+    private RequestAttempt<ByteBuffer> startFirst(int workItemIndex) {
         List<Entry> ofWorkItem = entries.get(workItemIndex);
         if (ofWorkItem == null) {
             return null;
         }
         for (Entry entry : ofWorkItem) {
             if (entry.sequence != null) {
-                return entry.read == null && !entry.released ? begin(entry, true) : null;
+                return entry.attempt == null && !entry.released ? begin(entry, true) : null;
             }
         }
         return null;
     }
 
     /// The read of `entry`'s bytes: the one under way or done, or one started as demand when none
-    /// is under way or a speculative one failed.
+    /// is under way or one started ahead of demand failed with an exception.
     ///
     /// @throws IllegalStateException if every column holding the entry has passed it
-    RangeRead demand(Entry entry) {
-        RangeRead current = entry.read;
-        if (current != null && !current.failedSpeculatively()) {
+    RequestAttempt<ByteBuffer> demand(Entry entry) {
+        RequestAttempt<ByteBuffer> current = entry.attempt;
+        if (current != null && !current.failedAhead()) {
             return current;
         }
-        RangeRead read;
+        RequestAttempt<ByteBuffer> attempt;
         lock.lock();
         try {
             if (entry.released) {
                 throw new IllegalStateException("Entry at offset " + entry.offset + " (length " + entry.length
                         + ") of " + entry.inputFile.name() + " was released before it was read");
             }
-            current = entry.read;
-            if (current != null && !current.failedSpeculatively()) {
+            current = entry.attempt;
+            if (current != null && !current.failedAhead()) {
                 return current;
             }
-            read = begin(entry, false);
+            attempt = begin(entry, false);
         }
         finally {
             lock.unlock();
         }
-        started(read);
-        return read;
+        started(attempt);
+        return attempt;
     }
 
     /// Starts every queued request that fits, in position order, and registers for a release of R
@@ -560,40 +562,47 @@ public final class FetchSequence {
         return request.begin();
     }
 
-    /// Starts `entry`'s read; one started `aheadOfDemand`, a speculative or next-unit read, fails
-    /// without failing the read, and a step that needs its bytes reads them again. Called under
-    /// `lock`, which the caller has charged the entry under if it is speculative.
+    /// Starts `entry`'s read; one started `aheadOfDemand`, a speculative or next-unit read, that
+    /// fails with an exception does not fail the read, and a step that needs its bytes reads them
+    /// again ([RequestAttempt#failedAhead]). Called under `lock`, which the caller has charged the entry
+    /// under if it is speculative.
     ///
     /// @return the read, for the caller to submit once it has let go of the lock
-    private RangeRead begin(Entry entry, boolean aheadOfDemand) {
+    private RequestAttempt<ByteBuffer> begin(Entry entry, boolean aheadOfDemand) {
         unqueue(entry);
         entry.started = true;
-        RangeRead read = new RangeRead(entry.inputFile, entry.offset, entry.length, entry.reason, aheadOfDemand,
-                tasks);
-        entry.read = read;
+        RequestAttempt<ByteBuffer> attempt = new RequestAttempt<>(
+                ExceptionContext.filePrefix(entry.inputFile.name()) + "Failed to fetch data at offset "
+                        + entry.offset + " (length " + entry.length + ")",
+                aheadOfDemand, tasks, entry::readBytes, () -> {
+                    throw new IOException(ExceptionContext.filePrefix(entry.inputFile.name())
+                            + "The read was closed before the range at offset " + entry.offset + " (length "
+                            + entry.length + ") was fetched");
+                });
+        entry.attempt = attempt;
         lastStarted = Math.max(lastStarted, entry.workItemIndex);
-        read.whenDone(() -> completed(entry, read));
-        return read;
+        attempt.whenDone(() -> completed(entry, attempt));
+        return attempt;
     }
 
     /// Submits `read`, if any, and tells planning an entry has started. Called outside `lock`.
-    private void started(RangeRead read) {
-        if (read != null) {
-            read.submit();
+    private void started(RequestAttempt<ByteBuffer> attempt) {
+        if (attempt != null) {
+            attempt.submit();
             onStarted.run();
         }
     }
 
     /// Drops `entry`'s charges once its read started ahead of demand has failed, so that it is
     /// started again only on demand.
-    private void completed(Entry entry, RangeRead read) {
-        if (!read.failedSpeculatively()) {
+    private void completed(Entry entry, RequestAttempt<ByteBuffer> attempt) {
+        if (!attempt.failedAhead()) {
             return;
         }
         long uncharge = 0;
         lock.lock();
         try {
-            if (entry.read == read && entry.charged) {
+            if (entry.attempt == attempt && entry.charged) {
                 entry.charged = false;
                 speculativeBytes -= entry.length;
                 uncharge = entry.length;
@@ -698,8 +707,8 @@ public final class FetchSequence {
         /// Guarded by the sequence's lock: the columns that have not passed the entry.
         private int holders;
         /// The read under way or done; `null` before it starts and once released. Replaced only to
-        /// repeat a speculative read that failed.
-        private volatile RangeRead read;
+        /// repeat a read started ahead of demand that failed with an exception.
+        private volatile RequestAttempt<ByteBuffer> attempt;
         /// The bytes of an entry sliced in place: of a file in memory, sliced on first poll, or
         /// inside the file's tail, sliced as it is inserted.
         private volatile ByteBuffer inPlace;
@@ -741,7 +750,7 @@ public final class FetchSequence {
 
         @Override
         void dropped() {
-            read = null;
+            attempt = null;
         }
 
         /// The entry's bytes, or `null` while they are not present, without waiting and without
@@ -758,11 +767,18 @@ public final class FetchSequence {
                 }
                 return bytes;
             }
-            RangeRead current = read;
-            if (current == null || !current.isDone() || current.failedSpeculatively()) {
+            RequestAttempt<ByteBuffer> current = attempt;
+            if (current == null || !current.isDone() || current.failedAhead()) {
                 return null;
             }
-            return current.bytes();
+            return current.take();
+        }
+
+        /// Reads the entry's bytes from the file, under the entry's [FetchReason].
+        private ByteBuffer readBytes() throws IOException {
+            try (FetchReason.Scope ignored = FetchReason.set(reason)) {
+                return ReadRanges.read(inputFile, offset, length);
+            }
         }
 
         /// A slice of `length` bytes at absolute `fileOffset` from bytes [#poll] returned.
@@ -777,7 +793,7 @@ public final class FetchSequence {
         }
 
         @Override
-        public RangeRead issue() {
+        public RequestAttempt<ByteBuffer> issue() {
             if (sequence == null) {
                 throw new IllegalStateException("An entry sliced in place is never read");
             }

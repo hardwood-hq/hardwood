@@ -126,19 +126,15 @@ this, also where a footer is loaded and in the byte-level reads outside the pipe
 and reaches the consumer as raised, but is recorded on the way past, or a consumer waiting on
 work that thread will never finish waits for ever.
 
-A prefetch is the exception: nothing waits on it, so its failure does not fail the read. A
-chunk or region prefetch keeps its failure in its read (`RangeRead`), which a walk that reaches
-the handle takes as not present: the step issues the read again as demand, and that read's
-failure is raised with a caller waiting. A failed speculative read is logged at DEBUG, and an
-`Error` it fails with is thrown by the iterator's close. A plan prefetch caches nothing on
-failure, and the demand path redoes the work. A footer prefetch is different:
-`FileMetadataCache` keeps its failure and rethrows it on demand. A failure of any other
-speculative task no caller receives is reported by `PrefetchTasks.report`: a failure of the
-file (an I/O failure, a malformed or unsupported file) at DEBUG, since the demand path reports
-it when it repeats the work, any other `RuntimeException` at WARNING, as a defect, and an
-`Error` is thrown by the close that waits for the work, the iterator's for a prefetch task and
-the `FileMetadataCache`'s for a footer load no read asked for, once the files are closed
-([THREADING.md](THREADING.md#invariants)). A demand read's failure reaches the
+A read started ahead of demand is the exception: nothing waits on it, so its failure does not
+fail the read. Every read of a read, a chunk's or region's (a `FetchSequence` entry) and a
+file's footer (`FileMetadataCache`), keeps its failure in its `RequestAttempt`. One started ahead of
+demand that failed with an exception is logged at DEBUG as it fails, and a walk that reaches
+the handle, or a load that reaches the file, takes it as not present: the read is issued again
+as demand, and that read's failure is raised with a caller waiting. One that failed with an
+`Error` is not read again: the demand that reaches it takes the `Error`, and an `Error` no step
+or load took is thrown once, by the close of the read's `PrefetchTasks`, once the files are
+closed ([THREADING.md](THREADING.md#invariants)). A demand read's failure reaches the
 step that waits for it, and a work item's planning's failure every column that reaches the work
 item. An `Error` a read or a planning fails with reaches the caller once: through a step that
 takes it, or through the iterator's close when no step did, as when the column stopped while it

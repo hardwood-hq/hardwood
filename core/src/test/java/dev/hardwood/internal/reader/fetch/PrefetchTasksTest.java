@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader.fetch;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -19,7 +18,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Stream;
 
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -33,8 +31,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
@@ -47,7 +43,6 @@ import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -55,10 +50,9 @@ import dev.hardwood.schema.FileSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A speculative task's failure does not fail the read: a failure of the file is logged at
-/// `DEBUG`, any other `RuntimeException` at `WARNING`, and an `Error` is thrown by
-/// [PrefetchTasks#awaitAll()], which the iterator's close calls, or, for a footer prefetch no
-/// read asked for, by the close of the [FileMetadataCache].
+/// A read started ahead of demand that fails does not fail the read: an exception is logged at
+/// `DEBUG`, and an `Error` no step or load took is thrown by [PrefetchTasks#awaitAll()], which
+/// the close of the read that started it calls.
 class PrefetchTasksTest {
 
     private final List<HardwoodContextImpl> contexts = new ArrayList<>();
@@ -81,59 +75,13 @@ class PrefetchTasksTest {
     private static final String LATER_FILE = "src/test/resources/multi_file_part1.parquet";
 
     @Test
-    void runtimeFailureIsLoggedAsWarning() {
-        IllegalStateException failure = new IllegalStateException("speculative bug");
-        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-
-        List<LogEvent> events = captureLog(() -> {
-            tasks.submit(() -> {
-                throw failure;
-            });
-            tasks.awaitAll();
-        });
-
-        assertThat(events).hasSize(1);
-        assertThat(events.getFirst().getLevel()).isEqualTo(Level.WARN);
-        assertThat(events.getFirst().getMessage().getFormattedMessage()).isEqualTo("Prefetch failed");
-        assertThat(events.getFirst().getThrown()).isSameAs(failure);
-    }
-
-    static Stream<RuntimeException> fileFailures() {
-        return Stream.of(new UncheckedIOException(new IOException("connection reset")),
-                new ParquetReadException("malformed page header"),
-                new UnsupportedOperationException("column chunk too large"));
-    }
-
-    @ParameterizedTest
-    @MethodSource("fileFailures")
-    void fileFailureIsLoggedAtDebug(RuntimeException failure) {
-        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-
-        List<LogEvent> events = captureLog(() -> {
-            tasks.submit(() -> {
-                throw failure;
-            });
-            tasks.awaitAll();
-        });
-
-        assertThat(events).hasSize(1);
-        assertThat(events.getFirst().getLevel()).isEqualTo(Level.DEBUG);
-        assertThat(events.getFirst().getThrown()).isSameAs(failure);
-    }
-
-    @Test
     void awaitAllThrowsTheFirstErrorWithLaterOnesSuppressed() {
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
         SpeculativeError first = new SpeculativeError("first");
         SpeculativeError second = new SpeculativeError("second");
-        tasks.submit(() -> {
-            throw first;
-        });
-        tasks.submit(() -> {
-        });
-        tasks.submit(() -> {
-            throw second;
-        });
+        failing(tasks, first).submit();
+        new RequestAttempt<>("read", true, tasks, () -> "read", () -> null).submit();
+        failing(tasks, second).submit();
 
         assertThatThrownBy(tasks::awaitAll)
                 .isSameAs(first)
@@ -149,7 +97,7 @@ class PrefetchTasksTest {
         List<Runnable> queued = new ArrayList<>();
         PrefetchTasks tasks = new PrefetchTasks(queued::add);
         AtomicBoolean ran = new AtomicBoolean();
-        tasks.submit(() -> ran.set(true));
+        tasks.submit(() -> ran.set(true), () -> {});
 
         Thread closer = Thread.ofVirtual().start(tasks::awaitAll);
         while (closer.getState() != Thread.State.WAITING) {
@@ -167,10 +115,11 @@ class PrefetchTasksTest {
         PrefetchTasks tasks = new PrefetchTasks(queued::add);
         tasks.awaitAll();
 
-        tasks.submit(() -> {
-        });
+        AtomicBoolean dropped = new AtomicBoolean();
+        tasks.submit(() -> {}, () -> dropped.set(true));
 
         assertThat(queued).isEmpty();
+        assertThat(dropped).isTrue();
     }
 
     /// The first row group's plans make the second the read's next unit, whose data read raises an
@@ -237,7 +186,7 @@ class PrefetchTasksTest {
         FileMetadataCache cache = cache(file, Runnable::run);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
 
-        List<LogEvent> events = captureLog(FileMetadataCache.class, () -> cache.prefetch(0, tasks, () -> {}));
+        List<LogEvent> events = captureLog(RequestAttempt.class, () -> cache.prefetch(0, tasks, () -> {}));
 
         assertThat(events).hasSize(1);
         assertThat(events.getFirst().getLevel()).isEqualTo(Level.DEBUG);
@@ -279,8 +228,11 @@ class PrefetchTasksTest {
         cache.close();
     }
 
-    private static List<LogEvent> captureLog(Runnable action) {
-        return captureLog(PrefetchTasks.class, action);
+    /// A read on `tasks` that fails with `error`.
+    private static RequestAttempt<String> failing(PrefetchTasks tasks, Error error) {
+        return new RequestAttempt<>("read", true, tasks, () -> {
+            throw error;
+        }, () -> null);
     }
 
     private static List<LogEvent> captureLog(Class<?> logger, Runnable action) {

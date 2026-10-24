@@ -166,7 +166,7 @@ class FetchStepYieldTest {
 
         FetchSequence.Entry speculative = entry(sequence(tasks, true), file, 10);
         assertThat(file.readCount()).isEqualTo(2);
-        RangeRead joined = speculative.issue();
+        RequestAttempt<ByteBuffer> joined = speculative.issue();
         assertThat(speculative.issue()).isSameAs(joined);
         assertThat(speculative.poll()).isNotNull();
         assertThat(file.readCount()).as("no read issued past the speculative one").isEqualTo(2);
@@ -182,6 +182,22 @@ class FetchStepYieldTest {
         assertThat(entry.poll()).isNull();
         assertThat(fetch(entry).remaining()).isEqualTo(10);
         assertThat(file.reads).isEqualTo(2);
+    }
+
+    /// A speculative read that failed with an `Error` is not read again: the step that reaches it
+    /// takes the `Error`, and the close of the read's tasks does not raise it again.
+    @Test
+    void aSpeculativeReadThatFailedWithAnErrorIsNotReadAgain() throws Exception {
+        SpeculativeError error = new SpeculativeError("read failed");
+        FailingInputFile file = new FailingInputFile(1, error);
+        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
+        FetchSequence.Entry entry = entry(sequence(tasks, true), file, 0);
+
+        assertThatThrownBy(entry::poll)
+                .isSameAs(error)
+                .hasMessage("read failed");
+        assertThat(file.reads).isEqualTo(1);
+        tasks.awaitAll();
     }
 
     /// A demand read that fails raises its failure, naming the file, offset and length.
@@ -230,18 +246,19 @@ class FetchStepYieldTest {
         assertColumnReadsOnVirtualThreads(remote);
     }
 
-    /// An `Error` a speculative read fails with is thrown by the close of its tasks, not by the
-    /// thread that started it, and the step reads the bytes again on demand.
+    /// An `Error` a speculative read fails with that no step took is thrown by the close of its
+    /// tasks, not by the thread that started it.
     @Test
-    void anErrorOfASpeculativeReadIsThrownByTheClose() throws Exception {
+    void anErrorOfASpeculativeReadNoStepTookIsThrownByTheClose() {
         AssertionError error = new AssertionError("prefetch broke");
         FailingInputFile file = new FailingInputFile(1, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        FetchSequence.Entry entry = entry(sequence(tasks, true), file, 0);
+        entry(sequence(tasks, true), file, 0);
 
-        assertThat(entry.poll()).isNull();
-        assertThat(fetch(entry).remaining()).isEqualTo(10);
-        assertThatThrownBy(tasks::awaitAll).isSameAs(error);
+        assertThat(file.reads).isEqualTo(1);
+        assertThatThrownBy(tasks::awaitAll)
+                .isSameAs(error)
+                .hasMessage("prefetch broke");
     }
 
     /// An `Error` a demand read fails with reaches the step that takes it, and the close does not
@@ -437,6 +454,13 @@ class FetchStepYieldTest {
         assertThat(columnReads).allSatisfy(read -> assertThat(read.virtual())
                 .as("read for %s on a virtual thread", read.reason())
                 .isTrue());
+    }
+
+    private static final class SpeculativeError extends Error {
+
+        SpeculativeError(String message) {
+            super(message);
+        }
     }
 
     /// Fails its first `failures` reads with `failure`, thrown whether the method declares it or

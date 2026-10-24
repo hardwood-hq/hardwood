@@ -148,7 +148,7 @@ scratch, up to `MAX_INFLIGHT_PAGES` per nested column, is not measured.
 | Kind | What it holds | Decided by | Released when |
 | --- | --- | --- | --- |
 | Working set | per projected column: the entries of the dictionaries of every chunk the batch it fills has rows of, more than one where a batch spans row groups; the batches of the page holding the rows of the batch the column publishes next (`ReadScheduler`'s first submission rule), and for a nested column the page's decompressed bytes and levels; the fetched range that page is read from (a `RangeRead` of priority `DEMAND`). Once per read: the buffers of one task decoding a page, its decompressed bytes and level and dictionary-id scratch | the file's declared sizes | the consumer takes the page's last batch; the column moves past the chunk or the range; the task ends |
-| Read-ahead | everything else: speculative `RangeRead`s (the next chunk, region, row group and file), pages inside the scheduler's cap, the task buffers of pages decoded at once beyond the first, the next row group's dictionaries, dictionaries parsed only to prune | the reader | the read reaches it, which moves it into the working set, or abandons it |
+| Read-ahead | everything else: speculative `RequestAttempt`s (the next chunk, region, row group and file), pages inside the scheduler's cap, the task buffers of pages decoded at once beyond the first, the next row group's dictionaries, dictionaries parsed only to prune | the reader | the read reaches it, which moves it into the working set, or abandons it |
 
 Safety is a bound on the working set, throughput a bound on read-ahead. The working set is not
 optional: short of decoding pages in pieces, a read cannot produce its next batch with less.
