@@ -16,6 +16,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -34,7 +36,7 @@ import dev.hardwood.s3.S3Credentials;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Checks how [S3Api] retries a range `GET`, against a local endpoint whose first answer fails
-/// as [#firstAnswer] says and whose second carries the range.
+/// as [#firstAnswer] says and whose second carries the range from the start it asks for.
 class S3ApiRetryTest {
 
     enum FirstAnswer {
@@ -49,6 +51,7 @@ class S3ApiRetryTest {
     private static final byte[] RANGE_BODY = { 1, 2, 3, 4 };
 
     private final AtomicInteger requests = new AtomicInteger();
+    private final List<String> ranges = new CopyOnWriteArrayList<>();
     private final CountDownLatch errorResponseReleased = new CountDownLatch(1);
     private volatile FirstAnswer firstAnswer = FirstAnswer.LARGE_ERROR;
     private ExecutorService executor;
@@ -86,10 +89,14 @@ class S3ApiRetryTest {
             }
             return;
         }
-        exchange.getResponseHeaders().add("Content-Range", "bytes 0-3/4");
-        exchange.sendResponseHeaders(206, RANGE_BODY.length);
+        String range = exchange.getRequestHeaders().getFirst("Range");
+        ranges.add(range);
+        // Serves the bytes from the requested start, which a resumed request moves
+        int from = Integer.parseInt(range.substring("bytes=".length(), range.indexOf('-')));
+        exchange.getResponseHeaders().add("Content-Range", "bytes " + from + "-3/4");
+        exchange.sendResponseHeaders(206, RANGE_BODY.length - from);
         try (OutputStream body = exchange.getResponseBody()) {
-            body.write(RANGE_BODY);
+            body.write(RANGE_BODY, from, RANGE_BODY.length - from);
         }
     }
 
@@ -120,7 +127,8 @@ class S3ApiRetryTest {
 
     @Test
     void rangeRetryReleasesFailedResponse() throws Exception {
-        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length);
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", 0, RANGE_BODY.length,
+                null);
 
         assertThat(response.statusCode()).isEqualTo(206);
         assertThat(bytes(response.body())).isEqualTo(RANGE_BODY);
@@ -131,15 +139,18 @@ class S3ApiRetryTest {
     }
 
     @Test
-    void rangeRetriesBodyFailingMidway() throws Exception {
+    void rangeResumesBodyFailingMidway() throws Exception {
         firstAnswer = FirstAnswer.TRUNCATED_BODY;
 
-        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length);
+        // Only a conditional range resumes; the endpoint sends no ETag and ignores If-Match
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", 0, RANGE_BODY.length,
+                "\"v1\"");
 
         assertThat(response.statusCode()).isEqualTo(206);
         assertThat(response.body().overflow()).isFalse();
         assertThat(bytes(response.body())).isEqualTo(RANGE_BODY);
         assertThat(requests.get()).isEqualTo(2);
+        assertThat(ranges).containsExactly("bytes=2-3");
     }
 
     private static byte[] bytes(RangeBody body) {

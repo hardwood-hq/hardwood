@@ -16,7 +16,6 @@ import java.net.http.HttpClient;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Arrays;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
+import dev.hardwood.internal.reader.TailedInputFile;
 import dev.hardwood.s3.internal.S3Api;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,7 +34,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// a local endpoint that ignores the `Range` header and answers `200` with
 /// the whole object. Unless told to ignore it as well, the endpoint answers
 /// the open-time suffix range with `206`. It denies `private.parquet` with `403`, and
-/// `tail-only.parquet` likewise except for the suffix range.
+/// `tail-only.parquet` likewise except for the suffix range. It answers `small.parquet`, an
+/// object no longer than the open-time suffix, with `200` and the whole object.
 class S3FetcherStatusTest {
 
     /// Larger than the open-time suffix, so a range read at `100_000` lies outside it.
@@ -42,6 +43,7 @@ class S3FetcherStatusTest {
     private static final String ACCESS_DENIED = "<Error><Code>AccessDenied</Code></Error>";
 
     private final byte[] object = new byte[OBJECT_SIZE];
+    private final byte[] small = new byte[TailedInputFile.tailBytes() - 2];
     private volatile boolean ignoreSuffixRange;
     private HttpServer server;
     private HttpClient httpClient;
@@ -53,6 +55,9 @@ class S3FetcherStatusTest {
     void setUp() throws IOException {
         for (int i = 0; i < object.length; i++) {
             object[i] = (byte) i;
+        }
+        for (int i = 0; i < small.length; i++) {
+            small[i] = (byte) (i + 1);
         }
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/", this::respond);
@@ -82,6 +87,13 @@ class S3FetcherStatusTest {
             exchange.sendResponseHeaders(403, denied.length);
             try (OutputStream body = exchange.getResponseBody()) {
                 body.write(denied);
+            }
+            return;
+        }
+        if (path.endsWith("/small.parquet")) {
+            exchange.sendResponseHeaders(200, small.length);
+            try (OutputStream body = exchange.getResponseBody()) {
+                body.write(small);
             }
             return;
         }
@@ -144,16 +156,27 @@ class S3FetcherStatusTest {
     }
 
     @Test
-    void openAcceptsWholeObjectAnswer() throws IOException {
+    void openRejectsWholeObjectAnswerLongerThanSuffix() {
         ignoreSuffixRange = true;
-        fetcher.open();
-        long requestsAfterOpen = fetcher.networkRequestCount();
 
-        assertThat(fetcher.length()).isEqualTo(OBJECT_SIZE);
-        ByteBuffer range = fetcher.readRange(100_000, 100);
-        byte[] actual = new byte[100];
-        range.get(actual);
-        assertThat(actual).isEqualTo(Arrays.copyOfRange(object, 100_000, 100_100));
-        assertThat(fetcher.networkRequestCount()).isEqualTo(requestsAfterOpen);
+        assertThatThrownBy(fetcher::open)
+                .isInstanceOf(IOException.class)
+                .hasMessage("Failed to open s3://bucket/object.parquet: HTTP 200 with a body longer than the "
+                        + TailedInputFile.tailBytes() + " bytes requested; the endpoint ignored the Range header");
+    }
+
+    @Test
+    void openAcceptsWholeObjectAnswerWithinSuffix() throws IOException {
+        S3Fetcher smallFetcher = new S3Fetcher(signedApi, "bucket", "small.parquet");
+        smallFetcher.open();
+
+        assertThat(smallFetcher.length()).isEqualTo(small.length);
+        ByteBuffer whole = smallFetcher.readRange(0, small.length);
+        assertThat(whole.isDirect()).isTrue();
+        byte[] actual = new byte[small.length];
+        whole.get(actual);
+        assertThat(actual).isEqualTo(small);
+        assertThat(smallFetcher.networkRequestCount()).isEqualTo(1);
+        assertThat(smallFetcher.networkBytesFetched()).isEqualTo(small.length);
     }
 }

@@ -8,6 +8,7 @@
 package dev.hardwood.s3.internal;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -47,6 +48,7 @@ public final class S3Api {
     private final boolean pathStyle;
     private final Duration requestTimeout;
     private final int maxRetries;
+    private final IdleTimer idleTimer;
 
     /// Creates an S3Api instance.
     ///
@@ -55,11 +57,20 @@ public final class S3Api {
     /// @param region              the AWS region (e.g. "us-east-1")
     /// @param endpoint            custom endpoint URI, or `null` for AWS virtual-hosted style
     /// @param pathStyle           if `true`, use path-style access (`endpoint/bucket/key`)
-    /// @param requestTimeout      timeout for individual HTTP requests, or `null` for no timeout
+    /// @param requestTimeout      timeout for individual HTTP requests up to their response headers, and
+    ///                            for each gap between bytes of a response body; `null` for no timeout
     /// @param maxRetries          maximum number of retries per request (0 means no retries)
     public S3Api(HttpClient httpClient, S3CredentialsProvider credentialsProvider,
             String region, URI endpoint, boolean pathStyle,
             Duration requestTimeout, int maxRetries) {
+        this(httpClient, credentialsProvider, region, endpoint, pathStyle, requestTimeout, maxRetries,
+                IdleTimer.DELAYED);
+    }
+
+    /// Creates an S3Api instance whose checks for a stalled response body run on `idleTimer`.
+    public S3Api(HttpClient httpClient, S3CredentialsProvider credentialsProvider,
+            String region, URI endpoint, boolean pathStyle,
+            Duration requestTimeout, int maxRetries, IdleTimer idleTimer) {
         this.httpClient = httpClient;
         this.credentialsProvider = credentialsProvider;
         this.region = region;
@@ -67,6 +78,7 @@ public final class S3Api {
         this.pathStyle = pathStyle;
         this.requestTimeout = requestTimeout;
         this.maxRetries = maxRetries;
+        this.idleTimer = idleTimer;
     }
 
     /// Whether requests are sent unsigned, without credentials.
@@ -74,40 +86,80 @@ public final class S3Api {
         return credentialsProvider == null;
     }
 
-    /// Sends a GET request with a `Range` header and returns the full response body as bytes.
-    ///
-    /// Retries on HTTP 500/503 responses and network errors up to [#maxRetries] times
-    /// with exponential backoff and jitter.
-    public HttpResponse<byte[]> getBytes(String bucket, String key, String rangeHeader) throws IOException {
-        return sendWithRetry(bucket, key, rangeHeader, HttpResponse.BodyHandlers.ofByteArray());
-    }
-
-    /// Sends a GET request with a `Range` header of `length` bytes and receives the response body
-    /// through a [RangeBodyHandler]: a `206` body into a direct buffer of `length` bytes.
+    /// Sends a GET request for the last `length` bytes of an object and receives the response body
+    /// through [RangeBodyHandler#suffix(int)]: a `206` or `200` body of up to `length` bytes into a
+    /// direct buffer.
     ///
     /// Retries on HTTP 500/503 responses and network errors, a failure while the body arrives
     /// included, up to [#maxRetries] times with exponential backoff and jitter.
-    public HttpResponse<RangeBody> getRange(String bucket, String key, String rangeHeader, int length)
-            throws IOException {
-        return sendWithRetry(bucket, key, rangeHeader, new RangeBodyHandler(length));
+    public HttpResponse<RangeBody> getSuffix(String bucket, String key, int length) throws IOException {
+        String range = "bytes=-" + length;
+        return sendWithRetry(bucket, key, () -> range, range, null, RangeBodyHandler.suffix(length));
     }
 
-    private <T> HttpResponse<T> sendWithRetry(String bucket, String key, String rangeHeader,
-            HttpResponse.BodyHandler<T> bodyHandler) throws IOException {
+    /// Sends a GET request for the `length` bytes at `offset` and receives the response body
+    /// through a [RangeBodyHandler]: a `206` body into a direct buffer of `length` bytes. With an
+    /// `ifMatch` entity tag, the request carries it as `If-Match`, and a server holding another
+    /// version of the object answers `412`.
+    ///
+    /// Retries on HTTP 500/503 responses and network errors up to [#maxRetries] times with
+    /// exponential backoff and jitter. A body that fails midway, a stalled one included, is
+    /// resumed: with `ifMatch`, the retry requests only the bytes after those received, which stay
+    /// in the buffer; without it, the retry requests the whole range again.
+    ///
+    /// @param ifMatch the entity tag the object must have, or `null` for an unconditional request
+    /// @throws IOException naming the range and the object once the budget is spent on network
+    ///                     errors, with the last one as its cause
+    public HttpResponse<RangeBody> getRange(String bucket, String key, long offset, int length,
+            String ifMatch) throws IOException {
+        RangeBodyHandler handler = new RangeBodyHandler(length, ifMatch);
+        long end = offset + length - 1;
+        try {
+            return sendWithRetry(bucket, key, () -> "bytes=" + (offset + handler.resumeAt()) + "-" + end,
+                    "bytes=" + offset + "-" + end, ifMatch, handler);
+        }
+        catch (InterruptedIOException e) {
+            throw e;
+        }
+        catch (IOException e) {
+            throw new IOException("Failed to read range [" + offset + ", " + (end + 1) + ") from s3://" + bucket
+                    + "/" + key + ": received " + handler.received() + " of " + length + " bytes in "
+                    + (maxRetries + 1) + (maxRetries == 0 ? " attempt" : " attempts"), e);
+        }
+    }
+
+    /// Sends a GET request whose `Range` header each attempt takes from `rangeHeader`.
+    private <T> HttpResponse<T> sendWithRetry(String bucket, String key, Supplier<String> rangeHeader,
+            String requestedRange, String ifMatch, HttpResponse.BodyHandler<T> bodyHandler) throws IOException {
         return sendWithRetry(() -> signRequest("GET", objectUri(bucket, key),
-                SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), "Range", rangeHeader),
-                bodyHandler, "GET s3://" + bucket + "/" + key);
+                SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), rangeHeaders(rangeHeader.get(), ifMatch)),
+                bodyHandler, "GET s3://" + bucket + "/" + key + " range " + requestedRange);
+    }
+
+    private static String[] rangeHeaders(String range, String ifMatch) {
+        return ifMatch != null
+                ? new String[]{ "Range", range, "If-Match", ifMatch }
+                : new String[]{ "Range", range };
     }
 
     /// Sends the request `signedRequest` builds, retrying on HTTP 500/503 responses and network
     /// errors up to [#maxRetries] times with exponential backoff and jitter. Each attempt is
-    /// signed afresh, so a retry carries refreshed credentials and a current timestamp.
+    /// signed afresh, so a retry carries refreshed credentials and a current timestamp. With a
+    /// request timeout, each attempt's body fails once it delivers no bytes for that long
+    /// ([IdleBoundSubscriber]), and the failure is retried like a network error.
     private <T> HttpResponse<T> sendWithRetry(Supplier<HttpRequest> signedRequest,
-            HttpResponse.BodyHandler<T> bodyHandler, String description) throws IOException {
+            HttpResponse.BodyHandler<T> handler, String description) throws IOException {
+        IdleBoundSubscriber.Handler<T> idleBound = requestTimeout != null
+                ? new IdleBoundSubscriber.Handler<>(handler, requestTimeout, idleTimer, description)
+                : null;
+        HttpResponse.BodyHandler<T> bodyHandler = idleBound != null ? idleBound : handler;
         IOException lastException = null;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0 && lastException != null) {
                 sleepBeforeRetry(attempt);
+            }
+            if (idleBound != null) {
+                idleBound.reset();
             }
             try {
                 HttpResponse<T> response = httpClient.send(signedRequest.get(), bodyHandler);
@@ -120,7 +172,7 @@ public final class S3Api {
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IOException("Interrupted during " + description, e);
+                throw interrupted("Interrupted during " + description, e);
             }
             catch (IOException e) {
                 // The client wraps an Error from a body subscriber, such as a direct buffer
@@ -128,9 +180,10 @@ public final class S3Api {
                 if (e.getCause() instanceof Error error) {
                     throw error;
                 }
-                lastException = e;
+                // A timed-out body may surface as the client's error for the connection it closed
+                lastException = idleBound != null && idleBound.timeout() != null ? idleBound.timeout() : e;
                 if (attempt >= maxRetries) {
-                    throw e;
+                    throw lastException;
                 }
             }
         }
@@ -149,7 +202,7 @@ public final class S3Api {
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interrupted during retry backoff", e);
+            throw interrupted("Interrupted during retry backoff", e);
         }
     }
 
@@ -363,8 +416,14 @@ public final class S3Api {
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interrupted during " + description, e);
+            throw interrupted("Interrupted during " + description, e);
         }
+    }
+
+    private static InterruptedIOException interrupted(String message, InterruptedException cause) {
+        InterruptedIOException exception = new InterruptedIOException(message);
+        exception.initCause(cause);
+        return exception;
     }
 
     private static String hostHeader(URI uri) {

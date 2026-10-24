@@ -240,7 +240,10 @@ public final class S3Source implements Closeable {
             return this;
         }
 
-        /// Sets the per-request timeout for individual HTTP requests (default 30 seconds).
+        /// Sets the per-request timeout for individual HTTP requests (default 30 seconds). It bounds
+        /// the time until a response's headers arrive, and then each gap between bytes of its body:
+        /// a body that stops sending bytes fails after one to two timeouts, and its request is
+        /// retried like a network error.
         public Builder requestTimeout(Duration requestTimeout) {
             this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout must not be null");
             return this;

@@ -35,6 +35,12 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - An S3 object of up to 256 KiB is read in the one request that opens it, and the footer and page index of a larger file come with that request ([#1399](https://github.com/hardwood-hq/hardwood/issues/1399))
 - A multi-file read holds the footers of the files it is reading rather than of every file it has read ([#1662](https://github.com/hardwood-hq/hardwood/issues/1662))
 
+**Bug fixes:**
+
+- An S3 response body that sends no bytes for `requestTimeout` fails its request, which is retried, instead of blocking the read without bound ([#1393](https://github.com/hardwood-hq/hardwood/issues/1393))
+- An S3 read fails with `ParquetReadException` when the object was replaced since the file was opened, and opening an S3 file fails when the endpoint ignores the `Range` header of an object larger than the open-time tail ([#1686](https://github.com/hardwood-hq/hardwood/issues/1686))
+- An S3 range read whose connection fails midway re-requests only the bytes not yet received, within the retry budget ([#1666](https://github.com/hardwood-hq/hardwood/issues/1666))
+
 ## 1.1.0.Beta3 (2026-10-21)
 
 **Bug fixes:**
