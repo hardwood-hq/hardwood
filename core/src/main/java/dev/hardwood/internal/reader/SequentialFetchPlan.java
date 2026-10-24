@@ -180,7 +180,7 @@ public final class SequentialFetchPlan implements FetchPlan {
         }
         List<FetchSequence.Entry> entries = sequence.insert(0, inputFile, spans);
         EntryCursor.Rest rest = firstPart == length ? null
-                : FetchPlanBuilder.rest(sequence, 0, inputFile, start + length, reason, maxSpan);
+                : EntryCursor.rest(sequence, 0, inputFile, start + length, reason, maxSpan);
         return new SequentialFetchPlan(start, length, columnSchema, columnChunk, context, maxRows,
                 rowGroupIndex, fileName, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount,
                 null, WorkingSet.standalone(columnSchema), entries, rest);

@@ -264,7 +264,7 @@ public class HardwoodContextImpl implements HardwoodContext {
             });
         }
         catch (RejectedExecutionException e) {
-            throw ScheduledColumn.contextClosed(e);
+            throw contextClosed(e);
         }
     }
 
@@ -295,7 +295,7 @@ public class HardwoodContextImpl implements HardwoodContext {
             });
         }
         catch (RejectedExecutionException e) {
-            throw ScheduledColumn.contextClosed(e);
+            throw contextClosed(e);
         }
     }
 
@@ -383,4 +383,19 @@ public class HardwoodContextImpl implements HardwoodContext {
             return create(checkThreads(threads), metadataSource, IO_EXECUTOR);
         }
     }
+
+    /// The failure of a read whose decode pool refused a task: its context was closed while it
+    /// was reading. It is not the file's, so it is not placed.
+    public static IllegalStateException contextClosed(RejectedExecutionException e) {
+        return new IllegalStateException(CONTEXT_CLOSED, e);
+    }
+
+    /// Whether `e` is the failure [#contextClosed] makes, which a fetch step and the read's planning
+    /// chain each meet when the pool refuses them.
+    public static boolean isContextClosed(Throwable e) {
+        return e instanceof IllegalStateException && CONTEXT_CLOSED.equals(e.getMessage())
+                && e.getCause() instanceof RejectedExecutionException;
+    }
+
+    private static final String CONTEXT_CLOSED = "The HardwoodContext was closed while a reader using it was reading";
 }

@@ -243,7 +243,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
 
     /// Ends the read with the decode pool's refusal of a page task, which a closed context gives.
     void rejected(PageTask page, RejectedExecutionException e) {
-        signalError(ScheduledColumn.contextClosed(e));
+        signalError(HardwoodContextImpl.contextClosed(e));
         // Last: a poll that finds the read idle must find the failure too
         taskEnded(page);
     }
@@ -269,7 +269,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
         }
         catch (RejectedExecutionException e) {
             endFetch();
-            signalError(ScheduledColumn.contextClosed(e));
+            signalError(HardwoodContextImpl.contextClosed(e));
             // Last: a poll that finds the read idle must find the failure too
             uncountTask();
         }
@@ -328,7 +328,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
         }
         catch (RejectedExecutionException e) {
             endFetch();
-            signalError(ScheduledColumn.contextClosed(e));
+            signalError(HardwoodContextImpl.contextClosed(e));
             // Last: a poll that finds the read idle must find the failure too
             uncountTask();
         }
@@ -603,7 +603,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     /// not catch every file rewritten since the footer was read.
     static Exception placeFailure(Exception e, ColumnSchema column, boolean footersSupplied,
                                   String fileName, int rowGroup, int page) {
-        if (isContextClosed(e)) {
+        if (HardwoodContextImpl.isContextClosed(e)) {
             // The context's, not the file's, whichever thread of the read met the refusal first
             return e;
         }
@@ -624,21 +624,6 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
         }
         return typed;
     }
-
-    /// The failure of a read whose decode pool refused a task: its context was closed while it
-    /// was reading. It is not the file's, so it is not placed.
-    static IllegalStateException contextClosed(RejectedExecutionException e) {
-        return new IllegalStateException(CONTEXT_CLOSED, e);
-    }
-
-    /// Whether `e` is the failure [#contextClosed] makes, which a fetch step and the read's planning
-    /// chain each meet when the pool refuses them.
-    static boolean isContextClosed(Throwable e) {
-        return e instanceof IllegalStateException && CONTEXT_CLOSED.equals(e.getMessage())
-                && e.getCause() instanceof RejectedExecutionException;
-    }
-
-    private static final String CONTEXT_CLOSED = "The HardwoodContext was closed while a reader using it was reading";
 
     /// Delegates runtime-failure classification; checked transport failures pass through unchanged.
     static Exception asReadFailure(Exception e) {

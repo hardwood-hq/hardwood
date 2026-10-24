@@ -140,7 +140,7 @@ public final class FetchPlanBuilder {
                 // Determine needed pages (filter + maxRows). Each entry pairs a
                 // PageLocation with its PageRowMask so the column keeps only the
                 // records inside the matching ranges.
-                List<NeededPage> neededPages = computeNeededPages(
+                List<IndexedFetchPlan.NeededPage> neededPages = computeNeededPages(
                         allPages, matchingRows, rowGroup.numRows());
 
                 // Report the page-level filter's effect before `truncateToMaxRows`,
@@ -166,7 +166,7 @@ public final class FetchPlanBuilder {
                 if (dictStart > 0) {
                     ranges.add(new Range(projCol, dictStart, firstDataPageOffset));
                 }
-                for (NeededPage page : neededPages) {
+                for (IndexedFetchPlan.NeededPage page : neededPages) {
                     ranges.add(new Range(projCol, page.location().offset(),
                             page.location().offset() + page.location().compressedPageSize()));
                 }
@@ -241,28 +241,13 @@ public final class FetchPlanBuilder {
                 : List.of();
         String name = read.schema().name();
         EntryCursor.Rest rest = !read.restLeftOut() ? null
-                : rest(sequence, workItem.workItemIndex(), workItem.inputFile(), read.start() + read.length(),
+                : EntryCursor.rest(sequence, workItem.workItemIndex(), workItem.inputFile(), read.start() + read.length(),
                         "rg=" + workItem.rowGroupIndex() + " col=" + name, maxSpan);
         return new SequentialFetchPlan(read.start(), read.length(), read.schema(), read.chunk(), context,
                 perRgMaxRows, workItem.rowGroupIndex(), workItem.inputFile().name(), leaves,
                 BoundsReadability.ofOneColumn(readability.int96TimestampOrder(fileOrdinal)),
                 matchingRows, workItem.rowGroup().numRows(), read.preloadedDictionary(),
                 workingSet.column(read.column(), read.schema()), entries, rest);
-    }
-
-    /// Inserts, as a demanded entry, the part of a column chunk ending at `chunkEnd` that a walk
-    /// reaches past its entries: from where it reads to the next entry or the chunk's end, at most
-    /// `maxSpan` bytes.
-    static EntryCursor.Rest rest(FetchSequence sequence, int workItemIndex, InputFile inputFile, long chunkEnd,
-                                 String reason, int maxSpan) {
-        return (start, limit) -> {
-            long end = Math.min(Math.min(limit, chunkEnd), start + maxSpan);
-            if (end <= start) {
-                throw new IllegalStateException("No byte of the column chunk ending at " + chunkEnd
-                        + " is left to read at offset " + start);
-            }
-            return sequence.insertDemanded(workItemIndex, inputFile, start, Math.toIntExact(end - start), reason);
-        };
     }
 
     /// The entries of a row group whose rows are all read and that no Bloom filter or dictionary
@@ -298,7 +283,7 @@ public final class FetchPlanBuilder {
     /// What one decoded column of a row group reads: an indexed column its needed pages and
     /// dictionary page, one without an OffsetIndex its chunk from `start` on, `length` bytes, of
     /// which a row limit may leave the rest out (`restLeftOut`).
-    private record ColumnRead(int column, ColumnSchema schema, ColumnChunk chunk, List<NeededPage> neededPages,
+    private record ColumnRead(int column, ColumnSchema schema, ColumnChunk chunk, List<IndexedFetchPlan.NeededPage> neededPages,
                               long dictionaryStart, long firstDataPageOffset, Dictionary preloadedDictionary,
                               long start, int length, boolean restLeftOut) {
     }
@@ -465,39 +450,27 @@ public final class FetchPlanBuilder {
         return workItem.filterAlwaysMatches() && projection.isFilterOnly(projCol);
     }
 
-    /// A page needed for the current read paired with the [PageRowMask] selecting
-    /// which records within the page the column keeps. The mask is
-    /// [PageRowMask#ALL] when no filter is active or when the page falls
-    /// entirely inside the matching ranges.
-    ///
-    /// `pageIndex` is the page's ordinal in the whole column chunk, not its position in
-    /// this list: a filter drops pages, and a failure that named the position would send
-    /// a reader to a page the offset index numbers differently.
-    ///
-    /// `rows` is the page's row span in the offset index, before the mask.
-    record NeededPage(PageLocation location, PageRowMask mask, int pageIndex, int rows) {}
-
     /// Determines which pages are needed based on the filter's matching row ranges,
     /// pairing each kept page with the [PageRowMask] that selects which of its
     /// records the column keeps.
-    private static List<NeededPage> computeNeededPages(List<PageLocation> allPages,
+    private static List<IndexedFetchPlan.NeededPage> computeNeededPages(List<PageLocation> allPages,
                                                        RowRanges matchingRows,
                                                        long rowGroupRowCount) {
         if (matchingRows.isAll()) {
-            List<NeededPage> needed = new ArrayList<>(allPages.size());
+            List<IndexedFetchPlan.NeededPage> needed = new ArrayList<>(allPages.size());
             for (int i = 0; i < allPages.size(); i++) {
-                needed.add(new NeededPage(allPages.get(i), PageRowMask.ALL, i,
+                needed.add(new IndexedFetchPlan.NeededPage(allPages.get(i), PageRowMask.ALL, i,
                         pageRows(allPages, i, rowGroupRowCount)));
             }
             return needed;
         }
-        List<NeededPage> needed = new ArrayList<>();
+        List<IndexedFetchPlan.NeededPage> needed = new ArrayList<>();
         for (int i = 0; i < allPages.size(); i++) {
             long pageFirstRow = allPages.get(i).firstRowIndex();
             long pageLastRow = pageFirstRow + pageRows(allPages, i, rowGroupRowCount);
             PageRowMask mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
             if (mask != null) {
-                needed.add(new NeededPage(allPages.get(i), mask, i, Math.toIntExact(pageLastRow - pageFirstRow)));
+                needed.add(new IndexedFetchPlan.NeededPage(allPages.get(i), mask, i, Math.toIntExact(pageLastRow - pageFirstRow)));
             }
         }
         return needed;
@@ -588,12 +561,12 @@ public final class FetchPlanBuilder {
     /// Truncates a page list to cover at most `maxRows` rows. `maxRows <= 0`
     /// means "no row bound" and returns every page unchanged — the same
     /// `0 = unlimited` convention used throughout the fetch path.
-    private static List<NeededPage> truncateToMaxRows(List<NeededPage> pages, long maxRows) {
+    private static List<IndexedFetchPlan.NeededPage> truncateToMaxRows(List<IndexedFetchPlan.NeededPage> pages, long maxRows) {
         if (maxRows <= 0) {
             return pages;
         }
-        List<NeededPage> truncated = new ArrayList<>();
-        for (NeededPage page : pages) {
+        List<IndexedFetchPlan.NeededPage> truncated = new ArrayList<>();
+        for (IndexedFetchPlan.NeededPage page : pages) {
             if (page.location().firstRowIndex() >= maxRows) {
                 break;
             }

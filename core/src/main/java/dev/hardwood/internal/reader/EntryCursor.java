@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.InputFile;
+
 /// One walk's view of the [FetchSequence] entries that overlap its column chunk, in offset order,
 /// fixed when the row group was planned. [#read] takes a range's bytes without waiting: a slice of
 /// the entry holding it, or a copy of the parts of the entries a range straddles, once every one
@@ -130,5 +132,20 @@ final class EntryCursor implements ByteSource {
         while (held < entries.size()) {
             entries.get(held++).release();
         }
+    }
+
+    /// Inserts, as a demanded entry, the part of a column chunk ending at `chunkEnd` that a walk
+    /// reaches past its entries: from where it reads to the next entry or the chunk's end, at most
+    /// `maxSpan` bytes.
+    static Rest rest(FetchSequence sequence, int workItemIndex, InputFile inputFile, long chunkEnd,
+                     String reason, int maxSpan) {
+        return (start, limit) -> {
+            long end = Math.min(Math.min(limit, chunkEnd), start + maxSpan);
+            if (end <= start) {
+                throw new IllegalStateException("No byte of the column chunk ending at " + chunkEnd
+                        + " is left to read at offset " + start);
+            }
+            return sequence.insertDemanded(workItemIndex, inputFile, start, Math.toIntExact(end - start), reason);
+        };
     }
 }

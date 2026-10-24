@@ -29,7 +29,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// advanced. No I/O happens at plan time.
 final class IndexedFetchPlan implements FetchPlan {
 
-    private final List<FetchPlanBuilder.NeededPage> neededPages;
+    private final List<NeededPage> neededPages;
     /// The entries overlapping the column chunk, in offset order.
     private final List<FetchSequence.Entry> entries;
     /// Where the dictionary page starts, or `0` when the plan reads none: the chunk has no
@@ -59,7 +59,7 @@ final class IndexedFetchPlan implements FetchPlan {
     /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
     ///        the plan reads no dictionary page; `null` otherwise
     /// @param workingSet where the plan charges the dictionary it parses
-    IndexedFetchPlan(List<FetchPlanBuilder.NeededPage> neededPages, List<FetchSequence.Entry> entries,
+    IndexedFetchPlan(List<NeededPage> neededPages, List<FetchSequence.Entry> entries,
                      long dictionaryStart, long firstDataPageOffset,
                      ColumnSchema columnSchema, ColumnChunk columnChunk,
                      HardwoodContextImpl context, int rowGroupIndex, String fileName,
@@ -161,7 +161,7 @@ final class IndexedFetchPlan implements FetchPlan {
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 
-            FetchPlanBuilder.NeededPage needed = neededPages.get(index);
+            NeededPage needed = neededPages.get(index);
             currentPage = needed.pageIndex();
             PageLocation loc = needed.location();
             cursor.releaseBefore(loc.offset());
@@ -187,7 +187,7 @@ final class IndexedFetchPlan implements FetchPlan {
         /// The records `needed` contributes after its mask, for [PageInfo#records()]: its row span
         /// in the offset index for a column without repetition, whose records are its values; a
         /// column with repetition counts its records from its repetition levels once decoded.
-        private int keptRecords(FetchPlanBuilder.NeededPage needed) {
+        private int keptRecords(NeededPage needed) {
             if (columnSchema.maxRepetitionLevel() > 0) {
                 return PageInfo.UNKNOWN_RECORDS;
             }
@@ -215,4 +215,16 @@ final class IndexedFetchPlan implements FetchPlan {
             event.commit();
         }
     }
+
+    /// A page needed for the current read paired with the [PageRowMask] selecting
+    /// which records within the page the column keeps. The mask is
+    /// [PageRowMask#ALL] when no filter is active or when the page falls
+    /// entirely inside the matching ranges.
+    ///
+    /// `pageIndex` is the page's ordinal in the whole column chunk, not its position in
+    /// this list: a filter drops pages, and a failure that named the position would send
+    /// a reader to a page the offset index numbers differently.
+    ///
+    /// `rows` is the page's row span in the offset index, before the mask.
+    record NeededPage(PageLocation location, PageRowMask mask, int pageIndex, int rows) {}
 }

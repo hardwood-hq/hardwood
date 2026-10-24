@@ -155,7 +155,8 @@ public class PageSource {
             currentPlan = null;
             FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
             currentBatches = rowGroupIterator.getBatches(workItem);
-            rowGroupIterator.workingSet().enter(projectedColumnIndex, currentBatches);
+            rowGroupIterator.workingSet().enter(projectedColumnIndex, currentBatches.batchStartRow(),
+                    currentBatches.readRowsBefore() + currentBatches.plannedRows());
             currentPlan = plan.walk();
         }
     }

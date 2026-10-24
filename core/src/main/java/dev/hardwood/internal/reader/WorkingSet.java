@@ -110,11 +110,13 @@ public final class WorkingSet {
         return new Column(this, index, schema);
     }
 
-    /// Tells the column at `index` that its pages now come from the row group `batches` plans,
-    /// which places the rows of the chunk whose dictionary it charges next. Called by the column's
-    /// fetch step as it enters the row group.
-    void enter(int index, BatchPlan.RowGroupBatches batches) {
-        windows[index].enter(batches);
+    /// Tells the column at `index` that its pages now come from a row group the read's batch plan
+    /// places, which holds the rows of the chunk whose dictionary it charges next: the batch
+    /// holding the row group's first planned row starts at the read's row `batchStartRow`, and the
+    /// row group's planned rows end before the read's row `endRow`. Called by the column's fetch
+    /// step as it enters the row group.
+    void enter(int index, long batchStartRow, long endRow) {
+        windows[index].enter(batchStartRow, endRow);
     }
 
     /// The working-set limit of a read: [#DEFAULT_HEAP_PERCENT] of the maximum heap unless
@@ -377,25 +379,30 @@ public final class WorkingSet {
 
         private final ArrayDeque<Held> held = new ArrayDeque<>();
         private long heldBytes;
-        /// The row group the column's pages come from; `null` outside a read's batch plan, where
+        /// Whether the column's pages come from a row group of a read's batch plan; outside one,
         /// each dictionary counts alone.
-        private BatchPlan.RowGroupBatches batches;
+        private boolean planned;
+        /// The read's row the batch holding the current row group's first planned row starts at.
+        private long batchStartRow;
+        /// The read's row the current row group's planned rows end before.
+        private long endRow;
 
-        synchronized void enter(BatchPlan.RowGroupBatches batches) {
-            this.batches = batches;
+        synchronized void enter(long batchStartRow, long endRow) {
+            this.planned = true;
+            this.batchStartRow = batchStartRow;
+            this.endRow = endRow;
         }
 
         /// Adds the current chunk's dictionary of `bytes`, and returns the bytes of the
         /// dictionaries the batch holding the chunk's first row holds with it.
         synchronized long add(long bytes) {
-            if (batches == null) {
+            if (!planned) {
                 return bytes;
             }
-            long batchStart = batches.batchStartRow();
-            while (!held.isEmpty() && held.peekFirst().endRow() <= batchStart) {
+            while (!held.isEmpty() && held.peekFirst().endRow() <= batchStartRow) {
                 heldBytes -= held.pollFirst().bytes();
             }
-            held.addLast(new Held(batches.readRowsBefore() + batches.plannedRows(), bytes));
+            held.addLast(new Held(endRow, bytes));
             heldBytes += bytes;
             return heldBytes;
         }

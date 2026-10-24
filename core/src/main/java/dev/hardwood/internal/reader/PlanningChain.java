@@ -271,7 +271,7 @@ final class PlanningChain {
             }
         }
         catch (RejectedExecutionException e) {
-            fail(ScheduledColumn.contextClosed(e), planFrom());
+            fail(HardwoodContextImpl.contextClosed(e), planFrom());
             scheduled.set(false);
             executor.tasks().signal();
         }
