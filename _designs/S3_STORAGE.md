@@ -37,7 +37,7 @@ Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): creden
 | `credentials` | none | An `S3CredentialsProvider`, or static `S3Credentials` wrapped as one. Required unless `anonymous` is set; `build()` throws otherwise. |
 | `anonymous` | off | Sends every request unsigned. Mutually exclusive with `credentials`; `build()` throws when both are set. |
 | `connectTimeout` | 10 s | Applied to the `HttpClient` the source builds; ignored with a caller-supplied client. |
-| `requestTimeout` | 30 s | Per HTTP request, applied by `S3Api` to every request. |
+| `requestTimeout` | 30 s | Per HTTP request, applied by `S3Api` to every request: up to the response headers, and then between bytes of the body (see [Errors and retries](#errors-and-retries)). |
 | `maxRetries` | 3 | Retries per request, reads and writes alike (see [Errors and retries](#errors-and-retries)); negative values are rejected. |
 | `httpClient` | built by the source | A caller-supplied client is never closed by the source. |
 | `rangeBacking` | `NONE` | Range cache mode for every file from this source (see [Range backing](#range-backing)). |
@@ -192,15 +192,20 @@ Every failure from the network path is an `IOException`, the checked type the `I
 | `readRange()` | any other status except `206` | `IOException` naming the range, the object, the status and the body, plus the unsigned-request note for a `401`/`403` on an anonymous source |
 | `readRange()` | body complete by its own framing but shorter than `length` bytes | `IOException` "Short read" |
 | `readRange()` | connection lost mid-body | retried; once the budget is spent, the `HttpClient`'s `IOException` |
+| any request | body sends no bytes for `requestTimeout` | retried; once the budget is spent, `IOException` "{request} timed out: no body bytes for {ms} ms", where `{request}` is "GET {name} range {range}" for a read and names the operation and the object for a write |
 | `readRange()` | body longer than `length` bytes | `IOException` "Long read" |
 | any request | interrupt | `IOException` with the interrupt flag restored |
 | `S3Source.Builder.build()` | neither credentials nor anonymous, both, missing region without endpoint, unusable `tempDir` | `IllegalStateException` |
 
 `S3Api.sendWithRetry` retries a request up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; every body is received inside `send()`, a range read's error body by `RangeBodyHandler` up to 64 KiB ([Range reads](#range-reads)), so a retry does not hold a connection and, for a short error body, reuses it. Reading a short error body to its end is untested: `S3ApiRetryTest` covers a body cancelled past 64 KiB. Each attempt is signed afresh (unless the source is anonymous), so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
 
-The retry boundary is `send()`, which returns once the body is received, for the open-time tail and for `readRange` alike. A connection lost mid-body is therefore retried, and the retry requests the whole range again. An `Error` a body subscriber raises, such as a direct buffer the JVM cannot allocate, is rethrown without a retry. A body of the wrong length is not a network failure: `send()` completes, and the fetcher raises "Short read" or "Long read" without a retry. A write sends its body from a byte array, so each attempt sends the same bytes.
+The retry boundary is `send()`, which returns once the body is received, for the open-time tail and for `readRange` alike. A connection lost mid-body is therefore retried, and the retry requests the whole range again.
 
-Tests: `S3InputFileIT` (s3), `S3FetcherStatusTest` (s3), `S3ApiRetryTest` (s3). Backoff, retry exhaustion and the non-retried statuses are untested.
+An `Error` a body subscriber raises, such as a direct buffer the JVM cannot allocate, is rethrown without a retry. A body of the wrong length is not a network failure: `send()` completes, and the fetcher raises "Short read" or "Long read" without a retry. A write sends its body from a byte array, so each attempt sends the same bytes.
+
+The `HttpClient`'s request timeout ends when the response headers arrive, so it does not bound a body that stops sending bytes. `S3Api` wraps the body subscriber of every request, reads and writes alike, in `IdleBoundSubscriber` (`dev.hardwood.s3.internal`), which checks the body once per `requestTimeout` and fails it when no bytes arrived since the previous check: a stalled body fails after one to two timeouts without bytes, and the failure is retried like a lost connection. The check fails the wrapped subscriber and then cancels the subscription. The client may complete the attempt with its own error for the connection the cancel closed, so the handler records the timeout and `sendWithRetry` reports it in place of the client's error. A check still queued after its body ended holds only the subscriber's small shared state, which drops the wrapped subscriber, and with it the body's buffer, on any terminal signal: a range buffer the reader has dropped is not kept reachable for up to a period by the scheduler's queue. The checks run on the thread of the JDK's shared `CompletableFuture` delay scheduler ([THREADING.md](THREADING.md#thread-inventory)). With no request timeout (a `null` `requestTimeout`, which only internal callers can pass) no body is bounded.
+
+Tests: `S3InputFileIT` (s3), `S3FetcherStatusTest` (s3), `S3ApiRetryTest` (s3), `S3FetcherStallTest` (s3), `IdleBoundSubscriberTest` (s3). Backoff, retry exhaustion and the non-retried statuses are untested.
 
 ## Hadoop configuration bridge
 

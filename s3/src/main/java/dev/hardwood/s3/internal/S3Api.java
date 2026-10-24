@@ -47,6 +47,7 @@ public final class S3Api {
     private final boolean pathStyle;
     private final Duration requestTimeout;
     private final int maxRetries;
+    private final IdleTimer idleTimer;
 
     /// Creates an S3Api instance.
     ///
@@ -55,11 +56,20 @@ public final class S3Api {
     /// @param region              the AWS region (e.g. "us-east-1")
     /// @param endpoint            custom endpoint URI, or `null` for AWS virtual-hosted style
     /// @param pathStyle           if `true`, use path-style access (`endpoint/bucket/key`)
-    /// @param requestTimeout      timeout for individual HTTP requests, or `null` for no timeout
+    /// @param requestTimeout      timeout for individual HTTP requests up to their response headers, and
+    ///                            for each gap between bytes of a response body; `null` for no timeout
     /// @param maxRetries          maximum number of retries per request (0 means no retries)
     public S3Api(HttpClient httpClient, S3CredentialsProvider credentialsProvider,
             String region, URI endpoint, boolean pathStyle,
             Duration requestTimeout, int maxRetries) {
+        this(httpClient, credentialsProvider, region, endpoint, pathStyle, requestTimeout, maxRetries,
+                IdleTimer.DELAYED);
+    }
+
+    /// Creates an S3Api instance whose checks for a stalled response body run on `idleTimer`.
+    public S3Api(HttpClient httpClient, S3CredentialsProvider credentialsProvider,
+            String region, URI endpoint, boolean pathStyle,
+            Duration requestTimeout, int maxRetries, IdleTimer idleTimer) {
         this.httpClient = httpClient;
         this.credentialsProvider = credentialsProvider;
         this.region = region;
@@ -67,6 +77,7 @@ public final class S3Api {
         this.pathStyle = pathStyle;
         this.requestTimeout = requestTimeout;
         this.maxRetries = maxRetries;
+        this.idleTimer = idleTimer;
     }
 
     /// Whether requests are sent unsigned, without credentials.
@@ -96,18 +107,27 @@ public final class S3Api {
             HttpResponse.BodyHandler<T> bodyHandler) throws IOException {
         return sendWithRetry(() -> signRequest("GET", objectUri(bucket, key),
                 SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), "Range", rangeHeader),
-                bodyHandler, "GET s3://" + bucket + "/" + key);
+                bodyHandler, "GET s3://" + bucket + "/" + key + " range " + rangeHeader);
     }
 
     /// Sends the request `signedRequest` builds, retrying on HTTP 500/503 responses and network
     /// errors up to [#maxRetries] times with exponential backoff and jitter. Each attempt is
-    /// signed afresh, so a retry carries refreshed credentials and a current timestamp.
+    /// signed afresh, so a retry carries refreshed credentials and a current timestamp. With a
+    /// request timeout, each attempt's body fails once it delivers no bytes for that long
+    /// ([IdleBoundSubscriber]), and the failure is retried like a network error.
     private <T> HttpResponse<T> sendWithRetry(Supplier<HttpRequest> signedRequest,
-            HttpResponse.BodyHandler<T> bodyHandler, String description) throws IOException {
+            HttpResponse.BodyHandler<T> handler, String description) throws IOException {
+        IdleBoundSubscriber.Handler<T> idleBound = requestTimeout != null
+                ? new IdleBoundSubscriber.Handler<>(handler, requestTimeout, idleTimer, description)
+                : null;
+        HttpResponse.BodyHandler<T> bodyHandler = idleBound != null ? idleBound : handler;
         IOException lastException = null;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0 && lastException != null) {
                 sleepBeforeRetry(attempt);
+            }
+            if (idleBound != null) {
+                idleBound.reset();
             }
             try {
                 HttpResponse<T> response = httpClient.send(signedRequest.get(), bodyHandler);
@@ -128,9 +148,10 @@ public final class S3Api {
                 if (e.getCause() instanceof Error error) {
                     throw error;
                 }
-                lastException = e;
+                // A timed-out body may surface as the client's error for the connection it closed
+                lastException = idleBound != null && idleBound.timeout() != null ? idleBound.timeout() : e;
                 if (attempt >= maxRetries) {
-                    throw e;
+                    throw lastException;
                 }
             }
         }
