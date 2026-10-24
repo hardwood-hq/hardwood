@@ -9,43 +9,28 @@ package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.io.HeldBytes;
-import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.predicate.LogContext;
-import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
-import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
-import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
-import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.RowGroupPlans;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.SharedRowGroupMetadata;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
-import dev.hardwood.internal.reader.select.RowRanges;
-import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.internal.reader.step.ReadExecutor;
 import dev.hardwood.internal.reader.step.ReadQueue;
 import dev.hardwood.internal.schema.ReadProjection;
-import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
 import jdk.jfr.Event;
@@ -87,18 +72,10 @@ final class PlanningChain {
     private final FetchSequence sequence;
     /// The footers of the files the read reads ahead of it.
     private final FooterReadAhead footerReadAhead;
-    private final FileSchema referenceSchema;
-    private final List<RowGroup> firstFileRowGroups;
-    private final ReadProjection projection;
-    private final ResolvedPredicate filterPredicate;
-    private final SchemaCompatibility schemaCompatibility;
-    private final RowGroupPruning pruning;
-    private final FetchPlanBuilder fetchPlanBuilder;
-    private final long maxRows;
+    /// What planning decides: a file's work items and each work item's stages.
+    private final Planner planner;
     /// Whether planning goes past the next unit, by F ([FetchSequence#mayPlanAhead]).
     private final boolean plansDeep;
-    /// The most bytes one [IndexWindow] reads, gaps included, unless a single row group needs more.
-    private final long indexWindowBytes;
 
     /// The work list: the state of each work item listed, by index, appended to a file at a time by
     /// the chain and dropped as every column releases a work item.
@@ -114,17 +91,12 @@ final class PlanningChain {
     // The chain's own state, read and written only under its claim
     /// The next file to list; written under `cursorLock` too, which [#updateReached] reads it under.
     private int nextFileToPlan;
-    private long planRowBudget;
-    private long plannedRows;
-    private long planSkipRemaining;
-    /// Whether the read's batch plan has taken a work item, after which it can no longer be set.
-    private boolean batchesPlanned;
     /// Whether the work item the chain plans is ahead of the columns and the next unit, which lists
     /// no file whose footer has not started ([FooterReadAhead#started]).
     private boolean planningAhead;
 
     /// What the chain has published, replaced as a whole.
-    private volatile Progress progress = new Progress(new int[] {-1, -1, -1, -1}, false, null, Integer.MAX_VALUE, 0);
+    private volatile Progress progress = new Progress(new int[] {-1, -1, -1, -1}, false, null, Integer.MAX_VALUE);
     /// Whether a column or caller took the failure that ended planning, so close does not raise it.
     /// Written by the column that took it, read by close once the columns have closed.
     private boolean failureTaken;
@@ -133,10 +105,6 @@ final class PlanningChain {
     /// ([#advance]): by callers outside the read for the stages before [Stage#PLANS], and for
     /// [Stage#PLANS] by the read's columns ([#requested]), `-1` before the read starts.
     private final AtomicIntegerArray targets = new AtomicIntegerArray(new int[] {-1, -1, -1, -1});
-
-    // Set before the read's columns ask for plans, read by the chain after
-    private long tailSkip;
-    private BatchPlan batchPlan;
 
     /// The claim: held while a step of the chain runs or waits for its need, and raised by every
     /// change that may let it go further, which the step looks at before it lets go.
@@ -160,59 +128,25 @@ final class PlanningChain {
     /// What the chain has published: for each stage, the last work item it took through it, for a
     /// caller before [Stage#PLANS] and, for [Stage#PLANS], every work item up to it planned
     /// (published under `cursorLock`, with the waiters it resumes); whether the work list is
-    /// complete; the failure that ended planning with the first work item it fails; and the
-    /// residue of the physical skip within the first work item.
-    private record Progress(int[] reached, boolean listed, Throwable failure, int failedFrom,
-                            long firstRowGroupSkip) {
+    /// complete; and the failure that ended planning with the first work item it fails.
+    private record Progress(int[] reached, boolean listed, Throwable failure, int failedFrom) {
 
         Progress withReached(Stage stage, int index) {
             int[] next = reached.clone();
             next[stage.ordinal()] = Math.max(next[stage.ordinal()], index);
-            return new Progress(next, listed, failure, failedFrom, firstRowGroupSkip);
+            return new Progress(next, listed, failure, failedFrom);
         }
 
         Progress withListed() {
-            return new Progress(reached, true, failure, failedFrom, firstRowGroupSkip);
+            return new Progress(reached, true, failure, failedFrom);
         }
 
         Progress withFailure(Throwable e, int from) {
-            return failure != null ? this : new Progress(reached, listed, e, from, firstRowGroupSkip);
-        }
-
-        Progress withFirstRowGroupSkip(long skip) {
-            return new Progress(reached, listed, failure, failedFrom, skip);
+            return failure != null ? this : new Progress(reached, listed, e, from);
         }
 
         int reached(Stage stage) {
             return reached[stage.ordinal()];
-        }
-    }
-
-    /// One work item's state: what its stages have decided so far and the bytes they read, written
-    /// by the chain, and the columns that hold it and whether the read has entered it and reported
-    /// its drop.
-    static final class Planning {
-
-        final WorkItem workItem;
-        /// The bytes its stages read outside a window: Bloom filters without a length, dictionary
-        /// pages and page-format probes.
-        final PlanningReads reads;
-        final RowGroupPruning.Probe probe = new RowGroupPruning.Probe();
-        RowGroupPruning.Arrival arrival;
-        SharedRowGroupMetadata shared;
-        MaskCapability mask;
-        RowGroupPlans plans;
-        /// The validated chunk extents of the decoded columns, taken before any stage reads a
-        /// chunk ([#chunkExtents]).
-        Extent[] extents;
-        /// The columns that took the work item and have not released it, `0` before the first takes it.
-        final AtomicInteger holders = new AtomicInteger();
-        final AtomicBoolean entered = new AtomicBoolean();
-        final AtomicBoolean reported = new AtomicBoolean();
-
-        Planning(WorkItem workItem, FetchSequence sequence) {
-            this.workItem = workItem;
-            this.reads = new PlanningReads(sequence, workItem.inputFile(), "rg=" + workItem.rowGroupIndex(), 1);
         }
     }
 
@@ -228,19 +162,9 @@ final class PlanningChain {
         this.sequence = sequence;
         this.footerReadAhead = new FooterReadAhead(sequence, footers(),
                 FooterReadAhead.filesAhead(plansDeep, inputFiles.size()), inputFiles.size());
-        this.referenceSchema = referenceSchema;
-        this.firstFileRowGroups = firstFileRowGroups;
-        this.projection = projection;
-        this.filterPredicate = filterPredicate;
-        this.schemaCompatibility = schemaCompatibility;
-        this.pruning = pruning;
-        this.fetchPlanBuilder = fetchPlanBuilder;
-        this.maxRows = maxRows;
+        this.planner = new Planner(sequence, referenceSchema, firstFileRowGroups, projection, filterPredicate,
+                schemaCompatibility, pruning, fetchPlanBuilder, maxRows, physicalSkip, tailSkip, indexWindowBytes);
         this.plansDeep = plansDeep;
-        this.indexWindowBytes = indexWindowBytes;
-        this.planRowBudget = maxRows > 0 ? maxRows : Long.MAX_VALUE;
-        this.planSkipRemaining = physicalSkip;
-        this.tailSkip = tailSkip;
         this.columnCount = projection.decoded().getProjectedColumnCount();
     }
 
@@ -427,9 +351,9 @@ final class PlanningChain {
         try {
             need = switch (stage) {
                 case LISTED -> null;
-                case ARRIVAL -> arrival(planning);
-                case MASK -> masked(planning);
-                case PLANS -> plans(planning);
+                case ARRIVAL -> planner.arrival(planning);
+                case MASK -> planner.masked(planning);
+                case PLANS -> planner.plans(planning);
             };
             if (need == null) {
                 if (stage == Stage.PLANS) {
@@ -468,7 +392,7 @@ final class PlanningChain {
     /// has started the file's footer ([FooterReadAhead]), and returns [#NO_FOOTER_YET] before.
     private Need listThrough(int index) {
         while (listedCount <= index && !progress.listed() && progress.failure() == null) {
-            if (planningAhead && nextFileToPlan < inputFiles.size() && planRowBudget > 0
+            if (planningAhead && nextFileToPlan < inputFiles.size() && planner.budgetLeft()
                     && !footerReadAhead.started(nextFileToPlan)) {
                 return NO_FOOTER_YET;
             }
@@ -489,7 +413,7 @@ final class PlanningChain {
     /// advanced the shared planning state, the next file to plan, the row budget and the rows
     /// still to skip among them.
     private Need planNextFile() {
-        if (nextFileToPlan >= inputFiles.size() || planRowBudget <= 0) {
+        if (nextFileToPlan >= inputFiles.size() || !planner.budgetLeft()) {
             publish(progress.withListed());
             updateReached();
             return null;
@@ -501,7 +425,11 @@ final class PlanningChain {
             if (loading.need() != null) {
                 return loading.need();
             }
-            list(planRowGroups(fileIndex, loading.file()));
+            Planner.Listed listed = planner.planRowGroups(fileIndex, loading.file(), listedCount);
+            if (listed.event() != null) {
+                fileEvents.put(fileIndex, listed.event());
+            }
+            list(listed.plannings());
         }
         catch (IOException | RuntimeException | Error e) {
             nextFileToPlan = inputFiles.size();
@@ -527,390 +455,6 @@ final class PlanningChain {
         }
     }
 
-    /// The work items of `prepared`'s row groups that pruning keeps, within the read's row budget,
-    /// to append to the work list.
-    private List<Planning> planRowGroups(int fileIndex, PreparedFile prepared) throws IOException {
-        boolean hasFilter = filterPredicate != null;
-        // Decided per file and in the file's own ordinals: the order its bounds were written in
-        // is this file's to declare, not the reference file's (#1179).
-        BoundsReadability boundsReadability = prepared.boundsReadability();
-        FileColumnOrdinals columnOrdinals = fileIndex == 0
-                ? FileColumnOrdinals.identity(referenceSchema.getColumnCount(), filterPredicate,
-                        boundsReadability)
-                : FileColumnOrdinals.of(
-                        schemaCompatibility.validateSchemaCompatibility(prepared.inputFile(), prepared.schema()),
-                        filterPredicate, boundsReadability);
-        List<RowGroup> sourceRowGroups = fileIndex == 0 && firstFileRowGroups != null
-                ? firstFileRowGroups : prepared.rowGroups();
-        // Metadata pruning indexes every row group's chunk list by ordinal, so with
-        // it active the cross-check has to cover the whole file before it runs.
-        // Without it, the only row groups ever indexed are those that become work
-        // items, and the ones physicalSkip / maxRows discard are never looked at.
-        SchemaCompatibility.ChunkPathCheck chunkPaths = schemaCompatibility.chunkPathCheck(prepared.schema(),
-                columnOrdinals);
-        boolean pruningIndexesChunks = pruning.prunesByMetadata();
-        if (pruningIndexesChunks) {
-            for (int rgIndex = 0; rgIndex < sourceRowGroups.size(); rgIndex++) {
-                chunkPaths.verify(sourceRowGroups.get(rgIndex), rgIndex, prepared.inputFile());
-            }
-        }
-        RowGroupPruning.FilteredRowGroups filtered = pruning.filterRowGroups(
-                sourceRowGroups, prepared.inputFile(), columnOrdinals);
-        List<RowGroupPruning.FilteredRowGroup> rowGroups = filtered.rowGroups();
-        if (filtered.event() != null) {
-            fileEvents.put(fileIndex, filtered.event());
-        }
-
-        // Appended to the work list once the file's index windows are formed over them.
-        List<WorkItem> planned = new ArrayList<>();
-        for (int kept = 0; kept < rowGroups.size() && planRowBudget > 0; kept++) {
-            RowGroupPruning.FilteredRowGroup decided = rowGroups.get(kept);
-            RowGroup rg = decided.rowGroup();
-            int rgIndex = decided.fileRowGroupIndex();
-            long rgRows = rg.numRows();
-            if (planSkipRemaining >= rgRows) {
-                planSkipRemaining -= rgRows;
-                continue;
-            }
-
-            long leadingSkip = planSkipRemaining;
-            planSkipRemaining = 0;
-            if (listedCount == 0 && planned.isEmpty()) {
-                progress = progress.withFirstRowGroupSkip(leadingSkip);
-            }
-
-            // Not yet cross-checked when pruning was skipped: with pruning active the
-            // loop above has already covered every row group in the file.
-            if (!pruningIndexesChunks) {
-                chunkPaths.verify(rg, rgIndex, prepared.inputFile());
-            }
-
-            planned.add(new WorkItem(
-                    prepared.inputFile(),
-                    rg,
-                    prepared.schema(),
-                    columnOrdinals,
-                    fileIndex,
-                    rgIndex,
-                    listedCount + planned.size(),
-                    plannedRows,
-                    decided.alwaysMatches(),
-                    decided.leafDecisions(),
-                    decided.bloomFilterColumns(),
-                    null));
-
-            // maxRows limiting: deduct row count from budget.
-            // With a filter active, actual match count is unpredictable,
-            // so all row groups remain available.
-            if (!hasFilter) {
-                planRowBudget -= rgRows - leadingSkip;
-            }
-            plannedRows += rgRows - leadingSkip;
-        }
-
-        return withIndexWindows(planned);
-    }
-
-    /// The states of one file's planned work items, each with the [IndexWindow] it falls into,
-    /// whose section requests the sequence then holds.
-    private List<Planning> withIndexWindows(List<WorkItem> planned) throws IOException {
-        if (planned.isEmpty()) {
-            return List.of();
-        }
-        int count = planned.size();
-        List<IndexWindow.Member> members = new ArrayList<>(count);
-        for (WorkItem workItem : planned) {
-            members.add(indexMember(workItem));
-        }
-        WorkItem first = planned.getFirst();
-        List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(), first.workItemIndex(),
-                members);
-        List<Planning> listed = new ArrayList<>(count);
-        int next = 0;
-        for (IndexWindow window : windows) {
-            window.insertSections(sequence);
-            for (int m = 0; m < window.memberCount(); m++) {
-                listed.add(new Planning(planned.get(next++).withIndexWindow(window), sequence));
-            }
-        }
-        return listed;
-    }
-
-    /// `workItem` as its index window sees it: the columns whose ColumnIndex its page filter reads,
-    /// whose OffsetIndex its plans and page filter read, and whose bloom filter its arrival may
-    /// probe. A row group with a chunk in another file fails before any of them is read
-    /// ([#chunkExtents]), so it needs none: its offsets address that other file.
-    private IndexWindow.Member indexMember(WorkItem workItem) {
-        if (!storedInThisFile(workItem.rowGroup())) {
-            return new IndexWindow.Member(workItem.rowGroup(), workItem.rowGroupIndex(), new BitSet(), new BitSet(),
-                    new BitSet());
-        }
-        BitSet columnIndexColumns = RowGroupPruning.columnIndexColumns(workItem, pruning.pageFiltering(workItem));
-        return new IndexWindow.Member(workItem.rowGroup(), workItem.rowGroupIndex(),
-                fetchPlanBuilder.offsetIndexColumns(workItem, columnIndexColumns), columnIndexColumns,
-                workItem.bloomFilterColumns());
-    }
-
-    private static boolean storedInThisFile(RowGroup rowGroup) {
-        for (ColumnChunk chunk : rowGroup.columns()) {
-            if (!chunk.filePath().isEmpty()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // ==================== The stages of a work item ====================
-
-    /// What the work item's Bloom filters and dictionaries decide; a row group they cannot drop is
-    /// kept without a read.
-    private Need arrival(Planning planning) throws IOException {
-        if (planning.arrival != null) {
-            return null;
-        }
-        WorkItem workItem = planning.workItem;
-        if (!RowGroupPruning.droppableOnArrival(workItem)) {
-            planning.arrival = RowGroupPruning.Arrival.KEPT;
-            return null;
-        }
-        chunkExtents(planning);
-        try {
-            ByteSource bloomFilters = planning.reads;
-            if (!workItem.bloomFilterColumns().isEmpty()) {
-                Need need = workItem.indexWindow().bloomFiltersNeed();
-                if (need != null) {
-                    return need;
-                }
-                bloomFilters = workItem.indexWindow().bloomFilters(workItem.workItemIndex(), planning.reads);
-            }
-            planning.reads.clearMissing();
-            RowGroupPruning.Arrival arrival = pruning.probeOnArrival(workItem, bloomFilters, planning.reads,
-                    planning.probe);
-            // A filter or dictionary not yet read counted as absent: a drop stands, a keep is
-            // probed again once it has arrived
-            Parsed<?> missing = planning.reads.missing();
-            if (!arrival.dropped() && missing != null) {
-                return planning.reads.need(missing, PlanningReads.PRUNING);
-            }
-            planning.arrival = arrival;
-            return null;
-        }
-        catch (IOException e) {
-            throw metadataFailure(workItem, e);
-        }
-    }
-
-    /// The work item's index buffers and the rows its page filter keeps, after its arrival: a
-    /// page-index window is read only once a member survives its Bloom filters and dictionaries.
-    private Need shared(Planning planning) throws IOException {
-        if (planning.shared != null) {
-            return null;
-        }
-        Need need = arrival(planning);
-        if (need != null) {
-            return need;
-        }
-        WorkItem workItem = planning.workItem;
-        if (planning.arrival.dropped()) {
-            planning.shared = new SharedRowGroupMetadata(null, RowRanges.ALL, null, true);
-            return null;
-        }
-        chunkExtents(planning);
-        try {
-            need = workItem.indexWindow().indexNeed();
-            if (need != null) {
-                return need;
-            }
-            RowGroupIndexBuffers indexBuffers = workItem.indexWindow().buffersFor(workItem.workItemIndex());
-            RowRanges matchingRows = RowRanges.ALL;
-            if (pruning.pageFiltering(workItem)) {
-                matchingRows = PageFilterEvaluator.computeMatchingRows(
-                        workItem.columnOrdinals().filter(), workItem.rowGroup(), indexBuffers,
-                        new LogContext(workItem.inputFile().name(), workItem.rowGroupIndex()),
-                        workItem.columnOrdinals().boundsReadability());
-            }
-            planning.shared = new SharedRowGroupMetadata(indexBuffers, matchingRows, planning.arrival.dictionaries(),
-                    false);
-            return null;
-        }
-        catch (IOException e) {
-            throw metadataFailure(workItem, e);
-        }
-    }
-
-    /// The work item's page index read and, unless its Bloom filters or dictionaries dropped it,
-    /// its mask probed.
-    private Need masked(Planning planning) throws IOException {
-        Need need = shared(planning);
-        return need != null || planning.shared.dropped() ? need : mask(planning);
-    }
-
-    /// Whether every decoded column of the work item can take a page mask, by the page-format
-    /// probe of each nested column without an offset index.
-    private Need mask(Planning planning) throws IOException {
-        if (planning.mask != null) {
-            return null;
-        }
-        WorkItem workItem = planning.workItem;
-        chunkExtents(planning);
-        try {
-            planning.reads.clearMissing();
-            Parsed<Boolean> applicable = FetchPlanBuilder.masksApplicableForRowGroup(projection.decoded(),
-                    workItem.rowGroup(), workItem.fileSchema(), workItem.columnOrdinals(), planning.reads);
-            if (applicable.needsBytes()) {
-                return planning.reads.need(applicable, PlanningReads.INDEXES);
-            }
-            planning.mask = applicable.value() ? MaskCapability.YES : MaskCapability.NO;
-            return null;
-        }
-        catch (IOException e) {
-            throw metadataFailure(workItem, e);
-        }
-    }
-
-    /// The fetch plans of every decoded column for the work item's row group, and then its batches.
-    private Need plans(Planning planning) throws IOException {
-        if (planning.plans != null) {
-            return null;
-        }
-        WorkItem workItem = planning.workItem;
-        chunkExtents(planning);
-        // Before the page index, which the plans need and these section requests do not: they start
-        // while it is read
-        insertChunkSections(planning);
-        Need need = shared(planning);
-        if (need != null) {
-            return need;
-        }
-        SharedRowGroupMetadata shared = planning.shared;
-        int projectedCount = projection.decoded().getProjectedColumnCount();
-        if (shared.dropped()) {
-            FetchPlan[] empty = new FetchPlan[projectedCount];
-            Arrays.fill(empty, FetchPlan.EMPTY);
-            planning.plans = new RowGroupPlans(empty, planBatches(workItem, 0), List.of());
-            return null;
-        }
-        RowGroup rowGroup = workItem.rowGroup();
-        RowRanges matchingRows = shared.matchingRows();
-
-        // The tail-read fast path's synthesized matching range, applied here rather than to the
-        // shared metadata so that it stays independent of `tailSkip`
-        if (matchingRows.isAll() && tailSkip > 0 && workItem.workItemIndex() == 0) {
-            matchingRows = RowRanges.range(tailSkip, rowGroup.numRows());
-        }
-
-        // Per-page masks are honoured for this row group only when every decoded column is
-        // mask-friendly; masking a subset of columns would leave sibling columns row-misaligned,
-        // so a closed gate promotes `matchingRows` to ALL. Row ranges that are empty need no mask:
-        // every column gets `FetchPlan.EMPTY`, so the gate is not probed for them.
-        if (!matchingRows.isAll() && !matchingRows.isEmpty()) {
-            need = mask(planning);
-            if (need != null) {
-                return need;
-            }
-            if (planning.mask == MaskCapability.NO) {
-                matchingRows = RowRanges.ALL;
-            }
-        }
-
-        // Whether a *predicate* narrowed the pages of this row group, which is what
-        // PageFilterEvent reports, rather than the tail-read fast path's range or nothing at all
-        // where a closed mask gate promoted the ranges back to ALL.
-        boolean pageFilterApplied = !matchingRows.isAll() && !shared.matchingRows().isAll();
-
-        FetchPlanBuilder.Plans plans = fetchPlanBuilder.columnPlans(workItem, shared, matchingRows,
-                pageFilterApplied, perRgMaxRows(workItem), sequence, chunkExtents(planning));
-
-        // Last, once nothing above can fail: the batch plan takes each row group once.
-        planning.plans = new RowGroupPlans(plans.columns(),
-                planBatches(workItem, matchingRows.rowCount(rowGroup.numRows())), plans.pageFilterEvents());
-        return null;
-    }
-
-    /// Inserts the section requests of `workItem`'s row group from its chunks' extents, once, where
-    /// every row of it is read and nothing can drop it, so they start before its page index is
-    /// read.
-    private void insertChunkSections(Planning planning) throws IOException {
-        WorkItem workItem = planning.workItem;
-        if (readsAllRows(workItem) && !HeldBytes.inMemory(workItem.inputFile())
-                && sequence.sections(workItem.workItemIndex()) == null) {
-            sequence.insert(workItem.fileIndex(), workItem.workItemIndex(), workItem.inputFile(),
-                    fetchPlanBuilder.chunkSpans(workItem, chunkExtents(planning)));
-        }
-    }
-
-    /// The work item's chunk extents, checked on the first call, which every stage makes before it
-    /// reads anything its row group's footer entries address: that the chunks are in this file,
-    /// and then that they lie within it and do not overlap.
-    ///
-    /// @throws UnsupportedOperationException if a chunk is stored in another file
-    /// @throws ParquetReadException if a chunk lies outside the file or two overlap
-    private Extent[] chunkExtents(Planning planning) throws IOException {
-        if (planning.extents == null) {
-            requireSameFile(planning.workItem);
-            planning.extents = fetchPlanBuilder.extents(planning.workItem);
-        }
-        return planning.extents;
-    }
-
-    /// Whether every row of `workItem`'s row group is read and no Bloom filter or dictionary can
-    /// drop it, so its section requests follow from its chunks' extents in the footer alone: no
-    /// filter narrows its pages, no tail or row limit cuts it, and its chunks are in this file.
-    private boolean readsAllRows(WorkItem workItem) {
-        long perRgMaxRows = perRgMaxRows(workItem);
-        return !RowGroupPruning.droppableOnArrival(workItem) && !pruning.pageFiltering(workItem)
-                && !(tailSkip > 0 && workItem.workItemIndex() == 0)
-                && (perRgMaxRows == 0 || perRgMaxRows >= workItem.rowGroup().numRows())
-                && storedInThisFile(workItem.rowGroup());
-    }
-
-    /// Plans `workItem`'s batches from the rows its page masks keep, or returns `null` when the
-    /// read plans no batches.
-    private BatchPlan.RowGroupBatches planBatches(WorkItem workItem, long keptRows) {
-        batchesPlanned = true;
-        BatchPlan plan = batchPlan;
-        if (plan == null) {
-            return null;
-        }
-        return plan.plan(workItem.workItemIndex(), workItem.fileIndex(), workItem.inputFile().name(),
-                workItem.filterAlwaysMatches(), keptRows);
-    }
-
-    /// Per-row-group remainder of the iterator-wide `maxRows` budget: `0` (no fetch-side
-    /// truncation) when `maxRows` is unset or a filter is active, since `head(N)` then caps
-    /// matching rows; otherwise what is left of it at this row group.
-    private long perRgMaxRows(WorkItem workItem) {
-        if (maxRows <= 0 || filterPredicate != null) {
-            return 0;
-        }
-        long leadingSkip = workItem.workItemIndex() == 0 ? progress.firstRowGroupSkip() : 0;
-        return Math.max(0, maxRows - workItem.rowsConsumedBefore() + leadingSkip);
-    }
-
-    private static IOException metadataFailure(WorkItem workItem, IOException e) {
-        return new IOException(ExceptionContext.filePrefix(workItem.inputFile().name())
-                + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
-    }
-
-    /// Fails unless every chunk of the work item's row group stores its data in the file being
-    /// read. It precedes every read the row group drives, whose offsets would address the other
-    /// file for such a chunk.
-    ///
-    /// @throws UnsupportedOperationException if any chunk names another file
-    private static void requireSameFile(WorkItem workItem) {
-        List<ColumnChunk> columns = workItem.rowGroup().columns();
-        for (int i = 0; i < columns.size(); i++) {
-            try {
-                columns.get(i).requireSameFile();
-            }
-            catch (UnsupportedOperationException e) {
-                throw new UnsupportedOperationException(
-                        ExceptionContext.filePrefix(workItem.inputFile().name())
-                        + "Cannot read column " + i + " in row group "
-                        + workItem.rowGroupIndex() + ": " + e.getMessage(), e);
-            }
-        }
-    }
 
     // ==================== What the read and callers take ====================
 
@@ -1009,7 +553,7 @@ final class PlanningChain {
     /// index where nothing can. The chain parses them when it reaches the work item, wherever it
     /// runs; this only starts them, on the calling column's thread.
     void startNextUnit(WorkItem workItem) throws IOException {
-        if (workItem.indexWindow() == null || !storedInThisFile(workItem.rowGroup())) {
+        if (workItem.indexWindow() == null || !Planner.storedInThisFile(workItem.rowGroup())) {
             return;
         }
         if (!RowGroupPruning.droppableOnArrival(workItem)) {
@@ -1077,7 +621,7 @@ final class PlanningChain {
 
     /// The residue of the physical skip within the first work item, once the work list holds it.
     long firstRowGroupSkip() {
-        return progress.firstRowGroupSkip();
+        return planner.firstRowGroupSkip();
     }
 
     // ==================== The cursor ====================
@@ -1274,17 +818,17 @@ final class PlanningChain {
     }
 
     void setTailSkip(long tailSkip) {
-        this.tailSkip = tailSkip;
+        planner.setTailSkip(tailSkip);
     }
 
     void setBatchPlan(BatchPlan batchPlan) {
-        this.batchPlan = batchPlan;
+        planner.setBatchPlan(batchPlan);
     }
 
     /// Whether a work item's batches were planned, after which the batch plan and tail skip are
     /// fixed.
     boolean batchesPlanned() {
-        return batchesPlanned;
+        return planner.batchesPlanned();
     }
 
     /// Records that a column is done with `workItem`; the last of the columns that took it drops
