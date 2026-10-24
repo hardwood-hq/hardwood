@@ -232,7 +232,7 @@ class FetchSequenceReadTest {
 
     /// A section request that serves several columns names each of them, in file order.
     @Test
-    void anEntryNamesEveryColumnItServes() throws Exception {
+    void aSectionRequestNamesEveryColumnItServes() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(write(ROWS_PER_ROW_GROUP, ROWS_PER_ROW_GROUP,
                 "a", "b")));
         file.open();

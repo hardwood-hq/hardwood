@@ -159,7 +159,7 @@ public final class FetchPlanBuilder {
                         new ThriftCompactReader(colBuffers.offsetIndex()), columnChunk.metaData());
                 List<PageLocation> allPages = offsetIndex.pageLocations();
 
-                // Determine needed pages (filter + maxRows). Each section request pairs a
+                // Determine needed pages (filter + maxRows). Each entry pairs a
                 // PageLocation with its PageRowMask so the column keeps only the
                 // records inside the matching ranges.
                 List<IndexedFetchPlan.NeededPage> neededPages = computeNeededPages(
@@ -375,8 +375,7 @@ public final class FetchPlanBuilder {
     }
 
     /// The section requests of `sections`, in offset order, that overlap `[start, end)`.
-    private static List<SectionRequest> overlapping(List<SectionRequest> sections,
-                                                                  long start, long end) {
+    private static List<SectionRequest> overlapping(List<SectionRequest> sections, long start, long end) {
         List<SectionRequest> overlapping = new ArrayList<>();
         for (SectionRequest section : sections) {
             if (section.offset() < end && section.end() > start) {

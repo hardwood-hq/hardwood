@@ -32,7 +32,7 @@ class FetchSequenceTest {
 
     /// A demanded section request starts at once, whatever F and R hold, and is charged to neither.
     @Test
-    void aDemandedEntryStartsWhateverFAndRHold() throws Exception {
+    void aDemandedSectionRequestStartsWhateverFAndRHold() throws Exception {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(0);
         FetchSequence sequence = sequence(buffer, 0);
@@ -47,7 +47,7 @@ class FetchSequenceTest {
     /// The next unit's first section request starts without F and is not charged to R; the section
     /// requests after it wait for room.
     @Test
-    void theNextUnitsFirstEntryStartsUncharged() {
+    void theNextUnitsFirstSectionRequestStartsUncharged() {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(0);
         FetchSequence sequence = sequence(buffer, 0);
@@ -62,7 +62,7 @@ class FetchSequenceTest {
     /// Speculative section requests start in position order while their bytes stay within F, and
     /// each one passed starts the next.
     @Test
-    void speculativeEntriesStartInPositionOrderWithinF() {
+    void speculativeSectionRequestsStartInPositionOrderWithinF() {
         CountingInputFile file = file();
         FetchSequence sequence = sequence(new ReadAheadBuffer(1 << 20), 2 * LENGTH);
         List<SectionRequest> later = insert(sequence, file, 1, 2);
@@ -112,7 +112,7 @@ class FetchSequenceTest {
     /// A section request is released once every column holding it has passed it, which returns its
     /// charges and drops its bytes; a later demand for it is a fault.
     @Test
-    void anEntryIsReleasedOnceEveryHolderHasPassedIt() {
+    void aSectionRequestIsReleasedOnceEveryHolderHasPassedIt() {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         FetchSequence sequence = sequence(buffer, 1 << 20);
@@ -133,7 +133,7 @@ class FetchSequenceTest {
     /// A speculative section request that fails is dropped, its charges returned, and started again
     /// when demanded.
     @Test
-    void aFailedSpeculativeEntryIsDroppedAndReadAgainOnDemand() throws Exception {
+    void aFailedSpeculativeSectionRequestIsDroppedAndReadAgainOnDemand() throws Exception {
         FailingOnce file = new FailingOnce();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         FetchSequence sequence = sequence(buffer, 1 << 20);
@@ -150,7 +150,7 @@ class FetchSequenceTest {
     /// interrupting them, and releases every charge.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void closeWaitsForTheEntriesInFlightAndReleasesEveryCharge() throws Exception {
+    void closeWaitsForTheSectionRequestsInFlightAndReleasesEveryCharge() throws Exception {
         HeldFile file = new HeldFile();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         PrefetchTasks tasks = new PrefetchTasks(task -> Thread.ofVirtual().start(task));

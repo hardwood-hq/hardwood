@@ -629,7 +629,7 @@ final class PlanningChain {
         List<Planning> listed = new ArrayList<>(count);
         int next = 0;
         for (IndexWindow window : windows) {
-            window.insertEntries(sequence);
+            window.insertSections(sequence);
             for (int m = 0; m < window.memberCount(); m++) {
                 listed.add(new Planning(planned.get(next++).withIndexWindow(window), sequence));
             }
@@ -778,7 +778,7 @@ final class PlanningChain {
         chunkExtents(planning);
         // Before the page index, which the plans need and these section requests do not: they start
         // while it is read
-        insertChunkEntries(planning);
+        insertChunkSections(planning);
         Need need = shared(planning);
         if (need != null) {
             return need;
@@ -831,7 +831,7 @@ final class PlanningChain {
     /// Inserts the section requests of `workItem`'s row group from its chunks' extents, once, where
     /// every row of it is read and nothing can drop it, so they start before its page index is
     /// read.
-    private void insertChunkEntries(Planning planning) throws IOException {
+    private void insertChunkSections(Planning planning) throws IOException {
         WorkItem workItem = planning.workItem;
         if (readsAllRows(workItem) && !HeldBytes.inMemory(workItem.inputFile())
                 && sequence.sections(workItem.workItemIndex()) == null) {

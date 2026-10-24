@@ -63,7 +63,7 @@ class IndexWindowBloomFilterTest {
         BitSet[] columns = { new BitSet(), column(CODE), column(CODE) };
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, members(rowGroups().subList(0, 3), columns))
                 .getFirst();
-        window.insertEntries(FetchSequence.demandOnly(context));
+        window.insertSections(FetchSequence.demandOnly(context));
 
         assertThat(window.bloomFiltersFor(0)).containsOnlyNulls();
         assertThat(file.reads()).isEmpty();
@@ -84,7 +84,7 @@ class IndexWindowBloomFilterTest {
         RowGroup withoutLength = withoutBloomFilterLength(rowGroups().get(0), CODE);
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
                 members(List.of(withoutLength), new BitSet[] { column(CODE) })).getFirst();
-        window.insertEntries(FetchSequence.demandOnly(context));
+        window.insertSections(FetchSequence.demandOnly(context));
         assertThat(window.bloomFiltersNeed()).isNull();
 
         ByteBuffer[] fetched = window.bloomFiltersFor(0);

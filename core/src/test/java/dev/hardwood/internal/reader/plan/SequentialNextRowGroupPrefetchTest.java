@@ -46,7 +46,7 @@ class SequentialNextRowGroupPrefetchTest {
     }
 
     @Test
-    void theNextRowGroupsSharedEntryIsReadOnce() throws Exception {
+    void theNextRowGroupsSharedSectionRequestIsReadOnce() throws Exception {
         // Two back-to-back columns: their chunks are coalesced into one section request.
         CountingInputFile file = read(write("a", "b"));
 

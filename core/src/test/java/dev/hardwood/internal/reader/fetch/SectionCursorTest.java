@@ -61,7 +61,7 @@ class SectionCursorTest {
 
     /// A walk passes the section requests that end before where it reads next, once each.
     @Test
-    void aWalkPassesTheEntriesBehindIt() throws Exception {
+    void aWalkPassesTheSectionRequestsBehindIt() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(300));
         file.open();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);

@@ -154,7 +154,7 @@ class IndexWindowTest {
             BitSet columnIndexColumns) throws Exception {
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
                 members(rowGroups().subList(0, count), offsetIndexColumns, columnIndexColumns)).getFirst();
-        window.insertEntries(FetchSequence.demandOnly(context));
+        window.insertSections(FetchSequence.demandOnly(context));
         return window;
     }
 

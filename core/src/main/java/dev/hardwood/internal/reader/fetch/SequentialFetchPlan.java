@@ -172,7 +172,7 @@ public final class SequentialFetchPlan implements FetchPlan {
     /// As [#build(InputFile, ColumnSchema, ColumnChunk, HardwoodContextImpl, int, String, long)],
     /// dropping data pages whose inline [Statistics] prove they cannot match any of the given
     /// AND-necessary leaf predicates, and keeping only the records within `matchingRows`. Dropped
-    /// pages are replaced with [PageInfo#nullPlaceholder] section requests carrying the same
+    /// pages are replaced with [PageInfo#nullPlaceholder] pages carrying the same
     /// `numValues`, so row alignment across sibling columns is preserved and the record-level
     /// filter drops the rows via SQL three-valued logic. Page skipping is only applied when the
     /// column is optional (`maxDefinitionLevel > 0`).

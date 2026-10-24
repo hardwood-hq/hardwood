@@ -115,7 +115,7 @@ public final class SectionCursor implements ByteSource {
             return i;
         }
         if (rest == null) {
-            throw new IllegalStateException("No section holds offset " + position);
+            throw new IllegalStateException("No section request holds offset " + position);
         }
         long limit = i < sections.size() ? sections.get(i).offset() : Long.MAX_VALUE;
         sections.add(i, rest.insert(position, limit));

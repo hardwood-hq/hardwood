@@ -58,7 +58,7 @@ final class IndexWindow {
     private final CoalescedRanges offsetIndexes;
     private final CoalescedRanges columnIndexes;
     private final CoalescedRanges bloomFilters;
-    /// Each structure's requests; `null` until [#insertEntries].
+    /// Each structure's requests; `null` until [#insertSections].
     private PlanningReads offsetIndexReads;
     private PlanningReads columnIndexReads;
     private PlanningReads bloomFilterReads;
@@ -207,7 +207,7 @@ final class IndexWindow {
 
     /// Inserts the window's requests into `sequence`, each held by every member. Called once, as
     /// the file is planned.
-    void insertEntries(FetchSequence sequence) {
+    void insertSections(FetchSequence sequence) {
         offsetIndexReads = reads(sequence, offsetIndexes, " indexes");
         columnIndexReads = reads(sequence, columnIndexes, " indexes");
         bloomFilterReads = reads(sequence, bloomFilters, " pruning");
