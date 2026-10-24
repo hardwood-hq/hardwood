@@ -36,6 +36,7 @@ class ReadPathLayersTest {
             "internal.reader.footer",
             "internal.reader.plan",
             "internal.reader.pipeline",
+            "internal.reader.engine",
             "internal.reader.row");
 
     private static final Path SOURCES = Path.of("src/main/java/dev/hardwood");

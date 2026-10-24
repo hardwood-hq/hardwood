@@ -87,7 +87,7 @@ public final class FileMetadataCache {
         footers.put(0, Footer.of(PreparedFile.of(firstFile, firstFileFooter)));
     }
 
-    List<InputFile> inputFiles() {
+    public List<InputFile> inputFiles() {
         return inputFiles;
     }
 

@@ -142,4 +142,5 @@ The read path in `core` is split into packages by responsibility. Each package d
 | `internal.reader.footer` | Reading and parsing a file's footer | [FILE_METADATA.md](_designs/FILE_METADATA.md) |
 | `internal.reader.plan` | The planning of a read: work items, pruning, fetch plans per row group, the batch plan | [READ_PIPELINE.md](_designs/READ_PIPELINE.md), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) |
 | `internal.reader.pipeline` | Decoded pages into batches: the scheduler, scheduled columns, cells, segments and fills | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) |
+| `internal.reader.engine` | A read with a single decision point (`ReadEngine`): the planning, requests, walks and decodes of the column reads it supports, selected by `hardwood.internal.readEngine` | — |
 | `internal.reader.row` | The row readers, their flyweights and accessors, record filtering | [ROW_READER.md](_designs/ROW_READER.md), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) |

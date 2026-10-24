@@ -26,6 +26,7 @@ import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.footer.FileFooter;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader.FooterRead;
@@ -117,7 +118,7 @@ public class ParquetFileReader implements Closeable {
     /// entry once it is closed, so a long-lived reader does not accumulate the work
     /// lists of finished children. Concurrent because a child reader may be closed
     /// from another thread.
-    private final Map<RowGroupIterator, Closeable> openChildren = new ConcurrentHashMap<>();
+    private final Map<Closeable, Closeable> openChildren = new ConcurrentHashMap<>();
     /// Held shared for the whole of each child build and exclusively by [#close()], so a
     /// close waits for the builds under way before it closes anything, and a build that
     /// finishes after a close began sees `closed` set. See [#buildChild].
@@ -725,6 +726,10 @@ public class ParquetFileReader implements Closeable {
         NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
 
         if (resolved == null) {
+            ProjectedSchema requested = ProjectedSchema.create(schema, requests, false);
+            if (ReadEngine.supports(fileMetadataCache.inputFiles().size(), requested, schema, rowGroups, false)) {
+                return openEngineRead(requested, rowGroups, layers, batchSize);
+            }
             RowGroupIterator iterator = trackedIterator(0, 0, 0);
             iterator.setFirstFile(schema, rowGroups);
             ProjectedSchema projected = iterator.initialize(
@@ -771,6 +776,20 @@ public class ParquetFileReader implements Closeable {
         return new ColumnRead(scan, readProjection.payload(), layers);
     }
 
+    /// A column read of `projected` driven by the [ReadEngine].
+    private ColumnRead openEngineRead(ProjectedSchema projected, List<RowGroup> rowGroups,
+                                      NestedLevelComputer.Layers[] layers, int batchSize) throws IOException {
+        ReadEngine engine = new ReadEngine(fileMetadataCache, context, openChildren::remove);
+        openChildren.put(engine, engine);
+        engine.initialize(schema, rowGroups, ReadProjection.of(projected));
+        if (!engine.hasLiveWorkItem()) {
+            return new ColumnRead(trackedChild(engine, ColumnScan.empty(engine)), projected, layers);
+        }
+        ColumnScan scan = trackedChild(engine, ColumnScan.openEngine(engine, schema, ReadProjection.of(projected),
+                resolveBatchSize(batchSize, projected, rowGroups), readAheadBudgetRows(projected, rowGroups)));
+        return new ColumnRead(scan, projected, layers);
+    }
+
     /// Iterators still tracked for teardown by [#close()]. Visible for testing.
     int trackedIteratorCount() {
         return openChildren.size();
@@ -795,7 +814,7 @@ public class ParquetFileReader implements Closeable {
     /// When a close began while the child was being built, closes the child and fails.
     ///
     /// @throws IllegalStateException if this reader is closed
-    private <C extends Closeable> C trackedChild(RowGroupIterator iterator, C child) throws IOException {
+    private <C extends Closeable> C trackedChild(Closeable iterator, C child) throws IOException {
         if (closed) {
             IllegalStateException failure = closedFailure();
             try {

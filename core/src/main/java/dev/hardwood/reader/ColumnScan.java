@@ -9,6 +9,7 @@ package dev.hardwood.reader;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
@@ -19,6 +20,7 @@ import dev.hardwood.internal.reader.batch.LeafCompaction;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.pipeline.ReadScheduler;
 import dev.hardwood.internal.reader.plan.RowGroupIterator;
 import dev.hardwood.internal.reader.row.RecordFilterTally;
@@ -45,7 +47,8 @@ final class ColumnScan implements Closeable {
     private final int payloadCount;
     /// `null` for an unfiltered read.
     private final SelectionEngine engine;
-    private final RowGroupIterator rowGroupIterator;
+    /// The read the cursors' columns run on, closed after them.
+    private final Closeable read;
     /// Per-file record-filter counts for JFR. Every batch a filtered read produces
     /// has passed through the selection, so the counts are complete for the read.
     private final RecordFilterTally tally = new RecordFilterTally();
@@ -57,11 +60,11 @@ final class ColumnScan implements Closeable {
     private final CloseClaim closeClaim = new CloseClaim();
 
     private ColumnScan(ColumnCursor[] cursors, int payloadCount, SelectionEngine engine,
-                       RowGroupIterator rowGroupIterator) {
+                       Closeable read) {
         this.cursors = cursors;
         this.payloadCount = payloadCount;
         this.engine = engine;
-        this.rowGroupIterator = rowGroupIterator;
+        this.read = read;
     }
 
     /// A scan over every decoded column of `projection`. With a `filter`, the
@@ -120,8 +123,20 @@ final class ColumnScan implements Closeable {
 
     /// A scan for a read in which pruning dropped every row group: it has no
     /// cursors, starts no column, and its first [#advance()] returns `false`.
-    static ColumnScan empty(RowGroupIterator rowGroupIterator) {
-        return new ColumnScan(new ColumnCursor[0], 0, null, rowGroupIterator);
+    static ColumnScan empty(Closeable read) {
+        return new ColumnScan(new ColumnCursor[0], 0, null, read);
+    }
+
+    /// An unfiltered scan over every decoded column of `projection`, driven by `engine`.
+    static ColumnScan openEngine(ReadEngine engine, FileSchema schema, ReadProjection projection, int batchSize,
+                                 long budgetRows) {
+        ProjectedSchema decoded = projection.decoded();
+        List<BatchExchange<BatchExchange.Batch>> exchanges = engine.start(decoded, batchSize, budgetRows);
+        ColumnCursor[] cursors = new ColumnCursor[exchanges.size()];
+        for (int i = 0; i < cursors.length; i++) {
+            cursors[i] = ColumnCursor.engine(schema.getColumn(decoded.toOriginalIndex(i)), exchanges.get(i));
+        }
+        return new ColumnScan(cursors, projection.payloadColumnCount(), null, engine);
     }
 
     /// The cursor of payload column `index`.
@@ -367,7 +382,7 @@ final class ColumnScan implements Closeable {
         // Released even when a cursor's teardown fails: this scan will not run its
         // close body again, so skipping the release would leave the work list
         // reachable for the parent reader's whole lifetime.
-        try (rowGroupIterator) {
+        try (read) {
             tally.close();
             for (ColumnCursor cursor : cursors) {
                 cursor.close();

@@ -88,7 +88,7 @@ public final class BatchPlan {
     /// a binary column has a use for.
     ///
     /// @param columns every column the read decodes, predicate columns included
-    static boolean endsBatchesAtRowGroupBoundaries(List<ColumnSchema> columns) {
+    public static boolean endsBatchesAtRowGroupBoundaries(List<ColumnSchema> columns) {
         for (ColumnSchema column : columns) {
             switch (column.type()) {
                 case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {

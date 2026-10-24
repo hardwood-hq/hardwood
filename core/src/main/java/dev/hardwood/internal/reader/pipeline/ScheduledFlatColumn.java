@@ -308,7 +308,7 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     /// of an unmasked page, and at least the rows up to its mask's last for a masked one.
     ///
     /// @throws ParquetReadException if it does not
-    private static void checkRows(PageInfo info, int values) {
+    static void checkRows(PageInfo info, int values) {
         PageRowMask mask = info.mask();
         if (mask.isAll() ? values != info.records() : values < mask.end(mask.intervalCount() - 1)) {
             throw new ParquetReadException("Page holds " + values + " values, but its metadata gives it "

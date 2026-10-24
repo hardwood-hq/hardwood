@@ -35,7 +35,9 @@ final class ColumnCursor {
     private final boolean nested;
     private final BatchExchange<BatchExchange.Batch> flatExchange;
     private final BatchExchange<NestedBatch> nestedExchange;
-    private final ScheduledColumn<?> pipeline;
+    /// Stops the column's pipeline; nothing for a column the read engine drives, which the read's
+    /// close stops.
+    private final Runnable stop;
 
     private BatchExchange.Batch flatBatch;
     private NestedBatch nestedBatch;
@@ -43,12 +45,12 @@ final class ColumnCursor {
     private boolean closed;
 
     private ColumnCursor(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatExchange,
-                         BatchExchange<NestedBatch> nestedExchange, ScheduledColumn<?> pipeline) {
+                         BatchExchange<NestedBatch> nestedExchange, Runnable stop) {
         this.column = column;
         this.nested = nestedExchange != null;
         this.flatExchange = flatExchange;
         this.nestedExchange = nestedExchange;
-        this.pipeline = pipeline;
+        this.stop = stop;
     }
 
     /// Whether a column with `layers` decodes through the nested pipeline: any
@@ -81,14 +83,20 @@ final class ColumnCursor {
             BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
             ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, pageSource, exchange, column,
                     batchSize, context.decompressorFactory(), layers, indexMode, fixedListFastPathEnabled);
-            return new ColumnCursor(column, null, exchange, scheduled);
+            return new ColumnCursor(column, null, exchange, scheduled::close);
         }
         // A flat cell gives its batch values on the first page task that reaches it, sized
         // to the rows the batch plan puts in it.
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
         ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, pageSource, exchange, column, batchSize,
                 context.decompressorFactory(), null);
-        return new ColumnCursor(column, exchange, null, scheduled);
+        return new ColumnCursor(column, exchange, null, scheduled::close);
+    }
+
+    /// The cursor of a flat column the read engine drives, over its exchange.
+    static ColumnCursor engine(ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange) {
+        return new ColumnCursor(column, exchange, null, () -> {
+        });
     }
 
     /// Takes the next batch from the exchange.
@@ -179,6 +187,6 @@ final class ColumnCursor {
             return;
         }
         closed = true;
-        pipeline.close();
+        stop.run();
     }
 }
