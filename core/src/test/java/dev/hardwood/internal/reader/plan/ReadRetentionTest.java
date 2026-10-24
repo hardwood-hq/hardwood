@@ -108,18 +108,18 @@ class ReadRetentionTest {
         QuiescentExecutor speculative = new QuiescentExecutor();
         try (HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(2, speculative)) {
             FileMetadataCache cache = new FileMetadataCache(List.copyOf(files), context);
-            RowGroupIterator iterator;
-            System.setProperty(FooterReadAhead.MAX_FILES_AHEAD_PROPERTY, Integer.toString(FILES_AHEAD));
-            try {
-                iterator = new RowGroupIterator(cache, ignored -> {}, context, 0, 0, 0);
-            }
-            finally {
-                System.clearProperty(FooterReadAhead.MAX_FILES_AHEAD_PROPERTY);
-            }
+            RowGroupIterator iterator = new RowGroupIterator(cache, ignored -> {}, context, 0, 0, 0);
             try {
                 iterator.openFirst();
-                iterator.initialize(ReadProjection.of(
-                        ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.all())), null, true);
+                // The read takes the files ahead as it sets up its planning
+                System.setProperty(FooterReadAhead.MAX_FILES_AHEAD_PROPERTY, Integer.toString(FILES_AHEAD));
+                try {
+                    iterator.initialize(ReadProjection.of(
+                            ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.all())), null, true);
+                }
+                finally {
+                    System.clearProperty(FooterReadAhead.MAX_FILES_AHEAD_PROPERTY);
+                }
                 RowGroupIterator.WorkItem first = iterator.workItemAt(0);
                 for (int column = 0; column < COLUMNS; column++) {
                     iterator.getColumnPlan(first, column);

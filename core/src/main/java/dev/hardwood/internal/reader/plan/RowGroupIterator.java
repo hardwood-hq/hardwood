@@ -62,8 +62,6 @@ public class RowGroupIterator implements Closeable {
     private final ReadExecutor readExecutor;
     /// The read's requests: its data, its planning reads and its footers read ahead.
     private final FetchSequence sequence;
-    /// The files after the one it has reached whose footers the read reads ahead.
-    private final int filesAhead;
     /// S, the largest request, fixed for the read.
     private final int maxSpan;
     /// Whether the read plans its next unit ahead of its columns: not on a context of zero threads
@@ -197,7 +195,6 @@ public class RowGroupIterator implements Closeable {
         this.plansDeep = maxRows <= 0 && !inMemory;
         this.sequence = new FetchSequence(prefetchTasks, context.readAheadBuffer(),
                 maxRows <= 0 ? FetchSequence.fetchAheadBytes(maxSpan) : 0, this::advancePlanning);
-        this.filesAhead = filesAhead(maxRows, inMemory);
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
         this.physicalSkip = physicalSkip;
@@ -272,7 +269,7 @@ public class RowGroupIterator implements Closeable {
         this.workingSet = new WorkingSet(projected.getProjectedColumnCount(), context.readAheadBuffer());
         SchemaCompatibility schemaCompatibility = new SchemaCompatibility(referenceSchema, projected, filter);
         schemaCompatibility.validateReferenceColumns(referenceFileName());
-        this.chain = new PlanningChain(inputFiles, fileMetadataCache, readExecutor, sequence, filesAhead, referenceSchema,
+        this.chain = new PlanningChain(inputFiles, fileMetadataCache, readExecutor, sequence, referenceSchema,
                 firstFileRowGroups, projection, filter, schemaCompatibility,
                 new RowGroupPruning(context, filter, metadataFilteringEnabled),
                 new FetchPlanBuilder(projection, filter, metadataFilteringEnabled, context, workingSet, maxSpan),
@@ -566,18 +563,6 @@ public class RowGroupIterator implements Closeable {
         if (planning != null && !closed) {
             planning.advance();
         }
-    }
-
-    /// The files after the one it has reached whose footers a read reads ahead: up to
-    /// [FooterReadAhead#maxFilesAhead] for a multi-file read of files not all in memory whose read
-    /// plans ahead, and otherwise only the next file: a read of files all in memory, whose reads
-    /// wait for nothing to overlap, or with a row limit, which may need no further file and under
-    /// a filter learns only downstream that it is satisfied.
-    private int filesAhead(long maxRows, boolean inMemory) {
-        if (inputFiles.size() < 2 || maxRows > 0 || !plansAhead || inMemory) {
-            return 1;
-        }
-        return FooterReadAhead.maxFilesAhead();
     }
 
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers of the read's files, so that a

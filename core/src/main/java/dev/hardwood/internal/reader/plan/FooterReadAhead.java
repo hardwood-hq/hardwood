@@ -73,11 +73,20 @@ final class FooterReadAhead {
         this.fileCount = fileCount;
     }
 
+    /// The files after the one it has reached whose footers a read reads ahead: up to
+    /// [#maxFilesAhead] for a multi-file read that plans past its next unit (a read of files not
+    /// all in memory without a row limit), and otherwise only the next file: a read of files all
+    /// in memory, whose reads wait for nothing to overlap, or with a row limit, which may need no
+    /// further file and under a filter learns only downstream that it is satisfied.
+    static int filesAhead(boolean plansDeep, int fileCount) {
+        return fileCount < 2 || !plansDeep ? 1 : maxFilesAhead();
+    }
+
     /// The files after the one it has reached a read reads footers of ahead:
     /// [#DEFAULT_MAX_FILES_AHEAD] unless overridden through [#MAX_FILES_AHEAD_PROPERTY], read for
     /// each read. A value that is not a positive count is rejected rather than replaced by the
     /// default; `1` reads only the next file's footer ahead.
-    static int maxFilesAhead() {
+    private static int maxFilesAhead() {
         return InternalProperty.intValue(MAX_FILES_AHEAD_PROPERTY, DEFAULT_MAX_FILES_AHEAD, 1, "a positive count");
     }
 

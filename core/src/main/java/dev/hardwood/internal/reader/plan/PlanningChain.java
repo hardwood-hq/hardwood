@@ -218,7 +218,7 @@ final class PlanningChain {
     }
 
     PlanningChain(List<InputFile> inputFiles, FileMetadataCache fileMetadataCache, ReadExecutor executor,
-                  FetchSequence sequence, int filesAhead, FileSchema referenceSchema, List<RowGroup> firstFileRowGroups,
+                  FetchSequence sequence, FileSchema referenceSchema, List<RowGroup> firstFileRowGroups,
                   ReadProjection projection, ResolvedPredicate filterPredicate,
                   SchemaCompatibility schemaCompatibility, RowGroupPruning pruning,
                   FetchPlanBuilder fetchPlanBuilder, long maxRows, long physicalSkip, long tailSkip,
@@ -227,7 +227,8 @@ final class PlanningChain {
         this.fileMetadataCache = fileMetadataCache;
         this.executor = executor;
         this.sequence = sequence;
-        this.footerReadAhead = new FooterReadAhead(sequence, footers(), filesAhead, inputFiles.size());
+        this.footerReadAhead = new FooterReadAhead(sequence, footers(),
+                FooterReadAhead.filesAhead(plansDeep, inputFiles.size()), inputFiles.size());
         this.referenceSchema = referenceSchema;
         this.firstFileRowGroups = firstFileRowGroups;
         this.projection = projection;
