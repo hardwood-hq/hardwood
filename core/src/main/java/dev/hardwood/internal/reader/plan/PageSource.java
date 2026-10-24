@@ -19,8 +19,8 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column iterator that yields [PageInfo] objects across all row groups and files.
 ///
-/// For each row group, obtains a [FetchPlan] from [RowGroupIterator#getColumnPlan]
-/// and drains its [PageWalk]. `PageSource` is agnostic of whether pages are
+/// For each row group, takes its [FetchPlan] from the planned work item's plans
+/// ([RowGroupIterator#plansOf]) and drains its [PageWalk]. `PageSource` is agnostic of whether pages are
 /// pre-computed (OffsetIndex) or lazily discovered (sequential scan) — both are
 /// hidden behind the walk.
 ///
@@ -159,8 +159,9 @@ public class PageSource {
             // last page of the row group before this one.
             currentWorkItem = workItem;
             currentPlan = null;
-            FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
-            currentBatches = rowGroupIterator.getBatches(workItem);
+            RowGroupIterator.RowGroupPlans plans = rowGroupIterator.plansOf(workItem);
+            FetchPlan plan = plans.columns()[projectedColumnIndex];
+            currentBatches = plans.batches();
             rowGroupIterator.workingSet().enter(projectedColumnIndex, currentBatches.batchStartRow(),
                     currentBatches.readRowsBefore() + currentBatches.plannedRows());
             currentPlan = plan.walk();
