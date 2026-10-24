@@ -110,6 +110,11 @@
       <artifactId>duckdb_jdbc</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.code-intelligence</groupId>
+      <artifactId>jazzer-junit</artifactId>
+      <scope>test</scope>
+    </dependency>
     <!-- parquet-java (reference implementation) — oracle for bloom-filter hashing/membership -->
     <dependency>
       <groupId>org.apache.parquet</groupId>
@@ -201,6 +206,21 @@
         </configuration>
       </plugin>
 
+      <!-- The fuzz targets (`*FuzzTest`, see TESTING.md) run in an execution of their own: Jazzer
+           attaches an agent to the JVM it runs in, which then hooks every class that JVM loads.
+           Self-attaching is allowed in every execution, so that a selection by `-Dtest`, which
+           runs in the default execution, reaches them too. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <argLine>${test.argLine} -Djdk.attach.allowAttachSelf=true -XX:+EnableDynamicAgentLoading</argLine>
+          <excludes>
+            <exclude>**/*FuzzTest.java</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+
       <!-- Run integration tests against the packaged JAR to test multi-release classes -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -213,6 +233,43 @@
   </build>
 
   <profiles>
+    <!--
+      The fuzz targets replay their seeds and checked-in findings in every build. Activated on
+      the absence of `test`, like the profiles below: a `-Dtest` selection runs in the default
+      execution, which a second execution would repeat.
+    -->
+    <profile>
+      <id>fuzz-regression</id>
+      <activation>
+        <property>
+          <name>!test</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>fuzz-regression</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>test</goal>
+                </goals>
+                <configuration>
+                  <includes>
+                    <include>**/*FuzzTest.java</include>
+                  </includes>
+                  <excludes combine.self="override"/>
+                  <reportsDirectory>${project.build.directory}/surefire-reports-fuzz</reportsDirectory>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <!--
       The result-comparing suites run a second time at small batch capacities, through the
       internal `hardwood.internal.batchSize` property that replaces the auto batch size. At 7
