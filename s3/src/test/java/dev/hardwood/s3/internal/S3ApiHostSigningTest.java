@@ -110,7 +110,7 @@ class S3ApiHostSigningTest {
         S3Api api = new S3Api(httpClient, () -> S3Credentials.of(ACCESS_KEY, SECRET_KEY),
                 REGION, URI.create(endpoint), true, Duration.ofSeconds(10), 0);
 
-        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3",
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", 0,
                 RANGE_BODY.length, null);
 
         assertThat(response.statusCode()).isEqualTo(206);

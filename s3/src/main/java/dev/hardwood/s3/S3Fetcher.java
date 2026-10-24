@@ -133,15 +133,17 @@ final class S3Fetcher implements InputFile {
         long requestNo = networkRequestCount.incrementAndGet();
         long totalBytes = networkBytesFetched.addAndGet(length);
         logFetch(FetchReason.current(), offset, length, requestNo, totalBytes);
-        String range = "bytes=" + offset + "-" + (offset + length - 1);
-        HttpResponse<RangeBody> response = api.getRange(bucket, key, range, length, ifMatch);
+        HttpResponse<RangeBody> response = api.getRange(bucket, key, offset, length, ifMatch);
         int status = response.statusCode();
         RangeBody body = response.body();
         // A 412 to a request without If-Match is an error of the endpoint, reported as such below
         if (status == HTTP_PRECONDITION_FAILED && ifMatch != null) {
-            throw new ParquetReadException("Failed to read range [" + offset + ", " + (offset + length)
-                    + ") from " + name() + ": the file changed since it was opened (HTTP 412 for If-Match "
-                    + ifMatch + ")");
+            throw changed(offset, length, "HTTP 412");
+        }
+        // An endpoint that ignores If-Match answers a changed object with its new ETag
+        Optional<String> etag = response.headers().firstValue("ETag");
+        if (status == 206 && ifMatch != null && etag.isPresent() && !etag.get().equals(ifMatch)) {
+            throw changed(offset, length, "ETag " + etag.get());
         }
         if (status != 206) {
             // A 200 carries the whole object from byte 0: the endpoint ignored the Range header
@@ -161,6 +163,11 @@ final class S3Fetcher implements InputFile {
                     + " bytes but received " + buf.remaining());
         }
         return buf;
+    }
+
+    private ParquetReadException changed(long offset, int length, String answer) {
+        return new ParquetReadException("Failed to read range [" + offset + ", " + (offset + length) + ") from "
+                + name() + ": the file changed since it was opened (" + answer + " for If-Match " + ifMatch + ")");
     }
 
     @Override

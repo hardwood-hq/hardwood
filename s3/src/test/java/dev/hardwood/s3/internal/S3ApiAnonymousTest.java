@@ -74,7 +74,7 @@ class S3ApiAnonymousTest {
 
     @Test
     void requestsAreUnsigned() throws IOException {
-        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3",
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", 0,
                 RANGE_BODY.length, null);
 
         assertThat(api.anonymous()).isTrue();
