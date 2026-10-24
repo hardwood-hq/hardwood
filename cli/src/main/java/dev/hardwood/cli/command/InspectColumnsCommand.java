@@ -232,7 +232,8 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
             return -1;
         }
         try {
-            OffsetIndex oi = OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
+            OffsetIndex oi = OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)),
+                    chunk.metaData());
             return oi.pageLocations().size();
         }
         catch (IOException e) {

@@ -105,6 +105,26 @@ class InspectColumnsCommandTest implements InspectColumnsCommandContract {
                 "Error reading file: [damaged.parquet: row group 0, column 'id'] OffsetIndex field 15 — Unknown field type: 15");
     }
 
+    /// An offset index listing no page for a chunk with values is malformed: the ranked table
+    /// reports it rather than counting no page.
+    @Test
+    void anEmptyOffsetIndexIsReported(@TempDir Path tempDir) throws IOException {
+        Path source = TestResources.path("/column_index_pushdown.parquet");
+        ColumnChunk chunk;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
+            chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(0);
+        }
+        Path damaged = DamagedFiles.emptyOffsetIndex(source, chunk.offsetIndexOffset(), tempDir);
+
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", damaged.toString());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).isEqualTo(
+                "Error reading file: [damaged.parquet: row group 0, column 'id'] Malformed Parquet metadata:"
+                        + " OffsetIndex.page_locations is empty but the column chunk has "
+                        + chunk.metaData().numValues() + " values");
+    }
+
     private Path damageFirstDictionaryPageHeader(Path tempDir) throws IOException {
         Path source = TestResources.path("/dictionary_uncompressed.parquet");
         long offset;

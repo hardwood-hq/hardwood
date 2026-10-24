@@ -88,6 +88,26 @@ class InspectPagesCommandTest implements InspectPagesCommandContract {
                 "Error reading pages: [damaged.parquet: row group 0, column 'id'] ColumnIndex field 15 — Unknown field type: 15");
     }
 
+    /// An offset index listing no page for a chunk with values is malformed, not a chunk
+    /// without pages.
+    @Test
+    void anEmptyOffsetIndexIsReported(@TempDir Path tempDir) throws IOException {
+        Path source = Path.of(pageIndexFile());
+        ColumnChunk chunk;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
+            chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(0);
+        }
+        Path damaged = DamagedFiles.emptyOffsetIndex(source, chunk.offsetIndexOffset(), tempDir);
+
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", damaged.toString());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).isEqualTo(
+                "Error reading pages: [damaged.parquet: row group 0, column 'id'] Malformed Parquet metadata:"
+                        + " OffsetIndex.page_locations is empty but the column chunk has "
+                        + chunk.metaData().numValues() + " values");
+    }
+
     private Path damageFirstChunk(ToLongFunction<ColumnChunk> region, Path tempDir) throws IOException {
         Path source = Path.of(pageIndexFile());
         long offset;
