@@ -18,6 +18,7 @@ import java.util.Objects;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -33,7 +34,6 @@ import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.IndexedFetchPlan;
 import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.reader.fetch.SkippedColumnFetchPlan;
-import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.SharedRowGroupMetadata;
@@ -206,7 +206,7 @@ public final class FetchPlanBuilder {
             ranges.sort(Comparator.comparingLong(Range::start));
             entries = sequence.insert(workItem.workItemIndex(), inputFile,
                     CoalescingPolicy.coalesce(ranges, extents, names(workItem), workItem.rowGroupIndex(), maxSpan,
-                            TailedInputFile.tailOffset(inputFile)));
+                            HeldBytes.heldFrom(inputFile)));
         }
         for (Extent extent : extents) {
             ColumnRead read = reads[extent.column()];
@@ -283,7 +283,7 @@ public final class FetchPlanBuilder {
             }
         }
         return CoalescingPolicy.coalesce(ranges, chunkExtents, names(workItem), workItem.rowGroupIndex(), maxSpan,
-                TailedInputFile.tailOffset(workItem.inputFile()));
+                HeldBytes.heldFrom(workItem.inputFile()));
     }
 
     /// What one decoded column of a row group reads: an indexed column its needed pages and

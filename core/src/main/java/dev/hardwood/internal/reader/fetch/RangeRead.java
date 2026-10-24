@@ -16,8 +16,6 @@ import java.util.concurrent.CompletionException;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.io.ByteBufferInputFile;
-import dev.hardwood.internal.io.MappedInputFile;
 import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.util.Lazy;
 
@@ -68,11 +66,6 @@ public final class RangeRead implements PrefetchTasks.Untaken {
                 new IOException(ExceptionContext.filePrefix(inputFile.name())
                         + "The read was closed before the range at offset " + offset + " (length " + length
                         + ") was fetched")));
-    }
-
-    /// Whether `inputFile` holds its bytes in memory, so a read of it slices them without waiting.
-    public static boolean inMemory(InputFile inputFile) {
-        return inputFile instanceof MappedInputFile || inputFile instanceof ByteBufferInputFile;
     }
 
     private void run() {

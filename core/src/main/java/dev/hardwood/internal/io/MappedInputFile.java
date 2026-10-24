@@ -43,7 +43,7 @@ import dev.hardwood.jfr.FileMappingEvent;
 /// so against a larger-than-2 GB file they intend to keep reading. The up-to-2 GB
 /// path is unaffected: its channel is closed before any read, so reads are pure
 /// mapped-memory slices with no channel operation to interrupt.
-public class MappedInputFile implements InputFile {
+public class MappedInputFile implements InputFile, HeldBytes {
 
     private final Path path;
     private final String name;
@@ -133,6 +133,18 @@ public class MappedInputFile implements InputFile {
             return wholeFile.slice(Math.toIntExact(offset), length);
         }
         return map(channel, offset, length);
+    }
+
+    /// A slice of the whole-file mapping; `null` for a file mapped by region, whose range is
+    /// mapped as it is read ([#readRange]).
+    @Override
+    public ByteBuffer sliceHeld(long offset, int length) {
+        MappedByteBuffer whole = wholeFile;
+        if (whole == null) {
+            return null;
+        }
+        ReadRanges.checkBounds(name, offset, length, whole.capacity());
+        return whole.slice(Math.toIntExact(offset), length);
     }
 
     @Override

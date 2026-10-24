@@ -20,10 +20,10 @@ import dev.hardwood.InputFile;
 import dev.hardwood.MetadataSource;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.reader.fetch.PrefetchTasks;
 import dev.hardwood.internal.reader.fetch.RangeRead;
-import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.footer.FileFooter;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader.FooterRead;
@@ -282,7 +282,7 @@ public final class FileMetadataCache {
         return read.result.handle((ignored, failure) -> null);
     }
 
-    /// Drops the tail of `fileIndex` once its footer has been read ([TailedInputFile#dropTail]), and,
+    /// Drops the tail of `fileIndex` once its footer has been read ([HeldBytes#dropHeld]), and,
     /// but for the first file's, its footer once loaded, for a read that is done with the file or
     /// will not reach it.
     void drop(int fileIndex) {
@@ -297,12 +297,12 @@ public final class FileMetadataCache {
             return;
         }
         if (footer.outcome.isDone() && !footer.outcome.isCompletedExceptionally()) {
-            TailedInputFile.dropTail(footer.outcome.join().inputFile());
+            HeldBytes.drop(footer.outcome.join().inputFile());
         }
         FooterFetch read = footer.read;
         if (read != null && read.result.isDone() && !read.result.isCompletedExceptionally()
                 && read.result.join() != null) {
-            TailedInputFile.dropTail(read.result.join().read().inputFile());
+            HeldBytes.drop(read.result.join().read().inputFile());
         }
     }
 
@@ -318,7 +318,7 @@ public final class FileMetadataCache {
     /// context has no pool.
     private boolean readsInPlace(int fileIndex) {
         return fileIndex >= 0 && fileIndex < inputFiles.size()
-                && RangeRead.inMemory(inputFiles.get(fileIndex))
+                && HeldBytes.inMemory(inputFiles.get(fileIndex))
                 && (!footersSupplied() || !context.hasPool());
     }
 

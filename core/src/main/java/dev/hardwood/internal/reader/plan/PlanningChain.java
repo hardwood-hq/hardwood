@@ -26,6 +26,7 @@ import java.util.function.BooleanSupplier;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
@@ -33,7 +34,6 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
-import dev.hardwood.internal.reader.fetch.RangeRead;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.RowGroupPlans;
@@ -833,7 +833,7 @@ final class PlanningChain {
     /// of it is read and nothing can drop it, so they start before its page index is read.
     private void insertChunkEntries(Planning planning) throws IOException {
         WorkItem workItem = planning.workItem;
-        if (readsAllRows(workItem) && !RangeRead.inMemory(workItem.inputFile())
+        if (readsAllRows(workItem) && !HeldBytes.inMemory(workItem.inputFile())
                 && sequence.entries(workItem.workItemIndex()) == null) {
             sequence.insert(workItem.workItemIndex(), workItem.inputFile(),
                     fetchPlanBuilder.chunkSpans(workItem, chunkExtents(planning)));
