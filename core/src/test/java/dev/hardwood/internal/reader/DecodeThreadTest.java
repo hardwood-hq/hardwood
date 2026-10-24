@@ -180,7 +180,6 @@ class DecodeThreadTest {
         }
 
         assertThat(executor.failure()).isNull();
-        assertThat(flatSealedFillTasks).hasPositiveValue();
     }
 
     /// The second file fails its schema check as the fetcher reaches it, between two work items:

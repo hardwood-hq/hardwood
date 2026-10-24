@@ -87,11 +87,8 @@ class FetchSequenceReadTest {
                 iterator.getColumnPlan(iterator.workItemAt(0), 0);
                 // The next unit, and without a row limit every row group F has room for, is planned
                 // on the read's executor, which starts each one's first entry then
-                int lastPlanned = maxRows > 0 ? 1 : ROW_GROUPS - 1;
-                for (int i = 0; i < 100 && !iterator.isPlannedAhead(lastPlanned); i++) {
-                    Thread.sleep(50);
-                }
-                assertThat(speculative.awaitQuiescence(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(speculative.awaitQuiescence(10, TimeUnit.SECONDS, iterator::isPlanningAtRest))
+                        .as("planning and its reads at rest").isTrue();
             }
             finally {
                 iterator.close();
@@ -111,11 +108,12 @@ class FetchSequenceReadTest {
             RowGroupIterator iterator = inMemoryIterator(context);
             try {
                 iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                for (int i = 0; i < 100 && !iterator.isPlannedAhead(1); i++) {
-                    Thread.sleep(50);
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (!iterator.isPlanningAtRest()) {
+                    assertThat(System.nanoTime() - deadline).as("planning at rest").isNegative();
+                    Thread.sleep(1);
                 }
                 assertThat(iterator.isPlannedAhead(1)).as("the next row group planned").isTrue();
-                Thread.sleep(200);
                 assertThat(iterator.isPlannedAhead(2)).as("the row group after it planned").isFalse();
             }
             finally {

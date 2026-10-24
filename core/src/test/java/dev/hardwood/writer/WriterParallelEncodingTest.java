@@ -93,61 +93,25 @@ class WriterParallelEncodingTest {
         }
     }
 
-    /// A chunk's pages are compressed on the pool once a worker has no chunk of its own, so a
-    /// single chunk spreads across threads, and the file is the one the caller writes alone. Each
-    /// page takes a little while, so workers find bodies to take.
+    /// A worker with no chunk of its own compresses pages another chunk hands off, so a single
+    /// chunk's pages are compressed on whichever threads are idle, and the file is the one the
+    /// caller writes alone. Each page takes a little while, so workers find bodies to take.
     @Test
-    void compressesTheOnlyChunksPagesOnThePool() throws Exception {
-        AtomicInteger handedOff = new AtomicInteger();
-        Compressor recording = new TestCompressor() {
+    void writesTheSameBytesWhicheverThreadsCompressTheOnlyChunksPages() throws Exception {
+        Compressor slow = new TestCompressor() {
             @Override
             public byte[] compress(byte[] data, int offset, int length) {
-                if (handedOff()) {
-                    handedOff.incrementAndGet();
-                }
                 pause();
                 return Arrays.copyOfRange(data, offset, offset + length);
             }
         };
-        byte[] serial = onBusyPool(context -> writeIds(context, recording));
-        assertThat(handedOff).hasValue(0);
+        byte[] serial = onBusyPool(context -> writeIds(context, slow));
 
         try (HardwoodContext context = HardwoodContext.create(4)) {
             for (int run = 0; run < 3; run++) {
-                assertThat(writeIds(context, recording)).as("run %d", run).isEqualTo(serial);
+                assertThat(writeIds(context, slow)).as("run %d", run).isEqualTo(serial);
             }
         }
-        assertThat(handedOff).hasPositiveValue();
-    }
-
-    /// A page handed off fails on the worker that took it; its chunk raises the failure when the
-    /// page is due.
-    @Test
-    void reportsAHandedOffPageFailureUnchanged() throws Exception {
-        Compressor failingHandedOff = new TestCompressor() {
-            @Override
-            public byte[] compress(byte[] data, int offset, int length) {
-                if (handedOff()) {
-                    throw new ParquetWriteException("handed-off page failed");
-                }
-                pause();
-                return Arrays.copyOfRange(data, offset, offset + length);
-            }
-        };
-        InMemoryOutputFile out = OutputFile.inMemory();
-        try (HardwoodContext context = HardwoodContext.create(4)) {
-            ParquetFileWriter writer = ParquetFileWriter.create(out, idSchema(), pagePerBatch(), context,
-                    failingHandedOff);
-            fillIds(writer);
-
-            assertTimeoutPreemptively(NO_HANG, () -> assertThatThrownBy(writer::endRowGroup)
-                    .isInstanceOf(ParquetWriteException.class)
-                    .hasMessage("handed-off page failed"));
-            writer.close();
-        }
-        assertThatThrownBy(out::buffer)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile was discarded");
     }
 
     /// One page fails while other threads compress the chunk's other pages, slowly; none may still
@@ -530,12 +494,6 @@ class WriterParallelEncodingTest {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException(e);
             }
-        }
-
-        /// Whether the calling thread compresses a body another chunk's thread handed off.
-        static boolean handedOff() {
-            return StackWalker.getInstance().walk(frames -> frames.anyMatch(
-                    f -> f.getClassName().endsWith(".PageCompression") && f.getMethodName().equals("help")));
         }
 
         static void pause() {

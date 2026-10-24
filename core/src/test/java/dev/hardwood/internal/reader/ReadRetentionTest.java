@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -37,7 +38,6 @@ class ReadRetentionTest {
     private static final int FILES_AHEAD = 2;
     /// The first file, the next unit's, and the files ahead of that.
     private static final int MOST_FILES_OPENED = 2 + FILES_AHEAD;
-    private static final long PLANNING_AHEAD_MILLIS = 500;
 
     @ParameterizedTest(name = "in memory: {0}")
     @ValueSource(booleans = {true, false})
@@ -101,7 +101,8 @@ class ReadRetentionTest {
         for (int i = 0; i < FILES; i++) {
             files.add(new CountingInputFile(InputFile.of(FIXTURE)));
         }
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+        QuiescentExecutor speculative = new QuiescentExecutor();
+        try (HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(2, speculative)) {
             FileMetadataCache cache = new FileMetadataCache(List.copyOf(files), context);
             RowGroupIterator iterator;
             System.setProperty(FetchSequence.MAX_FILES_AHEAD_PROPERTY, Integer.toString(FILES_AHEAD));
@@ -120,7 +121,8 @@ class ReadRetentionTest {
                     iterator.getColumnPlan(first, column);
                 }
                 // A consumer that stops in the first file; planning ahead runs on the pool meanwhile
-                Thread.sleep(PLANNING_AHEAD_MILLIS);
+                assertThat(speculative.awaitQuiescence(10, TimeUnit.SECONDS, iterator::isPlanningAtRest))
+                        .as("planning and its reads at rest").isTrue();
 
                 long opened = files.stream().filter(file -> !file.reads().isEmpty()).count();
                 assertThat(opened).as("files opened").isLessThanOrEqualTo(MOST_FILES_OPENED);

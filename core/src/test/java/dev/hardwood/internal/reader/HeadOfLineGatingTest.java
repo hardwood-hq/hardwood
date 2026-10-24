@@ -154,6 +154,9 @@ class HeadOfLineGatingTest {
         List<ScheduledColumn<?>> columns = new CopyOnWriteArrayList<>();
         AtomicLong lastSmall = new AtomicLong(-1);
         ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
+            if (page instanceof SealedFillTask) {
+                return;
+            }
             for (ScheduledColumn<?> other : columns) {
                 // The queue is read before the next row, which only grows as pages are queued
                 if (other != column && other.peekReady() == null && other.nextRow() < page.firstRow) {
@@ -229,6 +232,11 @@ class HeadOfLineGatingTest {
     private static void observe(int largePage, List<String> violations, AtomicLong lastSubmission,
                                 AtomicLong lastSmall, AtomicLong lastLarge) {
         ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
+            // A sealed fill completes a cell its fetch step sealed, and can be queued ahead of the
+            // page the scheduler chose; it holds no page of its own
+            if (page instanceof SealedFillTask) {
+                return;
+            }
             if (page.firstRow != lowestRow && lowestRow - readPublishedRow < CAP_ROWS) {
                 violations.add("page at row " + page.firstRow + " past one at row " + lowestRow
                         + " with the read published to row " + readPublishedRow);

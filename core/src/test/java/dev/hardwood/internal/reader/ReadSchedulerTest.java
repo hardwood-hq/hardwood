@@ -56,8 +56,13 @@ class ReadSchedulerTest {
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void pagesAreSubmittedInRowOrder() throws Exception {
         List<long[]> submissions = Collections.synchronizedList(new ArrayList<>());
-        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) ->
+        // A sealed fill completes a cell its fetch step sealed, and can be queued ahead of the page
+        // the scheduler chose; it holds no page of its own
+        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
+            if (!(page instanceof SealedFillTask)) {
                 submissions.add(new long[]{ page.firstRow, inFlight, lowestRow, readPublishedRow });
+            }
+        };
 
         Map<String, Long> sums = new HashMap<>();
         try (HardwoodContext context = HardwoodContext.create(THREADS);

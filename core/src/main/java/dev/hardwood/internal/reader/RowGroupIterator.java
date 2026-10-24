@@ -418,6 +418,11 @@ public class RowGroupIterator implements Closeable {
         return chain.isPlanned(index);
     }
 
+    /// Whether the read's planning is at rest ([PlanningChain#atRest()]), for tests.
+    boolean isPlanningAtRest() {
+        return chain.atRest();
+    }
+
     /// Whether the read holds the work item at `index`, for tests.
     boolean holdsWorkItem(int index) {
         return chain.listedAt(index) != null;

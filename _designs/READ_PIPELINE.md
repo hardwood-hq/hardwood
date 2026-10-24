@@ -263,7 +263,7 @@ Tests: `ReadFailureTypingTest`, `ReadFailurePositionTest`, `ColumnReadersTranspo
 
 After close, the fetch steps pull no further page, so no entry they have not reached is fetched beyond those already started; page tasks not yet started return without decoding; and the planning chain plans nothing more. A reader closes its columns, returns its held and queued batches to the pool (recycling mode), and then closes its `RowGroupIterator`. The iterator closes its fetch sequence, which starts no further entry and releases every charge, stops the planning chain and waits for a step of it that runs, discards the planning entries, and waits for the reads the read started, its footer reads included (one that had not started returns without doing its work); the reader closes the files after it. Its caller has stopped the columns first, so no fetch step starts a task during the wait. A file is therefore never closed under a read in flight, whichever reader closes it. Close is idempotent, and a close on another thread while one runs, such as the parent reader's, waits for it to finish ([THREADING.md](THREADING.md#invariants)).
 
-Tests: `ScheduledColumnCloseTest`, `ReaderCloseLatencyTest`, `RowReaderCloseIdempotencyTest`, `IteratorTrackingTest`, `ParentCloseTest`, `ParquetFileReaderCloseTest`, `PrefetchTasksTest`, `S3SelectiveReadJfrIT` (s3).
+Tests: `ScheduledColumnCloseTest`, `ReaderCloseMidReadTest`, `RowReaderCloseIdempotencyTest`, `IteratorTrackingTest`, `ParentCloseTest`, `ParquetFileReaderCloseTest`, `PrefetchTasksTest`, `S3SelectiveReadJfrIT` (s3).
 
 ## Configuration (`ReaderConfig`)
 

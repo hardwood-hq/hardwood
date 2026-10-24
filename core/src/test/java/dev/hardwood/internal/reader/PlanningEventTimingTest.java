@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -43,7 +44,6 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
     private static final int FILES = 6;
     private static final int ROWS = 1_000;
     private static final long HOLD_MILLIS = 300;
-    private static final long PARKED_MILLIS = 50;
 
     /// A read held in its first file plans the files after it ahead, and closes there: only the
     /// first file and the next one, which the read resolves as its next unit, report their pruning.
@@ -86,7 +86,7 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
             });
             // Released only once the close has stopped the columns and waits for the held read, so
             // no column moves on to a later file meanwhile
-            awaitParked(closer);
+            awaitWaitingForTheRead(closer);
             release.countDown();
             closer.join(TimeUnit.SECONDS.toMillis(30));
             consumer.join(TimeUnit.SECONDS.toMillis(30));
@@ -138,24 +138,15 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
         assertThat(events("dev.hardwood.FileOpened")).isEmpty();
     }
 
-    /// Waits until `thread` stays parked, as a close does once it has stopped the read and waits for
-    /// the reads in flight; a park shorter than [#PARKED_MILLIS], such as on a lock, does not count.
-    private static void awaitParked(Thread thread) throws InterruptedException {
+    /// Waits until `closer` waits for the read's tasks, as a close does once it has stopped the read.
+    private static void awaitWaitingForTheRead(Thread closer) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        long parkedSince = 0;
-        while (System.nanoTime() < deadline) {
-            if (thread.getState() != Thread.State.WAITING) {
-                parkedSince = 0;
-            }
-            else if (parkedSince == 0) {
-                parkedSince = System.nanoTime();
-            }
-            else if (System.nanoTime() - parkedSince >= TimeUnit.MILLISECONDS.toNanos(PARKED_MILLIS)) {
-                return;
+        while (!(LockSupport.getBlocker(closer) instanceof ReadTasks)) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("The close did not wait for the held read: " + closer.getState());
             }
             Thread.sleep(1);
         }
-        throw new AssertionError("The close did not wait for the held read: " + thread.getState());
     }
 
     private static long dataReads(CountingInputFile file) {

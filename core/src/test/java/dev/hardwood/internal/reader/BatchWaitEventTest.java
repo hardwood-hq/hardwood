@@ -7,7 +7,10 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
@@ -22,30 +25,35 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// Driven at the [BatchExchange] level rather than through a file read: whether a
 /// real read outruns its pipeline depends on decode and I/O timing, so publishing
-/// the batch on a known delay is the only way to pin both the presence and the
-/// absence of the event.
+/// the batch once the consumer waits for it, or before it asks, is the only way to
+/// pin both the presence and the absence of the event.
 class BatchWaitEventTest extends AbstractJfrRecorderTest {
 
     private static final String BATCH_WAIT_EVENT = "dev.hardwood.BatchWait";
 
-    private static final long PUBLISH_DELAY_MILLIS = 50;
-
     @Test
     void stalledConsumerEmitsBatchWaitEventForItsColumn() throws Exception {
         BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch", batch -> 1, 1);
-
-        Thread producer = Thread.ofPlatform().start(() -> {
+        AtomicReference<String> polled = new AtomicReference<>();
+        Thread consumer = Thread.ofPlatform().start(() -> {
             try {
-                Thread.sleep(PUBLISH_DELAY_MILLIS);
-                exchange.tryPublish("batch-1");
+                polled.set(exchange.poll());
             }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            catch (InterruptedException | IOException e) {
+                throw new IllegalStateException(e);
             }
         });
 
-        assertThat(exchange.poll()).isEqualTo("batch-1");
-        producer.join();
+        // Published only once the consumer waits in the empty ready queue; nothing else takes the
+        // queue's lock before the publish, so a waiting consumer is one inside poll()'s wait
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (consumer.getState() != Thread.State.WAITING) {
+            assertThat(System.nanoTime() - deadline).as("the consumer waits for a batch").isNegative();
+            Thread.sleep(1);
+        }
+        exchange.tryPublish("batch-1");
+        consumer.join();
+        assertThat(polled.get()).isEqualTo("batch-1");
         awaitEvents();
 
         RecordedEvent event = events(BATCH_WAIT_EVENT).findFirst().orElseThrow();

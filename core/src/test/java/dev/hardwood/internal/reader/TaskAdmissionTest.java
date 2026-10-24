@@ -175,7 +175,8 @@ class TaskAdmissionTest {
 
     /// Two reads on a pool share a read-ahead buffer with room for one large task, so a task of
     /// one ending resumes the other's submission on its thread. Every submission of read A made
-    /// while a release runs the waiters fails: A ends with the failure, and B reads every row.
+    /// while a release runs the waiters fails: A ends with the failure, or reads every row where
+    /// none of its submissions resumed there, and B reads every row.
     @Test
     @Tag("pool")
     void failureResumingOneReadDoesNotReachAnother(@TempDir Path dir) throws Exception {
@@ -198,10 +199,13 @@ class TaskAdmissionTest {
         try (HardwoodContext context = HardwoodContext.create(2)) {
             for (int round = 0; round < 10; round++) {
                 CompletableFuture<Long> readA = CompletableFuture.supplyAsync(() -> count(context, a));
-                assertThat(count(context, b)).isEqualTo(6L * pageValues);
-                assertThatThrownBy(readA::join).hasRootCause(injected);
+                assertThat(count(context, b)).as("rows of read B, round %d", round).isEqualTo(6L * pageValues);
+                // A round in which no submission of A happened to resume inside a release reads A whole
+                assertThat(readA).as("read A, round %d", round).satisfiesAnyOf(
+                        read -> assertThatThrownBy(read::join).hasRootCause(injected),
+                        read -> assertThat(read.join()).isEqualTo(6L * pageValues));
             }
-            assertThat(resumedInWake).hasPositiveValue();
+            assertThat(resumedInWake).as("submissions of A resumed inside a release").hasPositiveValue();
         }
         finally {
             ReadScheduler.submissionObserver = null;

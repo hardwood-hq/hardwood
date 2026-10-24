@@ -1154,6 +1154,15 @@ final class PlanningChain {
         }
     }
 
+    /// Whether no step of the chain runs, is queued or waits for a need, for tests: the chain
+    /// goes on only once something advances it after this returns.
+    ///
+    /// A step lets the claim go and takes it back where `wanted` was raised meanwhile, so the flag
+    /// is read first: raised, the chain goes on; cleared, by a step holding the claim again.
+    boolean atRest() {
+        return !wanted && !scheduled.get();
+    }
+
     /// Whether the chain has planned the work item at `index` or plans nothing more.
     boolean isPlanned(int index) {
         cursorLock.lock();

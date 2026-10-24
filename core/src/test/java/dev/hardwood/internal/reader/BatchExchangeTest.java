@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// queue reading as ended only once, and a drain taking the sentinel from a waiting consumer.
 ///
 /// That the end reaches a waiting consumer in a full read is asserted separately, in
-/// [dev.hardwood.ReaderEofLatencyTest].
+/// [dev.hardwood.ReaderEndOfStreamTest].
 class BatchExchangeTest {
 
     /// Recycling mode bounds its ready queue in batches, so two published batches fill it and

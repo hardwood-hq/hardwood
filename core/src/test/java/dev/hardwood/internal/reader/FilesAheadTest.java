@@ -16,6 +16,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 
 import org.junit.jupiter.api.AfterEach;
@@ -196,10 +198,8 @@ class FilesAheadTest {
         int openedAhead = (int) files.stream().mapToLong(file -> openAheadReads(file)).sum();
         firstData.arm();
         Consumer consumer = Consumer.start(() -> reader.buildColumnReaders(ColumnProjection.all()).build());
-        for (int i = 0; i < 100 && files.stream().mapToLong(file -> openAheadReads(file)).sum()
-                < openedAhead + files.size() - 1; i++) {
-            Thread.sleep(50);
-        }
+        awaitTrue(() -> files.stream().mapToLong(file -> openAheadReads(file)).sum()
+                >= openedAhead + files.size() - 1, "every file after the first has its data fetched ahead");
         firstData.release();
         return consumer.rows();
     }
@@ -230,13 +230,13 @@ class FilesAheadTest {
              ParquetFileReader reader = ParquetFileReader.openAll(files, context);
              ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build()) {
             Consumer consumer = Consumer.start(() -> cols);
+            awaitTrue(() -> !dataReads(files.get(2)).isEmpty(), "file 2 has data fetched ahead");
             awaitQuiescence(files);
 
             long fetchedPastNext = 0;
             for (int i = 2; i < files.size(); i++) {
                 fetchedPastNext += files.get(i).bytesRead();
             }
-            assertThat(dataReads(files.get(2))).as("data reads of file 2").isNotEmpty();
             assertThat(fetchedPastNext).as("bytes fetched past the next file").isLessThanOrEqualTo(limit);
             assertThat(dataReads(files.getLast())).as("data reads of the last file").isEmpty();
 
@@ -260,8 +260,7 @@ class FilesAheadTest {
             ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.all()).build();
             indexes.arm();
             Consumer consumer = Consumer.start(() -> cols);
-            awaitQuiescence(files);
-            assertThat(context.readAheadBuffer().held()).as("read-ahead held while the read waits").isPositive();
+            awaitTrue(() -> context.readAheadBuffer().held() > 0, "read-ahead held while the read waits");
 
             // The close waits for the held planning, which the release lets end
             Thread closer = Thread.ofPlatform().name("closer").start(() -> {
@@ -273,6 +272,7 @@ class FilesAheadTest {
                     throw new IllegalStateException(e);
                 }
             });
+            awaitTrue(() -> LockSupport.getBlocker(closer) instanceof ReadTasks, "the close waits for the read");
             indexes.release();
             closer.join(TimeUnit.SECONDS.toMillis(30));
             assertThat(closer.isAlive()).as("close still running").isFalse();
@@ -287,6 +287,16 @@ class FilesAheadTest {
         return file.reads().stream()
                 .filter(read -> !read.reason().startsWith("footer-") && !read.reason().endsWith(" indexes"))
                 .toList();
+    }
+
+    private static void awaitTrue(BooleanSupplier condition, String what) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!condition.getAsBoolean()) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("timed out waiting until " + what);
+            }
+            Thread.sleep(1);
+        }
     }
 
     /// Waits until no file has been read for half a second.

@@ -100,7 +100,8 @@ class ScheduledColumnCloseTest {
                 interruptedOnClose.set(Thread.currentThread().isInterrupted());
             });
             try {
-                awaitParkedOrExited(closer);
+                awaitTrue(() -> LockSupport.getBlocker(closer) instanceof ReadTasks,
+                        "the close waits for the held fetch step");
             }
             finally {
                 release.countDown();
@@ -151,8 +152,8 @@ class ScheduledColumnCloseTest {
 
             Thread closer = Thread.ofVirtual().start(first::close);
             try {
-                awaitParkedOrExited(closer);
-                assertThat(closer.isAlive()).as("the first close waits for its held fetch step").isTrue();
+                awaitTrue(() -> LockSupport.getBlocker(closer) instanceof ReadTasks,
+                        "the first close waits for its held fetch step");
                 assertThat(second.isDone()).as("the second column is stopped by the first close").isTrue();
                 assertThat(secondExchange.isFinished())
                         .as("the second column's consumer sees the end while the first close waits")
@@ -223,8 +224,8 @@ class ScheduledColumnCloseTest {
                     awaitTrue(() -> LockSupport.getBlocker(first) instanceof ReadTasks,
                             "the first close waits for the read's fetch step");
                     second = Thread.ofVirtual().start(scheduled::close);
-                    awaitParkedOrExited(second);
-                    assertThat(second.isAlive()).as("the second close waits for the read's fetch step").isTrue();
+                    awaitTrue(() -> LockSupport.getBlocker(second) instanceof ReadTasks,
+                            "the second close waits for the read's fetch step");
                 }
                 finally {
                     releaseWorker.countDown();
@@ -376,18 +377,6 @@ class ScheduledColumnCloseTest {
         };
         return new ScheduledFlatColumn(scheduler, source, exchange, column, batchCapacity,
                 context.decompressorFactory(), null);
-    }
-
-    private static void awaitParkedOrExited(Thread thread) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (System.nanoTime() < deadline) {
-            if (!thread.isAlive() || thread.getState() == Thread.State.WAITING
-                    || thread.getState() == Thread.State.TIMED_WAITING) {
-                return;
-            }
-            Thread.sleep(1);
-        }
-        throw new AssertionError("thread neither exited nor parked");
     }
 
     private static void awaitTrue(BooleanSupplier condition, String what) throws InterruptedException {
