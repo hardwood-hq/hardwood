@@ -119,7 +119,7 @@ class FilesAheadTest {
             assertThat(context.readAheadBuffer().held()).as("read-ahead held once read").isZero();
         }
         // Every file after the first was planned ahead while the first was held, its data in one
-        // entry
+        // section request
         for (int i = 1; i < files.size(); i++) {
             assertThat(dataReads(files.get(i)))
                     .as("data reads of file %d", i)

@@ -58,9 +58,9 @@ import jdk.jfr.Event;
 /// item passes through stages (the file's footer and plan when it is the file's first, its Bloom
 /// filters and dictionaries, its page index and page filter, its mask probe, its plans), each a
 /// parse of the bytes the read holds that returns its result or what it needs: a footer still being
-/// read, a window's entries, a range of the file ([Parsed]). On a need, the chain demands what it
-/// needs from the read's [FetchSequence], registers to run again once it is met, and lets its
-/// thread go, keeping the claim; it never waits, so it needs no thread of its own.
+/// read, a window's section requests, a range of the file ([Parsed]). On a need, the chain demands
+/// what it needs from the read's [FetchSequence], registers to run again once it is met, and lets
+/// its thread go, keeping the claim; it never waits, so it needs no thread of its own.
 ///
 /// How far it plans: the work items the read's columns asked for ([#requested]), the read's next
 /// unit ([#nextUnit]), and further while [FetchSequence#mayPlanAhead] allows. The work items it has
@@ -249,7 +249,7 @@ final class PlanningChain {
 
     /// Runs the chain unless a step of it runs or waits, which then looks again. Called on every
     /// change that may let it go further: a column asking for a work item, the read entering a row
-    /// group, an entry starting, a footer read ahead arriving, a caller raising a target.
+    /// group, a section request starting, a footer read ahead arriving, a caller raising a target.
     void advance() {
         if (closed) {
             return;
@@ -613,7 +613,7 @@ final class PlanningChain {
     }
 
     /// The states of one file's planned work items, each with the [IndexWindow] it falls into,
-    /// whose entries the sequence then holds.
+    /// whose section requests the sequence then holds.
     private List<Planning> withIndexWindows(List<WorkItem> planned) throws IOException {
         if (planned.isEmpty()) {
             return List.of();
@@ -776,8 +776,8 @@ final class PlanningChain {
         }
         WorkItem workItem = planning.workItem;
         chunkExtents(planning);
-        // Before the page index, which the plans need and these entries do not: they start while
-        // it is read
+        // Before the page index, which the plans need and these section requests do not: they start
+        // while it is read
         insertChunkEntries(planning);
         Need need = shared(planning);
         if (need != null) {
@@ -828,12 +828,13 @@ final class PlanningChain {
         return null;
     }
 
-    /// Inserts the entries of `workItem`'s row group from its chunks' extents, once, where every row
-    /// of it is read and nothing can drop it, so they start before its page index is read.
+    /// Inserts the section requests of `workItem`'s row group from its chunks' extents, once, where
+    /// every row of it is read and nothing can drop it, so they start before its page index is
+    /// read.
     private void insertChunkEntries(Planning planning) throws IOException {
         WorkItem workItem = planning.workItem;
         if (readsAllRows(workItem) && !HeldBytes.inMemory(workItem.inputFile())
-                && sequence.entries(workItem.workItemIndex()) == null) {
+                && sequence.sections(workItem.workItemIndex()) == null) {
             sequence.insert(workItem.fileIndex(), workItem.workItemIndex(), workItem.inputFile(),
                     fetchPlanBuilder.chunkSpans(workItem, chunkExtents(planning)));
         }
@@ -853,9 +854,9 @@ final class PlanningChain {
         return planning.extents;
     }
 
-    /// Whether every row of `workItem`'s row group is read and no Bloom filter or dictionary can drop
-    /// it, so its entries follow from its chunks' extents in the footer alone: no filter narrows its
-    /// pages, no tail or row limit cuts it, and its chunks are in this file.
+    /// Whether every row of `workItem`'s row group is read and no Bloom filter or dictionary can
+    /// drop it, so its section requests follow from its chunks' extents in the footer alone: no
+    /// filter narrows its pages, no tail or row limit cuts it, and its chunks are in this file.
     private boolean readsAllRows(WorkItem workItem) {
         long perRgMaxRows = perRgMaxRows(workItem);
         return !RowGroupPruning.droppableOnArrival(workItem) && !pruning.pageFiltering(workItem)
@@ -1082,9 +1083,9 @@ final class PlanningChain {
 
     // ==================== The cursor ====================
 
-    /// Records that a column asks to plan the work item at `index`: its first entry starts as the
-    /// next unit's does, since the column waits for the planning that inserts it, and the read has
-    /// reached it.
+    /// Records that a column asks to plan the work item at `index`: its first section request
+    /// starts as the next unit's does, since the column waits for the planning that inserts it, and
+    /// the read has reached it.
     void requested(int index) {
         if (targets.getAndAccumulate(Stage.PLANS.ordinal(), index, Math::max) >= index) {
             return;
@@ -1094,7 +1095,7 @@ final class PlanningChain {
     }
 
     /// Records that the work item at `index` is the read's next unit, since the first column has
-    /// entered the one before it: its first entry starts without F and uncharged
+    /// entered the one before it: its first section request starts without F and uncharged
     /// ([FetchSequence#nextUnit]), the chain plans it whatever F holds, and the read has reached it.
     void nextUnit(int index) {
         sequence.nextUnit(index);
@@ -1324,8 +1325,8 @@ final class PlanningChain {
     }
 
     /// Stops the chain and its footer read-ahead and waits for a step of it that runs or waits for
-    /// its need, then drops the windows' entries. An `Error` that ended planning and that nothing took is returned for the
-    /// caller to raise.
+    /// its need, then drops the windows' section requests. An `Error` that ended planning and that
+    /// nothing took is returned for the caller to raise.
     Error close() {
         closed = true;
         footerReadAhead.close();

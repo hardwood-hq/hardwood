@@ -15,10 +15,10 @@ import java.util.concurrent.CompletionException;
 import dev.hardwood.internal.util.Lazy;
 
 /// One attempt at a request's I/O, on a task of a read's [PrefetchTasks], and the future of its
-/// result: the read of a [FetchSequence] entry's byte range, or of a file's footer
-/// ([dev.hardwood.internal.reader.plan.FileMetadataCache]). An entry takes a new attempt where one
-/// started ahead of demand failed ([#failedAhead]); a footer's attempt is the reader's, and the
-/// footer requests of every read of the reader that reach the file while it runs join it.
+/// result: the read of a [FetchSequence] section request's byte range, or of a file's footer
+/// ([dev.hardwood.internal.reader.plan.FileMetadataCache]). A section request takes a new attempt
+/// where one started ahead of demand failed ([#failedAhead]); a footer's attempt is the reader's,
+/// and the footer requests of every read of the reader that reach the file while it runs join it.
 ///
 /// The read runs on a task of the read's [PrefetchTasks], a virtual thread of the context's I/O
 /// executor, which completes it; the read's owner waits for those tasks before it closes the file.

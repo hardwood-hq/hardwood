@@ -53,9 +53,9 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// The sequence's rules as a read applies them (FETCH_PLANNING.md, Entries and Planning ahead):
-/// what a read starts ahead, how far it plans, what a walk inserts, what planning rejects and how
-/// entries are named.
+/// The sequence's rules as a read applies them (FETCH_PLANNING.md, Section requests and Planning
+/// ahead): what a read starts ahead, how far it plans, what a walk inserts, what planning rejects
+/// and how section requests are named.
 class FetchSequenceReadTest {
 
     private static final int ROW_GROUPS = 4;
@@ -74,7 +74,7 @@ class FetchSequenceReadTest {
     }
 
     /// A read without a row limit plans past its next unit while F has room, each row group
-    /// one past the last with a started entry.
+    /// one past the last with a started section request.
     @Test
     void aReadWithoutARowLimitPlansAheadWithinF() throws Exception {
         assertThat(rowGroupsReadAfterEnteringTheFirst(0)).containsExactly(0, 1, 2, 3);
@@ -92,7 +92,7 @@ class FetchSequenceReadTest {
             try {
                 iterator.getColumnPlan(iterator.workItemAt(0), 0);
                 // The next unit, and without a row limit every row group F has room for, is planned
-                // on the read's executor, which starts each one's first entry then
+                // on the read's executor, which starts each one's first section request then
                 assertThat(speculative.awaitQuiescence(10, TimeUnit.SECONDS, iterator::isPlanningAtRest))
                         .as("planning and its reads at rest").isTrue();
             }
@@ -230,7 +230,7 @@ class FetchSequenceReadTest {
                         + (bStart + bytes.length) + ") lies outside the file of " + fileLength + " bytes");
     }
 
-    /// An entry that serves several columns names each of them, in file order.
+    /// A section request that serves several columns names each of them, in file order.
     @Test
     void anEntryNamesEveryColumnItServes() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(write(ROWS_PER_ROW_GROUP, ROWS_PER_ROW_GROUP,

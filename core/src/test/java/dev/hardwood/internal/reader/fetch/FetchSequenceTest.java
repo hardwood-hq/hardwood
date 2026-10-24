@@ -24,28 +24,28 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// The rules by which a [FetchSequence] starts, releases and drops its entries
-/// (FETCH_PLANNING.md, Entries).
+/// The rules by which a [FetchSequence] starts, releases and drops its section requests
+/// (FETCH_PLANNING.md, Section requests).
 class FetchSequenceTest {
 
     private static final int LENGTH = 100;
 
-    /// A demanded entry starts at once, whatever F and R hold, and is charged to neither.
+    /// A demanded section request starts at once, whatever F and R hold, and is charged to neither.
     @Test
     void aDemandedEntryStartsWhateverFAndRHold() throws Exception {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(0);
         FetchSequence sequence = sequence(buffer, 0);
-        FetchSequence.Entry entry = insert(sequence, file, 0, 1).getFirst();
+        SectionRequest section = insert(sequence, file, 0, 1).getFirst();
         assertThat(file.readCount()).as("speculative start with no room").isZero();
 
-        assertThat(fetch(entry).remaining()).isEqualTo(LENGTH);
+        assertThat(fetch(section).remaining()).isEqualTo(LENGTH);
         assertThat(sequence.speculativeBytes()).isZero();
         assertThat(buffer.held()).isZero();
     }
 
-    /// The next unit's first entry starts without F and is not charged to R; the entries
-    /// after it wait for room.
+    /// The next unit's first section request starts without F and is not charged to R; the section
+    /// requests after it wait for room.
     @Test
     void theNextUnitsFirstEntryStartsUncharged() {
         CountingInputFile file = file();
@@ -59,16 +59,17 @@ class FetchSequenceTest {
         assertThat(buffer.held()).isZero();
     }
 
-    /// Speculative entries start in position order while their bytes stay within F, and
+    /// Speculative section requests start in position order while their bytes stay within F, and
     /// each one passed starts the next.
     @Test
     void speculativeEntriesStartInPositionOrderWithinF() {
         CountingInputFile file = file();
         FetchSequence sequence = sequence(new ReadAheadBuffer(1 << 20), 2 * LENGTH);
-        List<FetchSequence.Entry> later = insert(sequence, file, 1, 2);
-        List<FetchSequence.Entry> earlier = insert(sequence, file, 0, 2);
+        List<SectionRequest> later = insert(sequence, file, 1, 2);
+        List<SectionRequest> earlier = insert(sequence, file, 0, 2);
 
-        // Work item 1's entries were inserted first, and took F before work item 0's arrived
+        // Work item 1's section requests were inserted first, and took F before work item 0's
+        // arrived
         assertThat(file.reads()).extracting(CountingInputFile.Read::offset).containsExactly(0L, 100L);
         later.getFirst().release();
         assertThat(file.reads()).extracting(CountingInputFile.Read::offset).containsExactly(0L, 100L, 0L);
@@ -76,8 +77,8 @@ class FetchSequenceTest {
         assertThat(sequence.speculativeBytes()).isEqualTo(2 * LENGTH);
     }
 
-    /// An entry R has no room for waits for no one; a release of R wakes its waiters in
-    /// registration order, a decode task registered before the entry first.
+    /// A section request R has no room for waits for no one; a release of R wakes its waiters in
+    /// registration order, a decode task registered before the section request first.
     @Test
     void aReleaseOfRWakesItsWaitersInRegistrationOrder() {
         CountingInputFile file = file();
@@ -86,19 +87,19 @@ class FetchSequenceTest {
         List<String> woken = new ArrayList<>();
         buffer.whenReleased(buffer.releases(), () -> woken.add("decode task"));
         FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20,
-                () -> woken.add("entry"));
+                () -> woken.add("section"));
         insert(sequence, file, 0, 1);
         buffer.whenReleased(buffer.releases(), () -> woken.add("later task"));
         assertThat(file.readCount()).isZero();
 
         buffer.release(LENGTH);
 
-        assertThat(woken).containsExactly("decode task", "entry", "later task");
-        assertThat(file.readCount()).as("the entry started on the release").isEqualTo(1);
+        assertThat(woken).containsExactly("decode task", "section", "later task");
+        assertThat(file.readCount()).as("the section started on the release").isEqualTo(1);
         assertThat(buffer.held()).isEqualTo(LENGTH);
     }
 
-    /// A read whose F is zero, as one with a row limit, starts entries only on demand.
+    /// A read whose F is zero, as one with a row limit, starts section requests only on demand.
     @Test
     void aReadThatDoesNotSpeculateStartsOnlyOnDemand() {
         CountingInputFile file = file();
@@ -108,44 +109,44 @@ class FetchSequenceTest {
         assertThat(file.readCount()).isZero();
     }
 
-    /// An entry is released once every column holding it has passed it, which returns its
+    /// A section request is released once every column holding it has passed it, which returns its
     /// charges and drops its bytes; a later demand for it is a fault.
     @Test
     void anEntryIsReleasedOnceEveryHolderHasPassedIt() {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         FetchSequence sequence = sequence(buffer, 1 << 20);
-        FetchSequence.Entry entry = sequence.insert(0, 0, file,
+        SectionRequest section = sequence.insert(0, 0, file,
                 List.of(new FetchSequence.Span(0, LENGTH, "rg=0 col=a col=b", 2))).getFirst();
         assertThat(buffer.held()).isEqualTo(LENGTH);
 
-        entry.release();
+        section.release();
         assertThat(buffer.held()).as("held by the second column").isEqualTo(LENGTH);
-        entry.release();
+        section.release();
         assertThat(buffer.held()).isZero();
         assertThat(sequence.speculativeBytes()).isZero();
-        assertThatThrownBy(entry::issue)
+        assertThatThrownBy(section::issue)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Entry at offset 0 (length 100) of <memory> was released before it was read");
+                .hasMessage("Section request at offset 0 (length 100) of <memory> was released before it was read");
     }
 
-    /// A speculative entry that fails is dropped, its charges returned, and started again
+    /// A speculative section request that fails is dropped, its charges returned, and started again
     /// when demanded.
     @Test
     void aFailedSpeculativeEntryIsDroppedAndReadAgainOnDemand() throws Exception {
         FailingOnce file = new FailingOnce();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         FetchSequence sequence = sequence(buffer, 1 << 20);
-        FetchSequence.Entry entry = insert(sequence, file, 0, 1).getFirst();
+        SectionRequest section = insert(sequence, file, 0, 1).getFirst();
 
-        assertThat(entry.poll()).isNull();
+        assertThat(section.poll()).isNull();
         assertThat(buffer.held()).isZero();
         assertThat(sequence.speculativeBytes()).isZero();
-        assertThat(fetch(entry).remaining()).isEqualTo(LENGTH);
+        assertThat(fetch(section).remaining()).isEqualTo(LENGTH);
         assertThat(file.reads).isEqualTo(2);
     }
 
-    /// Close drops the entries not started, waits for those in flight without
+    /// Close drops the section requests not started, waits for those in flight without
     /// interrupting them, and releases every charge.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -166,7 +167,7 @@ class FetchSequenceTest {
         file.release.countDown();
         closer.join(10_000);
         assertThat(closer.isAlive()).isFalse();
-        assertThat(file.reads).as("the entries not started").isEqualTo(1);
+        assertThat(file.reads).as("the sections not started").isEqualTo(1);
         assertThat(file.interrupted).isFalse();
     }
 
@@ -186,9 +187,9 @@ class FetchSequenceTest {
         return new FetchSequence(new PrefetchTasks(Runnable::run), buffer, fetchAheadBytes, () -> {});
     }
 
-    /// Inserts `count` entries of [#LENGTH] bytes, back to back from offset 0, for work item
-    /// `workItemIndex`, each held by one column.
-    private static List<FetchSequence.Entry> insert(FetchSequence sequence, InputFile file, int workItemIndex,
+    /// Inserts `count` section requests of [#LENGTH] bytes, back to back from offset 0, for work
+    /// item `workItemIndex`, each held by one column.
+    private static List<SectionRequest> insert(FetchSequence sequence, InputFile file, int workItemIndex,
                                                     int count) {
         List<FetchSequence.Span> spans = new ArrayList<>();
         for (int i = 0; i < count; i++) {
@@ -197,14 +198,14 @@ class FetchSequenceTest {
         return sequence.insert(0, workItemIndex, file, spans);
     }
 
-    /// `entry`'s bytes, demanding them and waiting for them as a thread off the pool does.
-    private static ByteBuffer fetch(FetchSequence.Entry entry) throws IOException {
+    /// `section`'s bytes, demanding them and waiting for them as a thread off the pool does.
+    private static ByteBuffer fetch(SectionRequest section) throws IOException {
         while (true) {
-            ByteBuffer bytes = entry.poll();
+            ByteBuffer bytes = section.poll();
             if (bytes != null) {
                 return bytes;
             }
-            entry.issue().await();
+            section.issue().await();
         }
     }
 

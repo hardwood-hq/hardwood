@@ -84,8 +84,8 @@ class ReadRetentionTest {
     }
 
     /// A read planning ahead lists a file only once its fetch sequence has started, and charged,
-    /// the file's footer, so planning ahead over files that fit their tail, which no data entry
-    /// counts toward F, stays within the files ahead.
+    /// the file's footer, so planning ahead over files that fit their tail, which no section
+    /// request counts toward F, stays within the files ahead.
     @Test
     void planningAheadListsNoFileWhoseFooterTheReadHasNotStarted() throws Exception {
         // At the default size, so every file and its data fit their tail

@@ -234,7 +234,8 @@ final class IndexWindow {
 
     /// The index buffers of the work item at `workItemIndex`, once [#indexNeed] has none.
     ///
-    /// @throws IllegalStateException if the work item is not a member, or an entry is not present
+    /// @throws IllegalStateException if the work item is not a member, or a section request is not
+    ///                               present
     RowGroupIndexBuffers buffersFor(int workItemIndex) throws IOException {
         int member = member(workItemIndex);
         requirePresent(offsetIndexReads, workItemIndex);
@@ -249,7 +250,8 @@ final class IndexWindow {
     /// group: the filter's bytes for a column this window reads it for, `null` for every other;
     /// once [#bloomFiltersNeed] has none.
     ///
-    /// @throws IllegalStateException if the work item is not a member, or an entry is not present
+    /// @throws IllegalStateException if the work item is not a member, or a section request is not
+    ///                               present
     ByteBuffer[] bloomFiltersFor(int workItemIndex) throws IOException {
         int member = member(workItemIndex);
         List<ColumnChunk> chunks = members.get(member).rowGroup().columns();

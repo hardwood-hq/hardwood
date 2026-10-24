@@ -40,7 +40,7 @@ class NextRowGroupPrefetchTest {
     private static final int ROW_GROUPS = 4;
 
     /// With no room for speculative data (F of zero), entering each row group still starts the
-    /// first data entry of the next one, the read's next unit, and nothing past it.
+    /// first section request of the next one, the read's next unit, and nothing past it.
     @Test
     void theNextUnitStartsWithoutFetchAheadRoom() throws Exception {
         System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");

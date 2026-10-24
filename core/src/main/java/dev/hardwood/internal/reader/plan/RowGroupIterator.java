@@ -502,7 +502,7 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Notifies the iterator that one projected column is done with the given work item. On the
-    /// last column, the work item's planning, windows and entries are released.
+    /// last column, the work item's planning, windows and section requests are released.
     ///
     /// In-flight `PageInfo` slices and decode tasks keep their byte data alive via the slice's
     /// parent reference, so this only drops the iterator's references.
@@ -523,7 +523,7 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Stops the read's planning, waits for the reads the read has started, then releases its
-    /// windows and entries. The metadata cache and the files are the parent reader's
+    /// windows and section requests. The metadata cache and the files are the parent reader's
     /// ([dev.hardwood.reader.ParquetFileReader]), which closes them; the iterator tells the parent
     /// to stop tracking it, so a closed child reader's work list does not stay reachable for the
     /// parent's whole lifetime.

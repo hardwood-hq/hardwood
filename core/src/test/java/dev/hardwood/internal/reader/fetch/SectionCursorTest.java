@@ -19,11 +19,13 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
-/// How a walk takes bytes from the entries that hold its chunk (FETCH_PLANNING.md, Fetch plans).
-class EntryCursorTest {
+/// How a walk takes bytes from the section requests that hold its chunk (FETCH_PLANNING.md, Fetch
+/// plans).
+class SectionCursorTest {
 
-    /// A range the walk's entries hold is sliced from them, and only the part no entry holds
-    /// is inserted, up to the next entry; a range straddling a cut is copied from both.
+    /// A range the walk's section requests hold is sliced from them, and only the part no section
+    /// request holds is inserted, up to the next section request; a range straddling a cut is
+    /// copied from both.
     @Test
     void aHeldRangeIsSlicedAndOnlyTheGapIsInserted() throws Exception {
         ByteBuffer bytes = ByteBuffer.allocate(300);
@@ -34,11 +36,11 @@ class EntryCursorTest {
         file.open();
         FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), new ReadAheadBuffer(0), 0,
                 () -> {});
-        List<FetchSequence.Entry> held = sequence.insert(0, 0, file, List.of(
+        List<SectionRequest> held = sequence.insert(0, 0, file, List.of(
                 new FetchSequence.Span(0, 100, "rg=0 col=a", 1),
                 new FetchSequence.Span(150, 50, "rg=0 col=a col=b", 2)));
         List<long[]> inserted = new ArrayList<>();
-        EntryCursor cursor = new EntryCursor(held, (start, limit) -> {
+        SectionCursor cursor = new SectionCursor(held, (start, limit) -> {
             inserted.add(new long[] { start, limit });
             return sequence.insertDemanded(0, file, start, Math.toIntExact(limit - start), "rg=0 col=a");
         });
@@ -54,32 +56,32 @@ class EntryCursorTest {
             assertThat(read.get(i)).isEqualTo((byte) (90 + i));
         }
         read(cursor, 160, 20);
-        assertThat(file.readCount()).as("the held entry sliced again").isEqualTo(3);
+        assertThat(file.readCount()).as("the held section sliced again").isEqualTo(3);
     }
 
-    /// A walk passes the entries that end before where it reads next, once each.
+    /// A walk passes the section requests that end before where it reads next, once each.
     @Test
     void aWalkPassesTheEntriesBehindIt() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(300));
         file.open();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20, () -> {});
-        List<FetchSequence.Entry> held = sequence.insert(0, 0, file, List.of(
+        List<SectionRequest> held = sequence.insert(0, 0, file, List.of(
                 new FetchSequence.Span(0, 100, "rg=0 col=a", 1),
                 new FetchSequence.Span(100, 100, "rg=0 col=a", 1)));
-        EntryCursor cursor = new EntryCursor(held, null);
+        SectionCursor cursor = new SectionCursor(held, null);
         assertThat(buffer.held()).isEqualTo(200);
 
         cursor.releaseBefore(150);
-        assertThat(buffer.held()).as("the first entry passed").isEqualTo(100);
+        assertThat(buffer.held()).as("the first section passed").isEqualTo(100);
         cursor.releaseBefore(150);
         assertThat(buffer.held()).as("passed once").isEqualTo(100);
         cursor.releaseAll();
         assertThat(buffer.held()).isZero();
     }
 
-    /// The bytes `cursor` reads at `start`, demanding the entries it stops on.
-    private static ByteBuffer read(EntryCursor cursor, long start, int length) throws Exception {
+    /// The bytes `cursor` reads at `start`, demanding the section requests it stops on.
+    private static ByteBuffer read(SectionCursor cursor, long start, int length) throws Exception {
         while (true) {
             ByteBuffer bytes = cursor.read(start, length);
             if (bytes != null) {

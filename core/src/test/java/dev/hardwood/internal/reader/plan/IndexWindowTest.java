@@ -148,8 +148,8 @@ class IndexWindowTest {
                 .hasMessage("Work item 2 is not in the index window of work items 0 to 1");
     }
 
-    /// One window over the first `count` row groups of the fixture, its entries in a sequence that
-    /// starts them on demand.
+    /// One window over the first `count` row groups of the fixture, its section requests in a
+    /// sequence that starts them on demand.
     private IndexWindow window(InputFile file, int count, BitSet offsetIndexColumns,
             BitSet columnIndexColumns) throws Exception {
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,

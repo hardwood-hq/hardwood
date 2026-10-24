@@ -68,8 +68,8 @@ class FooterReadAheadTest {
                 .isEqualTo(4L * TAIL);
     }
 
-    /// A footer past the next file waits behind the read's data of earlier files: while an entry
-    /// planned and not started waits for F, only the next file's footer starts.
+    /// A footer past the next file waits behind the read's data of earlier files: while a section
+    /// request planned and not started waits for F, only the next file's footer starts.
     @Test
     void noFooterPastTheNextFileStartsWhileTheReadsDataWaits() {
         Footers footers = new Footers();

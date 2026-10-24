@@ -29,10 +29,11 @@ import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Range;
-import dev.hardwood.internal.reader.fetch.EntryCursor;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.IndexedFetchPlan;
+import dev.hardwood.internal.reader.fetch.SectionCursor;
+import dev.hardwood.internal.reader.fetch.SectionRequest;
 import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.reader.fetch.SkippedColumnFetchPlan;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
@@ -60,12 +61,13 @@ import dev.hardwood.schema.FileSchema;
 /// Builds the fetch plans of a row group's decoded columns ([#columnPlans]): selects each column's
 /// pages by the row group's matching rows and row limit, and coalesces the needed ranges of every
 /// column at once, under the gap G and the span S ([CoalescingPolicy]), into the row group's
-/// entries of the read's [FetchSequence]. Each plan then takes its pages' bytes from the entries
-/// that overlap its column chunk, located by offset.
+/// section requests of the read's [FetchSequence]. Each plan then takes its pages' bytes from the
+/// section requests that overlap its column chunk, located by offset.
 ///
 /// A row group whose rows are all read and that no Bloom filter or dictionary can drop has its
-/// entries built from its chunks' extents in the footer ([#chunkSpans]), before its page index is
-/// read, so they can start ahead of it; its plans then locate their pages in those entries.
+/// section requests built from its chunks' extents in the footer ([#chunkSpans]), before its page
+/// index is read, so they can start ahead of it; its plans then locate their pages in those section
+/// requests.
 public final class FetchPlanBuilder {
 
     private final ReadProjection projection;
@@ -109,8 +111,8 @@ public final class FetchPlanBuilder {
     }
 
     /// Builds the fetch plan of every decoded column of `workItem`'s row group from its offset
-    /// indexes, inserting the row group's entries into `sequence` unless [#chunkSpans] did. Reads
-    /// nothing: the entries start by the sequence's rules.
+    /// indexes, inserting the row group's section requests into `sequence` unless [#chunkSpans]
+    /// did. Reads nothing: the section requests start by the sequence's rules.
     ///
     /// @param chunkExtents the work item's validated chunk extents ([#extents])
     /// @throws ParquetReadException if a needed range lies outside its column chunk
@@ -157,7 +159,7 @@ public final class FetchPlanBuilder {
                         new ThriftCompactReader(colBuffers.offsetIndex()), columnChunk.metaData());
                 List<PageLocation> allPages = offsetIndex.pageLocations();
 
-                // Determine needed pages (filter + maxRows). Each entry pairs a
+                // Determine needed pages (filter + maxRows). Each section request pairs a
                 // PageLocation with its PageRowMask so the column keeps only the
                 // records inside the matching ranges.
                 List<IndexedFetchPlan.NeededPage> neededPages = computeNeededPages(
@@ -202,16 +204,16 @@ public final class FetchPlanBuilder {
 
         Extent[] extents = read(chunkExtents, reads);
         checkWithinExtents(workItem, ranges, reads);
-        List<FetchSequence.Entry> entries = sequence.entries(workItem.workItemIndex());
-        if (entries == null) {
+        List<SectionRequest> sections = sequence.sections(workItem.workItemIndex());
+        if (sections == null) {
             ranges.sort(Comparator.comparingLong(Range::start));
-            entries = sequence.insert(workItem.fileIndex(), workItem.workItemIndex(), inputFile,
+            sections = sequence.insert(workItem.fileIndex(), workItem.workItemIndex(), inputFile,
                     CoalescingPolicy.coalesce(ranges, extents, names(workItem), workItem.rowGroupIndex(), maxSpan,
                             HeldBytes.heldFrom(inputFile)));
         }
         for (Extent extent : extents) {
             ColumnRead read = reads[extent.column()];
-            List<FetchSequence.Entry> overlapping = overlapping(entries, extent.start(), extent.end());
+            List<SectionRequest> overlapping = overlapping(sections, extent.start(), extent.end());
             plans[extent.column()] = read.neededPages() != null
                     ? new IndexedFetchPlan(read.neededPages(), overlapping, read.dictionaryStart(),
                             read.firstDataPageOffset(), read.schema(), read.chunk(), context,
@@ -246,9 +248,10 @@ public final class FetchPlanBuilder {
                 length, firstPart < length);
     }
 
-    /// The plan of a column without an OffsetIndex over `entries`, inserting the rest of its chunk
-    /// on demand where a row limit left it out.
-    private SequentialFetchPlan sequentialPlan(WorkItem workItem, ColumnRead read, List<FetchSequence.Entry> entries,
+    /// The plan of a column without an OffsetIndex over `sections`, inserting the rest of
+    /// its chunk on demand where a row limit left it out.
+    private SequentialFetchPlan sequentialPlan(WorkItem workItem, ColumnRead read,
+                                               List<SectionRequest> sections,
                                                RowRanges matchingRows, long perRgMaxRows, FetchSequence sequence) {
         int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(read.column()));
         // Inline page statistics are bounds like any other, so a column whose bounds this file
@@ -260,20 +263,20 @@ public final class FetchPlanBuilder {
                 ? dropLeavesByColumn.getOrDefault(projection.decoded().toOriginalIndex(read.column()), List.of())
                 : List.of();
         String name = read.schema().name();
-        EntryCursor.Rest rest = !read.restLeftOut() ? null
-                : EntryCursor.rest(sequence, workItem.workItemIndex(), workItem.inputFile(), read.start() + read.length(),
+        SectionCursor.Rest rest = !read.restLeftOut() ? null
+                : SectionCursor.rest(sequence, workItem.workItemIndex(), workItem.inputFile(), read.start() + read.length(),
                         "rg=" + workItem.rowGroupIndex() + " col=" + name, maxSpan);
         return new SequentialFetchPlan(read.start(), read.length(), read.schema(), read.chunk(), context,
                 perRgMaxRows, workItem.rowGroupIndex(), workItem.inputFile().name(), leaves,
                 BoundsReadability.ofOneColumn(readability.int96TimestampOrder(fileOrdinal)),
                 matchingRows, workItem.rowGroup().numRows(), read.preloadedDictionary(),
-                workingSet.column(read.column(), read.schema()), entries, rest);
+                workingSet.column(read.column(), read.schema()), sections, rest);
     }
 
-    /// The entries of a row group whose rows are all read and that no Bloom filter or dictionary
-    /// can drop, from its chunks' extents in the footer: every decoded column the row group reads,
-    /// whole, cut into pieces of at most S and coalesced under G and S. Its plans locate their
-    /// pages in them once its page index is read.
+    /// The section requests of a row group whose rows are all read and that no Bloom filter or
+    /// dictionary can drop, from its chunks' extents in the footer: every decoded column the row
+    /// group reads, whole, cut into pieces of at most S and coalesced under G and S. Its plans
+    /// locate their pages in them once its page index is read.
     ///
     /// @param chunkExtents the work item's validated chunk extents ([#extents])
     List<FetchSequence.Span> chunkSpans(WorkItem workItem, Extent[] chunkExtents) {
@@ -371,12 +374,13 @@ public final class FetchPlanBuilder {
         return names;
     }
 
-    /// The entries of `entries`, in offset order, that overlap `[start, end)`.
-    private static List<FetchSequence.Entry> overlapping(List<FetchSequence.Entry> entries, long start, long end) {
-        List<FetchSequence.Entry> overlapping = new ArrayList<>();
-        for (FetchSequence.Entry entry : entries) {
-            if (entry.offset() < end && entry.end() > start) {
-                overlapping.add(entry);
+    /// The section requests of `sections`, in offset order, that overlap `[start, end)`.
+    private static List<SectionRequest> overlapping(List<SectionRequest> sections,
+                                                                  long start, long end) {
+        List<SectionRequest> overlapping = new ArrayList<>();
+        for (SectionRequest section : sections) {
+            if (section.offset() < end && section.end() > start) {
+                overlapping.add(section);
             }
         }
         return overlapping;

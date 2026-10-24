@@ -127,7 +127,7 @@ and reaches the consumer as raised, but is recorded on the way past, or a consum
 work that thread will never finish waits for ever.
 
 A read started ahead of demand is the exception: nothing waits on it, so its failure does not
-fail the read. Every read of a read, a chunk's or region's (a `FetchSequence` entry) and a
+fail the read. Every read of a read, a chunk's or region's (a `FetchSequence` section request) and a
 file's footer (`FileMetadataCache`), keeps its failure in its `RequestAttempt`. One started ahead of
 demand that failed with an exception is logged at DEBUG as it fails, and a walk that reaches
 the handle, or a load that reaches the file, takes it as not present: the read is issued again

@@ -16,13 +16,13 @@ import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.step.Need;
 
 /// Drives a [PageWalk] on a thread off the pool, for tests that walk a plan outside a read: each
-/// entry the walk stops on is demanded from its [FetchSequence] and waited for.
+/// section request the walk stops on is demanded from its [FetchSequence] and waited for.
 public final class PageWalks {
 
     private PageWalks() {
     }
 
-    /// The pages of `plan`'s walk, waiting for the entries they need.
+    /// The pages of `plan`'s walk, waiting for the section requests they need.
     public static Pages of(FetchPlan plan) {
         return new Pages(plan.walk());
     }

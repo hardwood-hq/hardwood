@@ -149,22 +149,22 @@ class FetchStepYieldTest {
         }
     }
 
-    /// A walk issues no read: polling an entry of a file not in memory starts nothing, and the read
-    /// the step issues joins a speculative read under way rather than starting another.
+    /// A walk issues no read: polling a section request of a file not in memory starts nothing, and
+    /// the read the step issues joins a speculative read under way rather than starting another.
     @Test
     void pollIssuesNoReadAndIssueJoinsASpeculativeRead() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(100));
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        FetchSequence.Entry entry = entry(sequence(tasks, false), file, 0);
+        SectionRequest section = section(sequence(tasks, false), file, 0);
 
-        assertThat(entry.poll()).isNull();
+        assertThat(section.poll()).isNull();
         assertThat(file.readCount()).isZero();
 
-        entry.issue();
-        assertThat(entry.poll()).isNotNull();
+        section.issue();
+        assertThat(section.poll()).isNotNull();
         assertThat(file.readCount()).isEqualTo(1);
 
-        FetchSequence.Entry speculative = entry(sequence(tasks, true), file, 10);
+        SectionRequest speculative = section(sequence(tasks, true), file, 10);
         assertThat(file.readCount()).isEqualTo(2);
         RequestAttempt<ByteBuffer> joined = speculative.issue();
         assertThat(speculative.issue()).isSameAs(joined);
@@ -177,10 +177,10 @@ class FetchStepYieldTest {
     @Test
     void aFailedSpeculativeReadIsReadAgainOnDemand() throws Exception {
         FailingInputFile file = new FailingInputFile(1, new IOException("connection reset"));
-        FetchSequence.Entry entry = entry(sequence(new PrefetchTasks(Runnable::run), true), file, 0);
+        SectionRequest section = section(sequence(new PrefetchTasks(Runnable::run), true), file, 0);
 
-        assertThat(entry.poll()).isNull();
-        assertThat(fetch(entry).remaining()).isEqualTo(10);
+        assertThat(section.poll()).isNull();
+        assertThat(fetch(section).remaining()).isEqualTo(10);
         assertThat(file.reads).isEqualTo(2);
     }
 
@@ -191,9 +191,9 @@ class FetchStepYieldTest {
         SpeculativeError error = new SpeculativeError("read failed");
         FailingInputFile file = new FailingInputFile(1, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        FetchSequence.Entry entry = entry(sequence(tasks, true), file, 0);
+        SectionRequest section = section(sequence(tasks, true), file, 0);
 
-        assertThatThrownBy(entry::poll)
+        assertThatThrownBy(section::poll)
                 .isSameAs(error)
                 .hasMessage("read failed");
         assertThat(file.reads).isEqualTo(1);
@@ -204,9 +204,9 @@ class FetchStepYieldTest {
     @Test
     void aFailedDemandReadIsRaised() {
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, new IOException("connection reset"));
-        FetchSequence.Entry entry = entry(sequence(new PrefetchTasks(Runnable::run), false), file, 20);
+        SectionRequest section = section(sequence(new PrefetchTasks(Runnable::run), false), file, 20);
 
-        assertThatThrownBy(() -> fetch(entry))
+        assertThatThrownBy(() -> fetch(section))
                 .isInstanceOf(IOException.class)
                 .hasMessage("[failing] Failed to fetch data at offset 20 (length 10)")
                 .cause()
@@ -253,7 +253,7 @@ class FetchStepYieldTest {
         AssertionError error = new AssertionError("prefetch broke");
         FailingInputFile file = new FailingInputFile(1, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        entry(sequence(tasks, true), file, 0);
+        section(sequence(tasks, true), file, 0);
 
         assertThat(file.reads).isEqualTo(1);
         assertThatThrownBy(tasks::awaitAll)
@@ -268,9 +268,9 @@ class FetchStepYieldTest {
         AssertionError error = new AssertionError("read broke");
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        FetchSequence.Entry entry = entry(sequence(tasks, false), file, 0);
+        SectionRequest section = section(sequence(tasks, false), file, 0);
 
-        assertThatThrownBy(() -> fetch(entry)).isSameAs(error);
+        assertThatThrownBy(() -> fetch(section)).isSameAs(error);
         tasks.awaitAll();
     }
 
@@ -281,9 +281,9 @@ class FetchStepYieldTest {
         AssertionError error = new AssertionError("read broke");
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, error);
         PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        FetchSequence.Entry entry = entry(sequence(tasks, false), file, 0);
+        SectionRequest section = section(sequence(tasks, false), file, 0);
 
-        entry.issue();
+        section.issue();
         assertThatThrownBy(tasks::awaitAll).isSameAs(error);
     }
 
@@ -293,10 +293,10 @@ class FetchStepYieldTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aCheckedExceptionThrownUndeclaredCompletesTheRead() {
         FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, new TimeoutException("too slow"));
-        FetchSequence.Entry entry = entry(sequence(new PrefetchTasks(task -> Thread.ofVirtual().start(task)), false),
-                file, 0);
+        SectionRequest section = section(
+                sequence(new PrefetchTasks(task -> Thread.ofVirtual().start(task)), false), file, 0);
 
-        assertThatThrownBy(() -> fetch(entry))
+        assertThatThrownBy(() -> fetch(section))
                 .isInstanceOf(IOException.class)
                 .hasMessage("[failing] Failed to fetch data at offset 0 (length 10)")
                 .cause()
@@ -304,25 +304,25 @@ class FetchStepYieldTest {
                 .hasMessage("too slow");
     }
 
-    /// A sequence of one read's entries on `tasks`, with room for any entry, whose entries start
-    /// speculatively when `speculates`, and on demand only otherwise.
+    /// A sequence of one read's section requests on `tasks`, with room for any section request,
+    /// whose section requests start speculatively when `speculates`, and on demand only otherwise.
     private static FetchSequence sequence(PrefetchTasks tasks, boolean speculates) {
         return new FetchSequence(tasks, new ReadAheadBuffer(1 << 20), speculates ? 1 << 20 : 0, () -> {});
     }
 
-    /// The entry of ten bytes at `offset` of `file` in `sequence`, held by one column.
-    private static FetchSequence.Entry entry(FetchSequence sequence, InputFile file, long offset) {
+    /// The section request of ten bytes at `offset` of `file` in `sequence`, held by one column.
+    private static SectionRequest section(FetchSequence sequence, InputFile file, long offset) {
         return sequence.insert(0, 0, file, List.of(new FetchSequence.Span(offset, 10, "chunk", 1))).getFirst();
     }
 
-    /// `entry`'s bytes, demanding them and waiting for them as a thread off the pool does.
-    private static ByteBuffer fetch(FetchSequence.Entry entry) throws IOException {
+    /// `section`'s bytes, demanding them and waiting for them as a thread off the pool does.
+    private static ByteBuffer fetch(SectionRequest section) throws IOException {
         while (true) {
-            ByteBuffer bytes = entry.poll();
+            ByteBuffer bytes = section.poll();
             if (bytes != null) {
                 return bytes;
             }
-            entry.issue().await();
+            section.issue().await();
         }
     }
 

@@ -17,10 +17,10 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// Walks the pages of one projected column in one row group without waiting for I/O.
 ///
-/// A walk is a state machine over the bytes present: it locates each page by its header or by
-/// the offset index and takes its bytes from the [FetchSequence] entries that hold them. Where it
-/// needs bytes that are not present, [#advance] returns `null` and [#pending] names them; the walk
-/// issues no read, keeps the state it reached, a parsed page header included, and the next
+/// A walk is a state machine over the bytes present: it locates each page by its header or by the
+/// offset index and takes its bytes from the [FetchSequence] section requests that hold them. Where
+/// it needs bytes that are not present, [#advance] returns `null` and [#pending] names them; the
+/// walk issues no read, keeps the state it reached, a parsed page header included, and the next
 /// [#advance] resumes there. A column's fetch step drives the walk: it issues the read of the
 /// pending bytes ([ByteNeed#issue]) and yields on it. A walk over a file whose bytes are in memory
 /// never stops for bytes.
