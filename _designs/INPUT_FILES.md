@@ -18,7 +18,7 @@ Related documents:
 | Method | Contract |
 |---|---|
 | `open()` | Acquires the backend's resources (mapping, channel, connection, temp file). Must complete before `readRange` or `length`. The built-in backends make it idempotent. |
-| `readRange(long offset, int length)` | Returns the bytes `[offset, offset + length)` of the file. `offset` is absolute within the file. The returned buffer has position `0` at `offset` and exactly `length` bytes remaining. It may be a zero-copy view (a slice of a mapping or of a caller's buffer) or a freshly allocated buffer. |
+| `readRange(long offset, int length)` | Returns the bytes `[offset, offset + length)` of the file. `offset` is absolute within the file. The returned buffer has position `0` at `offset` and exactly `length` bytes remaining. It may be a zero-copy view (a slice of a mapping or of a caller's buffer) or a freshly allocated buffer. Every read the reader makes goes through `ReadRanges.read`, which fails a buffer of another position or length with an `IOException` naming the range, since the reader slices what it holds by absolute index |
 | `length()` | The file's size in bytes. |
 | `name()` | A human-readable identifier. It prefixes exception messages (`ExceptionContext.filePrefix`, which renders `[name] …`) and fills the `file` field of JFR events. |
 | `identity()` | An identifier of the content the file was opened against, or empty. Defaulted to empty. See [Identity](#identity). |

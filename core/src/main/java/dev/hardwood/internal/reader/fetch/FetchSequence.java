@@ -20,6 +20,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 
@@ -881,7 +882,7 @@ public final class FetchSequence {
                 ByteBuffer bytes = inPlace;
                 if (bytes == null) {
                     // A race slices twice, which costs nothing on a file in memory
-                    bytes = inputFile.readRange(offset, length);
+                    bytes = ReadRanges.read(inputFile, offset, length);
                     inPlace = bytes;
                 }
                 return bytes;

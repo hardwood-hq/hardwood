@@ -50,7 +50,9 @@ public interface InputFile extends Closeable {
     ///
     /// @param offset the byte offset to start reading from
     /// @param length the number of bytes to read
-    /// @return a [ByteBuffer] containing the requested data
+    /// @return a [ByteBuffer] holding the requested bytes at position `0`, with exactly `length`
+    ///         bytes remaining; the reader fails a read whose buffer holds them otherwise with an
+    ///         [IOException]
     /// @throws IOException if the read fails
     /// @throws IllegalStateException if [#open()] has not been called
     /// @throws IndexOutOfBoundsException if offset or length is out of range

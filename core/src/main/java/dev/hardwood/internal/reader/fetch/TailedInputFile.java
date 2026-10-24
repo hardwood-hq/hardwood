@@ -13,6 +13,7 @@ import java.util.Optional;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 
 /// An opened file whose bytes are not in memory, together with its tail: the last
@@ -65,7 +66,7 @@ public final class TailedInputFile implements InputFile {
         int tailLength = Math.toIntExact(Math.min(tailBytes(), length));
         ByteBuffer tail;
         try (FetchReason.Scope ignored = FetchReason.set("footer-info")) {
-            tail = inputFile.readRange(length - tailLength, tailLength);
+            tail = ReadRanges.read(inputFile, length - tailLength, tailLength);
         }
         return new TailedInputFile(inputFile, length - tailLength, tail);
     }
