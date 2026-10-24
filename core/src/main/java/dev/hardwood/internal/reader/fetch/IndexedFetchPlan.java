@@ -13,7 +13,6 @@ import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
@@ -21,8 +20,6 @@ import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.internal.reader.step.Need;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
@@ -133,7 +130,7 @@ public final class IndexedFetchPlan implements FetchPlan {
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
                 if (preloadedDictionary != null || dictionaryStart == 0) {
                     dictionaryParsed = true;
-                    dictionary = preloadedDictionary();
+                    dictionary = DictionaryStep.preloaded(preloadedDictionary, workingSet);
                 }
                 else {
                     ByteBuffer dictRegion = cursor.read(dictionaryStart,
@@ -142,35 +139,20 @@ public final class IndexedFetchPlan implements FetchPlan {
                         pending = cursor.pending();
                         return null;
                     }
-                    ThriftCompactReader headerReader = new ThriftCompactReader(dictRegion, 0);
-                    PageHeader header = PageHeaderReader.read(headerReader);
-                    int headerSize = headerReader.getBytesRead();
-                    int pageLength = headerSize + header.compressedPageSize();
-                    if (pageLength > dictRegion.remaining()) {
+                    DataPage page = DataPage.parse(dictRegion);
+                    int pageLength = page.headerSize() + page.header().compressedPageSize();
+                    if (page.header().type() == PageType.DICTIONARY_PAGE && pageLength > dictRegion.remaining()) {
                         throw new ParquetReadException("Malformed Parquet metadata: the dictionary page header declares "
                                 + pageLength + " bytes but only " + dictRegion.remaining()
                                 + " bytes lie before the first data page");
                     }
-                    WorkingSet.DictionaryParse parse = workingSet.parseDictionary(header.uncompressedPageSize(), () -> {
-                        // Set the flag *before* parsing so a throw from the parse
-                        // doesn't cause a retry loop. This is safe because a throw
-                        // propagates to the column's fetch step (ScheduledColumn.runFetchStep), which
-                        // calls signalError → done=true → the pipeline stops; advance() is
-                        // never re-entered on the same walk.
-                        dictionaryParsed = true;
-                        // Not retitled on the way out. The parser says what is wrong with the
-                        // dictionary — a checksum that disagrees, a header that will not parse —
-                        // and naming the step that noticed would replace that with less.
-                        return header.type() == PageType.DICTIONARY_PAGE
-                                ? DictionaryParser.parsePage(header,
-                                        dictRegion.slice(headerSize, header.compressedPageSize()), columnSchema,
-                                        columnChunk.metaData(), context, workingSet)
-                                : null;
-                    });
+                    WorkingSet.DictionaryParse parse = DictionaryStep.parse(page, columnSchema, columnChunk.metaData(),
+                            context, workingSet);
                     if (parse.pending() != null) {
                         pending = parse.pending();
                         return null;
                     }
+                    dictionaryParsed = true;
                     dictionary = parse.dictionary();
                 }
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
@@ -206,15 +188,6 @@ public final class IndexedFetchPlan implements FetchPlan {
                 return PageInfo.UNKNOWN_RECORDS;
             }
             return needed.mask().isAll() ? needed.rows() : needed.mask().totalRecords();
-        }
-
-        /// The dictionary pruning parsed for the chunk, charged to the column as it takes it; `null`
-        /// where pruning parsed none and the chunk has no dictionary page.
-        private Dictionary preloadedDictionary() {
-            if (preloadedDictionary != null) {
-                workingSet.dictionary(preloadedDictionary);
-            }
-            return preloadedDictionary;
         }
 
         private void emitEvent() {

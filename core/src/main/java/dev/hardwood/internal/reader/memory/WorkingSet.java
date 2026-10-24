@@ -214,13 +214,12 @@ public final class WorkingSet {
     @FunctionalInterface
     public interface DictionaryRead {
 
-        /// The dictionary, or `null` where the page's bytes are not present or it is not a
-        /// dictionary page.
+        /// The dictionary.
         Dictionary read() throws IOException;
     }
 
-    /// What [Column#parseDictionary] came to: the dictionary parsed (`null` where its read found
-    /// none), or, with no dictionary, what the parse waits for.
+    /// What [Column#parseDictionary] came to: the dictionary parsed, or, with no dictionary, what
+    /// the parse waits for.
     public record DictionaryParse(Dictionary dictionary, Need pending) {
     }
 
@@ -243,9 +242,8 @@ public final class WorkingSet {
 
         /// Reads and parses a dictionary page whose header declares `uncompressedSize` bytes, once
         /// its parse is admitted beside the read's other tasks ([WorkingSet#admitTask]), and
-        /// releases the admission when `read` returns. `read` reads the page's bytes and parses
-        /// them, returning `null` where its bytes are not present or the page is not a dictionary
-        /// page.
+        /// releases the admission when `read` returns. `read` parses the page, whose bytes the
+        /// caller has read.
         ///
         /// @return the dictionary `read` returned, or what the parse waits for: a task of the read
         ///         ending

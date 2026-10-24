@@ -24,7 +24,6 @@ import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DataPage;
-import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.decode.PageFormatProbe.HeaderAt;
 import dev.hardwood.internal.reader.decode.PageInfo;
@@ -383,8 +382,7 @@ public final class SequentialFetchPlan implements FetchPlan {
         private boolean initialize() throws IOException {
             if (preloadedDictionary != null) {
                 // The plan starts at the first data page: pruning has read the dictionary page.
-                workingSet.dictionary(preloadedDictionary);
-                dictionary = preloadedDictionary;
+                dictionary = DictionaryStep.preloaded(preloadedDictionary, workingSet);
                 initialized = true;
                 return true;
             }
@@ -401,34 +399,22 @@ public final class SequentialFetchPlan implements FetchPlan {
             }
             if (header.type() == PageType.DICTIONARY_PAGE) {
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
-                int compressedSize = header.compressedPageSize();
-                int dictTotalSize = headerSize + compressedSize;
-                // Admitted before its bytes are read: a refused page read now would be read again
-                // when it is admitted
-                PageHeader dictionaryHeader = header;
-                WorkingSet.DictionaryParse parse = workingSet.parseDictionary(header.uncompressedPageSize(), () -> {
-                    ByteBuffer dictPage = readBytes(position, dictTotalSize);
-                    if (dictPage == null) {
-                        return null;
-                    }
-                    initialized = true;
-                    // The header is already parsed, so hand it over rather than a region the
-                    // parser would have to open and read the same header out of again.
-                    return DictionaryParser.parsePage(dictionaryHeader, dictPage.slice(headerSize, compressedSize),
-                            columnSchema, metaData, context, workingSet);
-                });
-                if (parse.pending() != null) {
-                    pending = parse.pending();
+                int dictTotalSize = headerSize + header.compressedPageSize();
+                ByteBuffer dictPage = readBytes(position, dictTotalSize);
+                if (dictPage == null) {
                     return false;
                 }
-                if (!initialized) {
-                    // The page's bytes are not present, which `readBytes` made pending
+                WorkingSet.DictionaryParse parse = DictionaryStep.parse(new DataPage(header, headerSize, dictPage),
+                        columnSchema, metaData, context, workingSet);
+                if (parse.pending() != null) {
+                    pending = parse.pending();
                     return false;
                 }
                 dictionary = parse.dictionary();
                 position += dictTotalSize;
                 clearPage();
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
+                initialized = true;
                 return true;
             }
             // A data page: the walk goes on from its parsed header.
