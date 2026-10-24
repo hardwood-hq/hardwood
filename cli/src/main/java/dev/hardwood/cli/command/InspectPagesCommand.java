@@ -464,10 +464,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         // this one at them would print page headers decoded from unrelated bytes.
         chunk.requireSameFile();
         ColumnMetaData cmd = chunk.metaData();
-        Long dictOffset = cmd.dictionaryPageOffset();
-        long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : cmd.dataPageOffset();
         PageRows rows = new PageRows(trackRowIndex, cmd.numValues());
-        PageHeaderWalk.walk(inputFile, chunkStart, cmd.totalCompressedSize(), PageHeaderWalk.WINDOW_BYTES,
+        PageHeaderWalk.walk(inputFile, chunk.chunkStartOffset(), cmd.totalCompressedSize(), PageHeaderWalk.WINDOW_BYTES,
                 rows::add);
         return rows.rows;
     }

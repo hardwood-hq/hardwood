@@ -14,13 +14,12 @@ import java.util.function.Predicate;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.decode.PageFormatProbe;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.internal.thrift.ThriftTruncatedException;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Walks a column chunk's pages header to header, for the commands and `dive` screens that list
-/// them at the byte level.
+/// them at the byte level: the reader's walk ([PageFormatProbe#walk]) over the file read in
+/// windows.
 public final class PageHeaderWalk {
 
     /// Largest single read of a walk. A chunk up to this size is one read; a larger one,
@@ -33,12 +32,10 @@ public final class PageHeaderWalk {
     /// Reads the headers of the pages in `[start, start + totalBytes)` in order, handing each to
     /// `visitor` until it returns `false` or the range ends.
     ///
-    /// Reads are at most `windowBytes`. A window ends where the next page no longer fits; the
-    /// next read starts at that page's header, so a body longer than a window is skipped rather
-    /// than read. A header cut off by the window's end is read again at the start of the next
-    /// window; a header that does not fit a whole window widens the window, up to
-    /// [PageFormatProbe#MAX_PEEK_SIZE]. A header cut off by the range's end is a truncated chunk,
-    /// and a page whose body runs past it a malformed one; both fail as the reader fails them.
+    /// Reads are at most `windowBytes`, unless a header needs more. A header the current window
+    /// does not hold starts the next window, so a body longer than a window is skipped rather than
+    /// read. A header cut off by the range's end is a truncated chunk, and a page whose body runs
+    /// past it a malformed one; both fail as the reader fails them.
     ///
     /// @param visitor receives each header; returns whether the walk goes on
     /// @throws IOException if a read fails
@@ -47,45 +44,27 @@ public final class PageHeaderWalk {
     public static void walk(InputFile inputFile, long start, long totalBytes, int windowBytes,
             Predicate<PageHeader> visitor) throws IOException {
         long end = start + totalBytes;
-        long position = start;
-        int window = windowBytes;
-        while (position < end) {
-            int windowLength = Math.toIntExact(Math.min(end - position, window));
-            ByteBuffer buffer = inputFile.readRange(position, windowLength);
-            long relative = 0;
-            while (relative < windowLength) {
-                ThriftCompactReader tcr = new ThriftCompactReader(buffer, Math.toIntExact(relative));
-                PageHeader header;
-                try {
-                    header = PageHeaderReader.read(tcr);
+        PageFormatProbe.walk(windows(inputFile, end, windowBytes), start, end, visitor);
+    }
+
+    /// The bytes of `inputFile` up to `end`, read a window of at most `windowBytes` at a time, or
+    /// of the range asked for where that is longer; a range the current window does not hold
+    /// starts the next one.
+    private static ByteSource windows(InputFile inputFile, long end, int windowBytes) {
+        return new ByteSource() {
+
+            private long windowStart;
+            private ByteBuffer window;
+
+            @Override
+            public ByteBuffer read(long offset, int length) throws IOException {
+                if (window == null || offset < windowStart || offset + length > windowStart + window.remaining()) {
+                    windowStart = offset;
+                    window = inputFile.readRange(offset,
+                            Math.toIntExact(Math.max(length, Math.min(windowBytes, end - offset))));
                 }
-                catch (ThriftTruncatedException e) {
-                    if (relative > 0) {
-                        break;
-                    }
-                    if (windowLength == end - position) {
-                        throw new ParquetReadException("Page header at offset " + position + " does not fit in the "
-                                + windowLength + " bytes left in its column chunk — the file is likely corrupt", e);
-                    }
-                    if (windowLength >= PageFormatProbe.MAX_PEEK_SIZE) {
-                        throw new ParquetReadException("Page header at offset " + position
-                                + " exceeds maximum peek size (" + PageFormatProbe.MAX_PEEK_SIZE + " bytes)", e);
-                    }
-                    window = Math.min(2 * window, PageFormatProbe.MAX_PEEK_SIZE);
-                    break;
-                }
-                long pageStart = position + relative;
-                long pageEnd = pageStart + tcr.getBytesRead() + header.compressedPageSize();
-                if (pageEnd > end) {
-                    throw new ParquetReadException("Page at offset " + pageStart + " ends at offset " + pageEnd
-                            + ", past the end of the column chunk at offset " + end);
-                }
-                if (!visitor.test(header)) {
-                    return;
-                }
-                relative = pageEnd - position;
+                return window.slice(Math.toIntExact(offset - windowStart), length);
             }
-            position += relative;
-        }
+        };
     }
 }

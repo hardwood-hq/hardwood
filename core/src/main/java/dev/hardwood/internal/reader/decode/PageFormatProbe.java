@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.decode;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.function.Predicate;
 
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.step.ByteSource;
@@ -97,6 +98,34 @@ public final class PageFormatProbe {
     /// Walks the chunk's pages from `chunkStart` to the first data page.
     private static Parsed<PageType> walkToFirstDataPage(ByteSource bytes, long chunkStart, long chunkEnd)
             throws IOException {
+        PageType[] first = new PageType[1];
+        Parsed<Boolean> walked = walk(bytes, chunkStart, chunkEnd, header -> {
+            PageType type = header.type();
+            if (type == PageType.DICTIONARY_PAGE || type == PageType.INDEX_PAGE) {
+                return true;
+            }
+            first[0] = type;
+            return false;
+        });
+        if (walked.needsBytes()) {
+            return walked.asNeed();
+        }
+        if (!walked.value()) {
+            throw new ParquetReadException("Column chunk at offset " + chunkStart + " has no data page");
+        }
+        return Parsed.of(first[0]);
+    }
+
+    /// Walks the pages of `[chunkStart, chunkEnd)` header to header, handing each header to
+    /// `visitor` until it returns `false` or the chunk ends; or the range it needs that `bytes`
+    /// does not hold, from which a caller walks again once it does. Only headers are read: a
+    /// page's body is stepped over.
+    ///
+    /// @return `true` when the visitor stopped the walk, `false` when the chunk ended
+    /// @throws ParquetReadException if a header runs past the end of the chunk or exceeds
+    ///         [#MAX_PEEK_SIZE], or a page's body runs past the end of the chunk
+    public static Parsed<Boolean> walk(ByteSource bytes, long chunkStart, long chunkEnd,
+                                       Predicate<PageHeader> visitor) throws IOException {
         long offset = chunkStart;
         while (offset < chunkEnd) {
             Parsed<HeaderAt> read = readHeader(bytes, offset, chunkEnd - offset, INITIAL_PEEK_SIZE, "");
@@ -104,18 +133,17 @@ public final class PageFormatProbe {
                 return read.asNeed();
             }
             HeaderAt parsed = read.value();
-            PageType type = parsed.header().type();
-            if (type != PageType.DICTIONARY_PAGE && type != PageType.INDEX_PAGE) {
-                return Parsed.of(type);
-            }
             long pageEnd = offset + parsed.length() + parsed.header().compressedPageSize();
             if (pageEnd > chunkEnd) {
                 throw new ParquetReadException("Page at offset " + offset + " ends at offset " + pageEnd
                         + ", past the end of the column chunk at offset " + chunkEnd);
             }
+            if (!visitor.test(parsed.header())) {
+                return Parsed.of(true);
+            }
             offset = pageEnd;
         }
-        throw new ParquetReadException("Column chunk at offset " + chunkStart + " has no data page");
+        return Parsed.of(false);
     }
 
     /// The page header at `offset`, starting from a peek of `fromPeek` bytes and doubling it while the

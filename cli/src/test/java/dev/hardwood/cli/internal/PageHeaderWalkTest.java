@@ -34,20 +34,29 @@ class PageHeaderWalkTest {
     /// data pages.
     private static final Path FIXTURE = TestResources.path("/column_index_pushdown_dict.parquet");
 
-    /// A window smaller than a page makes headers straddle window ends and bodies span several
-    /// windows; the walk must find the same headers as one read of the whole chunk.
+    /// Larger than a header's first peek ([PageFormatProbe#INITIAL_PEEK_SIZE]), smaller than the
+    /// fixture's chunk.
+    private static final int WINDOW = 4 * PageFormatProbe.INITIAL_PEEK_SIZE;
+
+    /// A window larger than a header's peek but smaller than the chunk serves several headers from
+    /// one read and starts a new window at a header it does not hold; the walk finds the same
+    /// headers as one read of the whole chunk, in reads no longer than a window.
     @Test
     void walkingInWindowsFindsTheSameHeadersAsOneRead() throws IOException {
         try (InputFile file = InputFile.of(FIXTURE)) {
             file.open();
             ColumnMetaData metaData = metaData(file);
             int wholeChunk = Math.toIntExact(metaData.totalCompressedSize());
+            List<Integer> reads = new ArrayList<>();
+            InputFile recording = new RecordingInputFile(file, reads);
 
             List<PageHeader> whole = walk(file, metaData, wholeChunk);
-            List<PageHeader> windowed = walk(file, metaData, 16);
+            List<PageHeader> windowed = walk(recording, metaData, WINDOW);
 
             assertThat(whole).hasSizeGreaterThan(2);
             assertThat(shapes(windowed)).isEqualTo(shapes(whole));
+            assertThat(reads).as("read lengths").hasSizeBetween(2, whole.size() - 1)
+                    .allSatisfy(length -> assertThat(length).isLessThanOrEqualTo(WINDOW));
         }
     }
 
@@ -68,7 +77,7 @@ class PageHeaderWalkTest {
         }
     }
 
-    /// A header too long for its window widens the window, but not without bound: one running
+    /// A header too long for its peek widens the peek, but not without bound: one running
     /// past [PageFormatProbe#MAX_PEEK_SIZE], as a corrupt length makes one, fails as a corrupt
     /// file rather than being read to the end of a chunk that may span gigabytes.
     @Test
@@ -152,6 +161,35 @@ class PageHeaderWalkTest {
     private static ColumnMetaData metaData(InputFile file) throws IOException {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
             return reader.getFileMetaData().rowGroups().getFirst().columns().get(1).metaData();
+        }
+    }
+
+    /// Records the length of each read it hands on to `delegate`.
+    private record RecordingInputFile(InputFile delegate, List<Integer> reads) implements InputFile {
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            reads.add(length);
+            return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() throws IOException {
+            return delegate.length();
+        }
+
+        @Override
+        public String name() {
+            return delegate.name();
+        }
+
+        @Override
+        public void close() {
         }
     }
 

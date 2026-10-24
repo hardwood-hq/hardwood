@@ -341,15 +341,13 @@ public final class ParquetModel implements AutoCloseable {
         }
         ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
         ColumnMetaData cmd = cc.metaData();
-        Long dictOffset = cmd.dictionaryPageOffset();
-        long start = dictOffset != null && dictOffset > 0 ? dictOffset : cmd.dataPageOffset();
         List<PageHeader> result;
         try {
             // The offsets address the file named by file_path, not this one; the pages this
             // would walk are whatever happens to sit there.
             cc.requireSameFile();
             List<PageHeader> headers = new ArrayList<>();
-            PageHeaderWalk.walk(inputFile, start, cmd.totalCompressedSize(), PageHeaderWalk.WINDOW_BYTES,
+            PageHeaderWalk.walk(inputFile, cc.chunkStartOffset(), cmd.totalCompressedSize(), PageHeaderWalk.WINDOW_BYTES,
                     headers::add);
             result = List.copyOf(headers);
         }
