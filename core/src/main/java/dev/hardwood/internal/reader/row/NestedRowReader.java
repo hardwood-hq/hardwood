@@ -333,6 +333,12 @@ public final class NestedRowReader implements FileAwareRowReader {
             }
         }
         int payloadColumnCount = payloadBatches.length;
+        if (payloadColumnCount == 0) {
+            // A projection of groups without a column reads as no rows, as one without a
+            // field does on the flat path
+            exhausted = true;
+            return false;
+        }
         if (!pollColumns(0, payloadColumnCount)) {
             return false;
         }
