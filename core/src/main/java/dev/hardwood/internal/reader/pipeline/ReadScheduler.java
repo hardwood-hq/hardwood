@@ -116,7 +116,7 @@ public final class ReadScheduler {
     private long chosenLowestRow;
     private long chosenReadPublished;
     private final AtomicInteger submitted = new AtomicInteger();
-    /// The read's working set, which admits its pages' tasks ([WorkingSet#admitTask]); taken from
+    /// The read's working set, which admits its pages' tasks ([WorkingSet#admit]); taken from
     /// the first column on [#start()].
     private WorkingSet workingSet;
     /// Raised while the scheduler waits for a task of the read to end to submit a page that was
@@ -370,7 +370,7 @@ public final class ReadScheduler {
         column.indexedInRows = true;
     }
 
-    /// Whether the task of `column`'s next queued page may start now ([WorkingSet#admitTask]),
+    /// Whether the task of `column`'s next queued page may start now ([WorkingSet#admit]),
     /// which then holds its admission in [#admission]. A page that is not admitted is submitted
     /// once a task of the read ends, which this asks the working set for.
     private boolean admits(ScheduledColumn<?> column) {
@@ -380,15 +380,14 @@ public final class ReadScheduler {
         if (bytes == 0) {
             return true;
         }
-        long tasksEnded = workingSet.tasksEnded();
-        long admitted = workingSet.admitTask(bytes);
-        if (admitted == WorkingSet.REFUSED) {
+        WorkingSet.Admission admitted = workingSet.admit(bytes);
+        if (!admitted.admitted()) {
             if (waitingForTask.compareAndSet(false, true)) {
-                workingSet.taskEndAfter(tasksEnded).whenMet(onTaskEnd);
+                admitted.refused().whenMet(onTaskEnd);
             }
             return false;
         }
-        admission = admitted;
+        admission = admitted.admission();
         return true;
     }
 

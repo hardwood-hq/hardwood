@@ -11,7 +11,7 @@ package dev.hardwood.internal.reader.step;
 /// [dev.hardwood.internal.reader.plan.PageSource#pending] returns: bytes not yet read
 /// ([dev.hardwood.internal.reader.fetch.ByteNeed]), the plans of a work item still being planned,
 /// or a task of the read ending before a dictionary page is parsed beside its other tasks
-/// ([dev.hardwood.internal.reader.memory.WorkingSet#admitTask]). The step does not wait for it: it
+/// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]). The step does not wait for it: it
 /// registers its resume ([#whenMet]) and returns, and the resume queues the next step.
 public interface Need {
 
