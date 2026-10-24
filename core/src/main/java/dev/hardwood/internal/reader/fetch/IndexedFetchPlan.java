@@ -26,6 +26,7 @@ import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PageType;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// [FetchPlan] for columns with an OffsetIndex.
@@ -143,6 +144,12 @@ public final class IndexedFetchPlan implements FetchPlan {
                     ThriftCompactReader headerReader = new ThriftCompactReader(dictRegion, 0);
                     PageHeader header = PageHeaderReader.read(headerReader);
                     int headerSize = headerReader.getBytesRead();
+                    int pageLength = headerSize + header.compressedPageSize();
+                    if (pageLength > dictRegion.remaining()) {
+                        throw new ParquetReadException("Malformed Parquet metadata: the dictionary page header declares "
+                                + pageLength + " bytes but only " + dictRegion.remaining()
+                                + " bytes lie before the first data page");
+                    }
                     WorkingSet.DictionaryParse parse = workingSet.parseDictionary(header.uncompressedPageSize(), () -> {
                         // Set the flag *before* parsing so a throw from the parse
                         // doesn't cause a retry loop. This is safe because a throw
