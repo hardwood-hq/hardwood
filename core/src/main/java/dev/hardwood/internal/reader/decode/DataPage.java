@@ -13,8 +13,10 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 
-/// A data page's bytes, header and body as stored, with its header parsed. The fetch plan parses
-/// the header to locate the page and to admit its decode, and the decode takes it as parsed.
+/// A page's bytes, header and body as stored, with its header parsed, so that whoever parsed it to
+/// locate the page hands it on as parsed: a data page, whose fetch plan parses the header to
+/// locate the page and admit its decode, which takes it as parsed, or a dictionary page, which the
+/// dictionary read hands to its parse likewise.
 ///
 /// @param header the page's header
 /// @param headerSize the bytes the header takes at the start of `bytes`
