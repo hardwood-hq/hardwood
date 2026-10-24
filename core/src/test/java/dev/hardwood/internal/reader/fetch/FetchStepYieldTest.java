@@ -32,6 +32,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
@@ -91,9 +92,9 @@ class FetchStepYieldTest {
     /// A file whose bytes are in memory is read in place, wherever the walk needs them.
     @Test
     void inMemoryFileIsReadWithoutYielding() throws Exception {
-        assertThat(RangeRead.inMemory(InputFile.of(INDEXED_FILE))).isTrue();
-        assertThat(RangeRead.inMemory(InputFile.of(ByteBuffer.allocate(1)))).isTrue();
-        assertThat(RangeRead.inMemory(new ThreadRecordingInputFile(InputFile.of(INDEXED_FILE)))).isFalse();
+        assertThat(HeldBytes.inMemory(InputFile.of(INDEXED_FILE))).isTrue();
+        assertThat(HeldBytes.inMemory(InputFile.of(ByteBuffer.allocate(1)))).isTrue();
+        assertThat(HeldBytes.inMemory(new ThreadRecordingInputFile(InputFile.of(INDEXED_FILE)))).isFalse();
     }
 
     /// Walks a column whose dictionary page and data pages straddle 300-byte windows, stopping

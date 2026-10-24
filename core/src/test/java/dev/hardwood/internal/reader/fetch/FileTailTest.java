@@ -22,6 +22,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.plan.FileMetadataCache;
 import dev.hardwood.internal.reader.plan.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -108,16 +109,16 @@ class FileTailTest {
         System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, "100");
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(300));
         InputFile tailed = TailedInputFile.take(file);
-        assertThat(TailedInputFile.tailOffset(tailed)).isEqualTo(200);
+        assertThat(HeldBytes.heldFrom(tailed)).isEqualTo(200);
 
         tailed.readRange(250, 50);
         tailed.readRange(150, 100);
-        TailedInputFile.dropTail(tailed);
+        HeldBytes.drop(tailed);
         tailed.readRange(250, 50);
 
         assertThat(file.reads()).extracting(CountingInputFile.Read::offset, CountingInputFile.Read::length)
                 .containsExactly(tuple(200L, 100), tuple(150L, 100), tuple(250L, 50));
-        assertThat(TailedInputFile.tailOffset(tailed)).isEqualTo(Long.MAX_VALUE);
+        assertThat(HeldBytes.heldFrom(tailed)).isEqualTo(Long.MAX_VALUE);
     }
 
     /// The tail is the reader's, shared by its reads: a read that has listed the file keeps the

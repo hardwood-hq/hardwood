@@ -17,7 +17,7 @@ import dev.hardwood.InputFile;
 /// captured as a slice at construction; the caller's buffer is not modified.
 /// Since the data is already in memory, [#open()] is a no-op.
 /// [#readRange] returns slices of that content (zero-copy).
-public class ByteBufferInputFile implements InputFile {
+public class ByteBufferInputFile implements InputFile, HeldBytes {
 
     private final ByteBuffer buffer;
 
@@ -34,6 +34,12 @@ public class ByteBufferInputFile implements InputFile {
     public ByteBuffer readRange(long offset, int length) {
         ReadRanges.checkBounds(name(), offset, length, buffer.limit());
         return buffer.slice(Math.toIntExact(offset), length);
+    }
+
+    /// A slice of the range, as [#readRange] takes it.
+    @Override
+    public ByteBuffer sliceHeld(long offset, int length) {
+        return readRange(offset, length);
     }
 
     @Override

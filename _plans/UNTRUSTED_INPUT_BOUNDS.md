@@ -156,7 +156,7 @@ Read-ahead is: skipping it costs speed, not results.
 
 Memory is counted where Hardwood allocates it, on the heap or off it: an S3 range arrives in a
 direct buffer, decoded values on the heap. A range of a mapped or in-memory file
-(`RangeRead.inMemory`) is a view of memory that exists already and counts nothing.
+(`HeldBytes.inMemory`) is a view of memory that exists already and counts nothing.
 
 #### Working-set limit
 

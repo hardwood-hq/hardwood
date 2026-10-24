@@ -17,6 +17,7 @@ import java.util.function.Consumer;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
@@ -25,7 +26,6 @@ import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.PrefetchTasks;
-import dev.hardwood.internal.reader.fetch.RangeRead;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.WorkingSet;
@@ -191,7 +191,7 @@ public class RowGroupIterator implements Closeable {
         this.readExecutor = ReadExecutor.forContext(context);
         this.prefetchTasks = new PrefetchTasks(context.ioExecutor());
         this.maxSpan = CoalescingPolicy.maxSpanBytes();
-        boolean inMemory = inputFiles.stream().allMatch(RangeRead::inMemory);
+        boolean inMemory = inputFiles.stream().allMatch(HeldBytes::inMemory);
         this.plansAhead = !inMemory || context.hasPool();
         this.plansDeep = maxRows <= 0 && !inMemory;
         this.sequence = new FetchSequence(prefetchTasks, context.readAheadBuffer(),
