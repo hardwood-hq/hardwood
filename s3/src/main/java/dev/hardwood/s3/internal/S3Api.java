@@ -8,6 +8,7 @@
 package dev.hardwood.s3.internal;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -92,31 +93,53 @@ public final class S3Api {
     /// Retries on HTTP 500/503 responses and network errors, a failure while the body arrives
     /// included, up to [#maxRetries] times with exponential backoff and jitter.
     public HttpResponse<RangeBody> getSuffix(String bucket, String key, int length) throws IOException {
-        return sendWithRetry(bucket, key, "bytes=-" + length, null, RangeBodyHandler.suffix(length));
+        String range = "bytes=-" + length;
+        return sendWithRetry(bucket, key, () -> range, range, null, RangeBodyHandler.suffix(length));
     }
 
-    /// Sends a GET request with a `Range` header of `length` bytes and receives the response body
+    /// Sends a GET request for the `length` bytes at `offset` and receives the response body
     /// through a [RangeBodyHandler]: a `206` body into a direct buffer of `length` bytes. With an
     /// `ifMatch` entity tag, the request carries it as `If-Match`, and a server holding another
     /// version of the object answers `412`.
     ///
-    /// Retries on HTTP 500/503 responses and network errors, a failure while the body arrives
-    /// included, up to [#maxRetries] times with exponential backoff and jitter.
+    /// Retries on HTTP 500/503 responses and network errors up to [#maxRetries] times with
+    /// exponential backoff and jitter. A body that fails midway, a stalled one included, is
+    /// resumed: with `ifMatch`, the retry requests only the bytes after those received, which stay
+    /// in the buffer; without it, the retry requests the whole range again.
     ///
     /// @param ifMatch the entity tag the object must have, or `null` for an unconditional request
-    public HttpResponse<RangeBody> getRange(String bucket, String key, String rangeHeader, int length,
+    /// @throws IOException naming the range and the object once the budget is spent on network
+    ///                     errors, with the last one as its cause
+    public HttpResponse<RangeBody> getRange(String bucket, String key, long offset, int length,
             String ifMatch) throws IOException {
-        return sendWithRetry(bucket, key, rangeHeader, ifMatch, new RangeBodyHandler(length));
+        RangeBodyHandler handler = new RangeBodyHandler(length, ifMatch);
+        long end = offset + length - 1;
+        try {
+            return sendWithRetry(bucket, key, () -> "bytes=" + (offset + handler.resumeAt()) + "-" + end,
+                    "bytes=" + offset + "-" + end, ifMatch, handler);
+        }
+        catch (InterruptedIOException e) {
+            throw e;
+        }
+        catch (IOException e) {
+            throw new IOException("Failed to read range [" + offset + ", " + (end + 1) + ") from s3://" + bucket
+                    + "/" + key + ": received " + handler.received() + " of " + length + " bytes in "
+                    + (maxRetries + 1) + (maxRetries == 0 ? " attempt" : " attempts"), e);
+        }
     }
 
-    private <T> HttpResponse<T> sendWithRetry(String bucket, String key, String rangeHeader, String ifMatch,
-            HttpResponse.BodyHandler<T> bodyHandler) throws IOException {
-        String[] headers = ifMatch != null
-                ? new String[]{ "Range", rangeHeader, "If-Match", ifMatch }
-                : new String[]{ "Range", rangeHeader };
+    /// Sends a GET request whose `Range` header each attempt takes from `rangeHeader`.
+    private <T> HttpResponse<T> sendWithRetry(String bucket, String key, Supplier<String> rangeHeader,
+            String requestedRange, String ifMatch, HttpResponse.BodyHandler<T> bodyHandler) throws IOException {
         return sendWithRetry(() -> signRequest("GET", objectUri(bucket, key),
-                SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), headers),
-                bodyHandler, "GET s3://" + bucket + "/" + key + " range " + rangeHeader);
+                SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), rangeHeaders(rangeHeader.get(), ifMatch)),
+                bodyHandler, "GET s3://" + bucket + "/" + key + " range " + requestedRange);
+    }
+
+    private static String[] rangeHeaders(String range, String ifMatch) {
+        return ifMatch != null
+                ? new String[]{ "Range", range, "If-Match", ifMatch }
+                : new String[]{ "Range", range };
     }
 
     /// Sends the request `signedRequest` builds, retrying on HTTP 500/503 responses and network
@@ -149,7 +172,7 @@ public final class S3Api {
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IOException("Interrupted during " + description, e);
+                throw interrupted("Interrupted during " + description, e);
             }
             catch (IOException e) {
                 // The client wraps an Error from a body subscriber, such as a direct buffer
@@ -179,7 +202,7 @@ public final class S3Api {
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interrupted during retry backoff", e);
+            throw interrupted("Interrupted during retry backoff", e);
         }
     }
 
@@ -393,8 +416,14 @@ public final class S3Api {
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interrupted during " + description, e);
+            throw interrupted("Interrupted during " + description, e);
         }
+    }
+
+    private static InterruptedIOException interrupted(String message, InterruptedException cause) {
+        InterruptedIOException exception = new InterruptedIOException(message);
+        exception.initCause(cause);
+        return exception;
     }
 
     private static String hostHeader(URI uri) {

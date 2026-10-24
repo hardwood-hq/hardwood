@@ -31,8 +31,9 @@ import dev.hardwood.s3.internal.S3Api;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Checks that [S3Fetcher] fails a response body that stops delivering bytes, against a local
-/// endpoint that sends the headers and the first half of a body, then stalls until the test ends.
+/// Checks that [S3Fetcher] fails a response body that delivers no bytes, against a local endpoint
+/// that sends the headers of a response and then stalls until the test ends. No body bytes come
+/// before the stall, so the bytes a failed read reports are known whenever a check runs.
 /// The endpoint stalls the open-time suffix range while [#stallOpen] is set, and every other
 /// range otherwise. The idle checks run once the endpoint has stalled, each as soon as it is
 /// scheduled, so a check that finds no bytes since the previous one fails the body without
@@ -97,7 +98,7 @@ class S3FetcherStallTest {
         exchange.sendResponseHeaders(206, length);
         OutputStream body = exchange.getResponseBody();
         if (suffix == stallOpen) {
-            body.write(object, from, length / 2);
+            // Sends the headers, which the server holds back until the first write or flush
             body.flush();
             stalled.countDown();
             awaitUninterruptibly(released);
@@ -122,6 +123,9 @@ class S3FetcherStallTest {
 
         assertThatThrownBy(() -> fetcher.readRange(100_000, 1000))
                 .isInstanceOf(IOException.class)
+                .hasMessage("Failed to read range [100000, 101000) from s3://bucket/object.parquet:"
+                        + " received 0 of 1000 bytes in 1 attempt")
+                .cause()
                 .hasMessage("GET s3://bucket/object.parquet range bytes=100000-100999 timed out:"
                         + " no body bytes for 30000 ms");
     }
