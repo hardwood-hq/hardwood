@@ -16,8 +16,15 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -50,6 +57,47 @@ class LaterFileFailureTest {
                     .hasMessage("[unreadable.parquet] Failed to read metadata");
         }
         assertThat(rows.get()).isEqualTo(expectedRows);
+    }
+
+    /// The same through column readers, over a first file of several row groups and batches,
+    /// every one of which is returned before the failure.
+    @Test
+    void everyBatchOfTheFileBeforeIsReturnedFirstByColumnReaders() throws Exception {
+        int rowCount = 50_000;
+        long[] ids = new long[rowCount];
+        for (int i = 0; i < rowCount; i++) {
+            ids[i] = i;
+        }
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,
+                WriterConfig.builder().pageTargetRows(1_000).rowGroupTargetRows(10_000).build())) {
+            writer.columnWriter().writeBatch(batch -> batch.longs("id", ids));
+        }
+        InputFile first = InputFile.of(ByteBuffer.wrap(InMemoryFiles.toByteArray(out)));
+
+        AtomicLong rows = new AtomicLong();
+        AtomicLong sum = new AtomicLong();
+        try (ParquetFileReader parquet = ParquetFileReader.openAll(List.of(first, new UnreadableInputFile()))) {
+            assertThatThrownBy(() -> {
+                try (ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.all()).batchSize(4_096)
+                        .build()) {
+                    while (columns.nextBatch()) {
+                        int count = columns.getRecordCount();
+                        long[] values = columns.getColumnReader(0).getLongs();
+                        for (int i = 0; i < count; i++) {
+                            sum.addAndGet(values[i]);
+                        }
+                        rows.addAndGet(count);
+                    }
+                }
+            }).isInstanceOf(IOException.class)
+                    .hasMessage("[unreadable.parquet] Failed to read metadata");
+        }
+        assertThat(rows.get()).isEqualTo(rowCount);
+        assertThat(sum.get()).isEqualTo((long) rowCount * (rowCount - 1) / 2);
     }
 
     /// Opens, but fails every read, so its footer cannot be loaded.

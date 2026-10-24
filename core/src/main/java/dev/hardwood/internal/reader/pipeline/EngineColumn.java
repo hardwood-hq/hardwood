@@ -37,6 +37,8 @@ public final class EngineColumn {
     private final BatchExchange<BatchExchange.Batch> exchange;
     private final DecompressorFactory decompressorFactory;
     private final WorkingSet.Column workingSet;
+    /// Whether a [dev.hardwood.MetadataSource] supplied the footers, which a failure hints at.
+    private final boolean footersSupplied;
     private final int maxDefinitionLevel;
     private final Placer<Cell> placer;
     /// The cells in plan order, then [#END] once the read has ended.
@@ -49,6 +51,8 @@ public final class EngineColumn {
     private long rowInRowGroup;
     private PageDecoder decoder;
     private boolean ended;
+    /// The failure the column ends with behind its cells, `null` for the read's end.
+    private Throwable endFailure;
     /// Whether a completed cell waits for room in the exchange.
     private boolean waitingForRoom;
 
@@ -67,8 +71,10 @@ public final class EngineColumn {
     }
 
     public EngineColumn(ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange, int batchCapacity,
-                        DecompressorFactory decompressorFactory, WorkingSet.Column workingSet) {
+                        DecompressorFactory decompressorFactory, WorkingSet.Column workingSet,
+                        boolean footersSupplied) {
         this.column = column;
+        this.footersSupplied = footersSupplied;
         this.exchange = exchange;
         this.decompressorFactory = decompressorFactory;
         this.workingSet = workingSet;
@@ -94,9 +100,10 @@ public final class EngineColumn {
         return task.segments.isEmpty() ? null : new Page(task);
     }
 
-    /// Ends the column's pages: every cell is sealed and the read's end queued behind them. Under
-    /// the engine's lock.
-    public void end() {
+    /// Ends the column's pages: every cell is sealed and the read's end, or `failure` where it is
+    /// not `null`, queued behind them. Under the engine's lock.
+    public void end(Throwable failure) {
+        endFailure = failure;
         placer.end();
     }
 
@@ -133,7 +140,7 @@ public final class EngineColumn {
 
     /// `e`, placed at the column and `fileName`, `rowGroup` and `page` it was met at.
     public Exception placed(Exception e, String fileName, int rowGroup, int page) {
-        return ScheduledColumn.placeFailure(e, column, false, fileName, rowGroup, page);
+        return ScheduledColumn.placeFailure(e, column, footersSupplied, fileName, rowGroup, page);
     }
 
     private List<Object> decodeUnplaced(Page page, DecodeBuffers buffers) {
@@ -199,7 +206,12 @@ public final class EngineColumn {
             if (head == END) {
                 publishOrder.pollFirst();
                 ended = true;
-                exchange.finish();
+                if (endFailure != null) {
+                    exchange.signalError(endFailure);
+                }
+                else {
+                    exchange.finish();
+                }
                 return;
             }
             Cell cell = (Cell) head;

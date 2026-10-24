@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.TreeMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.locks.ReentrantLock;
@@ -23,6 +24,7 @@ import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.HeldBytes;
@@ -36,6 +38,7 @@ import dev.hardwood.internal.reader.fetch.PageWalk;
 import dev.hardwood.internal.reader.fetch.Section;
 import dev.hardwood.internal.reader.fetch.Sections;
 import dev.hardwood.internal.reader.fetch.Span;
+import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.reader.memory.WorkingSet;
@@ -60,9 +63,17 @@ import dev.hardwood.schema.FileSchema;
 /// lock on the read's [ReadExecutor] or, for a read, on a virtual thread, and whose results are
 /// applied under the lock ([#update]), each followed by a poll.
 ///
+/// A read of several files lists them in order, each once its footer is loaded. The footers are
+/// jobs of the read like its requests: the next file's footer after the one the read has reached
+/// starts at once, those further ahead start in position order behind the earlier files' data,
+/// charged to R, at most `filesAhead` files ahead. A file's tail and footer are dropped once every
+/// column has passed a work item of a later file. A planning failure, of a footer, a file's listing
+/// or a work item's stage, is sticky at its file or work item: each column publishes every batch
+/// before it and then ends with it.
+///
 /// Interim name: the engine takes over [dev.hardwood.internal.reader.plan.RowGroupIterator]'s name
-/// once the pipeline it replaces is gone. It reads a single file of flat, non-binary columns
-/// without a filter or a row limit ([#supports]).
+/// once the pipeline it replaces is gone. It reads flat, non-binary columns without a filter or a
+/// row limit ([#supports]).
 public final class ReadEngine implements Closeable, Sections {
 
     /// Selects the engine for the reads it supports: `auto`; or never: `off`, the default.
@@ -89,6 +100,11 @@ public final class ReadEngine implements Closeable, Sections {
     private EnginePlanning planning;
     private WorkingSet workingSet;
     private int unitCount;
+    private int fileCount;
+    /// The files after the one the read has reached whose footers start ahead of it.
+    private int filesAhead;
+    /// The charge to R of a footer started ahead of the file after the one the read has reached.
+    private final int footerCharge = TailedInputFile.tailBytes();
 
     // ==================== State, guarded by the lock ====================
 
@@ -96,15 +112,40 @@ public final class ReadEngine implements Closeable, Sections {
     private int nextPlan;
     private Need planNeed;
     private boolean planRunning;
-    /// The units planned, and the columns still to pass each.
+    /// The units planned, the columns still to pass each, and each one's file.
     private final List<Boolean> planned = new ArrayList<>();
     private final List<Integer> unitHolders = new ArrayList<>();
+    private final List<Integer> unitFiles = new ArrayList<>();
 
-    /// The requests in position order, and by work item.
+    /// Each file's footer.
+    private FileState[] footers;
+    /// The next file to list, and whether every file is listed (or planning failed).
+    private int nextList = 1;
+    private boolean listed;
+    /// The last file the read has reached, the next file whose footer is to be requested, the
+    /// last file whose footer has been started at once, and the first file not dropped.
+    private int reachedFile = -1;
+    private int nextFooter = 1;
+    private int startedThrough;
+    private int doneBefore;
+    /// The furthest unit a column has entered.
+    private int furthestUnit;
+    /// Footers waiting for another read's load of them.
+    private int pendingFooters;
+    /// The failure that ends planning, sticky at unit `failedFrom`, and the work item it is
+    /// reported against, `null` for a file's.
+    private Throwable planFailure;
+    private int failedFrom = Integer.MAX_VALUE;
+    private WorkItem failedWorkItem;
+
+    /// Every request, and the requests by work item.
     private final List<Request> requests = new ArrayList<>();
     private final Map<Integer, List<Request>> byUnit = new HashMap<>();
-    /// The first request not started in position order.
-    private int nextStart;
+    /// The requests and footers that start ahead of need, in position order: by file, then by work
+    /// item, then by offset, a file's footer before its data.
+    private final PriorityQueue<Positioned> queued = new PriorityQueue<>();
+    /// The bytes of the data requests inserted and not started.
+    private long queuedBytes;
     private long speculativeBytes;
     private boolean waitingForRoom;
     /// Requests demanded since the last poll: a walk or planning stopped on them.
@@ -130,6 +171,10 @@ public final class ReadEngine implements Closeable, Sections {
 
     /// Jobs emitted and not yet applied.
     private int inFlight;
+    /// Whether an update applied in place asks for another poll.
+    private boolean repoll;
+    /// The bytes the read released from R under the lock, returned once it lets go of it.
+    private long toRelease;
     private boolean closed;
     private Throwable failure;
     private List<Runnable> out;
@@ -146,6 +191,52 @@ public final class ReadEngine implements Closeable, Sections {
     }
 
     private record Ready(int column, EngineColumn.Page page) {
+    }
+
+    /// A request's or footer's position in the read's order.
+    private abstract static class Positioned implements Comparable<Positioned> {
+        final int file;
+        final int unit;
+        final long position;
+
+        Positioned(int file, int unit, long position) {
+            this.file = file;
+            this.unit = unit;
+            this.position = position;
+        }
+
+        @Override
+        public int compareTo(Positioned o) {
+            int c = Integer.compare(file, o.file);
+            if (c == 0) {
+                c = Integer.compare(unit, o.unit);
+            }
+            return c != 0 ? c : Long.compare(position, o.position);
+        }
+    }
+
+    /// One file's footer, positioned before the file's data.
+    private static final class FileState extends Positioned {
+        /// Whether the footer waits in [#queued].
+        boolean queued;
+        /// Whether the footer's claim was made.
+        boolean started;
+        boolean charged;
+        boolean retried;
+        /// Whether another read's load of it is waited for.
+        boolean pending;
+        /// Whether the footer is loaded or failed, so that the file can be listed.
+        boolean loaded;
+
+        FileState(int file) {
+            super(file, -1, 0);
+        }
+
+        @Override
+        public String toString() {
+            return "footer " + file + "[queued=" + queued + " started=" + started + " pending=" + pending
+                    + " loaded=" + loaded + "]";
+        }
     }
 
     /// One decoded column: its column side and its walk over the current unit.
@@ -182,11 +273,12 @@ public final class ReadEngine implements Closeable, Sections {
         this.readAhead = context.readAheadBuffer();
     }
 
-    /// Whether the engine reads a column read of `rowGroups` of a single file over `projected`:
-    /// flat columns of fixed width, every chunk with an OffsetIndex, no filter, the property on.
-    public static boolean supports(int fileCount, ProjectedSchema projected, FileSchema schema, List<RowGroup> rowGroups,
+    /// Whether the engine reads a column read over `projected` whose first file's row groups are
+    /// `rowGroups`: flat columns of fixed width, every chunk of the first file with an OffsetIndex,
+    /// no filter, the property on.
+    public static boolean supports(ProjectedSchema projected, FileSchema schema, List<RowGroup> rowGroups,
                                    boolean filtered) {
-        if (!"auto".equals(System.getProperty(PROPERTY, "off")) || fileCount != 1 || filtered) {
+        if (!"auto".equals(System.getProperty(PROPERTY, "off")) || filtered) {
             return false;
         }
         for (int i = 0; i < projected.getProjectedColumnCount(); i++) {
@@ -210,19 +302,27 @@ public final class ReadEngine implements Closeable, Sections {
         return true;
     }
 
-    /// Sets up the read's planning and lists its file's work items.
+    /// Sets up the read's planning and lists its first file's work items.
     public void initialize(FileSchema schema, List<RowGroup> rowGroups, ReadProjection projection) throws IOException {
         this.referenceSchema = schema;
         WorkingSet workingSet = new WorkingSet(projection.decoded().getProjectedColumnCount(), readAhead);
         this.planning = new EnginePlanning(files, this, context, schema, rowGroups, projection, maxSpan,
                 indexWindowBytes, workingSet);
+        List<InputFile> inputFiles = files.inputFiles();
+        fileCount = inputFiles.size();
+        filesAhead = EnginePlanning.filesAhead(inputFiles.stream().allMatch(HeldBytes::inMemory), fileCount);
+        EnginePlanning.FileListing first = planning.listFile(0, 0);
         lock.lock();
         try {
-            unitCount = planning.list();
-            for (int i = 0; i < unitCount; i++) {
-                planned.add(false);
-                unitHolders.add(0);
+            footers = new FileState[fileCount];
+            for (int i = 0; i < fileCount; i++) {
+                footers[i] = new FileState(i);
             }
+            footers[0].started = true;
+            footers[0].loaded = true;
+            appendUnits(0, planning.append(first));
+            planning.reportFiles(0);
+            listed = fileCount == 1 || !planning.budgetLeft();
         }
         finally {
             lock.unlock();
@@ -230,9 +330,21 @@ public final class ReadEngine implements Closeable, Sections {
         this.workingSet = workingSet;
     }
 
-    /// Whether the read has a row group to read.
+    /// Appends `count` units of file `file`, with every column still to pass each once the columns
+    /// have started.
+    private void appendUnits(int file, int count) {
+        for (int i = 0; i < count; i++) {
+            planned.add(false);
+            unitHolders.add(columns == null ? 0 : columns.length);
+            unitFiles.add(file);
+        }
+        unitCount += count;
+    }
+
+    /// Whether the read may have a row group to read: its first file has one, or it reads further
+    /// files, which it lists once it runs.
     public boolean hasLiveWorkItem() {
-        return unitCount > 0;
+        return unitCount > 0 || fileCount > 1;
     }
 
     public String referenceFileName() {
@@ -257,7 +369,7 @@ public final class ReadEngine implements Closeable, Sections {
                     exchange.setQueue(queue);
                 }
                 EngineColumn side = new EngineColumn(column, exchange, batchSize, context.decompressorFactory(),
-                        workingSet.column(i, column));
+                        workingSet.column(i, column), planning.footersSupplied());
                 Column c = new Column(side, i);
                 columns[i] = c;
                 exchange.setRoomListener(() -> update(e -> {
@@ -294,27 +406,58 @@ public final class ReadEngine implements Closeable, Sections {
         Update run(DecodeBuffers buffers) throws Exception;
     }
 
-    /// Applies `u`, polls, and runs what the poll emitted once the lock is released.
+    /// Applies `u`, polls, and runs what the poll emitted once the lock is released. An update
+    /// that a callback brings about on the thread applying another, such as a need met at once, is
+    /// applied in place, and the poll runs again after it.
     private void update(Update u) {
+        if (lock.isHeldByCurrentThread() && out != null) {
+            apply(u);
+            repoll = true;
+            return;
+        }
         List<Runnable> emitted;
         lock.lock();
         try {
             // what the update emits is run with what the poll emits
             out = new ArrayList<>();
-            try {
-                u.apply(this);
+            apply(u);
+            do {
+                repoll = false;
+                emitted = poll();
             }
-            catch (Exception e) {
-                fail(e);
-            }
-            emitted = poll();
+            while (repoll);
             checkStall(emitted);
         }
         finally {
-            lock.unlock();
+            out = null;
+            unlock();
         }
         for (Runnable r : emitted) {
             r.run();
+        }
+    }
+
+    private void apply(Update u) {
+        try {
+            u.apply(this);
+        }
+        catch (Exception e) {
+            fail(e);
+        }
+    }
+
+    /// Lets go of the lock, and returns to R what the read released under it once the lock is let
+    /// go of entirely: R runs its waiters, other reads' among them, on the releasing thread, which
+    /// must hold no lock they could wait for.
+    private void unlock() {
+        long released = 0;
+        if (lock.getHoldCount() == 1) {
+            released = toRelease;
+            toRelease = 0;
+        }
+        lock.unlock();
+        if (released > 0) {
+            readAhead.release(released);
         }
     }
 
@@ -391,7 +534,7 @@ public final class ReadEngine implements Closeable, Sections {
     /// rule of the engine that misses a case brings about.
     private void checkStall(List<Runnable> emitted) {
         if (closed || failure != null || columns == null || inFlight > 0 || !emitted.isEmpty() || waitingForRoom
-                || planNeed != null && !(planNeed instanceof Request)) {
+                || pendingFooters > 0 || planNeed != null && !(planNeed instanceof Request)) {
             return;
         }
         boolean open = false;
@@ -413,7 +556,12 @@ public final class ReadEngine implements Closeable, Sections {
                 .append(ready.isEmpty() ? "" : " readyHead=" + ready.firstKey())
                 .append(" decodesInFlight=").append(decodesInFlight).append(" cap=")
                 .append(firstUnpublishedRow() + budgetRows).append(" requests=").append(requests.size())
-                .append(" nextStart=").append(nextStart);
+                .append(" queued=").append(queued.size()).append(" queuedHead=").append(queued.peek())
+                .append(" nextList=").append(nextList).append('/').append(fileCount).append(" listed=").append(listed)
+                .append(" reachedFile=").append(reachedFile).append(" failedFrom=").append(failedFrom);
+        if (nextList < fileCount) {
+            b.append(" nextListFooter=").append(footers[nextList]);
+        }
         for (int i = 0; i < columns.length; i++) {
             Column c = columns[i];
             b.append("\n  column ").append(i).append(": unit=").append(c.unit).append(" walk=").append(c.walk != null)
@@ -428,6 +576,7 @@ public final class ReadEngine implements Closeable, Sections {
 
     private List<Runnable> poll() {
         if (!closed && failure == null && columns != null) {
+            filesReached();
             plan();
             walk();
             startRequests();
@@ -482,7 +631,11 @@ public final class ReadEngine implements Closeable, Sections {
     /// Plans the units the columns are in and the next, and further while the requests planned and
     /// not started stay below F, one stage job at a time.
     private void plan() {
-        if (planRunning || nextPlan >= unitCount) {
+        if (planRunning || nextPlan >= failedFrom) {
+            return;
+        }
+        if (nextPlan >= unitCount) {
+            list();
             return;
         }
         if (planNeed != null) {
@@ -491,15 +644,214 @@ public final class ReadEngine implements Closeable, Sections {
             }
             planNeed = null;
         }
-        if (nextPlan > consumerUnit() + 1 && unstartedBytes() >= fetchAheadBytes) {
+        if (nextPlan > consumerUnit() + 1 && queuedBytes >= fetchAheadBytes) {
             return;
         }
         planRunning = true;
         int index = nextPlan;
         emit(Kind.PLANNING, buffers -> {
-            Need need = planning.plan(index);
+            Need need;
+            try {
+                need = planning.plan(index);
+            }
+            catch (Exception | Error t) {
+                return e -> e.planFailed(index, t, e.planning.workItem(index));
+            }
             return e -> e.planStepped(index, need);
         });
+    }
+
+    /// Lists the next file once its footer is loaded, within the bound planning has: the units the
+    /// columns are in and the next, and further while the requests not started stay below F.
+    private void list() {
+        if (listed || !footers[nextList].loaded
+                || nextPlan > consumerUnit() + 1 && queuedBytes >= fetchAheadBytes) {
+            return;
+        }
+        planRunning = true;
+        int file = nextList;
+        int before = unitCount;
+        emit(Kind.PLANNING, buffers -> {
+            EnginePlanning.FileListing listing;
+            try {
+                listing = planning.listFile(file, before);
+            }
+            catch (Exception | Error t) {
+                return e -> e.planFailed(before, t, null);
+            }
+            return e -> e.fileListed(file, listing);
+        });
+    }
+
+    private void fileListed(int file, EnginePlanning.FileListing listing) {
+        planRunning = false;
+        int before = unitCount;
+        appendUnits(file, planning.append(listing));
+        nextList++;
+        listed = nextList >= fileCount || !planning.budgetLeft();
+        wakeColumnsFrom(before);
+    }
+
+    /// Ends planning at unit `from` with `t`, a failure of the file listed there (`workItem`
+    /// `null`) or of work item `from`'s stage: no file is listed and no unit planned from there on,
+    /// and each column ends with the failure once it reaches the unit.
+    private void planFailed(int from, Throwable t, WorkItem workItem) {
+        planRunning = false;
+        if (planFailure == null) {
+            planFailure = t;
+            failedFrom = from;
+            failedWorkItem = workItem;
+            listed = true;
+        }
+        wakeColumnsFrom(from);
+    }
+
+    /// Queues the columns that wait for a unit from `from` on to be listed or planned.
+    private void wakeColumnsFrom(int from) {
+        for (Column c : columns) {
+            if (c.walk == null && c.unit >= from) {
+                markRunnable(c);
+            }
+        }
+    }
+
+    // ==================== Files ====================
+
+    /// Takes up the move of the file the read has reached, the file of the furthest unit a column
+    /// has entered or the next unit, or the file listed next where that is not listed: starts the
+    /// footers up to the next file's at once and queues those of the files ahead it brings within
+    /// reach. Drops the files before that of the last unit every column has passed.
+    private void filesReached() {
+        int consumer = consumerUnit();
+        int unit = Math.max(furthestUnit, consumer + 1);
+        int file = unit < unitCount ? unitFiles.get(unit) : listed ? fileCount - 1 : nextList;
+        if (file > reachedFile) {
+            reachedFile = file;
+            planning.reportFiles(file);
+            if (planFailure == null) {
+                requestFooters();
+            }
+        }
+        int done = consumer > 0 ? unitFiles.get(consumer - 1) : 0;
+        dropFilesBefore(done);
+    }
+
+    private void requestFooters() {
+        int now = Math.min(reachedFile + 1, fileCount - 1);
+        for (int i = startedThrough + 1; i <= now; i++) {
+            if (!footers[i].started) {
+                startFooter(footers[i], false);
+            }
+        }
+        startedThrough = Math.max(startedThrough, now);
+        int last = Math.min(reachedFile + filesAhead, fileCount - 1);
+        for (int i = Math.max(nextFooter, now + 1); i <= last; i++) {
+            FileState f = footers[i];
+            if (!f.started) {
+                f.queued = true;
+                queued.add(f);
+            }
+        }
+        nextFooter = Math.max(nextFooter, last + 1);
+    }
+
+    /// Claims `f`'s footer and starts what its load needs: nothing where it is loaded, a wait for
+    /// another read's load, or its read and parse. A charge to R the footer took is kept only for
+    /// a read of its own.
+    private void startFooter(FileState f, boolean charged) {
+        f.started = true;
+        f.queued = false;
+        switch (planning.claimFooter(f.file)) {
+            case LOADED -> {
+                f.loaded = true;
+                returnCharge(charged);
+            }
+            case PENDING -> {
+                f.pending = true;
+                pendingFooters++;
+                returnCharge(charged);
+                out.add(() -> planning.whenFooterDone(f.file, () -> update(e -> e.footerPendingDone(f))));
+            }
+            case CLAIMED -> {
+                if (planning.footerReadsInPlace(f.file)) {
+                    returnCharge(charged);
+                    parseFooter(f);
+                }
+                else {
+                    f.charged = charged;
+                    readFooter(f);
+                }
+            }
+        }
+    }
+
+    private void returnCharge(boolean charged) {
+        if (charged) {
+            toRelease += footerCharge;
+        }
+    }
+
+    private void footerPendingDone(FileState f) {
+        f.pending = false;
+        pendingFooters--;
+        if (!closed) {
+            startFooter(f, false);
+        }
+    }
+
+    private void readFooter(FileState f) {
+        emit(Kind.IO, buffers -> {
+            try {
+                planning.readFooter(f.file);
+            }
+            catch (IOException | RuntimeException e) {
+                return engine -> engine.footerReadFailed(f, e);
+            }
+            return engine -> engine.parseFooter(f);
+        });
+    }
+
+    /// Parses `f`'s footer on a job, also once the read closed, so that the reader's other reads
+    /// find its load completed.
+    private void parseFooter(FileState f) {
+        emit(Kind.PLANNING, buffers -> {
+            planning.parseFooter(f.file);
+            return engine -> f.loaded = true;
+        });
+    }
+
+    /// A footer read that failed the first time is started again at once, uncharged; a second
+    /// failure is final, and fails the read where its listing reaches the file. A read closed
+    /// meanwhile leaves the load to its close, which gives it up.
+    private void footerReadFailed(FileState f, Exception e) {
+        uncharge(f);
+        if (closed) {
+            return;
+        }
+        if (!f.retried) {
+            f.retried = true;
+            readFooter(f);
+        }
+        else {
+            planning.failFooter(f.file, e);
+            f.loaded = true;
+        }
+    }
+
+    private void uncharge(FileState f) {
+        if (f.charged) {
+            f.charged = false;
+            toRelease += footerCharge;
+        }
+    }
+
+    /// Drops the tails and footers of the files before `file`, which the read is done with, and
+    /// returns their charges.
+    private void dropFilesBefore(int file) {
+        for (; doneBefore < file; doneBefore++) {
+            uncharge(footers[doneBefore]);
+            planning.dropFile(doneBefore);
+        }
     }
 
     private void planStepped(int index, Need need) {
@@ -523,17 +875,6 @@ public final class ReadEngine implements Closeable, Sections {
         }
     }
 
-    private long unstartedBytes() {
-        long n = 0;
-        for (int i = nextStart; i < requests.size(); i++) {
-            Request r = requests.get(i);
-            if (!r.started) {
-                n += r.span.length();
-            }
-        }
-        return n;
-    }
-
     /// Runs each column's walk while its bytes are present, it has room for pages, and its next
     /// row is within the read-ahead; moves a column whose walk ended to its next unit.
     private void walk() {
@@ -546,13 +887,14 @@ public final class ReadEngine implements Closeable, Sections {
                 continue;
             }
             if (c.walk == null) {
+                if (c.unit >= failedFrom) {
+                    end(c, placedPlanFailure(c));
+                    continue;
+                }
                 if (c.unit >= unitCount) {
-                    c.ended = true;
-                    // the end seals the open cell, whose completion may then fall to a job
-                    c.side.end();
-                    sealed(c);
-                    c.side.publish();
-                    refresh(c);
+                    if (listed) {
+                        end(c, null);
+                    }
                     continue;
                 }
                 if (!planned.get(c.unit)) {
@@ -604,6 +946,28 @@ public final class ReadEngine implements Closeable, Sections {
         }
     }
 
+    /// Ends `c` behind the cells it has placed: with the read's end, or with `failure`.
+    private void end(Column c, Throwable failure) {
+        c.ended = true;
+        // the end seals the open cell, whose completion may then fall to a job
+        c.side.end(failure);
+        sealed(c);
+        c.side.publish();
+        refresh(c);
+    }
+
+    /// The failure that ended planning as column `c` reports it: placed at the work item it was
+    /// met at, or, for a file's failure, as it stands.
+    private Throwable placedPlanFailure(Column c) {
+        if (!(planFailure instanceof Exception e)) {
+            return planFailure;
+        }
+        return failedWorkItem == null
+                ? c.side.placed(e, null, ExceptionContext.UNKNOWN_ROW_GROUP, ExceptionContext.UNKNOWN_PAGE)
+                : c.side.placed(e, failedWorkItem.inputFile().name(), failedWorkItem.rowGroupIndex(),
+                        ExceptionContext.UNKNOWN_PAGE);
+    }
+
     private void walked(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
                         List<PageInfo> pages, List<Integer> ordinals, Need pending, boolean ended) {
         Column c = columns[column];
@@ -622,6 +986,7 @@ public final class ReadEngine implements Closeable, Sections {
             markRunnable(c);
             c.walk = null;
             c.unit++;
+            furthestUnit = Math.max(furthestUnit, c.unit);
             int left = unitHolders.get(unit) - 1;
             unitHolders.set(unit, left);
             if (left == 0) {
@@ -632,7 +997,13 @@ public final class ReadEngine implements Closeable, Sections {
             c.waitingOn = pending;
             if (pending instanceof Request r) {
                 demands.add(r);
-                r.waiting.add(c);
+                if (r.bytes != null || r.failure != null) {
+                    // arrived while the walk ran
+                    markRunnable(c);
+                }
+                else {
+                    r.waiting.add(c);
+                }
             }
             else {
                 c.needMet = false;
@@ -706,29 +1077,54 @@ public final class ReadEngine implements Closeable, Sections {
         if (next != null && !next.isEmpty() && !next.getFirst().started) {
             start(next.getFirst());
         }
-        for (; nextStart < requests.size(); nextStart++) {
-            Request r = requests.get(nextStart);
-            if (r.started || r.planning) {
-                continue;
-            }
-            if (speculativeBytes + r.span.length() > fetchAheadBytes) {
-                return;
-            }
-            if (!readAhead.tryCharge(r.span.length())) {
-                if (!waitingForRoom) {
-                    waitingForRoom = true;
-                    readAhead.whenReleased(readAhead.releases(), () -> update(e -> e.waitingForRoom = false));
+        Positioned head;
+        while ((head = queued.peek()) != null) {
+            if (head instanceof Request r) {
+                if (r.started || r.released) {
+                    queued.poll();
+                    continue;
                 }
-                return;
+                if (speculativeBytes + r.span.length() > fetchAheadBytes || !charge(r.span.length())) {
+                    return;
+                }
+                queued.poll();
+                speculativeBytes += r.span.length();
+                r.charged = true;
+                start(r);
             }
-            speculativeBytes += r.span.length();
-            r.charged = true;
-            start(r);
+            else {
+                FileState f = (FileState) head;
+                if (!f.queued || planFailure != null) {
+                    queued.poll();
+                    continue;
+                }
+                if (!charge(footerCharge)) {
+                    return;
+                }
+                queued.poll();
+                startFooter(f, true);
+            }
         }
+    }
+
+    /// Takes `bytes` from R, or registers for its next release where they do not fit.
+    private boolean charge(long bytes) {
+        if (readAhead.tryCharge(bytes)) {
+            return true;
+        }
+        if (!waitingForRoom) {
+            waitingForRoom = true;
+            readAhead.whenReleased(readAhead.releases(), () -> update(e -> e.waitingForRoom = false));
+        }
+        return false;
     }
 
     private void start(Request r) {
         r.started = true;
+        if (r.counted) {
+            r.counted = false;
+            queuedBytes -= r.span.length();
+        }
         emit(Kind.IO, buffers -> {
             ByteBuffer bytes;
             try (FetchReason.Scope ignored = FetchReason.set(r.span.reason())) {
@@ -773,7 +1169,7 @@ public final class ReadEngine implements Closeable, Sections {
         if (r.charged) {
             r.charged = false;
             speculativeBytes -= r.span.length();
-            readAhead.release(r.span.length());
+            toRelease += r.span.length();
         }
     }
 
@@ -800,10 +1196,13 @@ public final class ReadEngine implements Closeable, Sections {
             }
             List<Request> inserted = new ArrayList<>(spans.size());
             for (Span span : spans) {
-                Request r = new Request(inputFile, span);
+                Request r = new Request(inputFile, span, fileIndex, workItemIndex);
                 inserted.add(r);
                 if (!r.started) {
                     requests.add(r);
+                    queued.add(r);
+                    r.counted = true;
+                    queuedBytes += span.length();
                 }
             }
             byUnit.put(workItemIndex, inserted);
@@ -823,7 +1222,7 @@ public final class ReadEngine implements Closeable, Sections {
     public Section planned(InputFile inputFile, long start, int length, String reason, int holders) {
         lock.lock();
         try {
-            Request r = new Request(inputFile, new Span(start, length, reason, holders));
+            Request r = new Request(inputFile, new Span(start, length, reason, holders), -1, -1);
             // planning reads start when planning demands them, charged to nothing
             r.planning = true;
             if (!r.started) {
@@ -838,12 +1237,12 @@ public final class ReadEngine implements Closeable, Sections {
 
     @Override
     public Section heldInPlace(InputFile inputFile, Span span) {
-        Request r = new Request(inputFile, span);
+        Request r = new Request(inputFile, span, -1, -1);
         return r.started ? r : null;
     }
 
     /// One range of a file the read reads: a request, or bytes it holds sliced in place.
-    private final class Request implements Section {
+    private final class Request extends Positioned implements Section {
 
         final InputFile inputFile;
         final Span span;
@@ -854,11 +1253,16 @@ public final class ReadEngine implements Closeable, Sections {
         boolean planning;
         boolean retried;
         boolean charged;
+        /// Whether the request's bytes count in [#queuedBytes].
+        boolean counted;
+        /// Whether every holder has passed the request.
+        boolean released;
         int holders;
         /// The columns whose walk stopped on the request.
         final List<Column> waiting = new ArrayList<>(1);
 
-        Request(InputFile inputFile, Span span) {
+        Request(InputFile inputFile, Span span, int file, int unit) {
+            super(file, unit, span.start());
             this.inputFile = inputFile;
             this.span = span;
             this.holders = span.holders();
@@ -913,11 +1317,11 @@ public final class ReadEngine implements Closeable, Sections {
             try {
                 if (--holders == 0) {
                     bytes = null;
-                    uncharge(this);
+                    released();
                 }
             }
             finally {
-                lock.unlock();
+                unlock();
             }
         }
 
@@ -938,10 +1342,20 @@ public final class ReadEngine implements Closeable, Sections {
             try {
                 holders = 0;
                 bytes = null;
-                uncharge(this);
+                released();
             }
             finally {
-                lock.unlock();
+                unlock();
+            }
+        }
+
+        /// Returns the request's charge, and takes it out of the bytes not started.
+        private void released() {
+            released = true;
+            uncharge(this);
+            if (counted) {
+                counted = false;
+                queuedBytes -= span.length();
             }
         }
 
@@ -987,10 +1401,14 @@ public final class ReadEngine implements Closeable, Sections {
             }
             if (planning != null) {
                 planning.discard();
+                planning.abandonFooters();
+            }
+            if (footers != null) {
+                dropFilesBefore(nextFooter);
             }
         }
         finally {
-            lock.unlock();
+            unlock();
         }
         closeListener.accept(this);
     }

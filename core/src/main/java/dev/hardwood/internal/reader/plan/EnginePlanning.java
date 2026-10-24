@@ -8,31 +8,59 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
-import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.Sections;
 import dev.hardwood.internal.reader.memory.WorkingSet;
+import dev.hardwood.internal.reader.plan.FileMetadataCache.EngineLoad;
+import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
+import jdk.jfr.Event;
 
-/// The planning of a read for a driver outside this package: the work list of a single file and
-/// each work item's stages, which [Planner] decides and the driver runs one at a time, in
-/// work-list order. Every byte planning reads comes from the driver's [Sections].
+/// The planning of a read for a driver outside this package: the footers of its files, which the
+/// reader's [FileMetadataCache] holds for every read of the reader, the work list, which the
+/// driver lists a file at a time, and each work item's stages, which [Planner] decides and the
+/// driver runs one at a time, in work-list order. Every byte planning reads comes from the
+/// driver's [Sections].
+///
+/// A footer the read needs is claimed from the cache ([#claimFooter]): a footer loaded, or whose
+/// load failed, is taken as it stands, a load another read runs is waited for, and otherwise the
+/// driver runs the load itself, its read ([#readFooter]) and then its parse ([#parseFooter]),
+/// which completes the cache's entry. A footer's failure is kept and raised by the listing of its
+/// file ([#listFile]).
 public final class EnginePlanning {
 
     private final FileMetadataCache files;
     private final Planner planner;
-    private final List<Planning> plannings = new ArrayList<>();
+    /// The work items listed and not released, by index.
+    private final Map<Integer, Planning> plannings = new ConcurrentHashMap<>();
+    /// The loads the driver claimed and has not completed, by file.
+    private final Map<Integer, EngineLoad> loads = new ConcurrentHashMap<>();
+    /// The footers loaded and not yet listed, by file.
+    private final Map<Integer, PreparedFile> prepared = new ConcurrentHashMap<>();
+    /// The failures of the footers that could not be loaded, by file.
+    private final Map<Integer, Throwable> failed = new ConcurrentHashMap<>();
+    /// The [dev.hardwood.jfr.RowGroupFilterEvent] of each file listed, until the read reaches it.
+    /// Guarded by the driver.
+    private final TreeMap<Integer, Event> fileEvents = new TreeMap<>();
+    /// The loads of other reads a claim found under way, by file, until the driver registers for
+    /// their end ([#whenFooterDone]).
+    private final Map<Integer, CompletableFuture<?>> pending = new ConcurrentHashMap<>();
 
     public EnginePlanning(FileMetadataCache files, Sections sections, HardwoodContextImpl context,
                           FileSchema referenceSchema, List<RowGroup> firstFileRowGroups, ReadProjection projection,
-                          int maxSpan, long indexWindowBytes, WorkingSet workingSet) {
+                          int maxSpan, long indexWindowBytes, WorkingSet workingSet) throws IOException {
         this.files = files;
         SchemaCompatibility compatibility = new SchemaCompatibility(referenceSchema, projection.decoded(), null);
         compatibility.validateReferenceColumns(files.inputFiles().getFirst().name());
@@ -40,17 +68,163 @@ public final class EnginePlanning {
                 new RowGroupPruning(context, null, true),
                 new FetchPlanBuilder(projection, null, true, context, workingSet, maxSpan),
                 0, 0, 0, indexWindowBytes);
+        prepared.put(0, files.getFile(0));
     }
 
-    /// Lists the work items of the read's one file, whose footer the reader has loaded, and
-    /// returns how many there are.
-    public int list() throws IOException {
-        Planner.Listed listed = planner.planRowGroups(0, files.getFile(0), 0);
-        if (listed.event() != null) {
-            listed.event().commit();
+    /// The files after the one it has reached whose footers a read of `fileCount` files reads
+    /// ahead: up to `hardwood.internal.maxFilesAhead` when its files are not all in memory, and
+    /// otherwise only the next file's ([FooterReadAhead#filesAhead]).
+    public static int filesAhead(boolean allInMemory, int fileCount) {
+        return FooterReadAhead.filesAhead(!allInMemory, fileCount);
+    }
+
+    /// Whether a [dev.hardwood.MetadataSource] supplied the footers rather than each being read
+    /// from its file.
+    public boolean footersSupplied() {
+        return files.footersSupplied();
+    }
+
+    // ==================== Footers ====================
+
+    /// What the driver does about the footer of a file.
+    public enum FooterState {
+        /// The footer is loaded, or its load failed: the file can be listed.
+        LOADED,
+        /// Another read loads the footer; the driver asks again once it is done.
+        PENDING,
+        /// The driver loads the footer: [#readFooter] unless [#footerReadsInPlace], then
+        /// [#parseFooter].
+        CLAIMED
+    }
+
+    /// Claims the footer of `fileIndex` for the read ([FooterState]).
+    public FooterState claimFooter(int fileIndex) {
+        if (prepared.containsKey(fileIndex) || failed.containsKey(fileIndex)) {
+            return FooterState.LOADED;
         }
-        plannings.addAll(listed.plannings());
-        return plannings.size();
+        FileMetadataCache.Claim claim = files.claim(fileIndex);
+        if (claim.file() != null) {
+            prepared.put(fileIndex, claim.file());
+            return FooterState.LOADED;
+        }
+        if (claim.failure() != null) {
+            failed.put(fileIndex, claim.failure());
+            return FooterState.LOADED;
+        }
+        if (claim.pending() != null) {
+            pending.put(fileIndex, claim.pending());
+            return FooterState.PENDING;
+        }
+        loads.put(fileIndex, claim.load());
+        return FooterState.CLAIMED;
+    }
+
+    /// Runs `resume` once the load of another read that the claim of `fileIndex` found
+    /// ([FooterState#PENDING]) is done: on the thread that completes it, or at once on the caller's.
+    /// Called without the driver's lock, which `resume` may take.
+    public void whenFooterDone(int fileIndex, Runnable resume) {
+        pending.remove(fileIndex).whenComplete((ignored, failure) -> resume.run());
+    }
+
+    /// Whether the claimed footer of `fileIndex` waits for no I/O, so its parse reads it.
+    public boolean footerReadsInPlace(int fileIndex) {
+        return loads.get(fileIndex).readsInPlace();
+    }
+
+    /// Reads the claimed footer of `fileIndex` as far as I/O goes, on an I/O thread.
+    ///
+    /// @throws IOException the read's failure, naming the file
+    public void readFooter(int fileIndex) throws IOException {
+        loads.get(fileIndex).read();
+    }
+
+    /// Parses the claimed footer of `fileIndex`, on a CPU thread, completing its load. A failure is
+    /// kept for the listing of the file.
+    public void parseFooter(int fileIndex) {
+        EngineLoad load = loads.get(fileIndex);
+        try {
+            prepared.put(fileIndex, load.parse());
+        }
+        catch (IOException | RuntimeException | Error e) {
+            failed.put(fileIndex, e);
+        }
+        loads.remove(fileIndex);
+    }
+
+    /// Completes the claimed load of `fileIndex` with `failure`, its read's last, which the listing
+    /// of the file raises.
+    public void failFooter(int fileIndex, Exception failure) {
+        EngineLoad load = loads.remove(fileIndex);
+        load.fail(failure);
+        failed.put(fileIndex, failure);
+    }
+
+    /// Gives up the loads claimed and not completed, as the read closes.
+    public void abandonFooters() {
+        for (Iterator<EngineLoad> it = loads.values().iterator(); it.hasNext(); ) {
+            it.next().abandon();
+            it.remove();
+        }
+    }
+
+    /// Drops the tail of `fileIndex` and, but for the first file's, its footer from the reader's
+    /// cache, once the read is done with the file or will not reach it.
+    public void dropFile(int fileIndex) {
+        prepared.remove(fileIndex);
+        files.drop(fileIndex);
+    }
+
+    // ==================== The work list ====================
+
+    /// The work items of one file, as [#listFile] planned them, for the driver to append.
+    public static final class FileListing {
+
+        private final Planner.Listed listed;
+        private final int fileIndex;
+
+        private FileListing(Planner.Listed listed, int fileIndex) {
+            this.listed = listed;
+            this.fileIndex = fileIndex;
+        }
+    }
+
+    /// Plans the work items of `fileIndex`, whose footer is loaded or failed, after the `listedBefore`
+    /// work items of the files before it. Never on two threads at once, nor with [#plan].
+    ///
+    /// @throws IOException the failure of the file's footer, or of its planning: a schema that does
+    ///         not match the first file's, among others
+    public FileListing listFile(int fileIndex, int listedBefore) throws IOException {
+        Throwable failure = failed.get(fileIndex);
+        if (failure != null) {
+            throw rethrow(failure);
+        }
+        PreparedFile file = prepared.remove(fileIndex);
+        return new FileListing(planner.planRowGroups(fileIndex, file, listedBefore), fileIndex);
+    }
+
+    /// Appends `listing` to the work list; returns how many work items it holds. Under the driver's
+    /// lock.
+    public int append(FileListing listing) {
+        for (Planning planning : listing.listed.plannings()) {
+            plannings.put(planning.workItem.workItemIndex(), planning);
+        }
+        if (listing.listed.event() != null) {
+            fileEvents.put(listing.fileIndex, listing.listed.event());
+        }
+        return listing.listed.plannings().size();
+    }
+
+    /// Commits the [dev.hardwood.jfr.RowGroupFilterEvent]s of the files listed up to `fileIndex`,
+    /// which the read has reached. Under the driver's lock.
+    public void reportFiles(int fileIndex) {
+        while (!fileEvents.isEmpty() && fileEvents.firstKey() <= fileIndex) {
+            fileEvents.pollFirstEntry().getValue().commit();
+        }
+    }
+
+    /// Whether the read lists no further file: the row budget is spent.
+    public boolean budgetLeft() {
+        return planner.budgetLeft();
     }
 
     public void setBatchPlan(BatchPlan batchPlan) {
@@ -59,7 +233,7 @@ public final class EnginePlanning {
 
     /// Takes work item `index` through its stages as far as the bytes the read holds allow:
     /// `null` once its plans are made, else what the next stage lacks. Run again once it has
-    /// arrived; never on two threads at once.
+    /// arrived; never on two threads at once, nor with [#listFile].
     public Need plan(int index) throws IOException {
         return planner.plans(plannings.get(index));
     }
@@ -80,19 +254,31 @@ public final class EnginePlanning {
 
     /// Releases what work item `index`'s planning holds, once every column has passed it.
     public void release(int index) {
-        Planning planning = plannings.set(index, null);
+        Planning planning = plannings.remove(index);
         planning.reads.release();
         planning.workItem.indexWindow().release(index);
     }
 
     /// Releases what every work item not released holds, as the read closes.
     public void discard() {
-        for (int i = 0; i < plannings.size(); i++) {
-            Planning planning = plannings.set(i, null);
-            if (planning != null) {
-                planning.workItem.indexWindow().releaseAll();
-                planning.reads.discard();
-            }
+        for (Iterator<Planning> it = plannings.values().iterator(); it.hasNext(); ) {
+            Planning planning = it.next();
+            it.remove();
+            planning.workItem.indexWindow().releaseAll();
+            planning.reads.discard();
         }
+    }
+
+    private static IOException rethrow(Throwable failure) throws IOException {
+        if (failure instanceof IOException io) {
+            throw io;
+        }
+        if (failure instanceof RuntimeException re) {
+            throw re;
+        }
+        if (failure instanceof Error err) {
+            throw err;
+        }
+        throw new IOException(failure);
     }
 }
