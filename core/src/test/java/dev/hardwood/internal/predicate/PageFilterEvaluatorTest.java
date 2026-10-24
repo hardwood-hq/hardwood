@@ -12,7 +12,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -114,6 +116,110 @@ class PageFilterEvaluatorTest {
                 Arguments.of(Operator.GT_EQ, 11,  false, true,  true),
                 Arguments.of(Operator.GT_EQ, 31,  false, false, false)
         );
+    }
+
+    @Test
+    void ascendingBoundsLocateEqualityAcrossOverlappingPages() {
+        ColumnIndex index = intColumnIndex(
+                new int[]{ 1, 8, 18, 31 },
+                new int[]{ 10, 20, 30, 40 },
+                ColumnIndex.BoundaryOrder.ASCENDING);
+
+        RowRanges ranges = evaluatePages(index, offsetIndex(10, 10, 10, 10), 40,
+                new ResolvedPredicate.IntPredicate(0, Operator.EQ, 9));
+
+        assertThat(ranges.overlapsPage(0, 10)).isTrue();
+        assertThat(ranges.overlapsPage(10, 20)).isTrue();
+        assertThat(ranges.overlapsPage(20, 30)).isFalse();
+        assertThat(ranges.overlapsPage(30, 40)).isFalse();
+    }
+
+    @Test
+    void descendingBoundsLocateRange() {
+        ColumnIndex index = intColumnIndex(
+                new int[]{ 31, 21, 11, 1 },
+                new int[]{ 40, 30, 20, 10 },
+                ColumnIndex.BoundaryOrder.DESCENDING);
+
+        RowRanges ranges = evaluatePages(index, offsetIndex(10, 10, 10, 10), 40,
+                new ResolvedPredicate.IntPredicate(0, Operator.GT_EQ, 21));
+
+        assertThat(ranges.overlapsPage(0, 10)).isTrue();
+        assertThat(ranges.overlapsPage(10, 20)).isTrue();
+        assertThat(ranges.overlapsPage(20, 30)).isFalse();
+        assertThat(ranges.overlapsPage(30, 40)).isFalse();
+    }
+
+    @Test
+    void ascendingBoundsLocateLessThanRange() {
+        ColumnIndex index = intColumnIndex(
+                new int[]{ 1, 11, 21, 31 },
+                new int[]{ 10, 20, 30, 40 },
+                ColumnIndex.BoundaryOrder.ASCENDING);
+
+        RowRanges ranges = evaluatePages(index, offsetIndex(10, 10, 10, 10), 40,
+                new ResolvedPredicate.IntPredicate(0, Operator.LT, 15));
+
+        assertThat(ranges.overlapsPage(0, 10)).isTrue();
+        assertThat(ranges.overlapsPage(10, 20)).isTrue();
+        assertThat(ranges.overlapsPage(20, 30)).isFalse();
+        assertThat(ranges.overlapsPage(30, 40)).isFalse();
+    }
+
+    @Test
+    void notEqualKeepsOrderedIndexOnLinearFallback() {
+        ColumnIndex index = intColumnIndex(
+                new int[]{ 1, 5, 10 },
+                new int[]{ 4, 5, 20 },
+                ColumnIndex.BoundaryOrder.ASCENDING);
+
+        RowRanges ranges = evaluatePages(index, offsetIndex(10, 10, 10), 30,
+                new ResolvedPredicate.IntPredicate(0, Operator.NOT_EQ, 5));
+
+        assertThat(ranges.overlapsPage(0, 10)).isTrue();
+        assertThat(ranges.overlapsPage(10, 20)).isFalse();
+        assertThat(ranges.overlapsPage(20, 30)).isTrue();
+    }
+
+    @Test
+    void orderedBoundsAreReadLogarithmically() {
+        int pageCount = 1_024;
+        List<byte[]> mins = new ArrayList<>(pageCount);
+        List<byte[]> maxs = new ArrayList<>(pageCount);
+        int[] rowsPerPage = new int[pageCount];
+        Arrays.fill(rowsPerPage, 1);
+        for (int i = 0; i < pageCount; i++) {
+            mins.add(intBytes(i * 10));
+            maxs.add(intBytes(i * 10 + 9));
+        }
+        int[] reads = { 0 };
+        ColumnIndex index = new ColumnIndex(new boolean[pageCount],
+                new CountingList(mins, reads), new CountingList(maxs, reads),
+                ColumnIndex.BoundaryOrder.ASCENDING, null, null, null, null);
+
+        RowRanges ranges = evaluatePages(index, offsetIndex(rowsPerPage), pageCount,
+                new ResolvedPredicate.IntPredicate(0, Operator.EQ, 7_005));
+
+        assertThat(ranges.overlapsPage(700, 701)).isTrue();
+        assertThat(ranges.rowCount(pageCount)).isEqualTo(1);
+        assertThat(reads[0]).isLessThan(100);
+    }
+
+    @Test
+    void nullOnlyPageKeepsOrderedIndexOnLinearFallback() {
+        ColumnIndex index = new ColumnIndex(
+                new boolean[]{ false, true, false },
+                List.of(intBytes(1), intBytes(0), intBytes(21)),
+                List.of(intBytes(10), intBytes(0), intBytes(30)),
+                ColumnIndex.BoundaryOrder.ASCENDING,
+                null, null, null, null);
+
+        RowRanges ranges = evaluatePages(index, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                new ResolvedPredicate.IntPredicate(0, Operator.GT, 0));
+
+        assertThat(ranges.overlapsPage(0, 30)).isTrue();
+        assertThat(ranges.overlapsPage(30, 60)).isFalse();
+        assertThat(ranges.overlapsPage(60, 90)).isTrue();
     }
 
     @Test
@@ -337,6 +443,20 @@ class PageFilterEvaluatorTest {
         );
     }
 
+    @Test
+    void orderedBooleanBoundsKeepTheLinearDecisionPath() {
+        ColumnIndex index = new ColumnIndex(new boolean[2],
+                List.of(new byte[]{ 0 }, new byte[]{ 0 }),
+                List.of(new byte[]{ 0 }, new byte[]{ 1 }),
+                ColumnIndex.BoundaryOrder.ASCENDING, null, null, null, null);
+
+        RowRanges ranges = evaluatePages(index, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.BooleanPredicate(0, Operator.EQ, true));
+
+        assertThat(ranges.overlapsPage(0, 50)).isFalse();
+        assertThat(ranges.overlapsPage(50, 100)).isTrue();
+    }
+
     // Binary Filtering Tests
 
     // 2 pages: [apple,banana], [cherry,date]
@@ -484,6 +604,11 @@ class PageFilterEvaluatorTest {
     }
 
     private static ColumnIndex intColumnIndex(int[] mins, int[] maxs) {
+        return intColumnIndex(mins, maxs, ColumnIndex.BoundaryOrder.UNORDERED);
+    }
+
+    private static ColumnIndex intColumnIndex(int[] mins, int[] maxs,
+            ColumnIndex.BoundaryOrder boundaryOrder) {
         List<byte[]> minValues = new ArrayList<>();
         List<byte[]> maxValues = new ArrayList<>();
         boolean[] nullPages = new boolean[mins.length];
@@ -492,7 +617,29 @@ class PageFilterEvaluatorTest {
             maxValues.add(intBytes(maxs[i]));
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null, null, null, null);
+                boundaryOrder, null, null, null, null);
+    }
+
+    private static final class CountingList extends AbstractList<byte[]> {
+
+        private final List<byte[]> values;
+        private final int[] reads;
+
+        private CountingList(List<byte[]> values, int[] reads) {
+            this.values = values;
+            this.reads = reads;
+        }
+
+        @Override
+        public byte[] get(int index) {
+            reads[0]++;
+            return values.get(index);
+        }
+
+        @Override
+        public int size() {
+            return values.size();
+        }
     }
 
     private static ColumnIndex longColumnIndex(long[] mins, long[] maxs) {
