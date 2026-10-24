@@ -85,8 +85,10 @@ class FetchSequenceReadTest {
             RowGroupIterator iterator = iterator(file, context, maxRows);
             try {
                 iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                // The next unit is planned on the read's executor, and starts its first entry then
-                for (int i = 0; i < 100 && !iterator.isPlannedAhead(1); i++) {
+                // The next unit, and without a row limit every row group F has room for, is planned
+                // on the read's executor, which starts each one's first entry then
+                int lastPlanned = maxRows > 0 ? 1 : ROW_GROUPS - 1;
+                for (int i = 0; i < 100 && !iterator.isPlannedAhead(lastPlanned); i++) {
                     Thread.sleep(50);
                 }
                 assertThat(speculative.awaitQuiescence(5, TimeUnit.SECONDS)).isTrue();

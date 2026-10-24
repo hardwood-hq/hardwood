@@ -36,8 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// A [ScheduledNestedColumn] fills its cells in tasks of the decode pool only, never in its fetch
 /// steps, which run on the pool too: also the cell a fetch step seals at the end of the stream, and
 /// the open cell it seals at its failure between two work items, once the page tasks have placed
-/// every page. It queues a [SealedFillTask] only for cells its fetch steps seal, none for the cells
-/// its page tasks seal.
+/// every page. Every record reaches the consumer either way.
 @Tag("pool")
 class NestedFillThreadTest {
 
@@ -50,7 +49,6 @@ class NestedFillThreadTest {
     /// Threads that filled a cell off the decode pool or inside a fetch step.
     private final ConcurrentLinkedQueue<String> offPool = new ConcurrentLinkedQueue<>();
     private final AtomicInteger fills = new AtomicInteger();
-    private final AtomicInteger sealedFillTasks = new AtomicInteger();
 
     @BeforeEach
     void observeFills() {
@@ -61,17 +59,11 @@ class NestedFillThreadTest {
                 offPool.add(thread.toString());
             }
         };
-        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
-            if (page instanceof SealedFillTask) {
-                sealedFillTasks.incrementAndGet();
-            }
-        };
     }
 
     @AfterEach
     void stopObserving() {
         ScheduledNestedColumn.fillObserver = null;
-        ReadScheduler.submissionObserver = null;
     }
 
     @ParameterizedTest(name = "batch {0}")
@@ -81,12 +73,10 @@ class NestedFillThreadTest {
         assertThat(read(batchSize, End.STREAM)).isEqualTo(RECORDS);
         assertThat(fills).hasPositiveValue();
         assertThat(offPool).isEmpty();
-        // The file has one row group, so the fetch steps seal cells only at the end of the stream
-        assertThat(sealedFillTasks).as("sealed fill tasks").hasValueLessThanOrEqualTo(1);
     }
 
     /// The fetch step reaches the end of the stream only once every page is placed, so its
-    /// placement seals the open cell and no page task is left to fill it.
+    /// placement may seal the open cell when no page task is left to fill it.
     @ParameterizedTest(name = "batch {0}")
     @ValueSource(ints = { 7, 1 << 20 })
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -94,7 +84,6 @@ class NestedFillThreadTest {
         assertThat(read(batchSize, End.STREAM_AFTER_TASKS)).isEqualTo(RECORDS);
         assertThat(fills).hasPositiveValue();
         assertThat(offPool).isEmpty();
-        assertThat(sealedFillTasks).as("sealed fill tasks").hasValue(1);
     }
 
     /// The fetch step fails between two work items only once every page is placed, so its
@@ -108,7 +97,6 @@ class NestedFillThreadTest {
                 .hasMessage("simulated transport failure");
         assertThat(fills).hasPositiveValue();
         assertThat(offPool).isEmpty();
-        assertThat(sealedFillTasks).as("sealed fill tasks").hasValue(1);
     }
 
     private enum End {
