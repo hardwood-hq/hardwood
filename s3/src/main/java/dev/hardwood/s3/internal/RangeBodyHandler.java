@@ -16,7 +16,9 @@ import java.util.concurrent.Flow;
 
 /// Receives the body of a range `GET` into a buffer as the client delivers it, on the client's
 /// threads. A `206` body goes into a direct buffer of the requested length, the body of any
-/// other status, such as an error document, into a heap buffer of up to 64 KiB.
+/// other status, such as an error document, into a heap buffer of up to 64 KiB. A suffix range
+/// ([#suffix(int)]) takes a `200` too, the answer of an endpoint that sends the whole object, and
+/// either body goes into a direct buffer of its `Content-Length`, at most the suffix's length.
 ///
 /// A body that fits is read to its end, so its HTTP/1.1 connection goes back to the pool. A body
 /// longer than its buffer is cancelled once the buffer is full, which closes its HTTP/1.1
@@ -27,20 +29,42 @@ public final class RangeBodyHandler implements HttpResponse.BodyHandler<RangeBod
     /// The most bytes received of a body other than a `206`'s.
     static final int OTHER_BODY_LIMIT = 64 * 1024;
 
+    private static final int HTTP_OK = 200;
     private static final int HTTP_PARTIAL_CONTENT = 206;
 
     private final int length;
+    private final boolean suffix;
 
     /// @param length the number of bytes the range requests
     public RangeBodyHandler(int length) {
+        this(length, false);
+    }
+
+    private RangeBodyHandler(int length, boolean suffix) {
         this.length = length;
+        this.suffix = suffix;
+    }
+
+    /// A handler for a suffix range of `length` bytes, whose body may be shorter, when the object
+    /// is, and may come with a `200`.
+    public static RangeBodyHandler suffix(int length) {
+        return new RangeBodyHandler(length, true);
     }
 
     @Override
     public HttpResponse.BodySubscriber<RangeBody> apply(HttpResponse.ResponseInfo responseInfo) {
-        ByteBuffer target = responseInfo.statusCode() == HTTP_PARTIAL_CONTENT
-                ? ByteBuffer.allocateDirect(length)
-                : ByteBuffer.allocate(OTHER_BODY_LIMIT);
+        int status = responseInfo.statusCode();
+        ByteBuffer target;
+        if (suffix && (status == HTTP_PARTIAL_CONTENT || status == HTTP_OK)) {
+            long declared = responseInfo.headers().firstValueAsLong("Content-Length").orElse(length);
+            target = ByteBuffer.allocateDirect(Math.clamp(declared, 0, length));
+        }
+        else if (status == HTTP_PARTIAL_CONTENT) {
+            target = ByteBuffer.allocateDirect(length);
+        }
+        else {
+            target = ByteBuffer.allocate(OTHER_BODY_LIMIT);
+        }
         return new Receiver(target);
     }
 

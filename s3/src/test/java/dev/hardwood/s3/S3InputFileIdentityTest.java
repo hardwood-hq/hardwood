@@ -65,17 +65,28 @@ class S3InputFileIdentityTest {
         server.stop(0);
     }
 
-    /// Answers the suffix range that opens a file, which covers the whole of this object.
+    /// Answers the suffix range that opens a file and the range reads after it.
     private void respond(HttpExchange exchange) throws IOException {
         byte[] body = object;
+        String range = exchange.getRequestHeaders().getFirst("Range").substring("bytes=".length());
+        int from;
+        int to;
+        if (range.startsWith("-")) {
+            from = Math.max(0, body.length - Integer.parseInt(range.substring(1)));
+            to = body.length - 1;
+        }
+        else {
+            int dash = range.indexOf('-');
+            from = Integer.parseInt(range.substring(0, dash));
+            to = Integer.parseInt(range.substring(dash + 1));
+        }
         if (etag != null) {
             exchange.getResponseHeaders().add("ETag", etag);
         }
-        exchange.getResponseHeaders().add("Content-Range",
-                "bytes 0-" + (body.length - 1) + "/" + body.length);
-        exchange.sendResponseHeaders(206, body.length);
+        exchange.getResponseHeaders().add("Content-Range", "bytes " + from + "-" + to + "/" + body.length);
+        exchange.sendResponseHeaders(206, to - from + 1);
         try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
+            out.write(body, from, to - from + 1);
         }
     }
 

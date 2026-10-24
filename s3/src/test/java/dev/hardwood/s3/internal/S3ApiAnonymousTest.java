@@ -14,6 +14,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
@@ -73,11 +74,12 @@ class S3ApiAnonymousTest {
 
     @Test
     void requestsAreUnsigned() throws IOException {
-        HttpResponse<byte[]> response = api.getBytes("bucket", "object.parquet", "bytes=0-3");
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3",
+                RANGE_BODY.length, null);
 
         assertThat(api.anonymous()).isTrue();
         assertThat(response.statusCode()).isEqualTo(206);
-        assertThat(response.body()).isEqualTo(RANGE_BODY);
+        assertThat(response.body().bytes()).isEqualTo(ByteBuffer.wrap(RANGE_BODY));
         assertThat(requestHeaders).hasSize(2);
         for (Map<String, List<String>> headers : requestHeaders) {
             List<String> names = headers.keySet().stream().map(name -> name.toLowerCase(Locale.ROOT)).toList();
