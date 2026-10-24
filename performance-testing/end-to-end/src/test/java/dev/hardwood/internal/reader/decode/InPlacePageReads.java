@@ -32,13 +32,14 @@ public final class InPlacePageReads {
     /// copies them.
     public Object read(PageDecoder decoder, ColumnSchema column, ByteBuffer page, Dictionary dictionary,
                        DecodeBuffers buffers) {
+        DataPage dataPage = DataPage.parse(page);
         if (column.maxRepetitionLevel() > 0) {
-            PageDecoder.InPlaceNestedPage nested = decoder.decodeNestedInPlace(page, dictionary, scratch, buffers);
+            PageDecoder.InPlaceNestedPage nested = decoder.decodeNestedInPlace(dataPage, dictionary, scratch, buffers);
             return nested.flat() != null ? write(nested.flat(), column) : write(nested.binary());
         }
         return switch (column.type()) {
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> write(decoder.decodeFlatBinary(page, dictionary, scratch, buffers));
-            default -> write(decoder.decodeFlat(page, dictionary, scratch, buffers), column);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> write(decoder.decodeFlatBinary(dataPage, dictionary, scratch, buffers));
+            default -> write(decoder.decodeFlat(dataPage, dictionary, scratch, buffers), column);
         };
     }
 

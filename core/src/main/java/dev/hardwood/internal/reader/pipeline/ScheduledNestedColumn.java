@@ -385,7 +385,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         PageRowMask mask = info.mask();
         PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
                 ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch, true)
-                : page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch, buffers);
+                : page.decoder.decodeNestedInPlace(info.dataPage(), info.dictionary(), page.scratch, buffers);
         if (!mask.isAll()) {
             inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
         }

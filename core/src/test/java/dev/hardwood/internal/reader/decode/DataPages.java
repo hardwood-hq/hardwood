@@ -228,17 +228,17 @@ public final class DataPages {
     public static Object read(PageDecoder decoder, ColumnSchema column, ByteBuffer page, Dictionary dictionary) {
         PageDecoder.LevelScratch scratch = new PageDecoder.LevelScratch();
         if (column.maxRepetitionLevel() > 0) {
-            return TestDecodeBuffers.decode(buffers -> values(decoder.decodeNestedInPlace(page, dictionary, scratch, buffers),
+            return TestDecodeBuffers.decode(buffers -> values(decoder.decodeNestedInPlace(DataPage.parse(page), dictionary, scratch, buffers),
                     column));
         }
         return TestDecodeBuffers.decode(buffers -> isBinary(column.type())
-                ? values(decoder.decodeFlatBinary(page, dictionary, scratch, buffers), column.maxDefinitionLevel())
-                : values(decoder.decodeFlat(page, dictionary, scratch, buffers), column.type()));
+                ? values(decoder.decodeFlatBinary(DataPage.parse(page), dictionary, scratch, buffers), column.maxDefinitionLevel())
+                : values(decoder.decodeFlat(DataPage.parse(page), dictionary, scratch, buffers), column.type()));
     }
 
     /// Reads `page` through [PageDecoder#decodeNestedInPlace], whatever the column.
     static Object readNested(PageDecoder decoder, ColumnSchema column, ByteBuffer page, Dictionary dictionary) {
-        return TestDecodeBuffers.decode(buffers -> values(decoder.decodeNestedInPlace(page, dictionary,
+        return TestDecodeBuffers.decode(buffers -> values(decoder.decodeNestedInPlace(DataPage.parse(page), dictionary,
                 new PageDecoder.LevelScratch(), buffers), column));
     }
 

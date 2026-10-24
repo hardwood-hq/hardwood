@@ -23,6 +23,7 @@ import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.decode.PageFormatProbe.HeaderAt;
@@ -546,8 +547,8 @@ public final class SequentialFetchPlan implements FetchPlan {
                     if (pageData == null) {
                         return null;
                     }
-                    pageInfo = PageInfo.dataPage(pageData, header, columnSchema, metaData, dictionary, mask,
-                            keptRecords(mask, numValues));
+                    pageInfo = new PageInfo(new DataPage(header, headerSize, pageData), columnSchema, metaData,
+                            dictionary, mask, keptRecords(mask, numValues));
                 }
                 donePage(numValues, pageRecords, totalPageSize);
                 return pageInfo;
