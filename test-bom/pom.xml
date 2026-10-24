@@ -129,6 +129,13 @@
         <version>${project.version}</version>
       </dependency>
 
+      <!-- Fuzz targets -->
+      <dependency>
+        <groupId>com.code-intelligence</groupId>
+        <artifactId>jazzer-junit</artifactId>
+        <version>0.30.0</version>
+      </dependency>
+
       <!-- Differential-test oracle (DuckDB) -->
       <dependency>
         <groupId>org.duckdb</groupId>
