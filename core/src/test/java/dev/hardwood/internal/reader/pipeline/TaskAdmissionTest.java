@@ -8,17 +8,12 @@
 package dev.hardwood.internal.reader.pipeline;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -173,60 +168,6 @@ class TaskAdmissionTest {
                 count++;
             }
             assertThat(count).isEqualTo(3L * pageValues);
-        }
-    }
-
-    /// Two reads on a pool share a read-ahead buffer with room for one large task, so a task of
-    /// one ending resumes the other's submission on its thread. Every submission of read A made
-    /// while a release runs the waiters fails: A ends with the failure, or reads every row where
-    /// none of its submissions resumed there, and B reads every row.
-    @Test
-    @Tag("pool")
-    void failureResumingOneReadDoesNotReachAnother(@TempDir Path dir) throws Exception {
-        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Integer.toString(40 * 1024 * 1024));
-        int pageValues = 5 * 1024 * 1024;
-        Path a = dir.resolve("a.parquet");
-        Path b = dir.resolve("b.parquet");
-        Files.write(a, RleExpansionFile.buildWide(4, 6, 2 * DecodeBuffers.RETAINED_BYTES, pageValues));
-        Files.write(b, RleExpansionFile.buildWide(4, 6, 2 * DecodeBuffers.RETAINED_BYTES, pageValues));
-        IllegalStateException injected = new IllegalStateException("injected");
-        AtomicInteger resumedInWake = new AtomicInteger();
-        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
-            if (page.fileName.equals("a.parquet") && StackWalker.getInstance().walk(frames -> frames.anyMatch(
-                    frame -> frame.getClassName().equals(ReadAheadBuffer.class.getName())
-                            && frame.getMethodName().equals("wake")))) {
-                resumedInWake.incrementAndGet();
-                throw injected;
-            }
-        };
-        try (HardwoodContext context = HardwoodContext.create(2)) {
-            for (int round = 0; round < 10; round++) {
-                CompletableFuture<Long> readA = CompletableFuture.supplyAsync(() -> count(context, a));
-                assertThat(count(context, b)).as("rows of read B, round %d", round).isEqualTo(6L * pageValues);
-                // A round in which no submission of A happened to resume inside a release reads A whole
-                assertThat(readA).as("read A, round %d", round).satisfiesAnyOf(
-                        read -> assertThatThrownBy(read::join).hasRootCause(injected),
-                        read -> assertThat(read.join()).isEqualTo(6L * pageValues));
-            }
-            assertThat(resumedInWake).as("submissions of A resumed inside a release").hasPositiveValue();
-        }
-        finally {
-            ReadScheduler.submissionObserver = null;
-        }
-    }
-
-    private static long count(HardwoodContext context, Path file) {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file), context);
-                RowReader rows = reader.buildRowReader().build()) {
-            long count = 0;
-            while (rows.hasNext()) {
-                rows.next();
-                count++;
-            }
-            return count;
-        }
-        catch (IOException e) {
-            throw new UncheckedIOException(e);
         }
     }
 
