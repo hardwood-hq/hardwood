@@ -159,8 +159,8 @@ catch (StaleMetadataException e) {
 ## Metadata for multiple files
 
 For a multi-file reader, use `getFileCount()` and `getFileMetaData(int)` to inspect each
-physical input file in order. Each footer is read once, when first needed, and reused by
-metadata, row and column access for the lifetime of the parent reader.
+physical input file in order. The first file's footer is read when the reader is opened; for a
+later file, `getFileMetaData(int)` may read the file's footer.
 
 ```java
 try (Hardwood hardwood = Hardwood.create();
@@ -176,8 +176,7 @@ try (Hardwood hardwood = Hardwood.create();
 
 `getFileMetaData(int)` reports the physical file's footer without validating it against the first
 file; cross-file schema validation happens when a row or column reader is planned. Leave every input
-file unchanged until the parent reader is closed. A failed footer load is cached too: close and
-reopen the parent reader to retry it or to inspect a changed file.
+file unchanged until the parent reader is closed.
 
 ## Size statistics and level histograms
 

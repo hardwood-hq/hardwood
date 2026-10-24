@@ -115,7 +115,7 @@ class FileMetadataCacheTest {
             Future<FileMetaData> offPool = callers.submit(() -> cache.getFileMetaData(0));
             assertThat(inputFile.awaitFooterRead()).isTrue();
 
-            Need need = cache.fileNeed(0);
+            Need need = cache.fileNeed(0, new PrefetchTasks(context.ioExecutor()));
             assertThat(need).as("the load under way").isNotNull();
             CountDownLatch met = new CountDownLatch(1);
             need.whenMet(met::countDown);
@@ -124,7 +124,7 @@ class FileMetadataCacheTest {
             inputFile.releaseFooterRead();
             FileMetaData metadata = offPool.get(WAIT_SECONDS, TimeUnit.SECONDS);
             assertThat(met.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
-            assertThat(cache.fileNeed(0)).isNull();
+            assertThat(cache.fileNeed(0, new PrefetchTasks(context.ioExecutor()))).isNull();
             assertThat(cache.getFile(0).metaData()).isSameAs(metadata);
         }
         finally {
@@ -156,10 +156,11 @@ class FileMetadataCacheTest {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
         List<Runnable> queued = new ArrayList<>();
         FileMetadataCache cache = cache(inputFile, queued::add);
+        PrefetchTasks tasks = new PrefetchTasks(queued::add);
 
         try {
-            cache.prefetch(0);
-            cache.prefetch(0);
+            cache.prefetch(0, tasks, () -> {});
+            cache.prefetch(0, tasks, () -> {});
             assertThat(queued).hasSize(1);
             assertThat(inputFile.openCount()).isZero();
 
@@ -183,7 +184,7 @@ class FileMetadataCacheTest {
         FileMetadataCache cache = cache(inputFile, queued::add);
 
         try {
-            cache.prefetch(0);
+            cache.prefetch(0, new PrefetchTasks(queued::add), () -> {});
             assertThat(queued).isEmpty();
             assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
             assertThat(queued).isEmpty();
@@ -214,7 +215,7 @@ class FileMetadataCacheTest {
         FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), context);
 
         try {
-            cache.prefetch(0);
+            cache.prefetch(0, new PrefetchTasks(context.ioExecutor()), () -> {});
             assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
             assertThat(callers).singleElement().satisfies(caller -> assertThat(caller.isVirtual()).isTrue());
         }
@@ -230,7 +231,7 @@ class FileMetadataCacheTest {
         FileMetadataCache cache = cache(inputFile, Runnable::run);
 
         cache.close();
-        cache.prefetch(0);
+        cache.prefetch(0, new PrefetchTasks(Runnable::run), () -> {});
 
         assertThat(inputFile.openCount()).isZero();
         assertThat(inputFile.closeCount()).isZero();

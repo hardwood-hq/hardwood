@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +19,8 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -33,11 +36,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 /// A file's tail, which its footer entry reads in one request: the reads that fall inside it are
-/// sliced from it, so a file up to the tail's size costs one request (READ_PATH_CONSOLIDATION.md,
-/// stage 2, item 2, and rule 5).
+/// sliced from it, so a file up to the tail's size costs one request (FETCH_PLANNING.md, The
+/// file's tail).
 class FileTailTest {
 
     private static final int ROWS = 20_000;
+    /// Twelve row groups of twenty columns with a page index, which lies inside the default tail.
+    private static final Path PAGE_INDEX_WINDOWS = Path.of("src/test/resources/page_index_windows.parquet");
 
     private String tailBytes;
 
@@ -72,7 +77,7 @@ class FileTailTest {
                 .containsExactly(tuple(0L, bytes.length, "footer-info"));
     }
 
-    /// Rule 5: a range of a column chunk that straddles the tail's start is requested only up to
+    /// A range of a column chunk that straddles the tail's start is requested only up to
     /// it, and the rest is sliced from the tail, so no byte is requested twice.
     @Test
     void aRangeStraddlingTheTailsStartIsRequestedOnlyUpToIt() throws Exception {
@@ -109,6 +114,44 @@ class FileTailTest {
         assertThat(file.reads()).extracting(CountingInputFile.Read::offset, CountingInputFile.Read::length)
                 .containsExactly(tuple(200L, 100), tuple(150L, 100), tuple(250L, 50));
         assertThat(TailedInputFile.tailOffset(tailed)).isEqualTo(Long.MAX_VALUE);
+    }
+
+    /// The tail is the reader's, shared by its reads: a read that has listed the file keeps the
+    /// page index it plans to slice from the tail when another read of the reader drops the tail
+    /// by closing. The two reads are iterators over one metadata cache, as a reader's child reads
+    /// are.
+    @Test
+    void aReadKeepsWhatItSlicesFromTheTailWhenAnotherReadDropsIt() throws Exception {
+        System.clearProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+        CountingInputFile file = new CountingInputFile(InputFile.of(PAGE_INDEX_WINDOWS));
+        file.open();
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            FileMetadataCache cache = new FileMetadataCache(List.of(file), context);
+            RowGroupIterator planning = iterator(cache, context);
+            RowGroupIterator closing = iterator(cache, context);
+            try {
+                // Lists the file, whose page index lies inside the tail, and plans nothing yet
+                RowGroupIterator.WorkItem workItem = planning.workItemAt(0);
+                closing.workItemAt(0);
+                closing.close();
+
+                assertThat(planning.getColumnPlan(workItem, 0).isEmpty()).isFalse();
+            }
+            finally {
+                planning.close();
+                cache.close();
+                file.close();
+            }
+        }
+    }
+
+    private static RowGroupIterator iterator(FileMetadataCache cache, HardwoodContextImpl context)
+            throws IOException {
+        RowGroupIterator iterator = new RowGroupIterator(cache, ignored -> {}, context, 0, 0, 0);
+        iterator.openFirst();
+        iterator.initialize(ReadProjection.of(
+                ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.columns("c05"))), null, true);
+        return iterator;
     }
 
     /// A file whose bytes are in memory takes no tail: it slices every read in place.

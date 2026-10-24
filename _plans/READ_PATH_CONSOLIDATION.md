@@ -376,8 +376,10 @@ decision a later PR forces that they do not settle is written here before it con
   leaf a dictionary can decide, so a dictionary the fold never reaches is never read.
 - **S2. One holder.** `PlanningReads` holds every planning entry of one file: a window's requests,
   inserted as the file is planned and held by every member, and a work item's dictionary pages,
-  filters without a length and probes, held by the work item. A range inside the file's tail, or
-  of a file in memory, is sliced in place and needs no entry. Entries are released with the work
+  filters without a length and probes, held by the work item. A range inside the file's tail while
+  the read holds it, or of a file in memory, is sliced in place and needs no entry; so is a data
+  entry inside the tail, which then starts no request and is charged to neither F nor R, since the
+  tail is charged already. Entries are released with the work
   items holding them, or on close. A window's slices are merged into requests by
   `CoalescedRanges`, which only plans them.
 - **S3. Page-index windows (#1659).** A window's page-index requests start when the chain plans
@@ -416,19 +418,31 @@ decision a later PR forces that they do not settle is written here before it con
   files not all in memory without a row limit, and no next unit at all for a read of files in
   memory on a context of zero threads.
 - **S9. Columns and callers wait for one cursor per stage.** A column waits for "work item i
-  planned", a need the sequence keeps. A caller outside the read that needs a work item taken only
+  planned", a need the chain keeps; the sequence only answers whether the chain may plan a work
+  item ahead (rule 7). A caller outside the read that needs a work item taken only
   part of the way before the read starts (`workItemAt`, `getWorkItems`, `hasLiveWorkItem`,
   `canFastSkipAllRowGroups`) asks for it to be taken through a stage (listed, arrival, mask) and
   waits for that stage's published cursor: parked on a pool, running the read's queue on a
   context of zero threads.
-- **S10. Reaching a file.** The sequence alone decides when the read has reached a file: the file
-  of the work item a column asks for, of the read's next unit, or a file listed for a caller. It
-  learns each listed work item's file from the chain, and a file the chain is listing for a work
-  item that becomes the next unit later is reached then. Reaching a file moves the footers ahead
-  (rule 4) and commits the file's `RowGroupFilterEvent`.
-- **S11. Footers.** The chain takes a footer without waiting: it yields on the footer's read, or on
-  another thread's load of it, and once the footer has been read loads it in place. A caller
-  outside a read registers the load itself and waits for it, so a close waits for that load.
+- **S10. Reaching a file.** The chain decides when the read has reached a file, from the furthest
+  work item the read has reached (a column's request, the next unit, a caller's) and that work
+  item's file, or, for a work item not listed yet, the file listed next. Reaching a file moves the
+  footers ahead (rule 4), which the sequence starts, and commits the file's `RowGroupFilterEvent`
+  once the file is planned.
+- **S11. Footers.** A footer read is a task of the read that starts it, like every other read: it
+  runs on the read's `PrefetchTasks`, whose close waits for it, and an `Error` it failed with that
+  no load took is raised by that close. It opens the file rather than reading a known range, so it
+  is the one read that is not a `RangeRead`. The chain takes a footer without waiting: it yields
+  on the footer's read, or on another thread's load of it, and once the footer has been read loads
+  it in place. A caller outside a read registers the load itself and waits for it, so a close waits
+  for that load. A footer read a read's close dropped before it started is no read: the next
+  request starts it again.
+- **S14. What a read holds.** Each listed work item has one state from its listing until every
+  column has released it, when the work list drops it: the work list holds the work items the
+  read has not passed. A read drops a file's tail and footer once it is done with the file, the
+  first file's footer excepted, which the reader keeps; a later read, or the reader's metadata
+  accessor, reads a dropped footer again. A read of many files therefore holds the footers and
+  work items of the files it is reading, not of every file it has read.
 - **S12. Priority.** A demanded entry starts at once (rule 1); the next unit's planning entries
   start only when the first column enters the row group before it (rule 2), after that row group's
   data entries are demanded or started; planning past the next unit is bounded by rule 7. Nothing
@@ -446,19 +460,23 @@ decision a later PR forces that they do not settle is written here before it con
 to two where the table says why, with every gate passing. Lines and constructs are reported, not
 gated.
 
-| Concern | Stage 2 | After the spike |
+| Concern | Stage 2 | After stage 3 |
 | --- | --- | --- |
-| Issue a byte request | sequence entries, `CoalescedRanges`, `readRange` in `DictionaryParser`, `RowGroupBloomFilterSource`, `PageFormatProbe` and the footer read | sequence entries |
+| Issue a byte request | sequence entries, `CoalescedRanges`, `readRange` in `DictionaryParser`, `RowGroupBloomFilterSource`, `PageFormatProbe` and the footer read | sequence entries, run with the footer reads as tasks of the read (S11) |
 | Plan a row group | on demand on a virtual thread or the step, ahead, the next unit's read, two caller paths | the chain |
-| Keep a row group's planned state | three `OnceCache`s, the plannings map, the next-unit set | one `Planning` per work item |
+| Keep a row group's state | three `OnceCache`s, the plannings map, the next-unit set, the reference counts, the entered and reported sets, the work list | one `Planning` per work item, which the work list holds (S14) |
 | Wait for planning | `WorkItemPlanning`, blocking `OnceCache`, the load's join and hand-off, `IndexWindow`'s lock | a need for steps, `ReadTasks` for callers |
 | Run planning CPU on the pool | four `compute` hops, `awaitFirst`, the hand-off | where the chain runs |
 | Fail planning | sticky for files, re-planned for row groups, swallowed ahead, untaken `Error`s | sticky, one instance |
-| Order planning | `planLock`, `IndexWindow`'s lock, `OnceCache`, the chain's claim | the chain's claim |
+| Order planning | `planLock`, `IndexWindow`'s lock, `OnceCache`, the chain's claim | the chain's claim and its cursor |
 | Get a footer | the load, the read ahead, the hand-off, `awaitFirst` | the chain's need and a caller's load (a caller may block, the chain may not) |
-| Decide the read has reached a file | the planning lock's callers | the sequence |
+| Decide the read has reached a file | the planning lock's callers | the chain (S10) |
 
-The spike measured 5,719 lines of code and 76 concurrency constructs, against stage 2's 5,401 and 86.
+The spike measured 5,719 lines of code and 76 concurrency constructs, against stage 2's 5,401 and
+86. Stage 3 measures 5,742 and 80: moving the cursor and the reached file into the
+chain, footer reads onto the read's tasks and the per-work-item state into one object left the
+size where it was, and dropped what a read holds per file (S14) and slicing data inside the tail
+(S2) added code.
 
 ### Stage 4: fold into the design documents
 

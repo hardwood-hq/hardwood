@@ -16,10 +16,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
 
 import dev.hardwood.InputFile;
@@ -50,15 +51,23 @@ import jdk.jfr.Event;
 /// needs from the read's [FetchSequence], registers to run again once it is met, and lets its
 /// thread go, keeping the claim; it never waits, so it needs no thread of its own.
 ///
-/// How far it plans: the work items the read's columns asked for, the read's next unit, and further
-/// while [FetchSequence#nextToPlan] allows. A caller outside the read that needs a work item taken
-/// part of the way before the read starts asks for it to be taken through a [Stage] ([#awaitStage])
-/// and waits for the chain to publish that stage's cursor past it.
+/// How far it plans: the work items the read's columns asked for ([#requested]), the read's next
+/// unit ([#nextUnit]), and further while [FetchSequence#mayPlanAhead] allows. The work items it has
+/// planned are a cursor, which columns wait on ([#isPlanned], [#whenPlanned]). A caller outside the
+/// read that needs a work item taken part of the way before the read starts asks for it to be taken
+/// through a [Stage] ([#awaitStage]) and waits for the chain to publish that stage's cursor past it.
 ///
-/// Each work item's planned state is written once, by the chain, before it publishes the work item
-/// planned ([FetchSequence#planned]), and read by the columns after that. A failure ends planning:
-/// a work item it hit, and every one after it, take the same failure, as do the work items of the
-/// file whose planning failed and the files after it.
+/// Each work item listed has one state, its [Planning], from its listing until every column has
+/// released it ([#release]), when it is dropped: the work list holds only the work items the read
+/// has not passed. Its planned state is written once, by the chain, before it publishes the work
+/// item planned, and read by the columns after that. A failure ends planning: a work item it hit,
+/// and every one after it, take the same failure, as do the work items of the file whose planning
+/// failed and the files after it.
+///
+/// The chain also decides which file the read has reached, from the furthest work item the read
+/// has reached and the work item's file, or, for a work item not listed yet, the file listed next:
+/// the read's [FetchSequence] starts the footers ahead of it, and the chain commits the
+/// [dev.hardwood.jfr.RowGroupFilterEvent]s of the files up to it.
 final class PlanningChain {
 
     private final List<InputFile> inputFiles;
@@ -73,26 +82,33 @@ final class PlanningChain {
     private final RowGroupPruning pruning;
     private final FetchPlanBuilder fetchPlanBuilder;
     private final long maxRows;
-    /// Whether planning goes past the next unit, by F ([FetchSequence#nextToPlan]).
+    /// Whether planning goes past the next unit, by F ([FetchSequence#mayPlanAhead]).
     private final boolean plansDeep;
     /// The most bytes one [IndexWindow] reads, gaps included, unless a single row group needs more.
     private final long indexWindowBytes;
 
-    /// The work list, appended to a file at a time by the chain.
-    private final List<WorkItem> workItems = new CopyOnWriteArrayList<>();
-    /// The planning state of each work item the chain has begun, until every column releases it.
+    /// The work list: the state of each work item listed, by index, appended to a file at a time by
+    /// the chain and dropped as every column releases a work item.
     private final Map<Integer, Planning> plannings = new ConcurrentHashMap<>();
+    /// The work items listed. Written under `cursorLock`.
+    private volatile int listedCount;
+    /// The decoded columns, each of which takes and releases every work item it reads.
+    private final int columnCount;
     /// The [dev.hardwood.jfr.RowGroupFilterEvent] of each file planned, by file index, until the
     /// read reaches the file.
     private final Map<Integer, Event> fileEvents = new ConcurrentSkipListMap<>();
 
     // The chain's own state, read and written only under its claim
+    /// The next file to list; written under `cursorLock` too, which [#updateReached] reads it under.
     private int nextFileToPlan;
     private long planRowBudget;
     private long plannedRows;
     private long planSkipRemaining;
     /// Whether the read's batch plan has taken a work item, after which it can no longer be set.
     private boolean batchesPlanned;
+    /// Whether the work item the chain plans is ahead of the columns and the next unit, which lists
+    /// no file whose footer the sequence has not started.
+    private boolean planningAhead;
 
     /// What the chain has published, replaced as a whole.
     private volatile Progress progress = new Progress(new int[] {-1, -1, -1}, false, null, Integer.MAX_VALUE, 0);
@@ -113,6 +129,23 @@ final class PlanningChain {
     private final AtomicBoolean scheduled = new AtomicBoolean();
     private volatile boolean wanted;
     private volatile boolean closed;
+
+    /// Guards the cursor: what columns asked for and wait on, and how far the read has reached.
+    private final ReentrantLock cursorLock = new ReentrantLock();
+    /// Guarded by `cursorLock`: the last work item a column asked to plan, `-1` before the read
+    /// starts.
+    private int requested = -1;
+    /// Guarded by `cursorLock`: the next work item the chain plans, every one before it planned.
+    private int planFrom;
+    /// Guarded by `cursorLock`: whether the chain plans nothing more, at the end of the work list
+    /// or after a failure.
+    private boolean planningEnded;
+    /// Guarded by `cursorLock`: the columns and callers waiting for a work item to be planned.
+    private final List<PlanWaiter> planWaiters = new ArrayList<>();
+    /// Guarded by `cursorLock`: the furthest work item the read has reached, as its next unit, a
+    /// column's request or a caller's, and the last file the read has been told it reached.
+    private int reachedItem = -1;
+    private int toldFile = -1;
 
     /// What the chain has published: for each stage before [Stage#PLANS], the last work item it
     /// took through it for a caller; whether the work list is complete; the failure that ended
@@ -144,7 +177,9 @@ final class PlanningChain {
         }
     }
 
-    /// One work item's planning: what its stages have decided so far, and the bytes they read.
+    /// One work item's state: what its stages have decided so far and the bytes they read, written
+    /// by the chain, and the columns that hold it and whether the read has entered it and reported
+    /// its drop.
     static final class Planning {
 
         final WorkItem workItem;
@@ -155,6 +190,10 @@ final class PlanningChain {
         SharedRowGroupMetadata shared;
         MaskCapability mask;
         RowGroupPlans plans;
+        /// The columns that took the work item and have not released it, `0` before the first takes it.
+        final AtomicInteger holders = new AtomicInteger();
+        final AtomicBoolean entered = new AtomicBoolean();
+        final AtomicBoolean reported = new AtomicBoolean();
 
         Planning(WorkItem workItem, FetchSequence sequence) {
             this.workItem = workItem;
@@ -187,6 +226,7 @@ final class PlanningChain {
         this.planRowBudget = maxRows > 0 ? maxRows : Long.MAX_VALUE;
         this.planSkipRemaining = physicalSkip;
         this.tailSkip = tailSkip;
+        this.columnCount = projection.decoded().getProjectedColumnCount();
     }
 
     // ==================== Running the chain ====================
@@ -223,7 +263,7 @@ final class PlanningChain {
     /// a column or a caller waits for it, at the tail otherwise.
     private void submit() {
         try {
-            if (sequence.demanded() || callerWaits()) {
+            if (demanded() || callerWaits()) {
                 executor.executeStep(this::run);
             }
             else {
@@ -231,7 +271,7 @@ final class PlanningChain {
             }
         }
         catch (RejectedExecutionException e) {
-            fail(ScheduledColumn.contextClosed(e), sequence.planFrom());
+            fail(ScheduledColumn.contextClosed(e), planFrom());
             scheduled.set(false);
             executor.tasks().signal();
         }
@@ -273,7 +313,7 @@ final class PlanningChain {
         catch (RuntimeException | Error e) {
             need = null;
             try {
-                fail(e, sequence.planFrom());
+                fail(e, planFrom());
             }
             finally {
                 scheduled.set(false);
@@ -297,27 +337,32 @@ final class PlanningChain {
             for (Stage stage : CALLER_STAGES) {
                 int next = p.reached(stage) + 1;
                 if (next <= targets.get(stage.ordinal()) && next < p.failedFrom()) {
+                    planningAhead = false;
                     need = stage(next, stage);
                     progressed = true;
                     break;
                 }
             }
             if (!progressed) {
-                int index = sequence.nextToPlan(plansDeep);
+                int index = nextToPlan();
                 if (index < 0) {
                     return null;
                 }
                 if (index >= p.failedFrom()) {
-                    sequence.planningEnded();
+                    planningEnded();
                     continue;
                 }
                 need = stage(index, Stage.PLANS);
+                if (need == NO_FOOTER_YET) {
+                    // Runs again once the footer the sequence starts has been read
+                    return null;
+                }
             }
             if (need != null) {
                 return need;
             }
         }
-        sequence.planningEnded();
+        planningEnded();
         return null;
     }
 
@@ -335,24 +380,32 @@ final class PlanningChain {
 
     private static final Stage[] CALLER_STAGES = {Stage.LISTED, Stage.ARRIVAL, Stage.MASK};
 
+    /// What a stage planning ahead returns when the file it would list has no footer started yet:
+    /// not a need the chain registers on, but the end of its step. The footer's arrival runs the
+    /// chain again.
+    private static final Need NO_FOOTER_YET = resume -> {
+        throw new IllegalStateException("Not a need to wait for");
+    };
+
     /// Takes work item `index` through `stage`, listing it first, and publishes what it reached;
     /// returns what a stage needs, `null` once done. A failure ends planning at the work item.
     private Need stage(int index, Stage stage) {
         Need need = listThrough(index);
         if (need != null) {
+            // NO_FOOTER_YET included, which ends this step without a need
             return need;
         }
-        if (index >= workItems.size()) {
+        if (index >= listedCount) {
             // Past the end of the work list, or of the files planned before a failure
             if (stage == Stage.PLANS) {
-                sequence.planningEnded();
+                planningEnded();
             }
             else {
                 publish(progress.withReached(stage, targets.get(stage.ordinal())));
             }
             return null;
         }
-        Planning planning = plannings.computeIfAbsent(index, i -> new Planning(workItems.get(i), sequence));
+        Planning planning = planning(index);
         try {
             need = switch (stage) {
                 case LISTED -> null;
@@ -362,7 +415,7 @@ final class PlanningChain {
             };
             if (need == null) {
                 if (stage == Stage.PLANS) {
-                    sequence.planned(index);
+                    planned(index);
                     executor.tasks().signal();
                 }
                 else {
@@ -382,7 +435,7 @@ final class PlanningChain {
     private void fail(Throwable e, int from) {
         publish(progress.withFailure(e, from));
         sequence.stopFooters();
-        sequence.planningEnded();
+        planningEnded();
     }
 
     private void publish(Progress next) {
@@ -393,10 +446,16 @@ final class PlanningChain {
     // ==================== The work list ====================
 
     /// Plans files until the work list holds work item `index`, or none is left to plan; returns
-    /// what a footer needs, `null` once done.
+    /// what a footer needs, `null` once done. Planning ahead, it lists a file only once the read's
+    /// sequence has started the file's footer, within the files ahead and charged to R, and
+    /// returns [#NO_FOOTER_YET] before.
     private Need listThrough(int index) {
-        while (workItems.size() <= index && !progress.listed() && progress.failure() == null) {
-            Need need = planNextFile(index);
+        while (listedCount <= index && !progress.listed() && progress.failure() == null) {
+            if (planningAhead && nextFileToPlan < inputFiles.size() && planRowBudget > 0
+                    && !sequence.footerStarted(nextFileToPlan)) {
+                return NO_FOOTER_YET;
+            }
+            Need need = planNextFile();
             if (need != null) {
                 return need;
             }
@@ -406,45 +465,56 @@ final class PlanningChain {
 
     /// Plans one more file, appending its surviving row groups to the work list, or records that
     /// none is left: every file done, or the row budget spent. Returns what the file's footer
-    /// needs, `null` once done. The sequence learns which file is listed for which work item
-    /// ([FetchSequence#listing]), which decides when the read has reached it.
+    /// needs, `null` once done.
     ///
     /// A failure is sticky: the files after it are not planned, and the work items of the files
     /// before it are still handed out. Retrying the file is no option: planning it has already
     /// advanced the shared planning state, the next file to plan, the row budget and the rows
     /// still to skip among them.
-    private Need planNextFile(int forIndex) {
+    private Need planNextFile() {
         if (nextFileToPlan >= inputFiles.size() || planRowBudget <= 0) {
             publish(progress.withListed());
+            updateReached();
             return null;
         }
         int fileIndex = nextFileToPlan;
-        int plannedBefore = workItems.size();
+        int plannedBefore = listedCount;
         try {
-            sequence.listing(fileIndex, callerWaits() ? -1 : forIndex);
-            Need need = fileMetadataCache.fileNeed(fileIndex);
-            if (need != null) {
-                return need;
+            FileMetadataCache.Loading loading = fileMetadataCache.fileForPlanning(fileIndex, sequence.tasks());
+            if (loading.need() != null) {
+                return loading.need();
             }
-            PreparedFile prepared = fileMetadataCache.getFile(fileIndex);
-            nextFileToPlan++;
-            int listedBefore = workItems.size();
-            planRowGroups(fileIndex, prepared);
-            sequence.listed(listedBefore, workItems.size() - listedBefore, fileIndex);
+            list(planRowGroups(fileIndex, loading.file()));
         }
         catch (IOException | RuntimeException | Error e) {
             nextFileToPlan = inputFiles.size();
             fail(e, plannedBefore);
             return null;
         }
+        updateReached();
         // The footers the planned file brings within reach
         sequence.pump();
         return null;
     }
 
-    /// Appends the work items of `prepared`'s row groups that pruning keeps, within the read's row
-    /// budget, to the work list.
-    private void planRowGroups(int fileIndex, PreparedFile prepared) throws IOException {
+    /// Appends one file's work items to the work list, and moves on to the next file.
+    private void list(List<Planning> listed) {
+        cursorLock.lock();
+        try {
+            for (Planning planning : listed) {
+                plannings.put(planning.workItem.workItemIndex(), planning);
+            }
+            listedCount += listed.size();
+            nextFileToPlan++;
+        }
+        finally {
+            cursorLock.unlock();
+        }
+    }
+
+    /// The work items of `prepared`'s row groups that pruning keeps, within the read's row budget,
+    /// to append to the work list.
+    private List<Planning> planRowGroups(int fileIndex, PreparedFile prepared) throws IOException {
         boolean hasFilter = filterPredicate != null;
         // Decided per file and in the file's own ordinals: the order its bounds were written in
         // is this file's to declare, not the reference file's (#1179).
@@ -490,7 +560,7 @@ final class PlanningChain {
 
             long leadingSkip = planSkipRemaining;
             planSkipRemaining = 0;
-            if (workItems.isEmpty() && planned.isEmpty()) {
+            if (listedCount == 0 && planned.isEmpty()) {
                 progress = progress.withFirstRowGroupSkip(leadingSkip);
             }
 
@@ -507,7 +577,7 @@ final class PlanningChain {
                     columnOrdinals,
                     fileIndex,
                     rgIndex,
-                    workItems.size() + planned.size(),
+                    listedCount + planned.size(),
                     plannedRows,
                     decided.alwaysMatches(),
                     decided.leafDecisions(),
@@ -523,14 +593,14 @@ final class PlanningChain {
             plannedRows += rgRows - leadingSkip;
         }
 
-        appendWithIndexWindows(planned);
+        return withIndexWindows(planned);
     }
 
-    /// Appends one file's planned work items to the work list, each with the [IndexWindow] it
-    /// falls into, whose entries the sequence then holds.
-    private void appendWithIndexWindows(List<WorkItem> planned) {
+    /// The states of one file's planned work items, each with the [IndexWindow] it falls into,
+    /// whose entries the sequence then holds.
+    private List<Planning> withIndexWindows(List<WorkItem> planned) {
         if (planned.isEmpty()) {
-            return;
+            return List.of();
         }
         int count = planned.size();
         RowGroup[] rowGroups = new RowGroup[count];
@@ -558,15 +628,15 @@ final class PlanningChain {
         List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(),
                 first.workItemIndex(), rowGroups, rowGroupIndexes, offsetIndexColumns,
                 columnIndexColumns, bloomFilterColumns);
-        List<WorkItem> appended = new ArrayList<>(count);
+        List<Planning> listed = new ArrayList<>(count);
         int next = 0;
         for (IndexWindow window : windows) {
             window.insertEntries(sequence);
             for (int m = 0; m < window.memberCount(); m++) {
-                appended.add(planned.get(next++).withIndexWindow(window));
+                listed.add(new Planning(planned.get(next++).withIndexWindow(window), sequence));
             }
         }
-        workItems.addAll(appended);
+        return listed;
     }
 
     private static boolean storedInThisFile(RowGroup rowGroup) {
@@ -824,26 +894,57 @@ final class PlanningChain {
             failureTaken = true;
             throw rethrow(p.failure());
         }
-        return index < workItems.size() ? workItems.get(index) : null;
+        return index < listedCount ? planning(index).workItem : null;
     }
 
     /// The work item a failure planning its row group is reported against, `null` when there is
     /// none, as for a failure planning a file.
     WorkItem failedWorkItem(int index) {
         Progress p = progress;
-        return p.failure() != null && index >= p.failedFrom() && index < workItems.size()
-                ? workItems.get(index) : null;
+        return p.failure() != null && index >= p.failedFrom() ? listedAt(index) : null;
+    }
+
+    /// The state of the listed work item at `index`.
+    ///
+    /// @throws IllegalStateException if every column has released it
+    private Planning planning(int index) {
+        Planning planning = plannings.get(index);
+        if (planning == null) {
+            throw new IllegalStateException("Work item " + index + " was released by every column");
+        }
+        return planning;
     }
 
     /// The plans of the work item at `index`, once planned.
     RowGroupPlans plans(int index) {
-        return plannings.get(index).plans;
+        return planning(index).plans;
     }
 
     /// What the work item's Bloom filters and dictionaries decided, `null` before its arrival.
     RowGroupPruning.Arrival arrival(int index) {
         Planning planning = plannings.get(index);
         return planning != null ? planning.arrival : null;
+    }
+
+    /// Records that a column takes the planned work item at `index`, which it releases once past
+    /// it ([#release]).
+    void take(int index) {
+        planning(index).holders.compareAndSet(0, columnCount);
+    }
+
+    /// Records that a column has entered the work item at `index`; whether it is the first to.
+    boolean enter(int index) {
+        return planning(index).entered.compareAndSet(false, true);
+    }
+
+    /// Commits the drop of the work item at `index` by its Bloom filters or dictionaries, once,
+    /// when the read reaches it, however far ahead the planning ran.
+    void report(int index) {
+        Planning planning = plannings.get(index);
+        RowGroupPruning.Arrival arrival = planning != null ? planning.arrival : null;
+        if (arrival != null && arrival.dropEvent() != null && planning.reported.compareAndSet(false, true)) {
+            arrival.dropEvent().commit();
+        }
     }
 
     /// Takes the work item at `index` through `stage`, on the caller's thread: runs the chain and
@@ -858,13 +959,14 @@ final class PlanningChain {
     }
 
     /// The work item at `index`, listing files as far as it, on the caller's thread; `null` past the
-    /// end of the work list.
+    /// end of the work list. The read has reached it.
     WorkItem workItemAt(int index) throws IOException {
+        reached(index);
         targets.accumulateAndGet(Stage.LISTED.ordinal(), index, Math::max);
         await(() -> progress.reached(Stage.LISTED) >= index || index >= progress.failedFrom());
         // A listed work item is handed out whatever its own planning came to: only a failure
         // planning a file, which listed no work item from it on, fails here
-        return index < workItems.size() ? workItems.get(index) : plannedWorkItem(index);
+        return index < listedCount ? planning(index).workItem : plannedWorkItem(index);
     }
 
     /// Starts the reads the planning of `workItem`, the read's next unit, needs first and that need
@@ -883,10 +985,15 @@ final class PlanningChain {
         }
     }
 
-    /// Every work item, listing every file.
+    /// Every work item, listing every file. The read has reached every file.
     List<WorkItem> workItems() throws IOException {
+        reached(Integer.MAX_VALUE - 1);
         awaitStage(Integer.MAX_VALUE - 1, Stage.LISTED);
-        return List.copyOf(workItems);
+        List<WorkItem> workItems = new ArrayList<>(listedCount);
+        for (int i = 0; i < listedCount; i++) {
+            workItems.add(planning(i).workItem);
+        }
+        return workItems;
     }
 
     /// What the Bloom filters and dictionaries of the work item at `index` decide, on the caller's
@@ -900,8 +1007,8 @@ final class PlanningChain {
     /// a mask.
     boolean awaitMasks() throws IOException {
         awaitStage(Integer.MAX_VALUE - 1, Stage.MASK);
-        for (WorkItem workItem : workItems) {
-            Planning planning = plannings.get(workItem.workItemIndex());
+        for (int i = 0; i < listedCount; i++) {
+            Planning planning = planning(i);
             if (!planning.shared.dropped() && planning.mask == MaskCapability.NO) {
                 return false;
             }
@@ -912,20 +1019,21 @@ final class PlanningChain {
     /// The shared metadata of the work item at `index`, its page index read, on the caller's thread.
     SharedRowGroupMetadata sharedAt(int index) throws IOException {
         awaitStage(index, Stage.MASK);
-        return plannings.get(index).shared;
+        return planning(index).shared;
     }
 
     /// Plans the work item at `index`, on the caller's thread, and returns its plans.
     RowGroupPlans awaitPlans(int index) throws IOException {
-        sequence.requested(index);
-        await(() -> sequence.isPlanned(index));
+        requested(index);
+        await(() -> isPlanned(index));
         plannedWorkItem(index);
         return plans(index);
     }
 
     /// The work item at `index` if the work list holds it, `null` otherwise.
     WorkItem listedAt(int index) {
-        return index < workItems.size() ? workItems.get(index) : null;
+        Planning planning = plannings.get(index);
+        return planning != null ? planning.workItem : null;
     }
 
     /// Whether the work list holds every work item of the read.
@@ -939,6 +1047,192 @@ final class PlanningChain {
         return progress.firstRowGroupSkip();
     }
 
+    // ==================== The cursor ====================
+
+    /// Records that a column asks to plan the work item at `index`: its first entry starts as the
+    /// next unit's does, since the column waits for the planning that inserts it, and the read has
+    /// reached it.
+    void requested(int index) {
+        cursorLock.lock();
+        try {
+            if (index <= requested) {
+                return;
+            }
+            requested = index;
+        }
+        finally {
+            cursorLock.unlock();
+        }
+        sequence.nextUnit(index);
+        reached(index);
+    }
+
+    /// Records that the work item at `index` is the read's next unit, since the first column has
+    /// entered the one before it: its first entry starts without F and uncharged
+    /// ([FetchSequence#nextUnit]), the chain plans it whatever F holds, and the read has reached it.
+    void nextUnit(int index) {
+        sequence.nextUnit(index);
+        reached(index);
+    }
+
+    /// The next work item the chain may plan, `-1` when it may plan none now: none before the read
+    /// starts, then the work items a column asked for and the next unit, and further as far as the
+    /// sequence lets it plan ahead ([FetchSequence#mayPlanAhead]), which [#planningAhead] then
+    /// records.
+    private int nextToPlan() {
+        int next;
+        cursorLock.lock();
+        try {
+            if (requested < 0 || planningEnded) {
+                return -1;
+            }
+            next = planFrom;
+            planningAhead = false;
+            if (next <= requested) {
+                return next;
+            }
+        }
+        finally {
+            cursorLock.unlock();
+        }
+        if (sequence.withinNextUnit(next)) {
+            return next;
+        }
+        planningAhead = true;
+        return plansDeep && sequence.mayPlanAhead(next) ? next : -1;
+    }
+
+    /// Records that the chain has planned the work item at `index`, and resumes the waiters it
+    /// meets.
+    private void planned(int index) {
+        List<Runnable> met = new ArrayList<>();
+        cursorLock.lock();
+        try {
+            planFrom = Math.max(planFrom, index + 1);
+            planWaiters.removeIf(waiter -> waiter.index() < planFrom && met.add(waiter.resume()));
+        }
+        finally {
+            cursorLock.unlock();
+        }
+        met.forEach(Runnable::run);
+    }
+
+    /// Records that the chain plans nothing more, and resumes every waiter.
+    private void planningEnded() {
+        List<Runnable> met = new ArrayList<>();
+        cursorLock.lock();
+        try {
+            planningEnded = true;
+            planWaiters.forEach(waiter -> met.add(waiter.resume()));
+            planWaiters.clear();
+        }
+        finally {
+            cursorLock.unlock();
+        }
+        met.forEach(Runnable::run);
+    }
+
+    /// Whether a column waits for a work item the chain has not planned.
+    private boolean demanded() {
+        cursorLock.lock();
+        try {
+            return requested >= planFrom && !planningEnded;
+        }
+        finally {
+            cursorLock.unlock();
+        }
+    }
+
+    /// The next work item the chain plans.
+    private int planFrom() {
+        cursorLock.lock();
+        try {
+            return planFrom;
+        }
+        finally {
+            cursorLock.unlock();
+        }
+    }
+
+    /// Whether the chain has planned the work item at `index` or plans nothing more.
+    boolean isPlanned(int index) {
+        cursorLock.lock();
+        try {
+            return index < planFrom || planningEnded;
+        }
+        finally {
+            cursorLock.unlock();
+        }
+    }
+
+    /// What a column waits for until the work item at `index` is planned ([#isPlanned]).
+    Need whenPlanned(int index) {
+        return resume -> {
+            cursorLock.lock();
+            try {
+                if (index >= planFrom && !planningEnded) {
+                    planWaiters.add(new PlanWaiter(index, resume));
+                    return;
+                }
+            }
+            finally {
+                cursorLock.unlock();
+            }
+            resume.run();
+        };
+    }
+
+    private record PlanWaiter(int index, Runnable resume) {
+    }
+
+    /// Records that the read has reached the work item at `index`, and so its file.
+    private void reached(int index) {
+        cursorLock.lock();
+        try {
+            if (index <= reachedItem) {
+                return;
+            }
+            reachedItem = index;
+        }
+        finally {
+            cursorLock.unlock();
+        }
+        updateReached();
+    }
+
+    /// Tells the sequence the file the read has reached once it moves: the file of the furthest work
+    /// item reached, or, for one not listed yet, the file listed next, and every file once the work
+    /// list is complete. Commits the events of the files planned up to it, which a file listed
+    /// since may add to.
+    private void updateReached() {
+        int told;
+        boolean moved;
+        cursorLock.lock();
+        try {
+            if (reachedItem < 0) {
+                return;
+            }
+            int file;
+            if (reachedItem < listedCount) {
+                Planning planning = plannings.get(reachedItem);
+                file = planning != null ? planning.workItem.fileIndex() : -1;
+            }
+            else {
+                file = progress.listed() ? inputFiles.size() : nextFileToPlan;
+            }
+            moved = file > toldFile;
+            toldFile = Math.max(toldFile, file);
+            told = toldFile;
+        }
+        finally {
+            cursorLock.unlock();
+        }
+        if (moved) {
+            sequence.reachedFile(told);
+        }
+        reportFiles(told);
+    }
+
     /// Runs the chain and waits until `done` holds: running the read's queue on a context of zero
     /// threads meanwhile, parking otherwise.
     private void await(BooleanSupplier done) {
@@ -949,7 +1243,7 @@ final class PlanningChain {
 
     /// Commits the [dev.hardwood.jfr.RowGroupFilterEvent]s of the files planned up to `fileIndex`,
     /// once the read has reached it.
-    void reportFiles(int fileIndex) {
+    private void reportFiles(int fileIndex) {
         for (Map.Entry<Integer, Event> event : fileEvents.entrySet()) {
             if (event.getKey() > fileIndex) {
                 break;
@@ -974,14 +1268,21 @@ final class PlanningChain {
         return batchesPlanned;
     }
 
-    /// Drops a work item's planning once every column has released it.
-    void release(WorkItem workItem) {
-        Planning planning = plannings.remove(workItem.workItemIndex());
-        if (planning != null) {
-            planning.pruningReads.release();
-            planning.probeReads.release();
+    /// Records that a column is done with `workItem`; the last of the columns that took it drops
+    /// its state and releases what its planning holds.
+    ///
+    /// @return whether this was the last
+    boolean release(WorkItem workItem) {
+        int index = workItem.workItemIndex();
+        Planning planning = plannings.get(index);
+        if (planning == null || planning.holders.getAndUpdate(h -> h > 0 ? h - 1 : h) != 1) {
+            return false;
         }
-        workItem.indexWindow().release(workItem.workItemIndex());
+        plannings.remove(index);
+        planning.pruningReads.release();
+        planning.probeReads.release();
+        workItem.indexWindow().release(index);
+        return true;
     }
 
     /// Stops the chain and waits for a step of it that runs or waits for its need, then drops the
@@ -989,16 +1290,10 @@ final class PlanningChain {
     /// caller to raise.
     Error close() {
         closed = true;
-        sequence.planningEnded();
+        planningEnded();
         executor.tasks().await(() -> !scheduled.get(), executor instanceof ReadQueue queue ? queue : null);
-        IndexWindow previous = null;
-        for (WorkItem workItem : workItems) {
-            if (workItem.indexWindow() != previous) {
-                previous = workItem.indexWindow();
-                previous.releaseAll();
-            }
-        }
         for (Planning planning : plannings.values()) {
+            planning.workItem.indexWindow().releaseAll();
             planning.pruningReads.discard();
             planning.probeReads.discard();
         }

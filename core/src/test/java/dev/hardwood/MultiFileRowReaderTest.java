@@ -72,8 +72,10 @@ class MultiFileRowReaderTest {
         }
     }
 
+    /// A read takes a footer loaded before it rather than reading it again, and drops it once it
+    /// has read past the file, so the next read reads it again.
     @Test
-    void dataReadersReusePerFileMetadata() throws Exception {
+    void aReadReusesAFooterLoadedBeforeItAndDropsItOnceDone() throws Exception {
         CountingInputFile file0 = new CountingInputFile(InputFile.of(
                 Paths.get("src/test/resources/multi_file_part0.parquet")));
         CountingInputFile file1 = new CountingInputFile(InputFile.of(
@@ -92,15 +94,17 @@ class MultiFileRowReaderTest {
 
             try (ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id"))) {
                 while (columns.nextBatch()) {
-                    // Consume all batches so reuse is checked across the file boundary.
+                    // Consume all batches so the second file is read.
                 }
             }
-            assertThat(file1.footerReadCount()).isEqualTo(file1FooterReads);
+            assertThat(file1.footerReadCount()).isEqualTo(2 * file1FooterReads);
         }
     }
 
+    /// A read drops the footer of a later file once it has read past it; the metadata accessor
+    /// reads it again.
     @Test
-    void rowReaderMetadataLoadIsReusedByIndexedAccess() throws Exception {
+    void aFooterARowReaderDroppedIsReadAgain() throws Exception {
         CountingInputFile file0 = new CountingInputFile(InputFile.of(
                 Paths.get("src/test/resources/multi_file_part0.parquet")));
         CountingInputFile file1 = new CountingInputFile(InputFile.of(
@@ -116,12 +120,14 @@ class MultiFileRowReaderTest {
             assertThat(file1FooterReads).isPositive();
 
             assertThat(reader.getFileMetaData(1).numRows()).isEqualTo(100);
-            assertThat(file1.footerReadCount()).isEqualTo(file1FooterReads);
+            assertThat(file1.footerReadCount()).isEqualTo(2 * file1FooterReads);
         }
     }
 
+    /// A read drops the footer of a later file once it has read past it; the metadata accessor
+    /// reads it again.
     @Test
-    void columnReaderMetadataLoadIsReusedByIndexedAccess() throws Exception {
+    void aFooterAColumnReaderDroppedIsReadAgain() throws Exception {
         CountingInputFile file0 = new CountingInputFile(InputFile.of(
                 Paths.get("src/test/resources/multi_file_part0.parquet")));
         CountingInputFile file1 = new CountingInputFile(InputFile.of(
@@ -137,7 +143,7 @@ class MultiFileRowReaderTest {
             assertThat(file1FooterReads).isPositive();
 
             assertThat(reader.getFileMetaData(1).numRows()).isEqualTo(100);
-            assertThat(file1.footerReadCount()).isEqualTo(file1FooterReads);
+            assertThat(file1.footerReadCount()).isEqualTo(2 * file1FooterReads);
         }
     }
 

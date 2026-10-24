@@ -33,6 +33,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A multi-file read of files not in memory, such as files on S3, opens several files ahead, fetching their footers and first data while it reads earlier files ([#1665](https://github.com/hardwood-hq/hardwood/issues/1665))
 - An S3 object of up to 256 KiB is read in the one request that opens it, and the footer and page index of a larger file come with that request ([#1399](https://github.com/hardwood-hq/hardwood/issues/1399))
+- A multi-file read holds the footers of the files it is reading rather than of every file it has read ([#1662](https://github.com/hardwood-hq/hardwood/issues/1662))
 
 ## 1.1.0.Beta3 (2026-10-21)
 

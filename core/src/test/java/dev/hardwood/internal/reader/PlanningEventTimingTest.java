@@ -102,7 +102,7 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
         List<InputFile> files = List.of(new NamedFile("f0", write(0), null), new NamedFile("f1", write(1), null));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
             FileMetadataCache cache = new FileMetadataCache(files, context);
-            cache.prefetch(1, () -> {}).join();
+            cache.prefetch(1, new PrefetchTasks(context.ioExecutor()), () -> {}).join();
             Thread.sleep(HOLD_MILLIS);
             cache.getFile(1);
             cache.close();
@@ -126,7 +126,7 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
         List<InputFile> files = List.of(new NamedFile("f0", write(0), null), new NamedFile("f1", write(1), null));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
             FileMetadataCache cache = new FileMetadataCache(files, context);
-            cache.prefetch(1, () -> {}).join();
+            cache.prefetch(1, new PrefetchTasks(context.ioExecutor()), () -> {}).join();
             cache.close();
         }
         awaitEvents();

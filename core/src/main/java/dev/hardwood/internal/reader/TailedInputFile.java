@@ -77,6 +77,20 @@ public final class TailedInputFile implements InputFile {
                 : Long.MAX_VALUE;
     }
 
+    /// A slice of the tail `inputFile` holds for a range inside it, `null` for a range outside it,
+    /// once the tail is dropped, or for any other file: never a request.
+    static ByteBuffer sliceTail(InputFile inputFile, long offset, int length) {
+        if (!(inputFile instanceof TailedInputFile tailed)) {
+            return null;
+        }
+        ByteBuffer held = tailed.tail;
+        if (held == null || length < 0 || offset < tailed.tailOffset
+                || offset + length > tailed.tailOffset + held.limit()) {
+            return null;
+        }
+        return held.slice(Math.toIntExact(offset - tailed.tailOffset), length);
+    }
+
     /// Drops the tail of a file whose tail `inputFile` holds, once the read is done with the
     /// file; a read of it from then on is a request again. No-op for any other file.
     static void dropTail(InputFile inputFile) {
@@ -94,12 +108,8 @@ public final class TailedInputFile implements InputFile {
     /// read.
     @Override
     public ByteBuffer readRange(long offset, int length) throws IOException {
-        ByteBuffer held = tail;
-        if (held != null && offset >= tailOffset && offset + length <= tailOffset + held.limit()
-                && length >= 0) {
-            return held.slice(Math.toIntExact(offset - tailOffset), length);
-        }
-        return delegate.readRange(offset, length);
+        ByteBuffer slice = sliceTail(this, offset, length);
+        return slice != null ? slice : delegate.readRange(offset, length);
     }
 
     @Override

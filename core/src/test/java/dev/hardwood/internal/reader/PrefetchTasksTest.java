@@ -224,52 +224,62 @@ class PrefetchTasksTest {
         assertThat(later.closeCount()).isEqualTo(1);
     }
 
-    /// A footer prefetch that fails and that no caller asks for is reported once, by the close.
+    /// A footer read ahead that fails is logged once, at `DEBUG`, as it fails: the load that takes
+    /// the failure reports it.
     @Test
-    void failedFooterPrefetchNoCallerAskedForIsLoggedByTheClose() {
+    void failedFooterReadAheadIsLoggedAtDebug() {
         FailingFooterFile file = new FailingFooterFile(new IOException("connection reset"));
         FileMetadataCache cache = cache(file, Runnable::run);
-        cache.prefetch(0);
+        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
 
-        List<LogEvent> events = captureLog(cache::close);
+        List<LogEvent> events = captureLog(FileMetadataCache.class, () -> cache.prefetch(0, tasks, () -> {}));
 
         assertThat(events).hasSize(1);
         assertThat(events.getFirst().getLevel()).isEqualTo(Level.DEBUG);
         assertThat(events.getFirst().getThrown().getCause()).isSameAs(file.failure);
+        tasks.awaitAll();
+        cache.close();
     }
 
-    /// A footer prefetch whose failure a caller received is not reported again by the close.
+    /// An `Error` of a footer read ahead that no load took is thrown by the close of the read
+    /// that started it.
     @Test
-    void failedFooterPrefetchACallerReceivedIsNotReportedAgain() {
-        FailingFooterFile file = new FailingFooterFile(new IOException("connection reset"));
-        FileMetadataCache cache = cache(file, Runnable::run);
-        cache.prefetch(0);
-        assertThatThrownBy(() -> cache.getFile(0))
-                .isInstanceOf(IOException.class)
-                .hasMessage("[failing.parquet] Failed to read metadata")
-                .hasCause(file.failure);
-
-        List<LogEvent> events = captureLog(cache::close);
-
-        assertThat(events).isEmpty();
-    }
-
-    /// An `Error` of a footer prefetch a caller received is not thrown again by the close.
-    @Test
-    void errorOfAFooterPrefetchACallerReceivedIsNotThrownAgain() {
+    void errorOfAFooterReadAheadNoLoadTookIsThrownByTheReadsClose() {
         SpeculativeError error = new SpeculativeError("footer read failed");
         FailingFooterFile file = new FailingFooterFile(error);
         FileMetadataCache cache = cache(file, Runnable::run);
-        cache.prefetch(0);
+        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
+        cache.prefetch(0, tasks, () -> {});
+
+        assertThatThrownBy(tasks::awaitAll)
+                .isSameAs(error)
+                .hasMessage("footer read failed");
+        cache.close();
+    }
+
+    /// An `Error` of a footer read ahead that a load took is not thrown again by the close of the
+    /// read that started it.
+    @Test
+    void errorOfAFooterReadAheadALoadTookIsNotThrownAgain() {
+        SpeculativeError error = new SpeculativeError("footer read failed");
+        FailingFooterFile file = new FailingFooterFile(error);
+        FileMetadataCache cache = cache(file, Runnable::run);
+        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
+        cache.prefetch(0, tasks, () -> {});
         assertThatThrownBy(() -> cache.getFile(0))
                 .isSameAs(error)
                 .hasMessage("footer read failed");
 
+        tasks.awaitAll();
         cache.close();
     }
 
     private static List<LogEvent> captureLog(Runnable action) {
-        String name = PrefetchTasks.class.getName();
+        return captureLog(PrefetchTasks.class, action);
+    }
+
+    private static List<LogEvent> captureLog(Class<?> logger, Runnable action) {
+        String name = logger.getName();
         LoggerContext context = (LoggerContext) LogManager.getContext(false);
         Configuration configuration = context.getConfiguration();
         CapturingAppender appender = new CapturingAppender();

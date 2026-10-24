@@ -17,8 +17,10 @@ import dev.hardwood.InputFile;
 /// The bytes the planning of a read holds of one file outside its data: a window's page index or
 /// Bloom filters, a work item's dictionary pages, Bloom filters without a length and page-format
 /// probes. Each range is an entry of the read's [FetchSequence], held by the work items it serves
-/// and released once each has released it; a range inside the file's tail, or of a file in memory,
-/// is sliced in place and needs none.
+/// and released once each has released it; a range inside the file's tail while the tail is held,
+/// or of a file in memory, is sliced in place and needs none. A window's request inside the tail
+/// is sliced as it is inserted and kept: the tail is the reader's, and another read may drop it
+/// before this one reads the window.
 ///
 /// A parse reads through it as a [ByteSource]: a range it holds is returned, one it does not is
 /// `null`, and the first such range since [#clearMissing] is kept ([#missing]). The planning then
@@ -35,7 +37,16 @@ final class PlanningReads implements ByteSource {
     /// The work items each entry serves, which release it.
     private final int holders;
     private final List<FetchSequence.Entry> entries = new ArrayList<>();
+    /// The requests inserted inside the file's tail, sliced from it as they were inserted.
+    private final List<Sliced> inTail = new ArrayList<>();
     private Parsed<?> missing;
+
+    private record Sliced(long offset, ByteBuffer bytes) {
+
+        boolean holds(long from, int length) {
+            return offset <= from && from + length <= offset + bytes.limit();
+        }
+    }
 
     PlanningReads(FetchSequence sequence, InputFile inputFile, String reason, int holders) {
         this.sequence = sequence;
@@ -46,8 +57,17 @@ final class PlanningReads implements ByteSource {
 
     @Override
     public ByteBuffer read(long offset, int length) throws IOException {
-        if (inPlace(offset)) {
+        if (RangeRead.inMemory(inputFile)) {
             return inputFile.readRange(offset, length);
+        }
+        for (Sliced sliced : inTail) {
+            if (sliced.holds(offset, length)) {
+                return sliced.bytes().slice(Math.toIntExact(offset - sliced.offset()), length);
+            }
+        }
+        ByteBuffer tailSlice = TailedInputFile.sliceTail(inputFile, offset, length);
+        if (tailSlice != null) {
+            return tailSlice;
         }
         FetchSequence.Entry entry = holding(offset, length);
         ByteBuffer bytes = entry != null ? entry.poll() : null;
@@ -80,11 +100,21 @@ final class PlanningReads implements ByteSource {
         return entry;
     }
 
-    /// Inserts an entry for each request of `ranges` outside the tail, which [#start] starts.
+    /// Inserts an entry for each request of `ranges`, which [#start] starts, but for a request
+    /// inside the file's tail, which it slices from the tail now, and a file in memory.
     void insert(CoalescedRanges ranges) {
+        if (RangeRead.inMemory(inputFile)) {
+            return;
+        }
         for (int r = 0; r < ranges.requestCount(); r++) {
-            if (!inPlace(ranges.requestStart(r))) {
-                insert(ranges.requestStart(r), Math.toIntExact(ranges.requestEnd(r) - ranges.requestStart(r)));
+            long start = ranges.requestStart(r);
+            int length = Math.toIntExact(ranges.requestEnd(r) - start);
+            ByteBuffer sliced = TailedInputFile.sliceTail(inputFile, start, length);
+            if (sliced != null) {
+                inTail.add(new Sliced(start, sliced));
+            }
+            else {
+                insert(start, length);
             }
         }
     }
@@ -132,10 +162,6 @@ final class PlanningReads implements ByteSource {
         FetchSequence.Entry entry = sequence.plannedEntry(inputFile, offset, length, reason, holders);
         entries.add(entry);
         return entry;
-    }
-
-    private boolean inPlace(long offset) {
-        return RangeRead.inMemory(inputFile) || offset >= TailedInputFile.tailOffset(inputFile);
     }
 
     private FetchSequence.Entry holding(long offset, int length) {

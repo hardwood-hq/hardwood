@@ -323,11 +323,8 @@ public class ParquetFileReader implements Closeable {
     /// Returns the metadata of one physical input file.
     ///
     /// Files are indexed in the order supplied to [#openAll(List)]. Metadata
-    /// for the first file is read when the reader is opened; metadata for later
-    /// files is read on first access or data-reader prefetch. In-progress,
-    /// successful, and failed loads are cached for this reader's lifetime, and
-    /// this synchronous accessor joins a load already in progress. Close and
-    /// reopen the reader to retry a failed load or inspect a changed file.
+    /// for the first file is read when the reader is opened; for a later file,
+    /// this call may read the file's footer.
     ///
     /// This method returns the physical file's footer without performing
     /// projection- or filter-specific cross-file schema validation. That

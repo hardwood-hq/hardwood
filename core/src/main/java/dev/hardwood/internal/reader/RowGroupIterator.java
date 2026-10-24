@@ -11,11 +11,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.BitSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
@@ -59,7 +55,7 @@ public class RowGroupIterator implements Closeable {
     /// Whether the read plans its next unit ahead of its columns: not on a context of zero threads
     /// reading files all in memory, where that would only reorder its work.
     private final boolean plansAhead;
-    /// Whether planning goes past the next unit, by F ([FetchSequence#nextToPlan]): a read of files
+    /// Whether planning goes past the next unit, by F ([FetchSequence#mayPlanAhead]): a read of files
     /// not all in memory without a row limit.
     private final boolean plansDeep;
     private final HardwoodContextImpl context;
@@ -81,15 +77,6 @@ public class RowGroupIterator implements Closeable {
     private volatile PlanningChain chain;
     /// Whether [#planBatches] has been called.
     private boolean batchesSet;
-
-    /// Number of projected columns still referencing each work item, added as a column first
-    /// takes it; on zero the work item's planning, windows and entries are released.
-    private final Map<Integer, AtomicInteger> workItemRefCounts = new ConcurrentHashMap<>();
-    /// Work items a column has entered, which makes the next one the read's next unit and commits
-    /// the events of its planning, once per work item; held until every column releases it.
-    private final Set<Integer> entered = ConcurrentHashMap.newKeySet();
-    /// Work items whose drop event the read has committed, on reaching them ([#report]).
-    private final Set<Integer> reported = ConcurrentHashMap.newKeySet();
 
     /// A single unit of work: one row group in one file.
     ///
@@ -281,9 +268,7 @@ public class RowGroupIterator implements Closeable {
 
     /// Returns the ordered work list of (file, rowGroup) pairs, planning every file.
     public List<WorkItem> getWorkItems() throws IOException {
-        List<WorkItem> workItems = chain.workItems();
-        sequence.reachedFile(inputFiles.size());
-        return workItems;
+        return chain.workItems();
     }
 
     /// Returns the reference schema (from the first file).
@@ -312,7 +297,7 @@ public class RowGroupIterator implements Closeable {
             }
             try {
                 RowGroupPruning.Arrival arrival = chain.arrivalAt(i);
-                report(workItem);
+                chain.report(i);
                 if (!arrival.dropped()) {
                     return true;
                 }
@@ -417,7 +402,7 @@ public class RowGroupIterator implements Closeable {
     /// Whether the work item at `index` is planned, or planning has ended before it; asks the
     /// read's planning to plan it otherwise, which a fetch step then waits for ([#whenPlanned]).
     boolean isPlanned(int index) {
-        sequence.requested(index);
+        chain.requested(index);
         if (context.runsInPlace()) {
             // On a thread of the read's executor, which is where the chain runs
             chain.advanceInPlace();
@@ -425,17 +410,22 @@ public class RowGroupIterator implements Closeable {
         else {
             chain.advance();
         }
-        return sequence.isPlanned(index);
+        return chain.isPlanned(index);
     }
 
     /// Whether the read's planning has planned the work item at `index`, without asking it to.
     boolean isPlannedAhead(int index) {
-        return sequence.isPlanned(index);
+        return chain.isPlanned(index);
+    }
+
+    /// Whether the read holds the work item at `index`, for tests.
+    boolean holdsWorkItem(int index) {
+        return chain.listedAt(index) != null;
     }
 
     /// What a fetch step waits for until the work item at `index` is planned.
     Need whenPlanned(int index) {
-        return sequence.whenPlanned(index);
+        return chain.whenPlanned(index);
     }
 
     /// The work item at `index` once [#isPlanned], `null` past the end of the work list. A column
@@ -445,14 +435,9 @@ public class RowGroupIterator implements Closeable {
     WorkItem plannedWorkItem(int index) throws IOException {
         WorkItem workItem = chain.plannedWorkItem(index);
         if (workItem == null) {
-            if (chain.listed()) {
-                // The read has reached the end, and so every file
-                sequence.reachedFile(inputFiles.size());
-            }
             return null;
         }
-        workItemRefCounts.computeIfAbsent(index,
-                i -> new AtomicInteger(projection.decoded().getProjectedColumnCount()));
+        chain.take(index);
         enter(workItem);
         return workItem;
     }
@@ -464,14 +449,12 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Records that a column has entered `workItem`, once per work item: commits the events its
-    /// planning decided and makes the next work item the read's next unit. Its first entry starts
-    /// without F and uncharged ([FetchSequence#nextUnit]), and the planning chain plans it whatever F
-    /// holds ([FetchSequence#nextToPlan]).
+    /// planning decided and makes the next work item the read's next unit ([PlanningChain#nextUnit]).
     private void enter(WorkItem workItem) {
-        if (workItem == null || !entered.add(workItem.workItemIndex())) {
+        if (!chain.enter(workItem.workItemIndex())) {
             return;
         }
-        report(workItem);
+        chain.report(workItem.workItemIndex());
         RowGroupPlans plans = chain.plans(workItem.workItemIndex());
         if (plans != null) {
             for (PageFilterEvent event : plans.pageFilterEvents()) {
@@ -479,7 +462,7 @@ public class RowGroupIterator implements Closeable {
             }
         }
         if (plansAhead) {
-            sequence.nextUnit(workItem.workItemIndex() + 1);
+            chain.nextUnit(workItem.workItemIndex() + 1);
             WorkItem next = chain.listedAt(workItem.workItemIndex() + 1);
             if (next != null) {
                 try {
@@ -499,28 +482,11 @@ public class RowGroupIterator implements Closeable {
     /// In-flight `PageInfo` slices and decode tasks keep their byte data alive via the slice's
     /// parent reference, so this only drops the iterator's references.
     public void releaseWorkItem(WorkItem workItem) {
-        AtomicInteger counter = workItemRefCounts.get(workItem.workItemIndex());
-        if (counter == null) {
-            return;
-        }
-        int idx = workItem.workItemIndex();
-        if (counter.decrementAndGet() == 0) {
-            sequence.forget(idx);
-            // Every column has passed the work item, and so every file before its own
+        if (chain.release(workItem)) {
+            sequence.forget(workItem.workItemIndex());
+            // Every column has passed the work item, and so every file before its own: their
+            // tails and footers are dropped
             sequence.filesDoneBefore(workItem.fileIndex());
-            entered.remove(idx);
-            reported.remove(idx);
-            chain.release(workItem);
-        }
-    }
-
-    /// Commits the events of `workItem`'s row group that its planning decided, when the read
-    /// reaches it, however far ahead the planning ran: the drop by its Bloom filters or
-    /// dictionaries.
-    private void report(WorkItem workItem) {
-        RowGroupPruning.Arrival arrival = chain.arrival(workItem.workItemIndex());
-        if (arrival != null && arrival.dropEvent() != null && reported.add(workItem.workItemIndex())) {
-            arrival.dropEvent().commit();
         }
     }
 
@@ -531,15 +497,7 @@ public class RowGroupIterator implements Closeable {
     /// ahead of the others, and a column failed short of it would return fewer rows of those files
     /// than the others.
     public WorkItem workItemAt(int index) throws IOException {
-        WorkItem workItem = chain.workItemAt(index);
-        if (workItem != null) {
-            sequence.reachedItem(index);
-        }
-        else {
-            // The read has reached the end, and so every file
-            sequence.reachedFile(inputFiles.size());
-        }
-        return workItem;
+        return chain.workItemAt(index);
     }
 
     /// Stops the read's planning, waits for the reads the read has started, then releases its
@@ -573,7 +531,6 @@ public class RowGroupIterator implements Closeable {
                 failure.addSuppressed(e);
             }
         }
-        entered.clear();
         closeListener.accept(this);
         InputFileCloser.rethrow(failure);
     }
@@ -587,26 +544,18 @@ public class RowGroupIterator implements Closeable {
         }
     }
 
-    /// The read's footer entries, which its [FileMetadataCache] holds: a footer read ahead tells the
-    /// planning chain it has arrived.
+    /// The read's footer entries, which its [FileMetadataCache] holds, read as tasks of the read: a
+    /// footer read ahead tells the planning chain it has arrived.
     private FetchSequence.Footers footers(FileMetadataCache cache) {
         return new FetchSequence.Footers() {
             @Override
             public CompletableFuture<?> start(int fileIndex) {
-                return cache.prefetch(fileIndex, RowGroupIterator.this::advancePlanning);
+                return cache.prefetch(fileIndex, prefetchTasks, RowGroupIterator.this::advancePlanning);
             }
 
             @Override
             public void drop(int fileIndex) {
-                cache.dropTail(fileIndex);
-            }
-
-            @Override
-            public void reached(int fileIndex) {
-                PlanningChain planning = chain;
-                if (planning != null) {
-                    planning.reportFiles(fileIndex);
-                }
+                cache.drop(fileIndex);
             }
         };
     }

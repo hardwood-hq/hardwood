@@ -127,19 +127,6 @@ class FetchSequenceTest {
                 .hasMessage("Entry at offset 0 (length 100) of <memory> was released before it was read");
     }
 
-    /// Rule 6: a work item every column has released gets no entries again, so planning ahead that
-    /// the read has passed fetches nothing a second time.
-    @Test
-    void aReleasedWorkItemGetsNoEntriesAgain() {
-        CountingInputFile file = file();
-        FetchSequence sequence = sequence(new ReadAheadBuffer(1 << 20), 1 << 20, true);
-        insert(sequence, file, 0, 1);
-        sequence.forget(0);
-
-        assertThat(insert(sequence, file, 0, 1)).isEmpty();
-        assertThat(file.readCount()).isEqualTo(1);
-    }
-
     /// Rule 9: a speculative entry that fails is dropped, its charges returned, and started again
     /// when demanded.
     @Test
