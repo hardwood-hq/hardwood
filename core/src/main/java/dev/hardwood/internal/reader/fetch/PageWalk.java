@@ -12,6 +12,8 @@ import java.io.IOException;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.step.Need;
+import dev.hardwood.jfr.RowGroupScannedEvent;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Walks the pages of one projected column in one row group without waiting for I/O.
 ///
@@ -47,6 +49,18 @@ public interface PageWalk {
     /// @return the page this walk is on
     default int currentPage() {
         return ExceptionContext.UNKNOWN_PAGE;
+    }
+
+    /// Reports a walk of `column` in row group `rowGroupIndex` of `file` that has handed out or
+    /// scanned its last page: `pageCount` pages, located by `strategy`.
+    static void scanned(String file, int rowGroupIndex, ColumnSchema column, int pageCount, String strategy) {
+        RowGroupScannedEvent event = new RowGroupScannedEvent();
+        event.file = file;
+        event.rowGroupIndex = rowGroupIndex;
+        event.column = column.name();
+        event.pageCount = pageCount;
+        event.scanStrategy = strategy;
+        event.commit();
     }
 
     /// A column the filter left with no pages in this row group.
