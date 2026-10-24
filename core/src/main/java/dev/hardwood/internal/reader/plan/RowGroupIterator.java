@@ -387,11 +387,20 @@ public class RowGroupIterator implements Closeable {
     ///
     /// @throws IllegalStateException if the read plans no batches ([#planBatches])
     BatchPlan.RowGroupBatches getBatches(WorkItem workItem) throws IOException {
-        BatchPlan.RowGroupBatches batches = rowGroupPlans(workItem).batches();
-        if (batches == null) {
+        rowGroupPlans(workItem);
+        return plansOf(workItem).batches();
+    }
+
+    /// The plans of `workItem`, which [#plannedWorkItem] handed out, so taking them reads nothing
+    /// and waits for nothing.
+    ///
+    /// @throws IllegalStateException if the read planned no batches
+    RowGroupPlans plansOf(WorkItem workItem) {
+        RowGroupPlans plans = chain.plans(workItem.workItemIndex());
+        if (plans.batches() == null) {
             throw new IllegalStateException("No batch plan: planBatches() was not called for this read");
         }
-        return batches;
+        return plans;
     }
 
     /// Returns the [FetchPlan] for the given column in the given row group, planning it on the
