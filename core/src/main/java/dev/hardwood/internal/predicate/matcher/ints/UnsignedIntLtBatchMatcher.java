@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.ints;
 
 import dev.hardwood.internal.predicate.IntBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// [IntLtBatchMatcher] for a column annotated `INT(32, isSigned = false)`, whose values order by
 /// unsigned magnitude. Both sides are biased by `Integer.MIN_VALUE`, which moves the sign bit

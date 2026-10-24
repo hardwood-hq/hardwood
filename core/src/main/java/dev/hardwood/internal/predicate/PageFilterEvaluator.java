@@ -9,9 +9,9 @@ package dev.hardwood.internal.predicate;
 
 import java.util.List;
 
-import dev.hardwood.internal.reader.ColumnIndexBuffers;
-import dev.hardwood.internal.reader.RowGroupIndexBuffers;
-import dev.hardwood.internal.reader.RowRanges;
+import dev.hardwood.internal.reader.plan.ColumnIndexBuffers;
+import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
+import dev.hardwood.internal.reader.select.RowRanges;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -34,7 +34,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// [FilterDecision#CANNOT_MATCH].
 ///
 /// When the `ColumnIndex` is absent, this evaluator returns `RowRanges.all()` — page
-/// skipping then happens per-column inside [dev.hardwood.internal.reader.SequentialFetchPlan]
+/// skipping then happens per-column inside [dev.hardwood.internal.reader.fetch.SequentialFetchPlan]
 /// based on inline `DataPageHeader.statistics`.
 public class PageFilterEvaluator {
 
@@ -132,9 +132,9 @@ public class PageFilterEvaluator {
     /// indexing one with the other's length further down.
     ///
     /// The page index is read per column chunk, outside the footer parse that
-    /// [dev.hardwood.internal.reader.ParquetMetadataReader] attributes, so failures are named
-    /// here by the read pipeline, which names the file, row group and column on the way
-    /// out; what this frame adds is which of the chunk's two indexes was being read.
+    /// [dev.hardwood.internal.reader.footer.ParquetMetadataReader] attributes, so failures are
+    /// named here by the read pipeline, which names the file, row group and column on the way out;
+    /// what this frame adds is which of the chunk's two indexes was being read.
     private static IndexPair readIndexPair(ColumnIndexBuffers colBuffers, int columnIndex,
             ColumnMetaData metaData) {
         ColumnIndex columnIdx;

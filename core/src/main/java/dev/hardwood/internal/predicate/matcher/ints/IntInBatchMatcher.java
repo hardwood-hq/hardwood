@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.ints;
 
 import dev.hardwood.internal.predicate.IntBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// IN-list matcher for `int` columns. Linear scan over the value list — IN lists
 /// in practice have only a handful of entries.

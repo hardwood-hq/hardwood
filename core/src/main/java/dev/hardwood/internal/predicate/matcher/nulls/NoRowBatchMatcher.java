@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.nulls;
 
 import dev.hardwood.internal.predicate.NullBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// No row: every bit of the live range is cleared. The answer to a comparison whose literal lies
 /// past every value the column can hold, in the direction the operator admits.

@@ -10,7 +10,7 @@ package dev.hardwood.internal.predicate;
 import java.util.List;
 import java.util.function.IntUnaryOperator;
 
-import dev.hardwood.internal.reader.InPlaceBinaryAccessor;
+import dev.hardwood.internal.reader.row.InPlaceBinaryAccessor;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
@@ -39,8 +39,8 @@ public final class RecordFilterCompiler {
     /// that index. The function returns `-1` for columns
     /// that aren't directly addressable that way; the compiler then falls back
     /// to the name-keyed leaf. The index space is the accessor's own; for
-    /// [dev.hardwood.internal.reader.PredicateView] it is the one
-    /// [dev.hardwood.internal.reader.PredicateView#indexOf] returns.
+    /// [dev.hardwood.internal.reader.row.PredicateView] it is the one
+    /// [dev.hardwood.internal.reader.row.PredicateView#indexOf] returns.
     ///
     /// The callback decides for a column at any depth: a leaf below a struct
     /// that the accessor holds as a flat column of its own is addressable by

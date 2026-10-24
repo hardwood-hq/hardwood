@@ -24,12 +24,12 @@ import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
-import dev.hardwood.internal.reader.Dictionary;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;

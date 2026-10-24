@@ -22,8 +22,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

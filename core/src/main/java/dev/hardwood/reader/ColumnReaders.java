@@ -14,7 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import dev.hardwood.internal.reader.NestedLevelComputer;
+import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;

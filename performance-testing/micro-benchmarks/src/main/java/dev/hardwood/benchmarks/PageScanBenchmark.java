@@ -29,10 +29,10 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageWalk;
-import dev.hardwood.internal.reader.SequentialFetchPlan;
+import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.decode.PageInfo;
+import dev.hardwood.internal.reader.fetch.PageWalk;
+import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;

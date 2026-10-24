@@ -12,7 +12,7 @@ import java.util.Arrays;
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.BinaryComparator;
-import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.internal.reader.batch.Dictionary;
 
 /// Shared utilities for evaluating equality / membership predicates against a row group's
 /// dictionaries.

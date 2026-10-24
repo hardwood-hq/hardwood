@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.TestResources;
 import dev.hardwood.internal.metadata.PageHeader;
-import dev.hardwood.internal.reader.PageFormatProbe;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.thrift.ThriftCompactConstants;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.ColumnMetaData;

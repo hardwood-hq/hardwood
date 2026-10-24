@@ -45,8 +45,8 @@ direction you are adding. Paths are relative to `core/src/main/java/dev/hardwood
 |---|---|---|
 | `metadata/Encoding.java` | Add the constant | The name a chunk's metadata reads back as |
 | `internal/thrift/ThriftEnumLookup.java` | Add it to `ENCODINGS`, at its Thrift index | Maps the value on the wire to that constant; without it the encoding reads back as `UNKNOWN` |
-| `internal/reader/FlatPageValues.java`, `internal/reader/BinaryPageValues.java` | Add a reader for the encoding, with a decoder in `internal/encoding/` where its stream needs one (as `DeltaBinaryPackedDecoder` and `AlpDecoder` do) | Reads a page's values in place, from any row, into the batch arrays |
-| `internal/reader/PageDecoder.java` | Add the case to `requireReader`, refusing the physical types the encoding is not defined over, and to `numericValues` or `binaryValues` | `requireReader` is the reader's only refusal point; the compiler names the case but cannot name the types, and an undefined pair left unguarded decodes into a page of the wrong shape |
+| `internal/reader/decode/FlatPageValues.java`, `internal/reader/decode/BinaryPageValues.java` | Add a reader for the encoding, with a decoder in `internal/encoding/` where its stream needs one (as `DeltaBinaryPackedDecoder` and `AlpDecoder` do) | Reads a page's values in place, from any row, into the batch arrays |
+| `internal/reader/decode/PageDecoder.java` | Add the case to `requireReader`, refusing the physical types the encoding is not defined over, and to `numericValues` or `binaryValues` | `requireReader` is the reader's only refusal point; the compiler names the case but cannot name the types, and an undefined pair left unguarded decodes into a page of the wrong shape |
 
 ### Write path
 

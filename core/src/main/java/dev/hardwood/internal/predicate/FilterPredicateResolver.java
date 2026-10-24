@@ -26,7 +26,7 @@ import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.conversion.PhysicalValueConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.reader.TimestampAccessorKind;
+import dev.hardwood.internal.reader.row.TimestampAccessorKind;
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.ByteColumnOrder;

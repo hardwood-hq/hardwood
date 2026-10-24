@@ -15,7 +15,7 @@ import java.util.function.Predicate;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
-import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.util.Geospatial;
 import dev.hardwood.metadata.BoundingBox;
 import dev.hardwood.metadata.ColumnMetaData;

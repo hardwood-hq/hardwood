@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.doubles;
 
 import dev.hardwood.internal.predicate.DoubleBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 public final class DoubleLtBatchMatcher implements DoubleBatchMatcher {
 

@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// Composes two [ColumnBatchMatcher]s evaluated against the same column and
 /// word-OR merges their bit masks. Used when an eligible subtree has multiple

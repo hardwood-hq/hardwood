@@ -15,8 +15,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.reader.ReadRanges;
-import dev.hardwood.internal.reader.TailedInputFile;
+import dev.hardwood.internal.io.ReadRanges;
+import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.s3.internal.RangeBody;
 import dev.hardwood.s3.internal.S3Api;

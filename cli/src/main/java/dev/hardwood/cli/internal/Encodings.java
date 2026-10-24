@@ -14,7 +14,7 @@ import java.util.TreeSet;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
-import dev.hardwood.internal.reader.DictionaryParser;
+import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;

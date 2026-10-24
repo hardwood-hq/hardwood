@@ -9,8 +9,8 @@ package dev.hardwood.internal.predicate.matcher.binaries;
 
 import dev.hardwood.internal.predicate.BinaryBatchMatcher;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 
 /// `value IN (members)`, or `value NOT IN (members)` when negated, over a byte-array column whose
 /// equality is byte equality, where at least one member is at most eight bytes long. Rows are

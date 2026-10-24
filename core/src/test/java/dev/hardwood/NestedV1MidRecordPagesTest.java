@@ -15,12 +15,12 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageWalks;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.ReferencePageDecoder;
-import dev.hardwood.internal.reader.SequentialFetchPlan;
+import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.decode.PageInfo;
+import dev.hardwood.internal.reader.decode.ReferencePageDecoder;
+import dev.hardwood.internal.reader.fetch.PageWalks;
+import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;

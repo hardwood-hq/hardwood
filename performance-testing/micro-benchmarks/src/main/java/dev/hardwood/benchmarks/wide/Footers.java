@@ -35,7 +35,7 @@ final class Footers {
     }
 
     /// The same footer body as a memory-mapped, and therefore direct, buffer: the form
-    /// [dev.hardwood.internal.reader.MappedInputFile] hands the decoder for a local file, whose
+    /// [dev.hardwood.internal.io.MappedInputFile] hands the decoder for a local file, whose
     /// bytes the decoder cannot reach through an array.
     static ByteBuffer map(Path path) throws IOException {
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {

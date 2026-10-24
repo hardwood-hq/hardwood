@@ -16,8 +16,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import dev.hardwood.internal.reader.ByteBufferInputFile;
-import dev.hardwood.internal.reader.MappedInputFile;
+import dev.hardwood.internal.io.ByteBufferInputFile;
+import dev.hardwood.internal.io.MappedInputFile;
 
 /// Abstraction for reading Parquet file data.
 ///

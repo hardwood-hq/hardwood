@@ -69,7 +69,7 @@ import dev.hardwood.schema.FileSchema;
 
 /// Compiles an eligible [ResolvedPredicate] into a [CompiledBatchFilter]:
 /// per-column [ColumnBatchMatcher] fragments plus a [MergePlan] describing
-/// how the consumer (in [dev.hardwood.internal.reader.FlatRowReader]) combines
+/// how the consumer (in [dev.hardwood.internal.reader.row.FlatRowReader]) combines
 /// the per-column bitmaps into one per-batch survivor mask.
 ///
 /// Eligibility:
@@ -87,7 +87,7 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// A binary leaf only ever names a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96`
 /// column, each of which reaches the batch as a
-/// [dev.hardwood.internal.reader.BinaryBatchValues] holding the stored bytes. That is
+/// [dev.hardwood.internal.reader.batch.BinaryBatchValues] holding the stored bytes. That is
 /// what lets every such leaf compile and the matchers cast `batch.values` to it
 /// unchecked; the order its [ByteColumnOrder] names is then the only thing
 /// that varies between them.

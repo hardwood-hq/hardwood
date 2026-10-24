@@ -8,8 +8,8 @@
 package dev.hardwood.reader;
 
 import dev.hardwood.Experimental;
-import dev.hardwood.internal.reader.Dictionary;
-import dev.hardwood.internal.reader.LogicalAccessorKind;
+import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.row.LogicalAccessorKind;
 import dev.hardwood.schema.ColumnSchema;
 
 /// The dictionary of a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column chunk, from

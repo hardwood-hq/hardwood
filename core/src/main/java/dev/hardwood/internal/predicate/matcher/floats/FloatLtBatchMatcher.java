@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.floats;
 
 import dev.hardwood.internal.predicate.FloatBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 
 public final class FloatLtBatchMatcher implements FloatBatchMatcher {
 

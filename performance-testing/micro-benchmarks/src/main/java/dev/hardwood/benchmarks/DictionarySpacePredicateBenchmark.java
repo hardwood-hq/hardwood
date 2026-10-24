@@ -34,9 +34,9 @@ import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BinaryBatchValues;
-import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.PhysicalType;
 
 /// Compares [DictionaryBinaryBatchMatcher] with the ordinary per-value loop of its delegate over

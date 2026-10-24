@@ -9,7 +9,7 @@ package dev.hardwood;
 
 import java.util.concurrent.ExecutorService;
 
-import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.writer.ParquetFileWriter;
 
@@ -45,7 +45,7 @@ public interface HardwoodContext extends AutoCloseable {
     /// @deprecated The executor is not meant to run the caller's tasks, and this method has no
     ///             replacement; it will be removed in the next major release.
     @Deprecated(since = "1.1", forRemoval = true)
-    ExecutorService executor();
+    public ExecutorService executor();
 
     /// Closes the context. The pool accepts no new task, and the tasks already submitted to it
     /// run to completion; the call waits up to five seconds for them.

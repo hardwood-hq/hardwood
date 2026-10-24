@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate;
 
 /// Plan describing how to merge per-column
-/// [BatchExchange.Batch#matches][dev.hardwood.internal.reader.BatchExchange.Batch#matches]
+/// [BatchExchange.Batch#matches][dev.hardwood.internal.reader.batch.BatchExchange.Batch#matches]
 /// bitmaps into a single per-batch combined survivor mask.
 ///
 /// Produced by [BatchFilterCompiler] alongside the per-column

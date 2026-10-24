@@ -419,7 +419,7 @@ class FlatPerformanceTest {
     ///
     /// Useful for stressing the per-column pipeline with a wide projection —
     /// e.g. measuring whether sequential vs parallel batch polling in
-    /// [dev.hardwood.internal.reader.FlatRowReader#loadNextBatch] becomes a
+    /// [dev.hardwood.internal.reader.row.FlatRowReader#loadNextBatch] becomes a
     /// bottleneck as column count grows.
     ///
     /// Groups files by full schema fingerprint (every leaf column's type)

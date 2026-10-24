@@ -14,12 +14,12 @@ import java.util.Arrays;
 import dev.hardwood.Experimental;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BinaryBatchValues;
-import dev.hardwood.internal.reader.LeafCompaction;
-import dev.hardwood.internal.reader.LogicalAccessorKind;
-import dev.hardwood.internal.reader.NestedBatch;
-import dev.hardwood.internal.reader.NestedLevelComputer;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.LeafCompaction;
+import dev.hardwood.internal.reader.batch.NestedBatch;
+import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.row.LogicalAccessorKind;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 

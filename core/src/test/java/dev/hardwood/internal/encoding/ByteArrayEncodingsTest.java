@@ -15,7 +15,7 @@ import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.ReferencePageDecoder;
+import dev.hardwood.internal.reader.decode.ReferencePageDecoder;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 

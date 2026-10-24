@@ -17,7 +17,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Compari
 import dev.hardwood.internal.predicate.matcher.ints.IntInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
-import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;

@@ -12,12 +12,12 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.reader.ByteSource;
-import dev.hardwood.internal.reader.CountingInputFile;
-import dev.hardwood.internal.reader.FetchPlanBuilder;
-import dev.hardwood.internal.reader.FileColumnOrdinals;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
+import dev.hardwood.internal.reader.plan.FetchPlanBuilder;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;

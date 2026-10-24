@@ -12,7 +12,7 @@ import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
 
 import dev.hardwood.internal.predicate.BinaryComparator;
-import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 
 /// Byte equality of each row against a set of members, with rows of at most eight bytes compared as
 /// one big-endian `long`.

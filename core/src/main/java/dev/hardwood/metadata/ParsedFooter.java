@@ -13,7 +13,7 @@ import java.util.Optional;
 import dev.hardwood.Experimental;
 import dev.hardwood.InputFile;
 import dev.hardwood.MetadataSource;
-import dev.hardwood.internal.reader.ParsedFooterImpl;
+import dev.hardwood.internal.reader.footer.ParsedFooterImpl;
 
 /// The parsed footer of one file, as a [MetadataSource] hands it to a reader.
 ///

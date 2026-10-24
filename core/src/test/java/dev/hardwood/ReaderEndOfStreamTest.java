@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// This is the read-path counterpart of [ReaderCloseMidReadTest]. That one covers teardown: a
 /// fetch stopped for room in its column's queue ends only if the close queues it a step. This
 /// covers the read itself: the *consumer* waiting inside
-/// [dev.hardwood.internal.reader.BatchExchange#poll()] cannot see the end-of-stream flag, and
+/// [dev.hardwood.internal.reader.batch.BatchExchange#poll()] cannot see the end-of-stream flag, and
 /// learns of the end only from the sentinel the column's end hands its queue. Teardown strands a
 /// producer whose consumer has stopped consuming; this strands a consumer whose producer has
 /// stopped producing, which is the ordinary path rather than the abandoned one.

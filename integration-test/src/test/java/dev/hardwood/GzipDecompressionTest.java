@@ -18,11 +18,11 @@ import java.util.zip.GZIPOutputStream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;

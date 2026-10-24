@@ -41,7 +41,7 @@ A filtered read decodes more than it exposes. `ReadProjection` (`internal.schema
 
 Everything downstream relies on this prefix property: readers take the payload batches as the prefix `[0, payloadColumnCount)` of the batch array, and poll filter-only columns only after the payload (see [Always-match row groups](#always-match-row-groups)).
 
-**Two accessor surfaces.** A row reader builds its accessor state from `payload()` alone: `FlatRowReader`'s name-to-index map and value arrays, and `NestedRowReader`'s `NestedBatchDataView`, have no entry for a filter-only column, so no accessor reaches one and no accessor branches on whether a column is filter-only. The per-row matcher evaluates against `PredicateView` (`internal.reader`) instead, a `StructAccessor` over the predicate columns alone, whether projected or filter-only:
+**Two accessor surfaces.** A row reader builds its accessor state from `payload()` alone: `FlatRowReader`'s name-to-index map and value arrays, and `NestedRowReader`'s `NestedBatchDataView`, have no entry for a filter-only column, so no accessor reaches one and no accessor branches on whether a column is filter-only. The per-row matcher evaluates against `PredicateView` (`internal.reader.row`) instead, a `StructAccessor` over the predicate columns alone, whether projected or filter-only:
 
 - Flat predicate columns are served from their typed arrays; nested ones through a `NestedBatchDataView` over a projection of the predicate paths.
 - Its indexed accessors use the view's own index space: flat predicate columns first, then the top-level fields of the nested projection. `PredicateView#indexOf` maps a file leaf column into that space, or returns `-1`.
@@ -116,7 +116,7 @@ Tests: `BatchMatcherOracleTest`.
 
 ### Merge
 
-`BatchMatchMerger` (`internal.reader`) combines the per-column bitmaps into one survivor bitmap per batch, once per batch. It has two modes, fixed at construction:
+`BatchMatchMerger` (`internal.reader.row`) combines the per-column bitmaps into one survivor bitmap per batch, once per batch. It has two modes, fixed at construction:
 
 - **Aliasing** (`FlatRowReader`): each `ScheduledFlatColumn` runs its fragment into the batch's own `matches` array as the batch's cell completes, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
 - **Owning** (`SelectionEngine`): the column readers' columns carry no fragment, so the merger runs the fragments itself into buffers it owns, on the consumer thread.

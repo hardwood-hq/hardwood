@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.reader.RowRanges;
+import dev.hardwood.internal.reader.select.RowRanges;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.OffsetIndex;

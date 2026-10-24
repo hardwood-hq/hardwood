@@ -13,7 +13,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Mirrors [MisalignedPageBoundariesTest] against a fixture written without
 /// a Page Index. Both columns are flat, so the per-page row mask machinery
-/// in [dev.hardwood.internal.reader.SequentialFetchPlan] is responsible for
+/// in [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] is responsible for
 /// keeping rows aligned across columns under filter pushdown and tail-mode
 /// reads — there is no `IndexedFetchPlan` to fall back on.
 class MisalignedPageBoundariesNoIndexTest {

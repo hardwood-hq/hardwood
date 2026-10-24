@@ -502,7 +502,7 @@ class ColumnReaderLayerModelTest {
 
     /// Legacy list encodings (#656) must surface through the same layer model as
     /// their modern equivalents — the ColumnReader path derives its layers solely
-    /// from [dev.hardwood.internal.reader.NestedLevelComputer], so a bare
+    /// from [dev.hardwood.internal.reader.batch.NestedLevelComputer], so a bare
     /// unannotated `REPEATED INT32` is a one-layer list: a single `REPEATED`
     /// layer over the leaf, here `foo = [42, 7]`.
     @Test

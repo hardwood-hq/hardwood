@@ -14,8 +14,8 @@ import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
