@@ -55,11 +55,6 @@ public final class CoalescingPolicy {
         return nextStart - end <= GAP_BYTES && nextEnd - start <= maxSpan;
     }
 
-    /// [#merges(long, long, long, long, long)] under [#maxSpanBytes()].
-    static boolean merges(long start, long end, long nextStart, long nextEnd) {
-        return merges(start, end, nextStart, nextEnd, maxSpanBytes());
-    }
-
     /// A range of the file one decoded column needs.
     public record Range(int column, long start, long end) {
     }
@@ -68,10 +63,10 @@ public final class CoalescingPolicy {
     public record Extent(int column, String name, long start, long end) {
     }
 
-    /// Coalesces `ranges`, in offset order, into the spans of a row group's entries: a range joins
-    /// the span before it when [#merges] allows, so a span bridges gaps of at most
-    /// G and is at most S long unless one range alone is longer. Each span is held by every column
-    /// whose extent overlaps it, and its reason names every column whose range it holds.
+    /// Coalesces `ranges`, in offset order, into the spans of a row group's entries, the requests
+    /// [CoalescedRanges] plans for them: a span bridges gaps of at most G and is at most S long
+    /// unless one range alone is longer. Each span is held by every column whose extent overlaps
+    /// it, and its reason names every column whose range it holds.
     ///
     /// No span crosses `tailOffset`, where the tail the file's footer entry read begins
     /// ([TailedInputFile]): a span inside the tail is sliced from it, so a range that straddles
@@ -79,47 +74,42 @@ public final class CoalescingPolicy {
     public static List<FetchSequence.Span> coalesce(List<Range> ranges, Extent[] extents, String[] names,
                                              int rowGroupIndex, int maxSpan, long tailOffset) {
         ranges = cutAt(ranges, tailOffset);
-        List<FetchSequence.Span> spans = new ArrayList<>();
+        CoalescedRanges.Builder builder = CoalescedRanges.builder();
+        for (Range range : ranges) {
+            builder.add(range.start(), Math.toIntExact(range.end() - range.start()));
+        }
+        CoalescedRanges requests = builder.build(tailOffset, maxSpan);
+        List<FetchSequence.Span> spans = new ArrayList<>(requests.requestCount());
+        int nextRange = 0;
         int firstExtent = 0;
-        long start = -1;
-        long end = -1;
         boolean[] served = new boolean[names.length];
         List<Integer> servedOrder = new ArrayList<>();
-        for (int i = 0; i <= ranges.size(); i++) {
-            Range range = i < ranges.size() ? ranges.get(i) : null;
-            if (range != null && start >= 0 && merges(start, end, range.start(), range.end(), maxSpan)
-                    && (start >= tailOffset || range.end() <= tailOffset)) {
-                end = Math.max(end, range.end());
-            }
-            else {
-                if (start >= 0) {
-                    while (firstExtent < extents.length && extents[firstExtent].end() <= start) {
-                        firstExtent++;
-                    }
-                    int holders = 0;
-                    for (int e = firstExtent; e < extents.length && extents[e].start() < end; e++) {
-                        if (extents[e].end() > start) {
-                            holders++;
-                        }
-                    }
-                    StringBuilder reason = new StringBuilder("rg=").append(rowGroupIndex);
-                    for (int column : servedOrder) {
-                        reason.append(" col=").append(names[column]);
-                        served[column] = false;
-                    }
-                    servedOrder.clear();
-                    spans.add(new FetchSequence.Span(start, Math.toIntExact(end - start), reason.toString(), holders));
+        for (int r = 0; r < requests.requestCount(); r++) {
+            long start = requests.requestStart(r);
+            long end = requests.requestEnd(r);
+            for (; nextRange < ranges.size() && ranges.get(nextRange).start() < end; nextRange++) {
+                int column = ranges.get(nextRange).column();
+                if (!served[column]) {
+                    served[column] = true;
+                    servedOrder.add(column);
                 }
-                if (range == null) {
-                    break;
+            }
+            StringBuilder reason = new StringBuilder("rg=").append(rowGroupIndex);
+            for (int column : servedOrder) {
+                reason.append(" col=").append(names[column]);
+                served[column] = false;
+            }
+            servedOrder.clear();
+            while (firstExtent < extents.length && extents[firstExtent].end() <= start) {
+                firstExtent++;
+            }
+            int holders = 0;
+            for (int e = firstExtent; e < extents.length && extents[e].start() < end; e++) {
+                if (extents[e].end() > start) {
+                    holders++;
                 }
-                start = range.start();
-                end = range.end();
             }
-            if (!served[range.column()]) {
-                served[range.column()] = true;
-                servedOrder.add(range.column());
-            }
+            spans.add(new FetchSequence.Span(start, Math.toIntExact(end - start), reason.toString(), holders));
         }
         return spans;
     }
