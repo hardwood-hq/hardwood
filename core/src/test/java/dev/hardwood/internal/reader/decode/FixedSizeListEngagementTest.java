@@ -111,7 +111,7 @@ class FixedSizeListEngagementTest {
                     PageDecoder decoder = new PageDecoder(
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), false);
-                    PageDecoder.InPlaceNestedPage page = decoder.decodeNestedInPlace(pageInfo.pageData(),
+                    PageDecoder.InPlaceNestedPage page = decoder.decodeNestedInPlace(pageInfo.dataPage(),
                             pageInfo.dictionary(), scratch, TestDecodeBuffers.create());
 
                     assertThat(page.repetitionLevels()).isSameAs(scratch.repetitionLevels(page.size()));
@@ -157,7 +157,7 @@ class FixedSizeListEngagementTest {
             PageDecoder decoder = new PageDecoder(
                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
                     context.decompressorFactory(), fastPath);
-            return decoder.decodeNestedInPlace(pageInfo.pageData(), pageInfo.dictionary(),
+            return decoder.decodeNestedInPlace(pageInfo.dataPage(), pageInfo.dictionary(),
                     new PageDecoder.LevelScratch(), TestDecodeBuffers.create()).fixedListK();
         }
         finally {
@@ -188,7 +188,7 @@ class FixedSizeListEngagementTest {
                     PageDecoder decoder = new PageDecoder(
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), true);
-                    result.add(decoder.decodeNestedInPlace(pageInfo.pageData(), pageInfo.dictionary(),
+                    result.add(decoder.decodeNestedInPlace(pageInfo.dataPage(), pageInfo.dictionary(),
                             new PageDecoder.LevelScratch(), TestDecodeBuffers.create()).fixedListK());
                 }
             }

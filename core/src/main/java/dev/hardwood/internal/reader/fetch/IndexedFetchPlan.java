@@ -15,6 +15,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.memory.WorkingSet;
@@ -187,8 +188,7 @@ public final class IndexedFetchPlan implements FetchPlan {
             index++;
             // The header gives the buffers decoding the page takes, which the read admits before
             // it submits the page
-            PageHeader header = PageHeaderReader.read(new ThriftCompactReader(pageData, 0));
-            PageInfo page = PageInfo.dataPage(pageData, header, columnSchema, columnChunk.metaData(), dictionary,
+            PageInfo page = new PageInfo(DataPage.parse(pageData), columnSchema, columnChunk.metaData(), dictionary,
                     needed.mask(), keptRecords(needed));
 
             if (!eventEmitted && index >= neededPages.size()) {

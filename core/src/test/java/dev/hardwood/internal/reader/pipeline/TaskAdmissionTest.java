@@ -25,12 +25,14 @@ import org.junit.jupiter.params.provider.CsvSource;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.internal.thrift.RleExpansionFile;
-import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -122,8 +124,9 @@ class TaskAdmissionTest {
     void pageIsSizedByItsDeclaredBytesWhateverValueCountItDeclares() throws IOException {
         ColumnSchema column = optionalColumn();
         int bytes = 2 * DecodeBuffers.RETAINED_BYTES;
-        PageInfo page = new PageInfo(ByteBuffer.allocate(1), column, null, null, PageRowMask.ALL, 0, 0, bytes,
-                Encoding.PLAIN);
+        PageHeader header = new PageHeader(PageType.DATA_PAGE, bytes, 1, null, null, null, null);
+        PageInfo page = new PageInfo(new DataPage(header, 0, ByteBuffer.allocate(1)), column, null, null,
+                PageRowMask.ALL, 0);
 
         assertThat(page.taskBytes()).isEqualTo(bytes);
     }
@@ -136,13 +139,6 @@ class TaskAdmissionTest {
 
         // Its definition levels, an `int` each
         assertThat(placeholder.taskBytes()).isEqualTo((long) Integer.BYTES * values);
-    }
-
-    @Test
-    void pageWithBytesButNoSizesIsRejected() {
-        assertThatThrownBy(() -> new PageInfo(ByteBuffer.allocate(1), null, null, null, PageRowMask.ALL, 0))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("A page with bytes needs the sizes its header declares");
     }
 
     private static ColumnSchema optionalColumn() throws IOException {

@@ -38,7 +38,7 @@ class StoredValuesInPlaceTest {
         ByteBuffer page = direct(DataPages.page(Encoding.PLAIN, VALUES.length, DataPages.concat(
                 DataPages.levelSection(1, 1, 1, 1, 1), PlainEncoder.encodeFloats(VALUES, 0, VALUES.length))));
         FlatPageValues values = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED)
-                .decodeFlat(page, null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
+                .decodeFlat(DataPage.parse(page), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
 
         overwriteLastValue(page, 9.5f);
 
@@ -55,7 +55,7 @@ class StoredValuesInPlaceTest {
                 DataPages.levelSection(present, present, present, present, present),
                 PlainEncoder.encodeFloats(VALUES, 0, VALUES.length))));
         PageDecoder.InPlaceNestedPage nested = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED)
-                .decodeNestedInPlace(page, null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
+                .decodeNestedInPlace(DataPage.parse(page), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
 
         overwriteLastValue(page, 9.5f);
 
@@ -69,7 +69,7 @@ class StoredValuesInPlaceTest {
                 DataPages.levelSection(1, list.repetition), DataPages.levelSection(2, list.definition),
                 PlainEncoder.encodeFloats(list.values, 0, list.values.length))));
         PageDecoder.InPlaceNestedPage nested = DataPages.decoder(list.column, CompressionCodec.UNCOMPRESSED)
-                .decodeNestedInPlace(page, null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
+                .decodeNestedInPlace(DataPage.parse(page), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
         assertThat(nested.fixedListK()).isEqualTo(2);
 
         overwriteLastValue(page, 99.5f);
@@ -88,7 +88,7 @@ class StoredValuesInPlaceTest {
                 DataPages.levels(present, present, present, present, present),
                 PlainEncoder.encodeFloats(VALUES, 0, VALUES.length), CompressionCodec.SNAPPY, false));
         PageDecoder.InPlaceNestedPage nested = DataPages.decoder(column, CompressionCodec.SNAPPY)
-                .decodeNestedInPlace(page, null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
+                .decodeNestedInPlace(DataPage.parse(page), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
 
         overwriteLastValue(page, 9.5f);
 
@@ -102,7 +102,7 @@ class StoredValuesInPlaceTest {
                 DataPages.levels(1, 1, 1, 1, 1), PlainEncoder.encodeFloats(VALUES, 0, VALUES.length),
                 CompressionCodec.UNCOMPRESSED, true));
         FlatPageValues values = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED)
-                .decodeFlat(page, null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
+                .decodeFlat(DataPage.parse(page), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
 
         overwriteLastValue(page, 9.5f);
 
@@ -117,7 +117,7 @@ class StoredValuesInPlaceTest {
                 PlainEncoder.encodeFloats(VALUES, 0, VALUES.length), CompressionCodec.SNAPPY, true);
         PageDecoder decoder = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED);
 
-        assertThatThrownBy(() -> decoder.decodeFlat(page, null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create()))
+        assertThatThrownBy(() -> decoder.decodeFlat(DataPage.parse(page), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Uncompressed page size mismatch: expected 16, got 18");
     }
@@ -129,7 +129,7 @@ class StoredValuesInPlaceTest {
                 DataPages.levels(1, list.repetition), DataPages.levels(2, list.definition),
                 PlainEncoder.encodeFloats(list.values, 0, list.values.length), CompressionCodec.SNAPPY, false));
         PageDecoder.InPlaceNestedPage nested = DataPages.decoder(list.column, CompressionCodec.SNAPPY)
-                .decodeNestedInPlace(page, null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
+                .decodeNestedInPlace(DataPage.parse(page), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
         assertThat(nested.fixedListK()).isEqualTo(2);
 
         overwriteLastValue(page, 99.5f);
@@ -167,7 +167,7 @@ class StoredValuesInPlaceTest {
                 DataPages.levelSection(1, 1, 1, 1, 1), PlainEncoder.encodeFloats(VALUES, 0, VALUES.length)));
         // A read-only heap buffer exposes no array, and is neither read through one nor in place
         FlatPageValues values = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED)
-                .decodeFlat(heap.asReadOnlyBuffer(), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
+                .decodeFlat(DataPage.parse(heap.asReadOnlyBuffer()), null, new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
 
         overwriteLastValue(heap, 9.5f);
 

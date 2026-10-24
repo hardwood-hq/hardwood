@@ -471,9 +471,8 @@ class BatchPlanTest {
                     if (page == null || extraRows == 0 || getCurrentRowGroupIndex() != 0) {
                         return page;
                     }
-                    return new PageInfo(page.pageData(), page.columnSchema(), page.columnMetaData(),
-                            page.dictionary(), page.mask(), page.records() + extraRows, page.declaredValues(),
-                            page.uncompressedSize(), page.encoding());
+                    return new PageInfo(page.dataPage(), page.columnSchema(), page.columnMetaData(),
+                            page.dictionary(), page.mask(), page.records() + extraRows);
                 }
 
                 @Override

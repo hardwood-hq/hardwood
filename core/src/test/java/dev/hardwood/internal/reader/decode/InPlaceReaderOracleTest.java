@@ -115,7 +115,7 @@ class InPlaceReaderOracleTest {
         PageDecoder decoder = DataPages.decoder(column, codec);
 
         assertThat(DataPages.read(decoder, column, page.duplicate(), dictionary)).isEqualTo(expected);
-        PageDecoder.InPlaceNestedPage nested = decoder.decodeNestedInPlace(page.duplicate(), dictionary,
+        PageDecoder.InPlaceNestedPage nested = decoder.decodeNestedInPlace(DataPage.parse(page.duplicate()), dictionary,
                 new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
         int size = levels.size();
         for (int from = 0; from < size; from++) {
