@@ -18,6 +18,7 @@ import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.util.Lazy;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.s3.internal.RangeBody;
 import dev.hardwood.s3.internal.S3Api;
 
@@ -47,6 +48,7 @@ final class S3Fetcher implements InputFile {
 
     private static final int HTTP_UNAUTHORIZED = 401;
     private static final int HTTP_FORBIDDEN = 403;
+    private static final int HTTP_PRECONDITION_FAILED = 412;
 
     private final S3Api api;
     private final String bucket;
@@ -57,6 +59,9 @@ final class S3Fetcher implements InputFile {
     private long tailCacheOffset;
     /// The object's `ETag` from the response to the suffix-range `GET` in [#open()].
     private Optional<String> identity;
+    /// The `If-Match` every range request carries: the identity when it is a strong entity tag,
+    /// otherwise `null`. `If-Match` compares strongly, so a weak tag would never match.
+    private String ifMatch;
     private final AtomicLong networkRequestCount = new AtomicLong();
     private final AtomicLong networkBytesFetched = new AtomicLong();
 
@@ -71,25 +76,31 @@ final class S3Fetcher implements InputFile {
         if (fileLength >= 0) {
             return;
         }
-        String suffixRange = "bytes=-" + TailedInputFile.tailBytes();
-        HttpResponse<byte[]> response = api.getBytes(bucket, key, suffixRange);
+        int suffixLength = TailedInputFile.tailBytes();
+        HttpResponse<RangeBody> response = api.getSuffix(bucket, key, suffixLength);
         int status = response.statusCode();
+        RangeBody body = response.body();
         if (status != 206 && status != 200) {
             throw new IOException("Failed to open " + name()
-                    + ": HTTP " + status + " " + new String(response.body()) + unsignedHint(status));
+                    + ": HTTP " + status + " " + body.text() + unsignedHint(status));
+        }
+        if (body.overflow()) {
+            // A body past the suffix is the whole object of an endpoint that ignored the Range header
+            throw new IOException("Failed to open " + name() + ": HTTP " + status + " with a body longer than the "
+                    + suffixLength + " bytes requested; the endpoint ignored the Range header");
         }
         fileLength = parseFileLength(response);
         identity = response.headers().firstValue("ETag");
-        byte[] tail = response.body();
-        long requestNo = networkRequestCount.incrementAndGet();
-        long totalBytes = networkBytesFetched.addAndGet(tail.length);
-        // Use a direct buffer so slices are usable from FFM-based decompressors
+        ifMatch = identity.filter(etag -> !etag.startsWith("W/")).orElse(null);
+        // A direct buffer, so slices are usable from FFM-based decompressors
         // (e.g. libdeflate), which require native MemorySegments.
-        tailCache = ByteBuffer.allocateDirect(tail.length);
-        tailCache.put(tail);
-        tailCache.flip();
-        tailCacheOffset = fileLength - tail.length;
-        logFetch("open-tail", tailCacheOffset, tail.length, requestNo, totalBytes);
+        // Sliced to the bytes received: a body without a Content-Length has a buffer of the suffix
+        ByteBuffer tail = body.bytes().slice();
+        long requestNo = networkRequestCount.incrementAndGet();
+        long totalBytes = networkBytesFetched.addAndGet(tail.remaining());
+        tailCache = tail;
+        tailCacheOffset = fileLength - tail.remaining();
+        logFetch("open-tail", tailCacheOffset, tail.remaining(), requestNo, totalBytes);
     }
 
     @Override
@@ -123,9 +134,15 @@ final class S3Fetcher implements InputFile {
         long totalBytes = networkBytesFetched.addAndGet(length);
         logFetch(FetchReason.current(), offset, length, requestNo, totalBytes);
         String range = "bytes=" + offset + "-" + (offset + length - 1);
-        HttpResponse<RangeBody> response = api.getRange(bucket, key, range, length);
+        HttpResponse<RangeBody> response = api.getRange(bucket, key, range, length, ifMatch);
         int status = response.statusCode();
         RangeBody body = response.body();
+        // A 412 to a request without If-Match is an error of the endpoint, reported as such below
+        if (status == HTTP_PRECONDITION_FAILED && ifMatch != null) {
+            throw new ParquetReadException("Failed to read range [" + offset + ", " + (offset + length)
+                    + ") from " + name() + ": the file changed since it was opened (HTTP 412 for If-Match "
+                    + ifMatch + ")");
+        }
         if (status != 206) {
             // A 200 carries the whole object from byte 0: the endpoint ignored the Range header
             String detail = status == 200

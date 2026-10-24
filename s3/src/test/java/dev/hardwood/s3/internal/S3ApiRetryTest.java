@@ -120,7 +120,8 @@ class S3ApiRetryTest {
 
     @Test
     void rangeRetryReleasesFailedResponse() throws Exception {
-        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length);
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length,
+                null);
 
         assertThat(response.statusCode()).isEqualTo(206);
         assertThat(bytes(response.body())).isEqualTo(RANGE_BODY);
@@ -134,7 +135,8 @@ class S3ApiRetryTest {
     void rangeRetriesBodyFailingMidway() throws Exception {
         firstAnswer = FirstAnswer.TRUNCATED_BODY;
 
-        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length);
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3", RANGE_BODY.length,
+                null);
 
         assertThat(response.statusCode()).isEqualTo(206);
         assertThat(response.body().overflow()).isFalse();

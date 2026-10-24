@@ -85,28 +85,37 @@ public final class S3Api {
         return credentialsProvider == null;
     }
 
-    /// Sends a GET request with a `Range` header and returns the full response body as bytes.
-    ///
-    /// Retries on HTTP 500/503 responses and network errors up to [#maxRetries] times
-    /// with exponential backoff and jitter.
-    public HttpResponse<byte[]> getBytes(String bucket, String key, String rangeHeader) throws IOException {
-        return sendWithRetry(bucket, key, rangeHeader, HttpResponse.BodyHandlers.ofByteArray());
-    }
-
-    /// Sends a GET request with a `Range` header of `length` bytes and receives the response body
-    /// through a [RangeBodyHandler]: a `206` body into a direct buffer of `length` bytes.
+    /// Sends a GET request for the last `length` bytes of an object and receives the response body
+    /// through [RangeBodyHandler#suffix(int)]: a `206` or `200` body of up to `length` bytes into a
+    /// direct buffer.
     ///
     /// Retries on HTTP 500/503 responses and network errors, a failure while the body arrives
     /// included, up to [#maxRetries] times with exponential backoff and jitter.
-    public HttpResponse<RangeBody> getRange(String bucket, String key, String rangeHeader, int length)
-            throws IOException {
-        return sendWithRetry(bucket, key, rangeHeader, new RangeBodyHandler(length));
+    public HttpResponse<RangeBody> getSuffix(String bucket, String key, int length) throws IOException {
+        return sendWithRetry(bucket, key, "bytes=-" + length, null, RangeBodyHandler.suffix(length));
     }
 
-    private <T> HttpResponse<T> sendWithRetry(String bucket, String key, String rangeHeader,
+    /// Sends a GET request with a `Range` header of `length` bytes and receives the response body
+    /// through a [RangeBodyHandler]: a `206` body into a direct buffer of `length` bytes. With an
+    /// `ifMatch` entity tag, the request carries it as `If-Match`, and a server holding another
+    /// version of the object answers `412`.
+    ///
+    /// Retries on HTTP 500/503 responses and network errors, a failure while the body arrives
+    /// included, up to [#maxRetries] times with exponential backoff and jitter.
+    ///
+    /// @param ifMatch the entity tag the object must have, or `null` for an unconditional request
+    public HttpResponse<RangeBody> getRange(String bucket, String key, String rangeHeader, int length,
+            String ifMatch) throws IOException {
+        return sendWithRetry(bucket, key, rangeHeader, ifMatch, new RangeBodyHandler(length));
+    }
+
+    private <T> HttpResponse<T> sendWithRetry(String bucket, String key, String rangeHeader, String ifMatch,
             HttpResponse.BodyHandler<T> bodyHandler) throws IOException {
+        String[] headers = ifMatch != null
+                ? new String[]{ "Range", rangeHeader, "If-Match", ifMatch }
+                : new String[]{ "Range", rangeHeader };
         return sendWithRetry(() -> signRequest("GET", objectUri(bucket, key),
-                SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), "Range", rangeHeader),
+                SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), headers),
                 bodyHandler, "GET s3://" + bucket + "/" + key + " range " + rangeHeader);
     }
 

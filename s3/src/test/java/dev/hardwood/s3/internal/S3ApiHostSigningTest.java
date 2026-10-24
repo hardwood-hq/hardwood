@@ -15,6 +15,7 @@ import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -109,10 +110,11 @@ class S3ApiHostSigningTest {
         S3Api api = new S3Api(httpClient, () -> S3Credentials.of(ACCESS_KEY, SECRET_KEY),
                 REGION, URI.create(endpoint), true, Duration.ofSeconds(10), 0);
 
-        HttpResponse<byte[]> response = api.getBytes("bucket", "object.parquet", "bytes=0-3");
+        HttpResponse<RangeBody> response = api.getRange("bucket", "object.parquet", "bytes=0-3",
+                RANGE_BODY.length, null);
 
         assertThat(response.statusCode()).isEqualTo(206);
-        assertThat(response.body()).isEqualTo(RANGE_BODY);
+        assertThat(response.body().bytes()).isEqualTo(ByteBuffer.wrap(RANGE_BODY));
     }
 
     @ParameterizedTest
