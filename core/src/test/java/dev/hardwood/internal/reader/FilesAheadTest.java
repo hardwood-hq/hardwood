@@ -41,9 +41,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A multi-file read over files whose bytes are not in memory reads the footers of up to
-/// `hardwood.internal.maxFilesAhead` files ahead of the one it waits for (READ_PATH_CONSOLIDATION.md,
-/// rules 4 and 9): their footers are in flight together, a file statistics keep has its first data
-/// fetched ahead in one request, a run of files statistics prune is opened ahead rather than one
+/// `hardwood.internal.maxFilesAhead` files ahead of the one it waits for (FETCH_PLANNING.md,
+/// Opening files ahead): their footers are in flight together, a file statistics keep has its
+/// first data fetched ahead in one request, a run of files statistics prune is opened ahead rather than one
 /// file after another, what is fetched beyond the next file stays within the context's read-ahead
 /// buffer, and a footer that fails ahead fails the read only at its file.
 class FilesAheadTest {
@@ -143,7 +143,7 @@ class FilesAheadTest {
         }
     }
 
-    /// Rule 9: a footer that fails while read ahead fails the read only when it reaches that file:
+    /// A footer that fails while read ahead fails the read only when it reaches that file:
     /// the rows of every file before it are returned first.
     @Test
     void aFooterThatFailsAheadFailsTheReadAtItsFile() throws Exception {

@@ -16,11 +16,10 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
-/// How a walk takes bytes from the entries that hold its chunk (READ_PATH_CONSOLIDATION.md, rules 5
-/// and 6).
+/// How a walk takes bytes from the entries that hold its chunk (FETCH_PLANNING.md, Fetch plans).
 class EntryCursorTest {
 
-    /// Rule 5: a range the walk's entries hold is sliced from them, and only the part no entry holds
+    /// A range the walk's entries hold is sliced from them, and only the part no entry holds
     /// is inserted, up to the next entry; a range straddling a cut is copied from both.
     @Test
     void aHeldRangeIsSlicedAndOnlyTheGapIsInserted() throws Exception {
@@ -55,7 +54,7 @@ class EntryCursorTest {
         assertThat(file.readCount()).as("the held entry sliced again").isEqualTo(3);
     }
 
-    /// Rule 6: a walk passes the entries that end before where it reads next, once each.
+    /// A walk passes the entries that end before where it reads next, once each.
     @Test
     void aWalkPassesTheEntriesBehindIt() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(300));

@@ -35,9 +35,9 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Rule 13 (READ_PATH_CONSOLIDATION.md): the events planning decides are committed when the read
-/// reaches the file or row group they describe, however far ahead planning ran, and a file's open
-/// is reported from the start of its footer entry to the parse of its footer.
+/// The events planning decides are committed when the read reaches the file or row group they
+/// describe, however far ahead planning ran, and a file's open is reported from the start of its
+/// footer entry to the parse of its footer.
 class PlanningEventTimingTest extends AbstractJfrRecorderTest {
 
     private static final int FILES = 6;

@@ -23,12 +23,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// The rules by which a [FetchSequence] starts, releases and drops its entries
-/// (READ_PATH_CONSOLIDATION.md, "The sequence's rules").
+/// (FETCH_PLANNING.md, Entries).
 class FetchSequenceTest {
 
     private static final int LENGTH = 100;
 
-    /// Rule 1: a demanded entry starts at once, whatever F and R hold, and is charged to neither.
+    /// A demanded entry starts at once, whatever F and R hold, and is charged to neither.
     @Test
     void aDemandedEntryStartsWhateverFAndRHold() throws Exception {
         CountingInputFile file = file();
@@ -42,7 +42,7 @@ class FetchSequenceTest {
         assertThat(buffer.held()).isZero();
     }
 
-    /// Rule 2: the next unit's first entry starts without F and is not charged to R; the entries
+    /// The next unit's first entry starts without F and is not charged to R; the entries
     /// after it wait for room.
     @Test
     void theNextUnitsFirstEntryStartsUncharged() {
@@ -57,7 +57,7 @@ class FetchSequenceTest {
         assertThat(buffer.held()).isZero();
     }
 
-    /// Rule 3: speculative entries start in position order while their bytes stay within F, and
+    /// Speculative entries start in position order while their bytes stay within F, and
     /// each one passed starts the next.
     @Test
     void speculativeEntriesStartInPositionOrderWithinF() {
@@ -74,7 +74,7 @@ class FetchSequenceTest {
         assertThat(sequence.speculativeBytes()).isEqualTo(2 * LENGTH);
     }
 
-    /// Rule 3: an entry R has no room for waits for no one; a release of R wakes its waiters in
+    /// An entry R has no room for waits for no one; a release of R wakes its waiters in
     /// registration order, a decode task registered before the entry first.
     @Test
     void aReleaseOfRWakesItsWaitersInRegistrationOrder() {
@@ -96,7 +96,7 @@ class FetchSequenceTest {
         assertThat(buffer.held()).isEqualTo(LENGTH);
     }
 
-    /// Rule 3: a read with a row limit starts no speculative entry.
+    /// A read with a row limit starts no speculative entry.
     @Test
     void aReadThatDoesNotSpeculateStartsOnlyOnDemand() {
         CountingInputFile file = file();
@@ -106,7 +106,7 @@ class FetchSequenceTest {
         assertThat(file.readCount()).isZero();
     }
 
-    /// Rule 6: an entry is released once every column holding it has passed it, which returns its
+    /// An entry is released once every column holding it has passed it, which returns its
     /// charges and drops its bytes; a later demand for it is a fault.
     @Test
     void anEntryIsReleasedOnceEveryHolderHasPassedIt() {
@@ -127,7 +127,7 @@ class FetchSequenceTest {
                 .hasMessage("Entry at offset 0 (length 100) of <memory> was released before it was read");
     }
 
-    /// Rule 9: a speculative entry that fails is dropped, its charges returned, and started again
+    /// A speculative entry that fails is dropped, its charges returned, and started again
     /// when demanded.
     @Test
     void aFailedSpeculativeEntryIsDroppedAndReadAgainOnDemand() throws Exception {
@@ -143,7 +143,7 @@ class FetchSequenceTest {
         assertThat(file.reads).isEqualTo(2);
     }
 
-    /// Rule 10: close drops the entries not started, waits for those in flight without
+    /// Close drops the entries not started, waits for those in flight without
     /// interrupting them, and releases every charge.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)

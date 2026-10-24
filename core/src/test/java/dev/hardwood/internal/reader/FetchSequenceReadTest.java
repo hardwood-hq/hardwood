@@ -47,9 +47,9 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// The sequence's rules as a read applies them (READ_PATH_CONSOLIDATION.md, "The sequence's
-/// rules"): what a read starts ahead, how far it plans, what a walk inserts, what planning rejects
-/// and how entries are named.
+/// The sequence's rules as a read applies them (FETCH_PLANNING.md, Entries and Planning ahead):
+/// what a read starts ahead, how far it plans, what a walk inserts, what planning rejects and how
+/// entries are named.
 class FetchSequenceReadTest {
 
     private static final int ROW_GROUPS = 4;
@@ -60,14 +60,14 @@ class FetchSequenceReadTest {
         System.clearProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
     }
 
-    /// Rule 4: a read with a row limit starts no data past its next unit, however much room F and
+    /// A read with a row limit starts no data past its next unit, however much room F and
     /// R leave.
     @Test
     void aReadWithARowLimitStartsNoDataPastItsNextUnit() throws Exception {
         assertThat(rowGroupsReadAfterEnteringTheFirst(ROW_GROUPS * ROWS_PER_ROW_GROUP)).containsExactly(0, 1);
     }
 
-    /// Rule 7: a read without a row limit plans past its next unit while F has room, each row group
+    /// A read without a row limit plans past its next unit while F has room, each row group
     /// one past the last with a started entry.
     @Test
     void aReadWithoutARowLimitPlansAheadWithinF() throws Exception {
@@ -101,7 +101,7 @@ class FetchSequenceReadTest {
                 .distinct().sorted().toList();
     }
 
-    /// Rule 7: a read whose files are all in memory plans one row group ahead on a pool.
+    /// A read whose files are all in memory plans one row group ahead on a pool.
     @Tag("pool")
     @Test
     void aReadOfFilesInMemoryPlansOneRowGroupAheadOnAPool() throws Exception {
@@ -122,7 +122,7 @@ class FetchSequenceReadTest {
         }
     }
 
-    /// Rule 7: a read whose files are all in memory plans nothing ahead on a context of zero
+    /// A read whose files are all in memory plans nothing ahead on a context of zero
     /// threads.
     @Test
     void aReadOfFilesInMemoryPlansNothingAheadOnZeroThreads() throws Exception {
@@ -154,7 +154,7 @@ class FetchSequenceReadTest {
         return iterator;
     }
 
-    /// Rule 5: a column without an offset index under a row limit holds its chunk's first part; the
+    /// A column without an offset index under a row limit holds its chunk's first part; the
     /// rest is requested as the walk reaches it, a piece of at most S at a time, and no byte twice.
     @Test
     void theRestOfAChunkARowLimitLeftOutIsRequestedAsTheWalkReachesIt() throws Exception {
@@ -192,7 +192,7 @@ class FetchSequenceReadTest {
         }
     }
 
-    /// Rule 11: column chunks that overlap fail the read with a `ParquetReadException` naming the
+    /// Column chunks that overlap fail the read with a `ParquetReadException` naming the
     /// column, before any data is requested.
     @Test
     void overlappingColumnChunksAreRejected() throws Exception {
@@ -209,7 +209,7 @@ class FetchSequenceReadTest {
                         + aStart + ", " + (bStart + 8) + ")");
     }
 
-    /// Rule 11: a column chunk that runs past the end of the file fails the read with a
+    /// A column chunk that runs past the end of the file fails the read with a
     /// `ParquetReadException` naming the column.
     @Test
     void aColumnChunkPastTheEndOfTheFileIsRejected() throws Exception {
@@ -224,7 +224,7 @@ class FetchSequenceReadTest {
                         + (bStart + bytes.length) + ") lies outside the file of " + fileLength + " bytes");
     }
 
-    /// Rule 12: an entry that serves several columns names each of them, in file order.
+    /// An entry that serves several columns names each of them, in file order.
     @Test
     void anEntryNamesEveryColumnItServes() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(write(ROWS_PER_ROW_GROUP, ROWS_PER_ROW_GROUP,

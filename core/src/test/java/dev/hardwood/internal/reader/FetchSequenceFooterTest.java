@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The rules by which a [FetchSequence] starts and charges a read's footer entries
-/// (READ_PATH_CONSOLIDATION.md, rules 4 and 10).
+/// (FETCH_PLANNING.md, Opening files ahead).
 class FetchSequenceFooterTest {
 
     private static final int TAIL = 1_000;
@@ -44,7 +44,7 @@ class FetchSequenceFooterTest {
         }
     }
 
-    /// Rule 4: the footers of the files after the one reached start, up to the files ahead; the
+    /// The footers of the files after the one reached start, up to the files ahead; the
     /// next file's is not charged, each one past it is charged the tail its read takes.
     @Test
     void footersAheadStartWithTheOnesPastTheNextFileCharged() {
@@ -63,7 +63,7 @@ class FetchSequenceFooterTest {
                 .isEqualTo(4L * TAIL);
     }
 
-    /// Rule 4: a footer past the next file starts only while the planning chain has room to plan
+    /// A footer past the next file starts only while the planning chain has room to plan
     /// its file: once the entries planned and not started reach F, only the next file's starts.
     @Test
     void noFooterPastTheNextFileStartsWhilePlanningHasNoRoom() {
@@ -82,7 +82,7 @@ class FetchSequenceFooterTest {
         assertThat(footers.started).containsExactly(1, 2, 3);
     }
 
-    /// Rule 4: a footer R has no room for waits for no one, and starts on a later release.
+    /// A footer R has no room for waits for no one, and starts on a later release.
     @Test
     void aFooterThatDoesNotFitStartsOnALaterRelease() {
         ReadAheadBuffer buffer = new ReadAheadBuffer(2 * TAIL);
@@ -100,7 +100,7 @@ class FetchSequenceFooterTest {
         assertThat(buffer.held()).isEqualTo(2L * TAIL);
     }
 
-    /// Rule 4: under a row limit only the next file's footer starts, uncharged.
+    /// Under a row limit only the next file's footer starts, uncharged.
     @Test
     void aReadWithARowLimitStartsOnlyTheNextFilesFooter() {
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
@@ -114,7 +114,7 @@ class FetchSequenceFooterTest {
         assertThat(buffer.held()).isZero();
     }
 
-    /// Rule 4: a file the read is done with drops its tail and releases its footer's charge.
+    /// A file the read is done with drops its tail and releases its footer's charge.
     @Test
     void aFileTheReadIsDoneWithDropsItsTailAndItsCharge() {
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
@@ -133,7 +133,7 @@ class FetchSequenceFooterTest {
         assertThat(buffer.held()).isZero();
     }
 
-    /// Rule 4: a footer whose entry another read started, or that is read in place, holds no charge.
+    /// A footer whose entry another read started, or that is read in place, holds no charge.
     @Test
     void aFooterNotStartedByTheReadHoldsNoCharge() {
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
@@ -146,7 +146,7 @@ class FetchSequenceFooterTest {
         assertThat(buffer.held()).as("file 3's charge alone").isEqualTo(TAIL);
     }
 
-    /// Rule 10: a footer in flight when the read closes keeps its charge until it completes, since
+    /// A footer in flight when the read closes keeps its charge until it completes, since
     /// the reader's cache shares its entry; one that has completed releases its charge at once.
     @Test
     void aFooterInFlightAtCloseKeepsItsChargeUntilItCompletes() {
