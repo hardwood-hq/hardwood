@@ -30,7 +30,9 @@ import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReaders;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -186,6 +188,39 @@ class FileTailTest {
             }
         }
         return rows;
+    }
+
+    /// A page-index request whose slices continue inside the tail is requested only up to the
+    /// tail's start, as a data range is: the slices inside the tail are sliced from it.
+    @Test
+    void aPageIndexRequestStraddlingTheTailsStartIsRequestedOnlyUpToIt() throws Exception {
+        long cut;
+        long fileLength;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PAGE_INDEX_WINDOWS))) {
+            // A slice boundary inside the read's one OffsetIndex request: row group 6's first slice
+            cut = reader.getFileMetaData().rowGroups().get(6).columns().get(0).offsetIndexOffset();
+        }
+        CountingInputFile file = new CountingInputFile(InputFile.of(PAGE_INDEX_WINDOWS));
+        file.open();
+        fileLength = file.length();
+        System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, Long.toString(fileLength - cut));
+
+        long rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                RowReader rowReader = reader.buildRowReader()
+                        .projection(ColumnProjection.columns("c00", "c05"))
+                        .filter(FilterPredicate.lt("c00", 100L))
+                        .build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                rows++;
+            }
+        }
+
+        assertThat(rows).isEqualTo(12 * 100);
+        assertThat(file.reads()).filteredOn(read -> !read.reason().equals("footer-info"))
+                .isNotEmpty()
+                .allSatisfy(read -> assertThat(read.end()).as(read.toString()).isLessThanOrEqualTo(cut));
     }
 
     /// One row group of [#ROWS] rows of two required columns.

@@ -22,15 +22,15 @@ class CoalescingPolicyTest {
 
     @Test
     void aGapUpToTheLimitIsBridged() {
-        assertThat(CoalescingPolicy.merges(0, 100, 100 + GAP, 200 + GAP)).isTrue();
-        assertThat(CoalescingPolicy.merges(0, 100, 100 + GAP + 1, 200 + GAP)).isFalse();
+        assertThat(CoalescingPolicy.merges(0, 100, 100 + GAP, 200 + GAP, CoalescingPolicy.maxSpanBytes())).isTrue();
+        assertThat(CoalescingPolicy.merges(0, 100, 100 + GAP + 1, 200 + GAP, CoalescingPolicy.maxSpanBytes())).isFalse();
     }
 
     @Test
     void aSpanUpToTheLimitIsMerged() {
         long max = CoalescingPolicy.maxSpanBytes();
-        assertThat(CoalescingPolicy.merges(0, max - 100, max - 50, max)).isTrue();
-        assertThat(CoalescingPolicy.merges(0, max - 100, max - 50, max + 1)).isFalse();
+        assertThat(CoalescingPolicy.merges(0, max - 100, max - 50, max, CoalescingPolicy.maxSpanBytes())).isTrue();
+        assertThat(CoalescingPolicy.merges(0, max - 100, max - 50, max + 1, CoalescingPolicy.maxSpanBytes())).isFalse();
     }
 
     @Test

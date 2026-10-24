@@ -15,8 +15,10 @@ import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
+import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.ColumnChunk;
@@ -71,9 +73,11 @@ final class IndexWindow {
                     offsetIndexBuilder, columnIndexBuilder);
             addBloomFilterRanges(rowGroups[m], bloomFilterColumns[m], bloomFilterBuilder);
         }
-        this.offsetIndexes = offsetIndexBuilder.build();
-        this.columnIndexes = columnIndexBuilder.build();
-        this.bloomFilters = bloomFilterBuilder.build();
+        long cut = HeldBytes.heldFrom(inputFile);
+        int maxSpan = CoalescingPolicy.maxSpanBytes();
+        this.offsetIndexes = offsetIndexBuilder.build(cut, maxSpan);
+        this.columnIndexes = columnIndexBuilder.build(cut, maxSpan);
+        this.bloomFilters = bloomFilterBuilder.build(cut, maxSpan);
     }
 
     /// Splits one file's work items into consecutive windows. Each window takes as many of the
