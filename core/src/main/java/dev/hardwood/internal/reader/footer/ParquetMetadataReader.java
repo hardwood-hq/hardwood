@@ -21,6 +21,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.MappedInputFile;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
@@ -249,7 +250,7 @@ public final class ParquetMetadataReader {
         long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
         ByteBuffer footerInfoBuf;
         try (FetchReason.Scope ignored = FetchReason.set("footer-info")) {
-            footerInfoBuf = inputFile.readRange(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+            footerInfoBuf = ReadRanges.read(inputFile, footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
         }
         footerInfoBuf.order(ByteOrder.LITTLE_ENDIAN);
         int footerLength = footerInfoBuf.getInt();
@@ -276,7 +277,7 @@ public final class ParquetMetadataReader {
     private static ByteBuffer readBody(InputFile inputFile, int footerLength, long fileSize) throws IOException {
         long footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
         try (FetchReason.Scope ignored = FetchReason.set("footer-body")) {
-            return inputFile.readRange(footerStart, footerLength);
+            return ReadRanges.read(inputFile, footerStart, footerLength);
         }
     }
 

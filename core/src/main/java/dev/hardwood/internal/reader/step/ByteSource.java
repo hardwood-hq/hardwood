@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.io.ReadRanges;
 
 /// The bytes of a file a parse reads, as far as they have arrived. A parse asks for a range and
 /// gets it, or `null` where the source does not hold it, which the parse then returns as the range
@@ -28,6 +29,6 @@ public interface ByteSource {
 
     /// A source that reads `inputFile`, waiting for each read, and so holds every range.
     static ByteSource of(InputFile inputFile) {
-        return inputFile::readRange;
+        return (offset, length) -> ReadRanges.read(inputFile, offset, length);
     }
 }

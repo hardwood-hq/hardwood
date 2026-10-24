@@ -133,7 +133,7 @@ public final class RangeBackedInputFile implements InputFile {
                     long gapStart = gap[0];
                     long gapEnd = gap[1];
                     int gapLen = Math.toIntExact(gapEnd - gapStart);
-                    ByteBuffer fetched = delegate.readRange(gapStart, gapLen);
+                    ByteBuffer fetched = ReadRanges.read(delegate, gapStart, gapLen);
                     MappedByteBuffer slot = mapping;
                     slot.position(Math.toIntExact(gapStart));
                     slot.put(fetched);
