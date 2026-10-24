@@ -90,9 +90,11 @@
     <!-- Every test JVM runs Hardwood code: the Vector API module enables the SIMD decode paths
          of core's multi-release JAR, and native access lets libdeflate (FFM) and the JNI codec
          libraries load without a restricted-method warning, which a later JDK turns into a
-         failure. A module needing more appends to this property; CI overrides it to run the
-         integration tests without the Vector API as well. -->
-    <test.argLine>--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector</test.argLine>
+         failure. The heap is capped because the reactor builds modules in parallel, each testing in
+         several JVMs, and at the default heap of a quarter of physical memory those JVMs together
+         can claim more than the machine has. A module needing more appends to this property; CI
+         overrides it to run the integration tests without the Vector API as well. -->
+    <test.argLine>--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector -Xmx1g</test.argLine>
     <!-- hardwood.internal.tailBytes: every test JVM reads a file's tail as the eight bytes of its
          trailer, the footer then in a request of its own. At the default size (256 KiB) the tail
          holds a fixture of a few KB whole, and a test of what a read requests of a file larger
