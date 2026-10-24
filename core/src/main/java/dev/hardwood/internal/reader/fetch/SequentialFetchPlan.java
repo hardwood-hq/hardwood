@@ -189,7 +189,7 @@ public final class SequentialFetchPlan implements FetchPlan {
             spans.add(new FetchSequence.Span(piece, Math.toIntExact(Math.min(maxSpan, start + firstPart - piece)),
                     reason, 1));
         }
-        List<FetchSequence.Entry> entries = sequence.insert(0, inputFile, spans);
+        List<FetchSequence.Entry> entries = sequence.insert(0, 0, inputFile, spans);
         EntryCursor.Rest rest = firstPart == length ? null
                 : EntryCursor.rest(sequence, 0, inputFile, start + length, reason, maxSpan);
         return new SequentialFetchPlan(start, length, columnSchema, columnChunk, context, maxRows,

@@ -85,6 +85,8 @@ final class PlanningChain {
     private final FileMetadataCache fileMetadataCache;
     private final ReadExecutor executor;
     private final FetchSequence sequence;
+    /// The footers of the files the read reads ahead of it.
+    private final FooterReadAhead footerReadAhead;
     private final FileSchema referenceSchema;
     private final List<RowGroup> firstFileRowGroups;
     private final ReadProjection projection;
@@ -118,7 +120,7 @@ final class PlanningChain {
     /// Whether the read's batch plan has taken a work item, after which it can no longer be set.
     private boolean batchesPlanned;
     /// Whether the work item the chain plans is ahead of the columns and the next unit, which lists
-    /// no file whose footer the sequence has not started.
+    /// no file whose footer has not started ([FooterReadAhead#started]).
     private boolean planningAhead;
 
     /// What the chain has published, replaced as a whole.
@@ -216,7 +218,7 @@ final class PlanningChain {
     }
 
     PlanningChain(List<InputFile> inputFiles, FileMetadataCache fileMetadataCache, ReadExecutor executor,
-                  FetchSequence sequence, FileSchema referenceSchema, List<RowGroup> firstFileRowGroups,
+                  FetchSequence sequence, int filesAhead, FileSchema referenceSchema, List<RowGroup> firstFileRowGroups,
                   ReadProjection projection, ResolvedPredicate filterPredicate,
                   SchemaCompatibility schemaCompatibility, RowGroupPruning pruning,
                   FetchPlanBuilder fetchPlanBuilder, long maxRows, long physicalSkip, long tailSkip,
@@ -225,6 +227,7 @@ final class PlanningChain {
         this.fileMetadataCache = fileMetadataCache;
         this.executor = executor;
         this.sequence = sequence;
+        this.footerReadAhead = new FooterReadAhead(sequence, footers(), filesAhead, inputFiles.size());
         this.referenceSchema = referenceSchema;
         this.firstFileRowGroups = firstFileRowGroups;
         this.projection = projection;
@@ -449,7 +452,7 @@ final class PlanningChain {
     /// that waits for planning.
     private void fail(Throwable e, int from) {
         publish(progress.withFailure(e, from));
-        sequence.stopFooters();
+        footerReadAhead.stop();
         planningEnded();
     }
 
@@ -461,13 +464,12 @@ final class PlanningChain {
     // ==================== The work list ====================
 
     /// Plans files until the work list holds work item `index`, or none is left to plan; returns
-    /// what a footer needs, `null` once done. Planning ahead, it lists a file only once the read's
-    /// sequence has started the file's footer, within the files ahead and charged to R, and
-    /// returns [#NO_FOOTER_YET] before.
+    /// what a footer needs, `null` once done. Planning ahead, it lists a file only once the read
+    /// has started the file's footer ([FooterReadAhead]), and returns [#NO_FOOTER_YET] before.
     private Need listThrough(int index) {
         while (listedCount <= index && !progress.listed() && progress.failure() == null) {
             if (planningAhead && nextFileToPlan < inputFiles.size() && planRowBudget > 0
-                    && !sequence.footerStarted(nextFileToPlan)) {
+                    && !footerReadAhead.started(nextFileToPlan)) {
                 return NO_FOOTER_YET;
             }
             Need need = planNextFile();
@@ -507,8 +509,6 @@ final class PlanningChain {
             return null;
         }
         updateReached();
-        // The footers the planned file brings within reach
-        sequence.pump();
         return null;
     }
 
@@ -833,7 +833,7 @@ final class PlanningChain {
         WorkItem workItem = planning.workItem;
         if (readsAllRows(workItem) && !HeldBytes.inMemory(workItem.inputFile())
                 && sequence.entries(workItem.workItemIndex()) == null) {
-            sequence.insert(workItem.workItemIndex(), workItem.inputFile(),
+            sequence.insert(workItem.fileIndex(), workItem.workItemIndex(), workItem.inputFile(),
                     fetchPlanBuilder.chunkSpans(workItem, chunkExtents(planning)));
         }
     }
@@ -1246,7 +1246,7 @@ final class PlanningChain {
             cursorLock.unlock();
         }
         if (moved) {
-            sequence.reachedFile(told);
+            footerReadAhead.reached(told);
         }
         reportFiles(told);
     }
@@ -1287,7 +1287,8 @@ final class PlanningChain {
     }
 
     /// Records that a column is done with `workItem`; the last of the columns that took it drops
-    /// its state and releases what its planning holds.
+    /// its state, releases what its planning holds and drops the footers of the files before its
+    /// own.
     ///
     /// @return whether this was the last
     boolean release(WorkItem workItem) {
@@ -1300,14 +1301,33 @@ final class PlanningChain {
         planning.pruningReads.release();
         planning.probeReads.release();
         workItem.indexWindow().release(index);
+        // Every column has passed the work item, and so every file before its own
+        footerReadAhead.filesDoneBefore(workItem.fileIndex());
         return true;
     }
 
-    /// Stops the chain and waits for a step of it that runs or waits for its need, then drops the
-    /// windows' entries. An `Error` that ended planning and that nothing took is returned for the
+    /// The read's footers, which the reader's [FileMetadataCache] holds, read as tasks of the read:
+    /// a footer read ahead runs the chain once it has arrived.
+    private FooterReadAhead.Footers footers() {
+        return new FooterReadAhead.Footers() {
+            @Override
+            public void start(int fileIndex) {
+                fileMetadataCache.prefetch(fileIndex, sequence.tasks(), PlanningChain.this::advance);
+            }
+
+            @Override
+            public void drop(int fileIndex) {
+                fileMetadataCache.drop(fileIndex);
+            }
+        };
+    }
+
+    /// Stops the chain and its footer read-ahead and waits for a step of it that runs or waits for
+    /// its need, then drops the windows' entries. An `Error` that ended planning and that nothing took is returned for the
     /// caller to raise.
     Error close() {
         closed = true;
+        footerReadAhead.close();
         planningEnded();
         executor.tasks().await(() -> !scheduled.get(), executor instanceof ReadQueue queue ? queue : null);
         for (Planning planning : plannings.values()) {

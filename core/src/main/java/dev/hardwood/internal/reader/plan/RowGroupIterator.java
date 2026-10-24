@@ -11,7 +11,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.BitSet;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
@@ -61,8 +60,10 @@ public class RowGroupIterator implements Closeable {
     /// Runs the read's fetch steps, page tasks and planning: the context's pool, or a queue of the
     /// read's own on a context without one.
     private final ReadExecutor readExecutor;
-    /// The read's data requests, planning reads and footer entries.
+    /// The read's requests: its data, its planning reads and its footers read ahead.
     private final FetchSequence sequence;
+    /// The files after the one it has reached whose footers the read reads ahead.
+    private final int filesAhead;
     /// S, the largest request, fixed for the read.
     private final int maxSpan;
     /// Whether the read plans its next unit ahead of its columns: not on a context of zero threads
@@ -195,9 +196,8 @@ public class RowGroupIterator implements Closeable {
         this.plansAhead = !inMemory || context.hasPool();
         this.plansDeep = maxRows <= 0 && !inMemory;
         this.sequence = new FetchSequence(prefetchTasks, context.readAheadBuffer(),
-                FetchSequence.fetchAheadBytes(maxSpan), maxRows <= 0,
-                this::advancePlanning, footers(fileMetadataCache), filesAhead(maxRows, inMemory),
-                inputFiles.size());
+                maxRows <= 0 ? FetchSequence.fetchAheadBytes(maxSpan) : 0, this::advancePlanning);
+        this.filesAhead = filesAhead(maxRows, inMemory);
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
         this.physicalSkip = physicalSkip;
@@ -272,7 +272,7 @@ public class RowGroupIterator implements Closeable {
         this.workingSet = new WorkingSet(projected.getProjectedColumnCount(), context.readAheadBuffer());
         SchemaCompatibility schemaCompatibility = new SchemaCompatibility(referenceSchema, projected, filter);
         schemaCompatibility.validateReferenceColumns(referenceFileName());
-        this.chain = new PlanningChain(inputFiles, fileMetadataCache, readExecutor, sequence, referenceSchema,
+        this.chain = new PlanningChain(inputFiles, fileMetadataCache, readExecutor, sequence, filesAhead, referenceSchema,
                 firstFileRowGroups, projection, filter, schemaCompatibility,
                 new RowGroupPruning(context, filter, metadataFilteringEnabled),
                 new FetchPlanBuilder(projection, filter, metadataFilteringEnabled, context, workingSet, maxSpan),
@@ -512,9 +512,6 @@ public class RowGroupIterator implements Closeable {
     public void releaseWorkItem(WorkItem workItem) {
         if (chain.release(workItem)) {
             sequence.forget(workItem.workItemIndex());
-            // Every column has passed the work item, and so every file before its own: their
-            // tails and footers are dropped
-            sequence.filesDoneBefore(workItem.fileIndex());
         }
     }
 
@@ -563,8 +560,7 @@ public class RowGroupIterator implements Closeable {
         InputFileCloser.rethrow(failure);
     }
 
-    /// Runs the planning chain, once the read has set it up: on an entry starting or a footer
-    /// read ahead arriving.
+    /// Runs the planning chain, once the read has set it up: on a request of the read starting.
     private void advancePlanning() {
         PlanningChain planning = chain;
         if (planning != null && !closed) {
@@ -572,24 +568,8 @@ public class RowGroupIterator implements Closeable {
         }
     }
 
-    /// The read's footer entries, which its [FileMetadataCache] holds, read as tasks of the read: a
-    /// footer read ahead tells the planning chain it has arrived.
-    private FetchSequence.Footers footers(FileMetadataCache cache) {
-        return new FetchSequence.Footers() {
-            @Override
-            public CompletableFuture<?> start(int fileIndex) {
-                return cache.prefetch(fileIndex, prefetchTasks, RowGroupIterator.this::advancePlanning);
-            }
-
-            @Override
-            public void drop(int fileIndex) {
-                cache.drop(fileIndex);
-            }
-        };
-    }
-
     /// The files after the one it has reached whose footers a read reads ahead: up to
-    /// [FetchSequence#maxFilesAhead] for a multi-file read of files not all in memory whose read
+    /// [FooterReadAhead#maxFilesAhead] for a multi-file read of files not all in memory whose read
     /// plans ahead, and otherwise only the next file: a read of files all in memory, whose reads
     /// wait for nothing to overlap, or with a row limit, which may need no further file and under
     /// a filter learns only downstream that it is satisfied.
@@ -597,7 +577,7 @@ public class RowGroupIterator implements Closeable {
         if (inputFiles.size() < 2 || maxRows > 0 || !plansAhead || inMemory) {
             return 1;
         }
-        return FetchSequence.maxFilesAhead();
+        return FooterReadAhead.maxFilesAhead();
     }
 
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers of the read's files, so that a

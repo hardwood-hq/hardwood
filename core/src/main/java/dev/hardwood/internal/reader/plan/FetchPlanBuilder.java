@@ -205,7 +205,7 @@ public final class FetchPlanBuilder {
         List<FetchSequence.Entry> entries = sequence.entries(workItem.workItemIndex());
         if (entries == null) {
             ranges.sort(Comparator.comparingLong(Range::start));
-            entries = sequence.insert(workItem.workItemIndex(), inputFile,
+            entries = sequence.insert(workItem.fileIndex(), workItem.workItemIndex(), inputFile,
                     CoalescingPolicy.coalesce(ranges, extents, names(workItem), workItem.rowGroupIndex(), maxSpan,
                             HeldBytes.heldFrom(inputFile)));
         }

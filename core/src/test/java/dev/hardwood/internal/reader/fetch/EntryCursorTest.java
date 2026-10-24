@@ -32,9 +32,9 @@ class EntryCursorTest {
         }
         CountingInputFile file = new CountingInputFile(bytes);
         file.open();
-        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), new ReadAheadBuffer(0), 0, false,
+        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), new ReadAheadBuffer(0), 0,
                 () -> {});
-        List<FetchSequence.Entry> held = sequence.insert(0, file, List.of(
+        List<FetchSequence.Entry> held = sequence.insert(0, 0, file, List.of(
                 new FetchSequence.Span(0, 100, "rg=0 col=a", 1),
                 new FetchSequence.Span(150, 50, "rg=0 col=a col=b", 2)));
         List<long[]> inserted = new ArrayList<>();
@@ -63,8 +63,8 @@ class EntryCursorTest {
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(300));
         file.open();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
-        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20, true, () -> {});
-        List<FetchSequence.Entry> held = sequence.insert(0, file, List.of(
+        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20, () -> {});
+        List<FetchSequence.Entry> held = sequence.insert(0, 0, file, List.of(
                 new FetchSequence.Span(0, 100, "rg=0 col=a", 1),
                 new FetchSequence.Span(100, 100, "rg=0 col=a", 1)));
         EntryCursor cursor = new EntryCursor(held, null);

@@ -35,7 +35,7 @@ class FetchSequenceTest {
     void aDemandedEntryStartsWhateverFAndRHold() throws Exception {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(0);
-        FetchSequence sequence = sequence(buffer, 0, true);
+        FetchSequence sequence = sequence(buffer, 0);
         FetchSequence.Entry entry = insert(sequence, file, 0, 1).getFirst();
         assertThat(file.readCount()).as("speculative start with no room").isZero();
 
@@ -50,7 +50,7 @@ class FetchSequenceTest {
     void theNextUnitsFirstEntryStartsUncharged() {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(0);
-        FetchSequence sequence = sequence(buffer, 0, true);
+        FetchSequence sequence = sequence(buffer, 0);
         sequence.nextUnit(1);
         insert(sequence, file, 1, 2);
 
@@ -64,7 +64,7 @@ class FetchSequenceTest {
     @Test
     void speculativeEntriesStartInPositionOrderWithinF() {
         CountingInputFile file = file();
-        FetchSequence sequence = sequence(new ReadAheadBuffer(1 << 20), 2 * LENGTH, true);
+        FetchSequence sequence = sequence(new ReadAheadBuffer(1 << 20), 2 * LENGTH);
         List<FetchSequence.Entry> later = insert(sequence, file, 1, 2);
         List<FetchSequence.Entry> earlier = insert(sequence, file, 0, 2);
 
@@ -85,7 +85,7 @@ class FetchSequenceTest {
         assertThat(buffer.tryCharge(LENGTH)).isTrue();
         List<String> woken = new ArrayList<>();
         buffer.whenReleased(buffer.releases(), () -> woken.add("decode task"));
-        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20, true,
+        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20,
                 () -> woken.add("entry"));
         insert(sequence, file, 0, 1);
         buffer.whenReleased(buffer.releases(), () -> woken.add("later task"));
@@ -98,11 +98,11 @@ class FetchSequenceTest {
         assertThat(buffer.held()).isEqualTo(LENGTH);
     }
 
-    /// A read with a row limit starts no speculative entry.
+    /// A read whose F is zero, as one with a row limit, starts entries only on demand.
     @Test
     void aReadThatDoesNotSpeculateStartsOnlyOnDemand() {
         CountingInputFile file = file();
-        FetchSequence sequence = sequence(new ReadAheadBuffer(1 << 20), 1 << 20, false);
+        FetchSequence sequence = sequence(new ReadAheadBuffer(1 << 20), 0);
         insert(sequence, file, 0, 3);
 
         assertThat(file.readCount()).isZero();
@@ -114,8 +114,8 @@ class FetchSequenceTest {
     void anEntryIsReleasedOnceEveryHolderHasPassedIt() {
         CountingInputFile file = file();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
-        FetchSequence sequence = sequence(buffer, 1 << 20, true);
-        FetchSequence.Entry entry = sequence.insert(0, file,
+        FetchSequence sequence = sequence(buffer, 1 << 20);
+        FetchSequence.Entry entry = sequence.insert(0, 0, file,
                 List.of(new FetchSequence.Span(0, LENGTH, "rg=0 col=a col=b", 2))).getFirst();
         assertThat(buffer.held()).isEqualTo(LENGTH);
 
@@ -135,7 +135,7 @@ class FetchSequenceTest {
     void aFailedSpeculativeEntryIsDroppedAndReadAgainOnDemand() throws Exception {
         FailingOnce file = new FailingOnce();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
-        FetchSequence sequence = sequence(buffer, 1 << 20, true);
+        FetchSequence sequence = sequence(buffer, 1 << 20);
         FetchSequence.Entry entry = insert(sequence, file, 0, 1).getFirst();
 
         assertThat(entry.poll()).isNull();
@@ -153,7 +153,7 @@ class FetchSequenceTest {
         HeldFile file = new HeldFile();
         ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
         PrefetchTasks tasks = new PrefetchTasks(task -> Thread.ofVirtual().start(task));
-        FetchSequence sequence = new FetchSequence(tasks, buffer, LENGTH, true, () -> {});
+        FetchSequence sequence = new FetchSequence(tasks, buffer, LENGTH, () -> {});
         insert(sequence, file, 0, 3);
         assertThat(file.entered.await(10, TimeUnit.SECONDS)).isTrue();
 
@@ -182,8 +182,8 @@ class FetchSequenceTest {
     }
 
     /// A sequence whose reads run on the calling thread.
-    private static FetchSequence sequence(ReadAheadBuffer buffer, long fetchAheadBytes, boolean speculates) {
-        return new FetchSequence(new PrefetchTasks(Runnable::run), buffer, fetchAheadBytes, speculates, () -> {});
+    private static FetchSequence sequence(ReadAheadBuffer buffer, long fetchAheadBytes) {
+        return new FetchSequence(new PrefetchTasks(Runnable::run), buffer, fetchAheadBytes, () -> {});
     }
 
     /// Inserts `count` entries of [#LENGTH] bytes, back to back from offset 0, for work item
@@ -194,7 +194,7 @@ class FetchSequenceTest {
         for (int i = 0; i < count; i++) {
             spans.add(new FetchSequence.Span((long) i * LENGTH, LENGTH, "rg=" + workItemIndex + " col=a", 1));
         }
-        return sequence.insert(workItemIndex, file, spans);
+        return sequence.insert(0, workItemIndex, file, spans);
     }
 
     /// `entry`'s bytes, demanding them and waiting for them as a thread off the pool does.

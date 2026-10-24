@@ -290,12 +290,12 @@ class FetchStepYieldTest {
     /// A sequence of one read's entries on `tasks`, with room for any entry, whose entries start
     /// speculatively when `speculates`, and on demand only otherwise.
     private static FetchSequence sequence(PrefetchTasks tasks, boolean speculates) {
-        return new FetchSequence(tasks, new ReadAheadBuffer(1 << 20), 1 << 20, speculates, () -> {});
+        return new FetchSequence(tasks, new ReadAheadBuffer(1 << 20), speculates ? 1 << 20 : 0, () -> {});
     }
 
     /// The entry of ten bytes at `offset` of `file` in `sequence`, held by one column.
     private static FetchSequence.Entry entry(FetchSequence sequence, InputFile file, long offset) {
-        return sequence.insert(0, file, List.of(new FetchSequence.Span(offset, 10, "chunk", 1))).getFirst();
+        return sequence.insert(0, 0, file, List.of(new FetchSequence.Span(offset, 10, "chunk", 1))).getFirst();
     }
 
     /// `entry`'s bytes, demanding them and waiting for them as a thread off the pool does.

@@ -33,6 +33,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.fetch.PrefetchTasks;
 import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.reader.step.Need;
@@ -172,6 +173,27 @@ class FileMetadataCacheTest {
             assertThat(inputFile.openCount()).isEqualTo(1);
             assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
             assertThat(inputFile.openCount()).isEqualTo(1);
+        }
+        finally {
+            cache.close();
+            inputFile.close();
+        }
+    }
+
+    /// A footer read the read drops while it is in flight drops the file's tail once it has read it.
+    @Test
+    void aFooterReadDroppedInFlightDropsItsTailOnceRead() throws Exception {
+        LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
+        List<Runnable> queued = new ArrayList<>();
+        FileMetadataCache cache = cache(inputFile, queued::add);
+        PrefetchTasks tasks = new PrefetchTasks(queued::add);
+
+        try {
+            cache.prefetch(0, tasks, () -> {});
+            cache.drop(0);
+            queued.getFirst().run();
+
+            assertThat(HeldBytes.heldFrom(cache.getFile(0).inputFile())).isEqualTo(Long.MAX_VALUE);
         }
         finally {
             cache.close();

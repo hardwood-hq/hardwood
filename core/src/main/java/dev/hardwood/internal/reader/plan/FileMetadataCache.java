@@ -300,9 +300,13 @@ public final class FileMetadataCache {
             HeldBytes.drop(footer.outcome.join().inputFile());
         }
         FooterFetch read = footer.read;
-        if (read != null && read.result.isDone() && !read.result.isCompletedExceptionally()
-                && read.result.join() != null) {
-            HeldBytes.drop(read.result.join().read().inputFile());
+        if (read != null) {
+            // A footer read in flight drops its tail once it has read it
+            read.result.thenAccept(opened -> {
+                if (opened != null) {
+                    HeldBytes.drop(opened.read().inputFile());
+                }
+            });
         }
     }
 

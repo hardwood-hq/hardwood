@@ -21,7 +21,6 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.io.InputFileCloser;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
@@ -110,12 +109,12 @@ class ReadRetentionTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(2, speculative)) {
             FileMetadataCache cache = new FileMetadataCache(List.copyOf(files), context);
             RowGroupIterator iterator;
-            System.setProperty(FetchSequence.MAX_FILES_AHEAD_PROPERTY, Integer.toString(FILES_AHEAD));
+            System.setProperty(FooterReadAhead.MAX_FILES_AHEAD_PROPERTY, Integer.toString(FILES_AHEAD));
             try {
                 iterator = new RowGroupIterator(cache, ignored -> {}, context, 0, 0, 0);
             }
             finally {
-                System.clearProperty(FetchSequence.MAX_FILES_AHEAD_PROPERTY);
+                System.clearProperty(FooterReadAhead.MAX_FILES_AHEAD_PROPERTY);
             }
             try {
                 iterator.openFirst();
