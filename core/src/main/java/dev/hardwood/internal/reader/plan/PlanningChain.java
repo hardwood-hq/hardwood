@@ -613,7 +613,7 @@ final class PlanningChain {
 
     /// The states of one file's planned work items, each with the [IndexWindow] it falls into,
     /// whose entries the sequence then holds.
-    private List<Planning> withIndexWindows(List<WorkItem> planned) {
+    private List<Planning> withIndexWindows(List<WorkItem> planned) throws IOException {
         if (planned.isEmpty()) {
             return List.of();
         }

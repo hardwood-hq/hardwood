@@ -15,6 +15,7 @@ import java.util.List;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.HeldBytes;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
@@ -23,6 +24,7 @@ import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ParquetReadException;
 
 /// The page-index and bloom-filter slices of a run of consecutive work items of one file, read
 /// together: the ColumnIndex slices of all members merged into requests of their own
@@ -92,8 +94,11 @@ final class IndexWindow {
     ///        group needs more
     /// @param firstWorkItemIndex the work-list index of the first work item
     /// @param members the work items, in work-list order
+    /// @throws ParquetReadException if a page index or bloom filter a member reads lies outside the
+    ///         file
     static List<IndexWindow> plan(long budgetBytes, InputFile inputFile, int firstWorkItemIndex,
-            List<Member> members) {
+            List<Member> members) throws IOException {
+        requireInFile(inputFile, members);
         List<IndexWindow> windows = new ArrayList<>();
         int from = 0;
         while (from < members.size()) {
@@ -102,6 +107,38 @@ final class IndexWindow {
             from += window.memberCount();
         }
         return windows;
+    }
+
+    /// Fails unless every page index and bloom filter `members` read lies within the file, so a
+    /// footer that misplaces one fails as such before any window requests it.
+    private static void requireInFile(InputFile inputFile, List<Member> members) throws IOException {
+        long fileLength = inputFile.length();
+        for (Member member : members) {
+            List<ColumnChunk> chunks = member.rowGroup().columns();
+            BitSet columns = (BitSet) member.offsetIndexColumns().clone();
+            columns.or(member.columnIndexColumns());
+            columns.or(member.bloomFilterColumns());
+            for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
+                ColumnChunk chunk = chunks.get(c);
+                ColumnMetaData metaData = chunk.metaData();
+                String column = metaData.pathInSchema().toString();
+                if (member.offsetIndexColumns().get(c) && chunk.offsetIndexOffset() != null) {
+                    ReadRanges.requireInFile(inputFile.name(), member.rowGroupIndex(), column, "offset index",
+                            chunk.offsetIndexOffset(), chunk.offsetIndexOffset() + chunk.offsetIndexLength(),
+                            fileLength);
+                }
+                if (member.columnIndexColumns().get(c) && chunk.columnIndexOffset() != null) {
+                    ReadRanges.requireInFile(inputFile.name(), member.rowGroupIndex(), column, "column index",
+                            chunk.columnIndexOffset(), chunk.columnIndexOffset() + chunk.columnIndexLength(),
+                            fileLength);
+                }
+                if (member.bloomFilterColumns().get(c) && RowGroupBloomFilterSource.hasKnownExtent(metaData)) {
+                    ReadRanges.requireInFile(inputFile.name(), member.rowGroupIndex(), column, "bloom filter",
+                            metaData.bloomFilterOffset(), metaData.bloomFilterOffset() + metaData.bloomFilterLength(),
+                            fileLength);
+                }
+            }
+        }
     }
 
     /// The window over the most work items from `from` on that fits the budget, and at least one.

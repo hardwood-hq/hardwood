@@ -14,6 +14,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.internal.thrift.BloomFilterHeaderReader;
@@ -23,6 +24,7 @@ import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ParquetReadException;
 
 /// [BloomFilterSource] backed by one `(InputFile, RowGroup)` pair.
 ///
@@ -136,7 +138,7 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             if (fetched[columnIndex] != null) {
                 return Parsed.of(BloomFilterReader.read(new ThriftCompactReader(fetched[columnIndex])));
             }
-            return readFilter(offset, metaData.bloomFilterLength());
+            return readFilter(metaData);
         }
         catch (UnsupportedOperationException e) {
             // The header names an algorithm, hash or compression this version of Hardwood does
@@ -163,11 +165,19 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
                 metaData.pathInSchema().toString());
     }
 
-    /// Reads the filter at `offset`. When `length` is known the whole region is read in one call;
+    /// Reads the chunk's filter. When its length is known the whole region is read in one call;
     /// otherwise the header is probed first to derive the total length.
-    private Parsed<BloomFilter> readFilter(long offset, Integer length) throws IOException {
+    ///
+    /// @throws ParquetReadException if the filter lies outside the file
+    private Parsed<BloomFilter> readFilter(ColumnMetaData metaData) throws IOException {
+        long offset = metaData.bloomFilterOffset();
+        Integer length = metaData.bloomFilterLength();
         if (length != null) {
-            return parse(offset, length);
+            return parse(metaData, offset, length);
+        }
+        if (offset >= fileLength()) {
+            throw new ParquetReadException(columnPrefix(metaData) + "The bloom filter at offset " + offset
+                    + " lies outside the file of " + fileLength() + " bytes");
         }
         // Legacy writers omit bloom_filter_length. Over-read a fixed window — large enough to
         // hold the header (a fixed-shape struct: an i32 plus three single-variant unions, ~19
@@ -187,20 +197,22 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             return Parsed.of(BloomFilterReader.readBitset(header, windowReader));
         }
         // The bitset extends past the probe window: re-fetch the exact region and parse it in full.
-        return parse(offset, totalLength);
+        return parse(metaData, offset, totalLength);
     }
 
     /// Parses the filter of `length` bytes at `offset`, or returns the range when the source
     /// does not hold it.
-    private Parsed<BloomFilter> parse(long offset, int length) throws IOException {
+    private Parsed<BloomFilter> parse(ColumnMetaData metaData, long offset, int length) throws IOException {
+        ReadRanges.requireInFile(inputFile.name(), ExceptionContext.UNKNOWN_ROW_GROUP,
+                metaData.pathInSchema().toString(), "bloom filter", offset, offset + length, fileLength());
         ByteBuffer buffer = bytes.read(offset, length);
         return buffer == null
                 ? Parsed.need(offset, length)
                 : Parsed.of(BloomFilterReader.read(new ThriftCompactReader(buffer)));
     }
 
-    /// File length, fetched at most once. Only the legacy length-absent path needs it, so it is
-    /// resolved lazily rather than in the constructor.
+    /// File length, fetched at most once, and only once a filter is read from the source rather
+    /// than from the bytes the read fetched.
     private long fileLength() throws IOException {
         if (fileLength < 0) {
             fileLength = inputFile.length();

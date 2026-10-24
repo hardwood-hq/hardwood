@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Validation of the ranges requested from an [InputFile], shared by its implementations
 /// so that every backend rejects a bad range with the same exception and message, and of the
@@ -35,6 +36,21 @@ public final class ReadRanges {
             throw new IndexOutOfBoundsException(ExceptionContext.filePrefix(name)
                     + "readRange(" + offset + ", " + length
                     + ") out of bounds (" + fileBytes + " bytes)");
+        }
+    }
+
+    /// Fails unless the region `[start, end)` the footer places in a file of `fileLength` bytes lies
+    /// within it. A region outside the file is a footer at odds with the file, so this fails as
+    /// malformed metadata, naming the region, before a read of it fails as an out-of-bounds read.
+    ///
+    /// @param region what the region holds, such as `column chunk` or `bloom filter`
+    /// @throws ParquetReadException if the region starts before the file, ends past it or ends
+    ///         before it starts
+    public static void requireInFile(String fileName, int rowGroupIndex, String column, String region,
+            long start, long end, long fileLength) {
+        if (start < 0 || end < start || end > fileLength) {
+            throw new ParquetReadException(ExceptionContext.readPrefix(fileName, rowGroupIndex, column) + "The "
+                    + region + " [" + start + ", " + end + ") lies outside the file of " + fileLength + " bytes");
         }
     }
 

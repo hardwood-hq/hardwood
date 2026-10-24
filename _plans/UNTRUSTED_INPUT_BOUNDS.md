@@ -2,7 +2,7 @@
 
 Tracking issue: #610. Stage issues: #201, #860, #571, #1644, #1630. Related: #604 (negative sizes,
 closed), #894 (Thrift malformed-input policy, closed), #1095 (corrupt page data read as values),
-#1135 (bloom filter or dictionary region outside the file).
+#1135 (bloom filter or dictionary region outside the file, closed).
 
 Hardwood reads files it did not write. A file can declare any value in any field, so no
 allocation may be sized by a wire value before something has bounded it. This plan lists every
@@ -42,8 +42,8 @@ decode pages in windows to read a page larger than that.
 | every `list<…>` count, every `binary` length | collection pre-size, `byte[]` | bytes remaining in the Thrift buffer (#894) | done; #860 test in stage 1 |
 | footer length | footer buffer | file size | done |
 | `ColumnMetaData.total_compressed_size`, `data_page_offset`, `dictionary_page_offset` | chunk fetch | file size, and no overlap with another chunk the read reads (`FetchPlanBuilder`) | done |
-| `ColumnChunk.offset_index_offset/length`, `column_index_offset/length` | index region fetch | file size | done |
-| `ColumnMetaData.bloom_filter_offset/length`, `BloomFilterHeader.numBytes` | bloom filter fetch | file size (message: #1135) | done |
+| `ColumnChunk.offset_index_offset/length`, `column_index_offset/length` | index region fetch | file size (`IndexWindow`) | done |
+| `ColumnMetaData.bloom_filter_offset/length`, `BloomFilterHeader.numBytes` | bloom filter fetch | file size (`IndexWindow`, `RowGroupBloomFilterSource`) | done |
 | `PageHeader.compressed_page_size`, `PageLocation.compressed_page_size` | page slice | the fetched chunk | done |
 | `DataPageHeaderV2.definition/repetition_levels_byte_length` | level slice | the page | done |
 | `DictionaryPageHeader.num_values` | dictionary arrays | the bytes decoded | done |

@@ -19,6 +19,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.HeldBytes;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -317,11 +318,8 @@ public final class FetchPlanBuilder {
         extents.sort(Comparator.comparingLong(Extent::start));
         Extent previous = null;
         for (Extent extent : extents) {
-            if (extent.start() < 0 || extent.end() > fileLength || extent.end() < extent.start()) {
-                throw new ParquetReadException(ExceptionContext.readPrefix(workItem.inputFile().name(),
-                        workItem.rowGroupIndex(), extent.name()) + "The column chunk [" + extent.start() + ", "
-                        + extent.end() + ") lies outside the file of " + fileLength + " bytes");
-            }
+            ReadRanges.requireInFile(workItem.inputFile().name(), workItem.rowGroupIndex(), extent.name(),
+                    "column chunk", extent.start(), extent.end(), fileLength);
             if (extent.end() > extent.start()) {
                 if (previous != null && previous.end() > extent.start()) {
                     throw new ParquetReadException(ExceptionContext.readPrefix(workItem.inputFile().name(),
