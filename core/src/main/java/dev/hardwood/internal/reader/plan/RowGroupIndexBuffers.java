@@ -13,6 +13,7 @@ import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
@@ -84,13 +85,13 @@ public class RowGroupIndexBuffers {
     private static Slices fetch(InputFile inputFile, CoalescedRanges ranges) throws IOException {
         ByteBuffer[] buffers = new ByteBuffer[ranges.requestCount()];
         for (int r = 0; r < buffers.length; r++) {
-            buffers[r] = inputFile.readRange(ranges.requestStart(r),
+            buffers[r] = ReadRanges.read(inputFile, ranges.requestStart(r),
                     Math.toIntExact(ranges.requestEnd(r) - ranges.requestStart(r)));
         }
         return (offset, length) -> {
             int request = ranges.requestHolding(offset, length);
             ByteBuffer buffer = buffers[request];
-            return buffer.slice(buffer.position() + Math.toIntExact(offset - ranges.requestStart(request)), length);
+            return buffer.slice(Math.toIntExact(offset - ranges.requestStart(request)), length);
         };
     }
 

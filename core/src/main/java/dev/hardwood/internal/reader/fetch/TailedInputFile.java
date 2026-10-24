@@ -13,18 +13,20 @@ import java.util.Optional;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.io.HeldBytes;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 
 /// An opened file whose bytes are not in memory, together with its tail: the last
 /// [#tailBytes()] bytes, or the whole file where it is shorter, read in one request by the
 /// file's footer entry. The tail holds the footer and usually the page index, and a file up to
 /// that size whole, so every read that falls inside it is sliced from it and costs no request
-/// ([#readRange]), until the read is done with the file ([#dropTail]).
+/// ([#readRange]), until the read is done with the file ([#dropHeld]).
 ///
 /// An S3 object's open fetches its tail with the request that learns its length, so taking it
 /// here costs no request (`S3InputFile`), and the tail is then held here rather
 /// than by the file.
-public final class TailedInputFile implements InputFile {
+public final class TailedInputFile implements InputFile, HeldBytes {
 
     public static final String TAIL_BYTES_PROPERTY = "hardwood.internal.tailBytes";
 
@@ -54,50 +56,49 @@ public final class TailedInputFile implements InputFile {
     }
 
     /// Reads the tail of the opened `inputFile` in one request, under the `footer-info` reason;
-    /// a file whose bytes are in memory is returned as it is, since it slices every read in place.
+    /// a file that holds bytes already, in memory or its tail taken, is returned as it is.
     ///
     /// @throws IOException if the read fails
     public static InputFile take(InputFile inputFile) throws IOException {
-        if (inputFile instanceof TailedInputFile || RangeRead.inMemory(inputFile)) {
+        if (inputFile instanceof HeldBytes) {
             return inputFile;
         }
         long length = inputFile.length();
         int tailLength = Math.toIntExact(Math.min(tailBytes(), length));
         ByteBuffer tail;
         try (FetchReason.Scope ignored = FetchReason.set("footer-info")) {
-            tail = inputFile.readRange(length - tailLength, tailLength);
+            tail = ReadRanges.read(inputFile, length - tailLength, tailLength);
         }
         return new TailedInputFile(inputFile, length - tailLength, tail);
     }
 
-    /// The offset of the tail's first byte in a file whose tail `inputFile` holds, and
-    /// [Long#MAX_VALUE] for any other file or once the tail is dropped.
-    public static long tailOffset(InputFile inputFile) {
-        return inputFile instanceof TailedInputFile tailed && tailed.tail != null
-                ? tailed.tailOffset
-                : Long.MAX_VALUE;
-    }
-
-    /// A slice of the tail `inputFile` holds for a range inside it, `null` for a range outside it,
-    /// once the tail is dropped, or for any other file: never a request.
-    static ByteBuffer sliceTail(InputFile inputFile, long offset, int length) {
-        if (!(inputFile instanceof TailedInputFile tailed)) {
+    /// A slice of the tail for a range inside it, `null` for a range outside it or once the tail
+    /// is dropped: never a request.
+    @Override
+    public ByteBuffer sliceHeld(long offset, int length) {
+        ByteBuffer held = tail;
+        if (held == null || length < 0 || offset < tailOffset || offset + length > tailOffset + held.limit()) {
             return null;
         }
-        ByteBuffer held = tailed.tail;
-        if (held == null || length < 0 || offset < tailed.tailOffset
-                || offset + length > tailed.tailOffset + held.limit()) {
-            return null;
-        }
-        return held.slice(Math.toIntExact(offset - tailed.tailOffset), length);
+        return held.slice(Math.toIntExact(offset - tailOffset), length);
     }
 
-    /// Drops the tail of a file whose tail `inputFile` holds, once the read is done with the
-    /// file; a read of it from then on is a request again. No-op for any other file.
-    public static void dropTail(InputFile inputFile) {
-        if (inputFile instanceof TailedInputFile tailed) {
-            tailed.tail = null;
-        }
+    /// The tail's first byte, [Long#MAX_VALUE] once the tail is dropped.
+    @Override
+    public long heldFrom() {
+        return tail != null ? tailOffset : Long.MAX_VALUE;
+    }
+
+    @Override
+    public boolean holdsAll() {
+        return false;
+    }
+
+    /// Drops the tail once the read is done with the file; a read of it from then on is a request
+    /// again.
+    @Override
+    public void dropHeld() {
+        tail = null;
     }
 
     @Override
@@ -109,7 +110,7 @@ public final class TailedInputFile implements InputFile {
     /// read.
     @Override
     public ByteBuffer readRange(long offset, int length) throws IOException {
-        ByteBuffer slice = sliceTail(this, offset, length);
+        ByteBuffer slice = sliceHeld(offset, length);
         return slice != null ? slice : delegate.readRange(offset, length);
     }
 

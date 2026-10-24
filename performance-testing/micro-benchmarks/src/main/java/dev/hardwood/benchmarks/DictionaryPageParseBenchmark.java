@@ -45,6 +45,7 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
+import dev.hardwood.internal.reader.decode.DataPage;
 
 /// Setting up one dictionary page, through each of [DictionaryParser]'s two entry points.
 ///
@@ -149,7 +150,7 @@ public class DictionaryPageParseBenchmark {
                 throw new IOException("CRC mismatch");
             }
         }
-        return DictionaryParser.parse(region, columnSchema, metaData, context);
+        return DictionaryParser.parse(DataPage.parse(region), columnSchema, metaData, context);
     }
 
     /// The floor the two sit above: the header already in hand, leaving the one checksum a

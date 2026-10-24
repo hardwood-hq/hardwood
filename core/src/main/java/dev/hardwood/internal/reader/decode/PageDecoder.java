@@ -22,8 +22,6 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.schema.FixedWidthValidator;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.PageDecodedEvent;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -278,10 +276,10 @@ public class PageDecoder {
     ///
     /// @throws ParquetReadException if the page is malformed, or its encoding is not defined over
     ///         the column's type
-    public FlatPageValues decodeFlat(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+    public FlatPageValues decodeFlat(DataPage dataPage, Dictionary dictionary, LevelScratch scratch,
                               DecodeBuffers buffers) {
         requireColumn(binaryWidth < 0 && column.maxRepetitionLevel() == 0, "decodeFlat");
-        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false, buffers);
+        InPlacePage page = readInPlace(dataPage, dictionary, scratch, false, buffers);
         FlatPageValues values = numericValues(page, dictionary, scratch);
         page.commit(column);
         return values;
@@ -294,10 +292,10 @@ public class PageDecoder {
     /// task's [#transientBytes] or the fetched page, until the fill is done.
     ///
     /// @throws ParquetReadException as [#decodeFlat] does
-    public BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+    public BinaryPageValues decodeFlatBinary(DataPage dataPage, Dictionary dictionary, LevelScratch scratch,
                                       DecodeBuffers buffers) {
         requireColumn(binaryWidth >= 0 && column.maxRepetitionLevel() == 0, "decodeFlatBinary");
-        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false, buffers);
+        InPlacePage page = readInPlace(dataPage, dictionary, scratch, false, buffers);
         BinaryPageValues values = binaryValues(page, dictionary, scratch, false);
         page.commit(column);
         return values;
@@ -310,9 +308,9 @@ public class PageDecoder {
     /// path takes keeps no levels and carries its `k`.
     ///
     /// @throws ParquetReadException as [#decodeFlat] does
-    public InPlaceNestedPage decodeNestedInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+    public InPlaceNestedPage decodeNestedInPlace(DataPage dataPage, Dictionary dictionary, LevelScratch scratch,
                                           DecodeBuffers buffers) {
-        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true, buffers);
+        InPlacePage page = readInPlace(dataPage, dictionary, scratch, true, buffers);
         FlatPageValues flat = binaryWidth < 0 ? numericValues(page, dictionary, scratch) : null;
         BinaryPageValues binary = binaryWidth < 0 ? null : binaryValues(page, dictionary, scratch, true);
         page.commit(column);
@@ -448,16 +446,15 @@ public class PageDecoder {
         }
     }
 
-    /// Reads the header of a data page, refuses it before decompressing it if its encoding is not
+    /// Takes a data page whose header its fetch plan parsed, refuses it before decompressing it if its encoding is not
     /// defined over the column's type ([#requireReader]), and decodes its levels.
     ///
     /// @param ownBytes whether the values must outlive the task: they are then decompressed or
     ///        copied into `scratch`'s own buffer rather than the task's [#transientBytes]
     /// @param buffers the buffers of the task decoding the page
-    private InPlacePage readInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+    private InPlacePage readInPlace(DataPage dataPage, Dictionary dictionary, LevelScratch scratch,
                                     boolean ownBytes, DecodeBuffers buffers) {
-        ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
-        PageHeader pageHeader = PageHeaderReader.read(headerReader);
+        PageHeader pageHeader = dataPage.header();
         if (pageHeader.type() == PageType.DATA_PAGE) {
             DataPageHeader header = pageHeader.dataPageHeader();
             requireWithinChunk(header.numValues());
@@ -473,9 +470,8 @@ public class PageDecoder {
         }
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
-        int headerSize = headerReader.getBytesRead();
         int compressedSize = pageHeader.compressedPageSize();
-        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
+        ByteBuffer pageData = dataPage.body();
         if (pageHeader.crc() != null) {
             CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
         }

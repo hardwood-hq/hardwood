@@ -69,7 +69,7 @@ The fetcher takes each `PageInfo` from its `PageSource`. It builds a new `PageDe
 |---|---|---|
 | Pages in flight | page tasks submitted and not finished, across the read's columns | a few per decode thread |
 | Cap (`ReadScheduler.admitted`) | the rows a page starts past the read's first unpublished row, the slowest column's | fewer than several batch byte budgets, in rows (`BatchSizing.readAheadBudgetRows`) |
-| Large tasks (`WorkingSet.admitTask`) | the buffers of the read's page tasks and dictionary parses above the retention size, beyond its one such task | the context's read-ahead buffer ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)) |
+| Large tasks (`WorkingSet.admit`) | the buffers of the read's page tasks and dictionary parses above the retention size, beyond its one such task | the context's read-ahead buffer ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)) |
 
 The scheduler sizes a page's task from its header, which both fetch plans parse as they walk the chunk. A page the third bound does not admit waits, and the pages after it wait with it, until a task of the read ends; it holds the read's row order as a page past the cap does not. A fetch step that reaches a dictionary page the bound does not admit yields until a task of the read ends, as it yields for bytes.
 

@@ -20,10 +20,10 @@ import dev.hardwood.InputFile;
 import dev.hardwood.MetadataSource;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.reader.fetch.PrefetchTasks;
 import dev.hardwood.internal.reader.fetch.RangeRead;
-import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.footer.FileFooter;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader.FooterRead;
@@ -145,10 +145,18 @@ public final class FileMetadataCache {
             }
             Objects.checkIndex(fileIndex, inputFiles.size());
             footer = footers.computeIfAbsent(fileIndex, i -> new Footer());
+            // One look at the read, which completes on its own thread: a read that fails after it
+            // is waited for below, and taken by the next look, never loaded here
+            boolean readDone = footer.read != null && footer.read.result.isDone();
+            if (readDone && footer.read.failedAhead()) {
+                // Read again on demand, as a data read that failed ahead of demand is
+                footer.read = null;
+                readDone = false;
+            }
             if (footer.loading) {
                 pending = footer.outcome;
             }
-            else if (readsInPlace(fileIndex) || footer.read != null && footer.read.result.isDone()) {
+            else if (readsInPlace(fileIndex) || readDone) {
                 footer.loading = true;
                 loads = true;
                 pending = null;
@@ -162,7 +170,7 @@ public final class FileMetadataCache {
             return null;
         }
         if (pending == null) {
-            CompletableFuture<?> started = prefetch(fileIndex, tasks, () -> {});
+            CompletableFuture<?> started = start(fileIndex, tasks, () -> {}, true);
             // Null where another thread registered the read or the load since: look again
             return started != null ? whenDone(started) : fileNeed(fileIndex, tasks);
         }
@@ -231,12 +239,18 @@ public final class FileMetadataCache {
     /// @return the read this started, which completes once it has, whether or not it failed;
     ///         `null` when it started none
     public CompletableFuture<?> prefetch(int fileIndex, PrefetchTasks tasks, Runnable whenRead) {
+        return start(fileIndex, tasks, whenRead, false);
+    }
+
+    /// As [#prefetch], for a read the read's planning chain `demanded`, whose failure fails the
+    /// file, or one started ahead of demand, whose failure is read again once the file is needed.
+    private CompletableFuture<?> start(int fileIndex, PrefetchTasks tasks, Runnable whenRead, boolean demanded) {
         if (readsInPlace(fileIndex)) {
             // Its read waits for nothing, so the load on the thread that asks for the file reads it
             whenRead.run();
             return null;
         }
-        FooterFetch read = new FooterFetch();
+        FooterFetch read = new FooterFetch(demanded);
         Footer footer;
         CompletableFuture<?> registered;
         synchronized (lifecycleLock) {
@@ -268,7 +282,7 @@ public final class FileMetadataCache {
         return read.result.handle((ignored, failure) -> null);
     }
 
-    /// Drops the tail of `fileIndex` once its footer has been read ([TailedInputFile#dropTail]), and,
+    /// Drops the tail of `fileIndex` once its footer has been read ([HeldBytes#dropHeld]), and,
     /// but for the first file's, its footer once loaded, for a read that is done with the file or
     /// will not reach it.
     void drop(int fileIndex) {
@@ -283,12 +297,12 @@ public final class FileMetadataCache {
             return;
         }
         if (footer.outcome.isDone() && !footer.outcome.isCompletedExceptionally()) {
-            TailedInputFile.dropTail(footer.outcome.join().inputFile());
+            HeldBytes.drop(footer.outcome.join().inputFile());
         }
         FooterFetch read = footer.read;
         if (read != null && read.result.isDone() && !read.result.isCompletedExceptionally()
                 && read.result.join() != null) {
-            TailedInputFile.dropTail(read.result.join().read().inputFile());
+            HeldBytes.drop(read.result.join().read().inputFile());
         }
     }
 
@@ -304,7 +318,7 @@ public final class FileMetadataCache {
     /// context has no pool.
     private boolean readsInPlace(int fileIndex) {
         return fileIndex >= 0 && fileIndex < inputFiles.size()
-                && RangeRead.inMemory(inputFiles.get(fileIndex))
+                && HeldBytes.inMemory(inputFiles.get(fileIndex))
                 && (!footersSupplied() || !context.hasPool());
     }
 
@@ -374,11 +388,24 @@ public final class FileMetadataCache {
 
     /// A footer read [#prefetch] started on a read's tasks: completes with the footer as read,
     /// `null` when the read's close dropped it before it started, or the failure, whose `Error`
-    /// the read's close raises unless a load took it, as a [RangeRead]'s.
+    /// the read's close raises unless a load took it, as a [RangeRead]'s. A read started ahead of
+    /// demand that failed with an exception is read again when the file is needed.
     private final class FooterFetch implements PrefetchTasks.Untaken {
 
         final CompletableFuture<OpenedFooter> result = new CompletableFuture<>();
+        /// Whether the read's planning chain demanded the read, rather than it starting ahead.
+        private final boolean demanded;
         private volatile Error untakenError;
+
+        FooterFetch(boolean demanded) {
+            this.demanded = demanded;
+        }
+
+        /// Whether the read started ahead of demand and failed with an exception, so that it is
+        /// read again; an `Error` is no transient fault and fails the file.
+        boolean failedAhead() {
+            return !demanded && result.isCompletedExceptionally() && !(result.exceptionNow() instanceof Error);
+        }
 
         void run(InputFile inputFile, PrefetchTasks tasks) {
             try {
@@ -420,7 +447,7 @@ public final class FileMetadataCache {
         FooterFetch read = footer.read;
         OpenedFooter opened;
         try {
-            opened = read != null ? read.take() : null;
+            opened = read != null && !read.failedAhead() ? read.take() : null;
         }
         catch (CompletionException e) {
             // Thrown as the read threw it; getFile unwraps it again

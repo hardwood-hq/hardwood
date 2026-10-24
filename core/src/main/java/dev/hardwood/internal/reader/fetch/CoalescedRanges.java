@@ -101,6 +101,14 @@ public final class CoalescedRanges {
         /// Plans the requests: joins overlapping ranges into extents, then merges consecutive
         /// extents under [CoalescingPolicy].
         public CoalescedRanges build() {
+            return build(Long.MAX_VALUE, CoalescingPolicy.maxSpanBytes());
+        }
+
+        /// As [#build()], under the span `maxSpan`, and merging no extents across `cut`, where
+        /// the tail of the file begins ([dev.hardwood.internal.io.HeldBytes#heldFrom]): a request
+        /// inside the tail is sliced from it, so only an extent that straddles the cut is
+        /// requested across it.
+        public CoalescedRanges build(long cut, int maxSpan) {
             // Starts and ends sorted independently still give the union of the ranges: a sweep
             // that opens an extent at a start and closes it once as many ends as starts passed.
             // Touching ranges stay apart here, so the span limit can split between them.
@@ -131,7 +139,8 @@ public final class CoalescedRanges {
                 } while (open > 0);
                 long extentEnd = sortedEnds[e - 1];
                 if (requests > 0 && CoalescingPolicy.merges(requestStarts[requests - 1],
-                        requestEnds[requests - 1], extentStart, extentEnd)) {
+                        requestEnds[requests - 1], extentStart, extentEnd, maxSpan)
+                        && (requestStarts[requests - 1] >= cut || extentEnd <= cut)) {
                     requestEnds[requests - 1] = extentEnd;
                 }
                 else {

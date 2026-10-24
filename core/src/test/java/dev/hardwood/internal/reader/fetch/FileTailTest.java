@@ -22,6 +22,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.plan.FileMetadataCache;
 import dev.hardwood.internal.reader.plan.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -29,7 +30,9 @@ import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReaders;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -108,16 +111,16 @@ class FileTailTest {
         System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, "100");
         CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(300));
         InputFile tailed = TailedInputFile.take(file);
-        assertThat(TailedInputFile.tailOffset(tailed)).isEqualTo(200);
+        assertThat(HeldBytes.heldFrom(tailed)).isEqualTo(200);
 
         tailed.readRange(250, 50);
         tailed.readRange(150, 100);
-        TailedInputFile.dropTail(tailed);
+        HeldBytes.drop(tailed);
         tailed.readRange(250, 50);
 
         assertThat(file.reads()).extracting(CountingInputFile.Read::offset, CountingInputFile.Read::length)
                 .containsExactly(tuple(200L, 100), tuple(150L, 100), tuple(250L, 50));
-        assertThat(TailedInputFile.tailOffset(tailed)).isEqualTo(Long.MAX_VALUE);
+        assertThat(HeldBytes.heldFrom(tailed)).isEqualTo(Long.MAX_VALUE);
     }
 
     /// The tail is the reader's, shared by its reads: a read that has listed the file keeps the
@@ -185,6 +188,39 @@ class FileTailTest {
             }
         }
         return rows;
+    }
+
+    /// A page-index request whose slices continue inside the tail is requested only up to the
+    /// tail's start, as a data range is: the slices inside the tail are sliced from it.
+    @Test
+    void aPageIndexRequestStraddlingTheTailsStartIsRequestedOnlyUpToIt() throws Exception {
+        long cut;
+        long fileLength;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PAGE_INDEX_WINDOWS))) {
+            // A slice boundary inside the read's one OffsetIndex request: row group 6's first slice
+            cut = reader.getFileMetaData().rowGroups().get(6).columns().get(0).offsetIndexOffset();
+        }
+        CountingInputFile file = new CountingInputFile(InputFile.of(PAGE_INDEX_WINDOWS));
+        file.open();
+        fileLength = file.length();
+        System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, Long.toString(fileLength - cut));
+
+        long rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                RowReader rowReader = reader.buildRowReader()
+                        .projection(ColumnProjection.columns("c00", "c05"))
+                        .filter(FilterPredicate.lt("c00", 100L))
+                        .build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                rows++;
+            }
+        }
+
+        assertThat(rows).isEqualTo(12 * 100);
+        assertThat(file.reads()).filteredOn(read -> !read.reason().equals("footer-info"))
+                .isNotEmpty()
+                .allSatisfy(read -> assertThat(read.end()).as(read.toString()).isLessThanOrEqualTo(cut));
     }
 
     /// One row group of [#ROWS] rows of two required columns.

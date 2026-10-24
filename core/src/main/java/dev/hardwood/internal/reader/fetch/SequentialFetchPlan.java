@@ -23,7 +23,7 @@ import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.Dictionary;
-import dev.hardwood.internal.reader.decode.DictionaryParser;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.decode.PageFormatProbe.HeaderAt;
 import dev.hardwood.internal.reader.decode.PageInfo;
@@ -325,7 +325,7 @@ public final class SequentialFetchPlan implements FetchPlan {
             exhausted = true;
             scannedPages = pageCount;
             cursor.releaseAll();
-            emitEvent();
+            PageWalk.scanned(fileName, rowGroupIndex, columnSchema, pageCount, RowGroupScannedEvent.STRATEGY_SEQUENTIAL);
             return null;
         }
 
@@ -382,8 +382,7 @@ public final class SequentialFetchPlan implements FetchPlan {
         private boolean initialize() throws IOException {
             if (preloadedDictionary != null) {
                 // The plan starts at the first data page: pruning has read the dictionary page.
-                workingSet.dictionary(preloadedDictionary);
-                dictionary = preloadedDictionary;
+                dictionary = DictionaryStep.preloaded(preloadedDictionary, workingSet);
                 initialized = true;
                 return true;
             }
@@ -400,34 +399,22 @@ public final class SequentialFetchPlan implements FetchPlan {
             }
             if (header.type() == PageType.DICTIONARY_PAGE) {
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
-                int compressedSize = header.compressedPageSize();
-                int dictTotalSize = headerSize + compressedSize;
-                // Admitted before its bytes are read: a refused page read now would be read again
-                // when it is admitted
-                PageHeader dictionaryHeader = header;
-                WorkingSet.DictionaryParse parse = workingSet.parseDictionary(header.uncompressedPageSize(), () -> {
-                    ByteBuffer dictPage = readBytes(position, dictTotalSize);
-                    if (dictPage == null) {
-                        return null;
-                    }
-                    initialized = true;
-                    // The header is already parsed, so hand it over rather than a region the
-                    // parser would have to open and read the same header out of again.
-                    return DictionaryParser.parsePage(dictionaryHeader, dictPage.slice(headerSize, compressedSize),
-                            columnSchema, metaData, context, workingSet);
-                });
-                if (parse.pending() != null) {
-                    pending = parse.pending();
+                int dictTotalSize = headerSize + header.compressedPageSize();
+                ByteBuffer dictPage = readBytes(position, dictTotalSize);
+                if (dictPage == null) {
                     return false;
                 }
-                if (!initialized) {
-                    // The page's bytes are not present, which `readBytes` made pending
+                WorkingSet.DictionaryParse parse = DictionaryStep.parse(new DataPage(header, headerSize, dictPage),
+                        columnSchema, metaData, context, workingSet);
+                if (parse.pending() != null) {
+                    pending = parse.pending();
                     return false;
                 }
                 dictionary = parse.dictionary();
                 position += dictTotalSize;
                 clearPage();
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
+                initialized = true;
                 return true;
             }
             // A data page: the walk goes on from its parsed header.
@@ -539,15 +526,15 @@ public final class SequentialFetchPlan implements FetchPlan {
                         placeholderRecords = mask.totalRecords();
                     }
                     pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData,
-                            columnSchema.maxRepetitionLevel() == 0 ? placeholderRecords : PageInfo.UNKNOWN_RECORDS);
+                            PageInfo.keptRecords(columnSchema, PageRowMask.ALL, placeholderRecords));
                 }
                 else {
                     ByteBuffer pageData = readBytes(position, totalPageSize);
                     if (pageData == null) {
                         return null;
                     }
-                    pageInfo = PageInfo.dataPage(pageData, header, columnSchema, metaData, dictionary, mask,
-                            keptRecords(mask, numValues));
+                    pageInfo = new PageInfo(new DataPage(header, headerSize, pageData), columnSchema, metaData,
+                            dictionary, mask, PageInfo.keptRecords(columnSchema, mask, numValues));
                 }
                 donePage(numValues, pageRecords, totalPageSize);
                 return pageInfo;
@@ -572,16 +559,6 @@ public final class SequentialFetchPlan implements FetchPlan {
             position += totalPageSize;
             pageCount++;
             clearPage();
-        }
-
-        /// The records a data page of `numValues` values contributes after `mask`, for
-        /// [PageInfo#records()]: a column without repetition has one record per value, a column
-        /// with repetition counts its records from its repetition levels once decoded.
-        private int keptRecords(PageRowMask mask, int numValues) {
-            if (columnSchema.maxRepetitionLevel() > 0) {
-                return PageInfo.UNKNOWN_RECORDS;
-            }
-            return mask.isAll() ? numValues : mask.totalRecords();
         }
 
         /// Whether the pages yielded so far cover `maxRows` records, which this
@@ -670,16 +647,6 @@ public final class SequentialFetchPlan implements FetchPlan {
             }
             return PageDropPredicates.canDropPage(dropLeaves, inline, rowCount, dropReadability,
                     logContext.withPageIndex(currentPage));
-        }
-
-        private void emitEvent() {
-            RowGroupScannedEvent event = new RowGroupScannedEvent();
-            event.file = fileName;
-            event.rowGroupIndex = rowGroupIndex;
-            event.column = columnSchema.name();
-            event.pageCount = pageCount;
-            event.scanStrategy = RowGroupScannedEvent.STRATEGY_SEQUENTIAL;
-            event.commit();
         }
 
     }

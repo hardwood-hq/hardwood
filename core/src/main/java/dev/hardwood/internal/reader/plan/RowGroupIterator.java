@@ -17,6 +17,7 @@ import java.util.function.Consumer;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
@@ -25,7 +26,6 @@ import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.PrefetchTasks;
-import dev.hardwood.internal.reader.fetch.RangeRead;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.WorkingSet;
@@ -191,7 +191,7 @@ public class RowGroupIterator implements Closeable {
         this.readExecutor = ReadExecutor.forContext(context);
         this.prefetchTasks = new PrefetchTasks(context.ioExecutor());
         this.maxSpan = CoalescingPolicy.maxSpanBytes();
-        boolean inMemory = inputFiles.stream().allMatch(RangeRead::inMemory);
+        boolean inMemory = inputFiles.stream().allMatch(HeldBytes::inMemory);
         this.plansAhead = !inMemory || context.hasPool();
         this.plansDeep = maxRows <= 0 && !inMemory;
         this.sequence = new FetchSequence(prefetchTasks, context.readAheadBuffer(),
@@ -387,11 +387,20 @@ public class RowGroupIterator implements Closeable {
     ///
     /// @throws IllegalStateException if the read plans no batches ([#planBatches])
     BatchPlan.RowGroupBatches getBatches(WorkItem workItem) throws IOException {
-        BatchPlan.RowGroupBatches batches = rowGroupPlans(workItem).batches();
-        if (batches == null) {
+        rowGroupPlans(workItem);
+        return plansOf(workItem).batches();
+    }
+
+    /// The plans of `workItem`, which [#plannedWorkItem] handed out, so taking them reads nothing
+    /// and waits for nothing.
+    ///
+    /// @throws IllegalStateException if the read planned no batches
+    RowGroupPlans plansOf(WorkItem workItem) {
+        RowGroupPlans plans = chain.plans(workItem.workItemIndex());
+        if (plans.batches() == null) {
             throw new IllegalStateException("No batch plan: planBatches() was not called for this read");
         }
-        return batches;
+        return plans;
     }
 
     /// Returns the [FetchPlan] for the given column in the given row group, planning it on the

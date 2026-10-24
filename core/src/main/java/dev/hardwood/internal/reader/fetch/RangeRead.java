@@ -16,8 +16,7 @@ import java.util.concurrent.CompletionException;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.io.ByteBufferInputFile;
-import dev.hardwood.internal.io.MappedInputFile;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.util.Lazy;
 
 /// One read of a byte range of a file not in memory, the request of a [FetchSequence] entry, and
@@ -69,14 +68,9 @@ public final class RangeRead implements PrefetchTasks.Untaken {
                         + ") was fetched")));
     }
 
-    /// Whether `inputFile` holds its bytes in memory, so a read of it slices them without waiting.
-    public static boolean inMemory(InputFile inputFile) {
-        return inputFile instanceof MappedInputFile || inputFile instanceof ByteBufferInputFile;
-    }
-
     private void run() {
         try (FetchReason.Scope ignored = FetchReason.set(reason)) {
-            bytes.complete(inputFile.readRange(offset, length));
+            bytes.complete(ReadRanges.read(inputFile, offset, length));
         }
         catch (Throwable e) {
             // Any throwable, checked ones an InputFile throws undeclared included: a read that

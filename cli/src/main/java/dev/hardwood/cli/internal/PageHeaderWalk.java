@@ -37,11 +37,13 @@ public final class PageHeaderWalk {
     /// next read starts at that page's header, so a body longer than a window is skipped rather
     /// than read. A header cut off by the window's end is read again at the start of the next
     /// window; a header that does not fit a whole window widens the window, up to
-    /// [PageFormatProbe#MAX_PEEK_SIZE]. A header cut off by the range's end is a truncated chunk.
+    /// [PageFormatProbe#MAX_PEEK_SIZE]. A header cut off by the range's end is a truncated chunk,
+    /// and a page whose body runs past it a malformed one; both fail as the reader fails them.
     ///
     /// @param visitor receives each header; returns whether the walk goes on
     /// @throws IOException if a read fails
-    /// @throws ParquetReadException if a header exceeds [PageFormatProbe#MAX_PEEK_SIZE]
+    /// @throws ParquetReadException if a header exceeds [PageFormatProbe#MAX_PEEK_SIZE], is cut off
+    ///         by the range's end, or its page runs past it
     public static void walk(InputFile inputFile, long start, long totalBytes, int windowBytes,
             Predicate<PageHeader> visitor) throws IOException {
         long end = start + totalBytes;
@@ -62,7 +64,8 @@ public final class PageHeaderWalk {
                         break;
                     }
                     if (windowLength == end - position) {
-                        throw e;
+                        throw new ParquetReadException("Page header at offset " + position + " does not fit in the "
+                                + windowLength + " bytes left in its column chunk — the file is likely corrupt", e);
                     }
                     if (windowLength >= PageFormatProbe.MAX_PEEK_SIZE) {
                         throw new ParquetReadException("Page header at offset " + position
@@ -71,10 +74,16 @@ public final class PageHeaderWalk {
                     window = Math.min(2 * window, PageFormatProbe.MAX_PEEK_SIZE);
                     break;
                 }
+                long pageStart = position + relative;
+                long pageEnd = pageStart + tcr.getBytesRead() + header.compressedPageSize();
+                if (pageEnd > end) {
+                    throw new ParquetReadException("Page at offset " + pageStart + " ends at offset " + pageEnd
+                            + ", past the end of the column chunk at offset " + end);
+                }
                 if (!visitor.test(header)) {
                     return;
                 }
-                relative += tcr.getBytesRead() + (long) header.compressedPageSize();
+                relative = pageEnd - position;
             }
             position += relative;
         }

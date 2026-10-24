@@ -26,13 +26,14 @@ import java.util.function.BooleanSupplier;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
-import dev.hardwood.internal.reader.fetch.RangeRead;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.RowGroupPlans;
@@ -121,14 +122,15 @@ final class PlanningChain {
     private boolean planningAhead;
 
     /// What the chain has published, replaced as a whole.
-    private volatile Progress progress = new Progress(new int[] {-1, -1, -1}, false, null, Integer.MAX_VALUE, 0);
+    private volatile Progress progress = new Progress(new int[] {-1, -1, -1, -1}, false, null, Integer.MAX_VALUE, 0);
     /// Whether a column or caller took the failure that ended planning, so close does not raise it.
     /// Written by the column that took it, read by close once the columns have closed.
     private boolean failureTaken;
 
-    /// The last work item callers outside the read asked to be taken through each stage before
-    /// [Stage#PLANS], raised before they run the chain ([#advance]).
-    private final AtomicIntegerArray targets = new AtomicIntegerArray(new int[] {-1, -1, -1});
+    /// The last work item asked to be taken through each stage, raised before the chain runs
+    /// ([#advance]): by callers outside the read for the stages before [Stage#PLANS], and for
+    /// [Stage#PLANS] by the read's columns ([#requested]), `-1` before the read starts.
+    private final AtomicIntegerArray targets = new AtomicIntegerArray(new int[] {-1, -1, -1, -1});
 
     // Set before the read's columns ask for plans, read by the chain after
     private long tailSkip;
@@ -140,13 +142,9 @@ final class PlanningChain {
     private volatile boolean wanted;
     private volatile boolean closed;
 
-    /// Guards the cursor: what columns asked for and wait on, and how far the read has reached.
+    /// Guards the cursor: the waiters on [Stage#PLANS] and what resumes them, and how far the read
+    /// has reached.
     private final ReentrantLock cursorLock = new ReentrantLock();
-    /// Guarded by `cursorLock`: the last work item a column asked to plan, `-1` before the read
-    /// starts.
-    private int requested = -1;
-    /// Guarded by `cursorLock`: the next work item the chain plans, every one before it planned.
-    private int planFrom;
     /// Guarded by `cursorLock`: whether the chain plans nothing more, at the end of the work list
     /// or after a failure.
     private boolean planningEnded;
@@ -157,10 +155,11 @@ final class PlanningChain {
     private int reachedItem = -1;
     private int toldFile = -1;
 
-    /// What the chain has published: for each stage before [Stage#PLANS], the last work item it
-    /// took through it for a caller; whether the work list is complete; the failure that ended
-    /// planning with the first work item it fails; and the residue of the physical skip within the
-    /// first work item.
+    /// What the chain has published: for each stage, the last work item it took through it, for a
+    /// caller before [Stage#PLANS] and, for [Stage#PLANS], every work item up to it planned
+    /// (published under `cursorLock`, with the waiters it resumes); whether the work list is
+    /// complete; the failure that ended planning with the first work item it fails; and the
+    /// residue of the physical skip within the first work item.
     private record Progress(int[] reached, boolean listed, Throwable failure, int failedFrom,
                             long firstRowGroupSkip) {
 
@@ -200,6 +199,9 @@ final class PlanningChain {
         SharedRowGroupMetadata shared;
         MaskCapability mask;
         RowGroupPlans plans;
+        /// The validated chunk extents of the decoded columns, taken before any stage reads a
+        /// chunk ([#chunkExtents]).
+        Extent[] extents;
         /// The columns that took the work item and have not released it, `0` before the first takes it.
         final AtomicInteger holders = new AtomicInteger();
         final AtomicBoolean entered = new AtomicBoolean();
@@ -273,7 +275,7 @@ final class PlanningChain {
     /// a column or a caller waits for it, at the tail otherwise.
     private void submit() {
         try {
-            if (demanded() || callerWaits()) {
+            if (waitedFor()) {
                 executor.executeStep(this::run);
             }
             else {
@@ -281,16 +283,19 @@ final class PlanningChain {
             }
         }
         catch (RejectedExecutionException e) {
-            fail(HardwoodContextImpl.contextClosed(e), planFrom());
+            fail(HardwoodContextImpl.contextClosed(e), progress.reached(Stage.PLANS) + 1);
             scheduled.set(false);
             executor.tasks().signal();
         }
     }
 
-    private boolean callerWaits() {
+    /// Whether a column or a caller waits for a work item the chain has not taken through the stage
+    /// it asked for.
+    private boolean waitedFor() {
         Progress p = progress;
-        for (Stage stage : CALLER_STAGES) {
-            if (targets.get(stage.ordinal()) > p.reached(stage) && p.reached(stage) + 1 < p.failedFrom()) {
+        for (Stage stage : Stage.values()) {
+            if (targets.get(stage.ordinal()) > p.reached(stage) && p.reached(stage) + 1 < p.failedFrom()
+                    && (stage != Stage.PLANS || !ended())) {
                 return true;
             }
         }
@@ -323,7 +328,7 @@ final class PlanningChain {
         catch (RuntimeException | Error e) {
             need = null;
             try {
-                fail(e, planFrom());
+                fail(e, progress.reached(Stage.PLANS) + 1);
             }
             finally {
                 scheduled.set(false);
@@ -613,31 +618,13 @@ final class PlanningChain {
             return List.of();
         }
         int count = planned.size();
-        RowGroup[] rowGroups = new RowGroup[count];
-        int[] rowGroupIndexes = new int[count];
-        BitSet[] offsetIndexColumns = new BitSet[count];
-        BitSet[] columnIndexColumns = new BitSet[count];
-        BitSet[] bloomFilterColumns = new BitSet[count];
-        for (int i = 0; i < count; i++) {
-            WorkItem workItem = planned.get(i);
-            rowGroups[i] = workItem.rowGroup();
-            rowGroupIndexes[i] = workItem.rowGroupIndex();
-            columnIndexColumns[i] = new BitSet();
-            offsetIndexColumns[i] = new BitSet();
-            bloomFilterColumns[i] = new BitSet();
-            // A row group with a chunk in another file fails before its page index or bloom
-            // filters are read (requireSameFile), so it asks for none: its offsets address that
-            // other file.
-            if (storedInThisFile(workItem.rowGroup())) {
-                columnIndexColumns[i] = RowGroupPruning.columnIndexColumns(workItem, pruning.pageFiltering(workItem));
-                offsetIndexColumns[i] = fetchPlanBuilder.offsetIndexColumns(workItem, columnIndexColumns[i]);
-                bloomFilterColumns[i] = workItem.bloomFilterColumns();
-            }
+        List<IndexWindow.Member> members = new ArrayList<>(count);
+        for (WorkItem workItem : planned) {
+            members.add(indexMember(workItem));
         }
         WorkItem first = planned.getFirst();
-        List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(),
-                first.workItemIndex(), rowGroups, rowGroupIndexes, offsetIndexColumns,
-                columnIndexColumns, bloomFilterColumns);
+        List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(), first.workItemIndex(),
+                members);
         List<Planning> listed = new ArrayList<>(count);
         int next = 0;
         for (IndexWindow window : windows) {
@@ -647,6 +634,21 @@ final class PlanningChain {
             }
         }
         return listed;
+    }
+
+    /// `workItem` as its index window sees it: the columns whose ColumnIndex its page filter reads,
+    /// whose OffsetIndex its plans and page filter read, and whose bloom filter its arrival may
+    /// probe. A row group with a chunk in another file fails before any of them is read
+    /// ([#chunkExtents]), so it needs none: its offsets address that other file.
+    private IndexWindow.Member indexMember(WorkItem workItem) {
+        if (!storedInThisFile(workItem.rowGroup())) {
+            return new IndexWindow.Member(workItem.rowGroup(), workItem.rowGroupIndex(), new BitSet(), new BitSet(),
+                    new BitSet());
+        }
+        BitSet columnIndexColumns = RowGroupPruning.columnIndexColumns(workItem, pruning.pageFiltering(workItem));
+        return new IndexWindow.Member(workItem.rowGroup(), workItem.rowGroupIndex(),
+                fetchPlanBuilder.offsetIndexColumns(workItem, columnIndexColumns), columnIndexColumns,
+                workItem.bloomFilterColumns());
     }
 
     private static boolean storedInThisFile(RowGroup rowGroup) {
@@ -671,7 +673,7 @@ final class PlanningChain {
             planning.arrival = RowGroupPruning.Arrival.KEPT;
             return null;
         }
-        requireSameFile(workItem);
+        chunkExtents(planning);
         try {
             ByteBuffer[] bloomFilterBytes = new ByteBuffer[workItem.rowGroup().columns().size()];
             if (!workItem.bloomFilterColumns().isEmpty()) {
@@ -713,7 +715,7 @@ final class PlanningChain {
             planning.shared = new SharedRowGroupMetadata(null, RowRanges.ALL, null, true);
             return null;
         }
-        requireSameFile(workItem);
+        chunkExtents(planning);
         try {
             need = workItem.indexWindow().indexNeed();
             if (need != null) {
@@ -750,6 +752,7 @@ final class PlanningChain {
             return null;
         }
         WorkItem workItem = planning.workItem;
+        chunkExtents(planning);
         try {
             planning.probeReads.clearMissing();
             Parsed<Boolean> applicable = FetchPlanBuilder.masksApplicableForRowGroup(projection.decoded(),
@@ -771,10 +774,10 @@ final class PlanningChain {
             return null;
         }
         WorkItem workItem = planning.workItem;
-        long fileLength = workItem.inputFile().length();
+        chunkExtents(planning);
         // Before the page index, which the plans need and these entries do not: they start while
         // it is read
-        insertChunkEntries(workItem);
+        insertChunkEntries(planning);
         Need need = shared(planning);
         if (need != null) {
             return need;
@@ -816,7 +819,7 @@ final class PlanningChain {
         boolean pageFilterApplied = !matchingRows.isAll() && !shared.matchingRows().isAll();
 
         FetchPlanBuilder.Plans plans = fetchPlanBuilder.columnPlans(workItem, shared, matchingRows,
-                pageFilterApplied, perRgMaxRows(workItem), sequence, fileLength);
+                pageFilterApplied, perRgMaxRows(workItem), sequence, chunkExtents(planning));
 
         // Last, once nothing above can fail: the batch plan takes each row group once.
         planning.plans = new RowGroupPlans(plans.columns(),
@@ -826,12 +829,27 @@ final class PlanningChain {
 
     /// Inserts the entries of `workItem`'s row group from its chunks' extents, once, where every row
     /// of it is read and nothing can drop it, so they start before its page index is read.
-    private void insertChunkEntries(WorkItem workItem) throws IOException {
-        if (readsAllRows(workItem) && !RangeRead.inMemory(workItem.inputFile())
+    private void insertChunkEntries(Planning planning) throws IOException {
+        WorkItem workItem = planning.workItem;
+        if (readsAllRows(workItem) && !HeldBytes.inMemory(workItem.inputFile())
                 && sequence.entries(workItem.workItemIndex()) == null) {
             sequence.insert(workItem.workItemIndex(), workItem.inputFile(),
-                    fetchPlanBuilder.chunkSpans(workItem, workItem.inputFile().length()));
+                    fetchPlanBuilder.chunkSpans(workItem, chunkExtents(planning)));
         }
+    }
+
+    /// The work item's chunk extents, checked on the first call, which every stage makes before it
+    /// reads anything its row group's footer entries address: that the chunks are in this file,
+    /// and then that they lie within it and do not overlap.
+    ///
+    /// @throws UnsupportedOperationException if a chunk is stored in another file
+    /// @throws ParquetReadException if a chunk lies outside the file or two overlap
+    private Extent[] chunkExtents(Planning planning) throws IOException {
+        if (planning.extents == null) {
+            requireSameFile(planning.workItem);
+            planning.extents = fetchPlanBuilder.extents(planning.workItem);
+        }
+        return planning.extents;
     }
 
     /// Whether every row of `workItem`'s row group is read and no Bloom filter or dictionary can drop
@@ -963,8 +981,14 @@ final class PlanningChain {
     ///
     /// @throws IOException the failure that ended planning at or before it
     private void awaitStage(int index, Stage stage) throws IOException {
-        targets.accumulateAndGet(stage.ordinal(), index, Math::max);
-        await(() -> progress.reached(stage) >= index || index >= progress.failedFrom());
+        if (stage == Stage.PLANS) {
+            requested(index);
+            await(() -> isPlanned(index));
+        }
+        else {
+            targets.accumulateAndGet(stage.ordinal(), index, Math::max);
+            await(() -> progress.reached(stage) >= index || index >= progress.failedFrom());
+        }
         plannedWorkItem(index);
     }
 
@@ -1034,9 +1058,7 @@ final class PlanningChain {
 
     /// Plans the work item at `index`, on the caller's thread, and returns its plans.
     RowGroupPlans awaitPlans(int index) throws IOException {
-        requested(index);
-        await(() -> isPlanned(index));
-        plannedWorkItem(index);
+        awaitStage(index, Stage.PLANS);
         return plans(index);
     }
 
@@ -1063,15 +1085,8 @@ final class PlanningChain {
     /// next unit's does, since the column waits for the planning that inserts it, and the read has
     /// reached it.
     void requested(int index) {
-        cursorLock.lock();
-        try {
-            if (index <= requested) {
-                return;
-            }
-            requested = index;
-        }
-        finally {
-            cursorLock.unlock();
+        if (targets.getAndAccumulate(Stage.PLANS.ordinal(), index, Math::max) >= index) {
+            return;
         }
         sequence.nextUnit(index);
         reached(index);
@@ -1090,20 +1105,14 @@ final class PlanningChain {
     /// sequence lets it plan ahead ([FetchSequence#mayPlanAhead]), which [#planningAhead] then
     /// records.
     private int nextToPlan() {
-        int next;
-        cursorLock.lock();
-        try {
-            if (requested < 0 || planningEnded) {
-                return -1;
-            }
-            next = planFrom;
-            planningAhead = false;
-            if (next <= requested) {
-                return next;
-            }
+        int requested = targets.get(Stage.PLANS.ordinal());
+        if (requested < 0 || ended()) {
+            return -1;
         }
-        finally {
-            cursorLock.unlock();
+        int next = progress.reached(Stage.PLANS) + 1;
+        planningAhead = false;
+        if (next <= requested) {
+            return next;
         }
         if (sequence.withinNextUnit(next)) {
             return next;
@@ -1118,8 +1127,9 @@ final class PlanningChain {
         List<Runnable> met = new ArrayList<>();
         cursorLock.lock();
         try {
-            planFrom = Math.max(planFrom, index + 1);
-            planWaiters.removeIf(waiter -> waiter.index() < planFrom && met.add(waiter.resume()));
+            publish(progress.withReached(Stage.PLANS, index));
+            int planned = progress.reached(Stage.PLANS);
+            planWaiters.removeIf(waiter -> waiter.index() <= planned && met.add(waiter.resume()));
         }
         finally {
             cursorLock.unlock();
@@ -1142,22 +1152,11 @@ final class PlanningChain {
         met.forEach(Runnable::run);
     }
 
-    /// Whether a column waits for a work item the chain has not planned.
-    private boolean demanded() {
+    /// Whether the chain plans nothing more.
+    private boolean ended() {
         cursorLock.lock();
         try {
-            return requested >= planFrom && !planningEnded;
-        }
-        finally {
-            cursorLock.unlock();
-        }
-    }
-
-    /// The next work item the chain plans.
-    private int planFrom() {
-        cursorLock.lock();
-        try {
-            return planFrom;
+            return planningEnded;
         }
         finally {
             cursorLock.unlock();
@@ -1177,7 +1176,7 @@ final class PlanningChain {
     boolean isPlanned(int index) {
         cursorLock.lock();
         try {
-            return index < planFrom || planningEnded;
+            return index <= progress.reached(Stage.PLANS) || planningEnded;
         }
         finally {
             cursorLock.unlock();
@@ -1189,7 +1188,7 @@ final class PlanningChain {
         return resume -> {
             cursorLock.lock();
             try {
-                if (index >= planFrom && !planningEnded) {
+                if (index > progress.reached(Stage.PLANS) && !planningEnded) {
                     planWaiters.add(new PlanWaiter(index, resume));
                     return;
                 }

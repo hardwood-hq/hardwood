@@ -9,7 +9,6 @@ package dev.hardwood.cli.dive;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -27,6 +26,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.reader.plan.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
@@ -278,7 +278,8 @@ public final class ParquetModel implements AutoCloseable {
         OffsetIndex result = null;
         if (buffers.offsetIndex() != null) {
             try {
-                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
+                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()),
+                        chunk(rowGroupIndex, columnIndex).metaData());
             }
             catch (RuntimeException e) {
                 throw placed(e, rowGroupIndex, columnIndex);
@@ -426,7 +427,7 @@ public final class ParquetModel implements AutoCloseable {
         ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
             cc.requireSameFile();
-            ByteBuffer page = DictionaryParser.readPage(inputFile, cc, "");
+            DataPage page = DictionaryParser.readPage(inputFile, cc, "");
             if (page == null) {
                 return null;
             }

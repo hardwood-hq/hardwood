@@ -11,7 +11,6 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
-import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.select.PageRowMask;
@@ -22,13 +21,13 @@ import dev.hardwood.schema.ColumnSchema;
 /// Page metadata and resolved data buffer.
 ///
 /// The fetch plan resolves the page bytes before creating the `PageInfo`.
-/// By the time a decode task calls [#pageData()], the buffer is ready —
+/// By the time a decode task calls [#dataPage()], the buffer is ready —
 /// no lazy I/O, no reference to the entry it was sliced from. This keeps `PageInfo` a
 /// simple data holder.
 ///
 /// A `PageInfo` may also carry a **null-placeholder** marker, produced by
 /// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] when inline page statistics prove that
-/// none of the page's rows can match the active filter predicate. In that mode [#pageData()] is
+/// none of the page's rows can match the active filter predicate. In that mode [#dataPage()] is
 /// `null`; [#isNullPlaceholder()] is `true`; and [#placeholderNumValues()] gives the number of rows
 /// the placeholder stands in for. Decoding short-circuits to an all-null typed page, preserving
 /// cross-column row alignment while skipping decompression and value decoding.
@@ -55,85 +54,54 @@ public class PageInfo {
 
     /// The one page of a column that is not read in a row group. See
     /// [dev.hardwood.internal.reader.fetch.SkippedColumnFetchPlan].
-    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL, 0, 0, 0,
-            Encoding.PLAIN);
+    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL, 0);
 
-    private final ByteBuffer pageData;
+    /// The page's bytes with its parsed header, `null` for a page without bytes.
+    private final DataPage page;
     private final ColumnSchema columnSchema;
     private final ColumnMetaData columnMetaData;
     private final Dictionary dictionary;
     private final int placeholderNumValues;
     private final PageRowMask mask;
     private final int records;
-    /// The values the page's header declares, `0` where the page carries no header.
-    private final int declaredValues;
-    /// The page's uncompressed size from its header, `0` where it carries no header.
-    private final int uncompressedSize;
-    /// The encoding of the page's values from its header, `PLAIN` where it carries no header.
-    private final Encoding encoding;
 
-    /// A page without bytes, which no task decodes: the tests of placement build them.
+    /// A data page whose header its fetch plan has parsed, so that what decoding it takes is known
+    /// before it is submitted, or with `page` `null` a page without bytes, which no task decodes:
+    /// the tests of placement build them.
     ///
     /// @param records the records the page contributes after `mask`, or [#UNKNOWN_RECORDS]
-    /// @throws IllegalArgumentException if `pageData` is not `null`: a page with bytes carries the
-    ///         sizes its task is admitted by
-    public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
-                    ColumnMetaData columnMetaData, Dictionary dictionary,
+    public PageInfo(DataPage page, ColumnSchema columnSchema, ColumnMetaData columnMetaData, Dictionary dictionary,
                     PageRowMask mask, int records) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, records, 0, 0, Encoding.PLAIN);
-        if (pageData != null) {
-            throw new IllegalArgumentException("A page with bytes needs the sizes its header declares");
-        }
+        this(page, columnSchema, columnMetaData, dictionary, 0, mask, records);
     }
 
-    /// A data page whose header its fetch plan has parsed, so that what decoding it takes is
-    /// known before it is submitted.
-    ///
-    /// @param records the records the page contributes after `mask`, or [#UNKNOWN_RECORDS]
-    /// @param declaredValues the values the page's header declares
-    /// @param uncompressedSize the page's uncompressed size from its header
-    /// @param encoding the encoding of the page's values from its header
-    public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
-                    ColumnMetaData columnMetaData, Dictionary dictionary,
-                    PageRowMask mask, int records, int declaredValues, int uncompressedSize, Encoding encoding) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, records, declaredValues,
-                uncompressedSize, encoding);
-    }
-
-    /// The data page whose bytes `pageData` holds and whose header, already parsed, is `header`.
-    ///
-    /// @param records the records the page contributes after `mask`, or [#UNKNOWN_RECORDS]
-    public static PageInfo dataPage(ByteBuffer pageData, PageHeader header, ColumnSchema columnSchema,
-                             ColumnMetaData columnMetaData, Dictionary dictionary, PageRowMask mask, int records) {
-        DataPageHeader v1 = header.dataPageHeader();
-        DataPageHeaderV2 v2 = header.dataPageHeaderV2();
-        // Another page declares no values here; its decode refuses it
-        int declaredValues = v1 != null ? v1.numValues() : v2 != null ? v2.numValues() : 0;
-        Encoding encoding = v1 != null ? v1.encoding() : v2 != null ? v2.encoding() : Encoding.PLAIN;
-        return new PageInfo(pageData, columnSchema, columnMetaData, dictionary, mask, records, declaredValues,
-                header.uncompressedPageSize(), encoding);
-    }
-
-    private PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
+    private PageInfo(DataPage page, ColumnSchema columnSchema,
                      ColumnMetaData columnMetaData, Dictionary dictionary,
-                     int placeholderNumValues, PageRowMask mask, int records, int declaredValues,
-                     int uncompressedSize, Encoding encoding) {
+                     int placeholderNumValues, PageRowMask mask, int records) {
         if (mask == null) {
             throw new IllegalArgumentException("mask must not be null; use PageRowMask.ALL");
         }
         if (records < UNKNOWN_RECORDS) {
             throw new IllegalArgumentException("records must not be negative, got " + records);
         }
-        this.pageData = pageData;
+        this.page = page;
         this.columnSchema = columnSchema;
         this.columnMetaData = columnMetaData;
         this.dictionary = dictionary;
         this.placeholderNumValues = placeholderNumValues;
         this.mask = mask;
         this.records = records;
-        this.declaredValues = declaredValues;
-        this.uncompressedSize = uncompressedSize;
-        this.encoding = encoding;
+    }
+
+    /// The records a page of `column` contributes after `mask`, for [#records()], where it holds
+    /// `records` before it: those it keeps for a column without repetition, whose records are its
+    /// values, and [#UNKNOWN_RECORDS] for a column with repetition, which counts its records from
+    /// its repetition levels once decoded.
+    public static int keptRecords(ColumnSchema column, PageRowMask mask, int records) {
+        if (column.maxRepetitionLevel() > 0) {
+            return UNKNOWN_RECORDS;
+        }
+        return mask.isAll() ? records : mask.totalRecords();
     }
 
     /// Creates a null-placeholder `PageInfo` representing `numValues` rows whose
@@ -147,14 +115,18 @@ public class PageInfo {
         if (numValues <= 0) {
             throw new IllegalArgumentException("placeholder numValues must be positive: " + numValues);
         }
-        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL, records, 0, 0,
-                Encoding.PLAIN);
+        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL, records);
     }
 
-    /// Returns the page data buffer (header + compressed data), or `null` if this
-    /// is a null-placeholder.
+    /// The page's bytes with its parsed header, which its decode takes, or `null` for a page
+    /// without bytes.
+    public DataPage dataPage() {
+        return page;
+    }
+
+    /// The page's bytes, header first, or `null` for a page without bytes.
     public ByteBuffer pageData() {
-        return pageData;
+        return page != null ? page.bytes() : null;
     }
 
     public ColumnSchema columnSchema() {
@@ -177,8 +149,8 @@ public class PageInfo {
             return WorkingSet.Column.pageBuffers(columnSchema, placeholderNumValues, 0, Encoding.PLAIN);
         }
         // The decompressed bytes, which a page read where it lies does not take: the bound errs high
-        return pageData == null ? 0
-                : WorkingSet.Column.pageBuffers(columnSchema, declaredValues, uncompressedSize, encoding);
+        return page == null ? 0
+                : WorkingSet.Column.pageBuffers(columnSchema, declaredValues(), uncompressedSize(), encoding());
     }
 
     public boolean isNullPlaceholder() {
@@ -207,18 +179,24 @@ public class PageInfo {
         return records;
     }
 
-    /// The values the page's header declares; `0` for a page without bytes.
+    /// The values the page's header declares; `0` for a page without bytes, or one that is no data
+    /// page, which its decode refuses.
     public int declaredValues() {
-        return declaredValues;
+        DataPageHeader v1 = page != null ? page.header().dataPageHeader() : null;
+        DataPageHeaderV2 v2 = page != null ? page.header().dataPageHeaderV2() : null;
+        return v1 != null ? v1.numValues() : v2 != null ? v2.numValues() : 0;
     }
 
     /// The page's uncompressed size from its header; `0` for a page without bytes.
     public int uncompressedSize() {
-        return uncompressedSize;
+        return page != null ? page.header().uncompressedPageSize() : 0;
     }
 
-    /// The encoding of the page's values from its header; `PLAIN` for a page without bytes.
+    /// The encoding of the page's values from its header; `PLAIN` for a page without bytes, or one
+    /// that is no data page.
     public Encoding encoding() {
-        return encoding;
+        DataPageHeader v1 = page != null ? page.header().dataPageHeader() : null;
+        DataPageHeaderV2 v2 = page != null ? page.header().dataPageHeaderV2() : null;
+        return v1 != null ? v1.encoding() : v2 != null ? v2.encoding() : Encoding.PLAIN;
     }
 }

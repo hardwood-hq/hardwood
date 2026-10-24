@@ -86,16 +86,55 @@ class PageHeaderWalkTest {
         }
     }
 
+    /// A page whose body runs past the range is a malformed chunk; the walk fails rather than
+    /// handing on a page the chunk does not hold.
+    @Test
+    void aPageRunningPastTheRangeFails() throws IOException {
+        byte[] header = pageHeader(100, 0);
+        int rangeSize = header.length + 10;
+        try (InputFile file = InputFile.of(ByteBuffer.allocate(rangeSize).put(header).rewind())) {
+            file.open();
+            List<PageHeader> visited = new ArrayList<>();
+
+            assertThatThrownBy(() -> PageHeaderWalk.walk(file, 0, rangeSize, 16, visited::add))
+                    .isExactlyInstanceOf(ParquetReadException.class)
+                    .hasMessage("Page at offset 0 ends at offset " + (header.length + 100)
+                            + ", past the end of the column chunk at offset " + rangeSize);
+            assertThat(visited).isEmpty();
+        }
+    }
+
+    /// A header cut off by the range's end is a truncated chunk, reported as the reader reports it.
+    @Test
+    void aHeaderCutOffByTheRangeEndFails() throws IOException {
+        byte[] header = pageHeader(0, 40);
+        int rangeSize = header.length - 2;
+        try (InputFile file = InputFile.of(ByteBuffer.wrap(header, 0, rangeSize).slice())) {
+            file.open();
+
+            assertThatThrownBy(() -> PageHeaderWalk.walk(file, 0, rangeSize, 16, visited -> true))
+                    .isExactlyInstanceOf(ParquetReadException.class)
+                    .hasMessage("Page header at offset 0 does not fit in the " + rangeSize
+                            + " bytes left in its column chunk — the file is likely corrupt");
+        }
+    }
+
     /// A data page header carrying an unknown binary field of `padding` bytes, which a reader
     /// skips but has to have in its buffer to skip.
     private static byte[] oversizedPageHeader(int padding) {
+        return pageHeader(0, padding);
+    }
+
+    /// A data page header declaring a body of `compressedSize` bytes and carrying an unknown
+    /// binary field of `padding` bytes.
+    private static byte[] pageHeader(int compressedSize, int padding) {
         ThriftCompactWriter writer = new ThriftCompactWriter();
         writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
         writer.writeI32(0); // Thrift PageType.DATA_PAGE
         writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
-        writer.writeI32(0);
+        writer.writeI32(compressedSize);
         writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
-        writer.writeI32(0);
+        writer.writeI32(compressedSize);
         writer.writeFieldBegin(99, ThriftCompactConstants.FieldType.BINARY);
         writer.writeBinary(new byte[padding]);
         writer.writeFieldStop();

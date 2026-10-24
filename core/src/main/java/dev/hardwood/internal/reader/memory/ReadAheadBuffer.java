@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import dev.hardwood.internal.reader.step.Need;
 
 /// The memory a context's reads hold by choice rather than because a file forces it, R: the buffers
-/// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admitTask]), the
+/// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admit]), the
 /// speculative entries of a read's [dev.hardwood.internal.reader.fetch.FetchSequence], and the
 /// footers a multi-file read reads for the files past the next one, each charged the tail it reads
 /// until the read is done with the file.

@@ -20,6 +20,8 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.HeldBytes;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 
@@ -47,7 +49,7 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 ///
 /// A file whose bytes are in memory gets no entries in the sequence: its entries are sliced from the
 /// mapping in place ([#insert]). So are the entries inside a file's tail while the read holds it
-/// ([TailedInputFile#sliceTail]): they start no request and are charged to neither F nor R, since
+/// ([TailedInputFile#sliceHeld]): they start no request and are charged to neither F nor R, since
 /// the tail is charged already.
 ///
 /// The sequence also starts the read's footer entries: the footer of the file after the one the
@@ -199,7 +201,7 @@ public final class FetchSequence {
     /// above. For a file in memory, and for a span inside the file's tail, entries the sequence
     /// does not start, sliced in place.
     public List<Entry> insert(int workItemIndex, InputFile inputFile, List<Span> spans) {
-        if (RangeRead.inMemory(inputFile)) {
+        if (HeldBytes.inMemory(inputFile)) {
             List<Entry> inMemory = new ArrayList<>(spans.size());
             for (Span span : spans) {
                 inMemory.add(inPlace(workItemIndex, inputFile, span));
@@ -294,11 +296,11 @@ public final class FetchSequence {
     /// inside the file's tail, sliced now, since the tail may be dropped before the entry is read.
     /// `null` for any other span.
     public static Entry inPlace(int workItemIndex, InputFile inputFile, Span span) {
-        if (RangeRead.inMemory(inputFile)) {
+        if (HeldBytes.inMemory(inputFile)) {
             return new Entry(null, inputFile, span, workItemIndex, null);
         }
-        ByteBuffer inTail = TailedInputFile.sliceTail(inputFile, span.start(), span.length());
-        return inTail != null ? new Entry(null, inputFile, span, workItemIndex, inTail) : null;
+        ByteBuffer held = HeldBytes.slice(inputFile, span.start(), span.length());
+        return held != null ? new Entry(null, inputFile, span, workItemIndex, held) : null;
     }
 
     /// The entries inserted for work item `workItemIndex`, `null` when it has none.
@@ -881,7 +883,7 @@ public final class FetchSequence {
                 ByteBuffer bytes = inPlace;
                 if (bytes == null) {
                     // A race slices twice, which costs nothing on a file in memory
-                    bytes = inputFile.readRange(offset, length);
+                    bytes = ReadRanges.read(inputFile, offset, length);
                     inPlace = bytes;
                 }
                 return bytes;

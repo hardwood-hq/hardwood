@@ -288,7 +288,7 @@ public abstract class ScheduledColumn<B> implements AutoCloseable {
     /// that stops on bytes issues their read as demand; one that stops on a work item's planning
     /// leaves it to the virtual thread that plans it; one that stops on a dictionary page not yet
     /// admitted waits for a task of the read to end
-    /// ([dev.hardwood.internal.reader.memory.WorkingSet#admitTask]). Each keeps the column's claim
+    /// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]). Each keeps the column's claim
     /// and its count of tasks, and the need's completion queues the next step ([#resumeFetch]): no
     /// step waits for I/O or another task, and a close waits for the read, the planning and the
     /// task.

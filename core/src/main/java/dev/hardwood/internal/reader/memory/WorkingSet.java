@@ -50,17 +50,17 @@ import dev.hardwood.schema.ColumnSchema;
 /// itself.
 ///
 /// The tasks of a read that run beside the one its working set counts hold their buffers by the
-/// reader's choice, and the context's [ReadAheadBuffer] holds them ([#admitTask]): a task whose
+/// reader's choice, and the context's [ReadAheadBuffer] holds them ([#admit]): a task whose
 /// buffers exceed the retention size starts as the read's one task while no other such task of
 /// the read runs, beside it only while its buffers fit the buffer, and otherwise once a task ends.
 /// A task within the retention size starts at once, as a context keeps that much per thread
 /// anyway.
 public final class WorkingSet {
 
-    /// [#admitTask] admitted the task as the read's one task its working set counts.
+    /// The admission of a task [#admit] admitted as the read's one task its working set counts.
     public static final long OWN_TASK = -1;
-    /// [#admitTask] did not admit the task: it waits for a task to end ([#taskEndAfter]).
-    public static final long REFUSED = -2;
+    /// The admission of a task [#admitTask] did not admit.
+    private static final long REFUSED = -2;
 
     static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
 
@@ -149,15 +149,38 @@ public final class WorkingSet {
         }
     }
 
+    /// What [#admit] came to: the task admitted, with the admission to hand to [#taskEnded] when
+    /// its buffers are released ([#OWN_TASK], the bytes charged to the read-ahead buffer, or `0`),
+    /// or refused, with what it waits for: a task ending or read-ahead released after it was
+    /// refused, met at once if one has. A refused task always has one to wait for: it was refused
+    /// only while the read's own task ran.
+    ///
+    /// @param admission the admission of an admitted task
+    /// @param refused what a refused task waits for, `null` for an admitted one
+    public record Admission(long admission, Need refused) {
+
+        private static final Admission UNCHARGED = new Admission(0, null);
+
+        public boolean admitted() {
+            return refused == null;
+        }
+    }
+
     /// Admits a task of the read whose buffers take `bytes`, to start now: at once, uncharged, if
     /// they are within the retention size ([DecodeBuffers#RETAINED_BYTES]) or the task runs
     /// outside a read; as the read's one task while no other larger one runs; beside it while
     /// they fit the context's read-ahead buffer, which they are charged to.
-    ///
-    /// @return the admission to hand to [#taskEnded] when the task's buffers are released:
-    ///         [#OWN_TASK], the bytes charged to the read-ahead buffer, or `0`; or [#REFUSED],
-    ///         after which the task waits for [#taskEndAfter]
-    public long admitTask(long bytes) {
+    public Admission admit(long bytes) {
+        long seen = readAhead == null ? 0 : readAhead.releases();
+        long admission = admitTask(bytes);
+        if (admission == REFUSED) {
+            return new Admission(0, readAhead.releaseAfter(seen));
+        }
+        return admission == 0 ? Admission.UNCHARGED : new Admission(admission, null);
+    }
+
+    /// The admission of a task whose buffers take `bytes` ([#admit]), or [#REFUSED].
+    private long admitTask(long bytes) {
         if (readAhead == null || bytes <= DecodeBuffers.RETAINED_BYTES) {
             return 0;
         }
@@ -167,7 +190,7 @@ public final class WorkingSet {
         return readAhead.tryCharge(bytes) ? bytes : REFUSED;
     }
 
-    /// Releases what [#admitTask] admitted a task under, which runs what waits for a task to end.
+    /// Releases what [#admit] admitted a task under, which runs what waits for a task to end.
     public void taskEnded(long admission) {
         if (admission == OWN_TASK) {
             ownTask.set(false);
@@ -176,18 +199,6 @@ public final class WorkingSet {
         else if (admission > 0) {
             readAhead.release(admission);
         }
-    }
-
-    /// The count to hand to [#taskEndAfter], taken before the [#admitTask] it follows.
-    public long tasksEnded() {
-        return readAhead == null ? 0 : readAhead.releases();
-    }
-
-    /// What a task [#admitTask] refused waits for: a task ending or read-ahead released after the
-    /// [#tasksEnded] count `seen`, met at once if one has. A refused task always has one to wait
-    /// for: it was refused only while the read's own task ran.
-    public Need taskEndAfter(long seen) {
-        return readAhead.releaseAfter(seen);
     }
 
     /// Drops `retry` if it still waits for a task to end.
@@ -214,13 +225,12 @@ public final class WorkingSet {
     @FunctionalInterface
     public interface DictionaryRead {
 
-        /// The dictionary, or `null` where the page's bytes are not present or it is not a
-        /// dictionary page.
+        /// The dictionary.
         Dictionary read() throws IOException;
     }
 
-    /// What [Column#parseDictionary] came to: the dictionary parsed (`null` where its read found
-    /// none), or, with no dictionary, what the parse waits for.
+    /// What [Column#parseDictionary] came to: the dictionary parsed, or, with no dictionary, what
+    /// the parse waits for.
     public record DictionaryParse(Dictionary dictionary, Need pending) {
     }
 
@@ -242,24 +252,22 @@ public final class WorkingSet {
         }
 
         /// Reads and parses a dictionary page whose header declares `uncompressedSize` bytes, once
-        /// its parse is admitted beside the read's other tasks ([WorkingSet#admitTask]), and
-        /// releases the admission when `read` returns. `read` reads the page's bytes and parses
-        /// them, returning `null` where its bytes are not present or the page is not a dictionary
-        /// page.
+        /// its parse is admitted beside the read's other tasks ([WorkingSet#admit]), and
+        /// releases the admission when `read` returns. `read` parses the page, whose bytes the
+        /// caller has read.
         ///
         /// @return the dictionary `read` returned, or what the parse waits for: a task of the read
         ///         ending
         public DictionaryParse parseDictionary(int uncompressedSize, DictionaryRead read) throws IOException {
-            long tasksEnded = set.tasksEnded();
-            long admission = set.admitTask(uncompressedSize);
-            if (admission == REFUSED) {
-                return new DictionaryParse(null, set.taskEndAfter(tasksEnded));
+            Admission admitted = set.admit(uncompressedSize);
+            if (!admitted.admitted()) {
+                return new DictionaryParse(null, admitted.refused());
             }
             try {
                 return new DictionaryParse(read.read(), null);
             }
             finally {
-                set.taskEnded(admission);
+                set.taskEnded(admitted.admission());
             }
         }
 

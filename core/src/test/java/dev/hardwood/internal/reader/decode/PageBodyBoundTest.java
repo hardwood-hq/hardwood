@@ -115,7 +115,7 @@ class PageBodyBoundTest {
         ColumnMetaData metaData = metaData(CompressionCodec.SNAPPY, Encoding.PLAIN);
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             Dictionary large = DictionaryParser.parse(
-                    snappyDictionaryPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125)),
+                    DataPage.parse(snappyDictionaryPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125))),
                     INT64_COLUMN, metaData, context);
             assertThat(large.size()).isEqualTo(125);
 
@@ -123,7 +123,7 @@ class PageBodyBoundTest {
             ByteBuffer shortPage = snappyDictionaryPage(100, shortBody);
             int compressedSize = new SnappyCompressor().compress(shortBody, 0, shortBody.length).length;
 
-            assertThatThrownBy(() -> DictionaryParser.parse(shortPage, INT64_COLUMN, metaData, context))
+            assertThatThrownBy(() -> DictionaryParser.parse(DataPage.parse(shortPage), INT64_COLUMN, metaData, context))
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("Failed to parse dictionary (type=INT64, numValues=100, uncompressedSize=16"
                             + ", compressedSize=" + compressedSize + ", codec=SNAPPY)")

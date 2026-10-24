@@ -7,11 +7,15 @@
  */
 package dev.hardwood.internal.io;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 
 /// Validation of the ranges requested from an [InputFile], shared by its implementations
-/// so that every backend rejects a bad range with the same exception and message.
+/// so that every backend rejects a bad range with the same exception and message, and of the
+/// buffers a backend returns, which every read of the reader checks ([#read]).
 public final class ReadRanges {
 
     private ReadRanges() {
@@ -32,5 +36,21 @@ public final class ReadRanges {
                     + "readRange(" + offset + ", " + length
                     + ") out of bounds (" + fileBytes + " bytes)");
         }
+    }
+
+    /// The bytes `[offset, offset + length)` of `inputFile`, as [InputFile#readRange] returns them:
+    /// at position `0`, with exactly `length` bytes remaining. The reader slices what it holds by
+    /// absolute index, so every read the reader makes of a file goes through here.
+    ///
+    /// @throws IOException if the read fails, or if the buffer `inputFile` returns does not hold
+    ///         the range as the contract requires
+    public static ByteBuffer read(InputFile inputFile, long offset, int length) throws IOException {
+        ByteBuffer bytes = inputFile.readRange(offset, length);
+        if (bytes.position() != 0 || bytes.remaining() != length) {
+            throw new IOException(ExceptionContext.filePrefix(inputFile.name()) + "readRange(" + offset + ", "
+                    + length + ") returned a buffer at position " + bytes.position() + " with "
+                    + bytes.remaining() + " bytes remaining, not at position 0 with " + length + " bytes remaining");
+        }
+        return bytes;
     }
 }

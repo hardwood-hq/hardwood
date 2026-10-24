@@ -25,12 +25,14 @@ import org.junit.jupiter.params.provider.CsvSource;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.internal.thrift.RleExpansionFile;
-import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -53,29 +55,32 @@ class TaskAdmissionTest {
     void firstLargeTaskIsTheReadsOwn() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
 
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.OWN_TASK);
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        assertThat(workingSet.admit(LARGE).admission()).isEqualTo(WorkingSet.OWN_TASK);
+        assertThat(workingSet.admit(LARGE).admitted()).isFalse();
     }
 
     @Test
     void taskWithinTheRetentionSizeStartsBesideTheReadsOwn() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
-        workingSet.admitTask(LARGE);
+        workingSet.admit(LARGE);
 
-        assertThat(workingSet.admitTask(DecodeBuffers.RETAINED_BYTES)).isZero();
+        WorkingSet.Admission small = workingSet.admit(DecodeBuffers.RETAINED_BYTES);
+
+        assertThat(small.admitted()).isTrue();
+        assertThat(small.admission()).isZero();
     }
 
     @Test
     void taskBesideTheReadsOwnIsChargedToTheReadAheadBuffer() {
         ReadAheadBuffer readAhead = new ReadAheadBuffer(LARGE);
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, readAhead);
-        workingSet.admitTask(LARGE);
+        workingSet.admit(LARGE);
 
-        long admission = workingSet.admitTask(LARGE);
+        long admission = workingSet.admit(LARGE).admission();
 
         assertThat(admission).isEqualTo(LARGE);
         assertThat(readAhead.held()).isEqualTo(LARGE);
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        assertThat(workingSet.admit(LARGE).admitted()).isFalse();
         workingSet.taskEnded(admission);
         assertThat(readAhead.held()).isZero();
     }
@@ -83,29 +88,29 @@ class TaskAdmissionTest {
     @Test
     void refusedTaskResumesOnceTheReadsOwnEnds() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
-        long own = workingSet.admitTask(LARGE);
-        long seen = workingSet.tasksEnded();
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        long own = workingSet.admit(LARGE).admission();
+        WorkingSet.Admission refused = workingSet.admit(LARGE);
+        assertThat(refused.admitted()).isFalse();
         AtomicInteger resumed = new AtomicInteger();
-        workingSet.taskEndAfter(seen).whenMet(resumed::incrementAndGet);
+        refused.refused().whenMet(resumed::incrementAndGet);
 
         assertThat(resumed).hasValue(0);
         workingSet.taskEnded(own);
 
         assertThat(resumed).hasValue(1);
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.OWN_TASK);
+        assertThat(workingSet.admit(LARGE).admission()).isEqualTo(WorkingSet.OWN_TASK);
     }
 
     @Test
     void refusedTaskResumesAtOnceWhenATaskEndedBeforeItWaits() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
-        long own = workingSet.admitTask(LARGE);
-        long seen = workingSet.tasksEnded();
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        long own = workingSet.admit(LARGE).admission();
+        WorkingSet.Admission refused = workingSet.admit(LARGE);
+        assertThat(refused.admitted()).isFalse();
         workingSet.taskEnded(own);
         AtomicInteger resumed = new AtomicInteger();
 
-        workingSet.taskEndAfter(seen).whenMet(resumed::incrementAndGet);
+        refused.refused().whenMet(resumed::incrementAndGet);
 
         assertThat(resumed).hasValue(1);
     }
@@ -114,16 +119,17 @@ class TaskAdmissionTest {
     void taskOutsideAReadIsNotAdmitted() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, null);
 
-        assertThat(workingSet.admitTask(LARGE)).isZero();
-        assertThat(workingSet.admitTask(LARGE)).isZero();
+        assertThat(workingSet.admit(LARGE).admission()).isZero();
+        assertThat(workingSet.admit(LARGE).admission()).isZero();
     }
 
     @Test
     void pageIsSizedByItsDeclaredBytesWhateverValueCountItDeclares() throws IOException {
         ColumnSchema column = optionalColumn();
         int bytes = 2 * DecodeBuffers.RETAINED_BYTES;
-        PageInfo page = new PageInfo(ByteBuffer.allocate(1), column, null, null, PageRowMask.ALL, 0, 0, bytes,
-                Encoding.PLAIN);
+        PageHeader header = new PageHeader(PageType.DATA_PAGE, bytes, 1, null, null, null, null);
+        PageInfo page = new PageInfo(new DataPage(header, 0, ByteBuffer.allocate(1)), column, null, null,
+                PageRowMask.ALL, 0);
 
         assertThat(page.taskBytes()).isEqualTo(bytes);
     }
@@ -136,13 +142,6 @@ class TaskAdmissionTest {
 
         // Its definition levels, an `int` each
         assertThat(placeholder.taskBytes()).isEqualTo((long) Integer.BYTES * values);
-    }
-
-    @Test
-    void pageWithBytesButNoSizesIsRejected() {
-        assertThatThrownBy(() -> new PageInfo(ByteBuffer.allocate(1), null, null, null, PageRowMask.ALL, 0))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("A page with bytes needs the sizes its header declares");
     }
 
     private static ColumnSchema optionalColumn() throws IOException {
