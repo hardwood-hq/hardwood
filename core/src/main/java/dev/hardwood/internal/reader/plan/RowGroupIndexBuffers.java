@@ -15,6 +15,7 @@ import java.util.List;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
@@ -25,13 +26,6 @@ import dev.hardwood.metadata.RowGroup;
 /// slices only with ColumnIndex slices, OffsetIndex slices only with OffsetIndex slices.
 /// [#addRanges] and [#slice] let one pair of [CoalescedRanges] serve several row groups.
 public class RowGroupIndexBuffers {
-
-    /// Takes a range from the requests of one structure.
-    @FunctionalInterface
-    interface Slices {
-
-        ByteBuffer slice(long offset, int length) throws IOException;
-    }
 
     private final ColumnIndexBuffers[] columns;
     private final BitSet fetched;
@@ -77,21 +71,34 @@ public class RowGroupIndexBuffers {
         CoalescedRanges.Builder offsetIndexes = CoalescedRanges.builder();
         CoalescedRanges.Builder columnIndexes = CoalescedRanges.builder();
         addRanges(rowGroup, offsetIndexColumns, columnIndexColumns, offsetIndexes, columnIndexes);
-        return slice(rowGroup, offsetIndexColumns, columnIndexColumns, fetch(inputFile, offsetIndexes.build()),
-                fetch(inputFile, columnIndexes.build()));
+        return slice(rowGroup, offsetIndexColumns, columnIndexColumns,
+                fetch(inputFile, offsetIndexes.build(), columnIndexes.build()));
     }
 
-    /// Reads every request of `ranges` from `inputFile`, and takes the ranges from them.
-    private static Slices fetch(InputFile inputFile, CoalescedRanges ranges) throws IOException {
-        ByteBuffer[] buffers = new ByteBuffer[ranges.requestCount()];
-        for (int r = 0; r < buffers.length; r++) {
-            buffers[r] = ReadRanges.read(inputFile, ranges.requestStart(r),
-                    Math.toIntExact(ranges.requestEnd(r) - ranges.requestStart(r)));
+    /// Reads every request of `structures` from `inputFile`: a source holding the ranges they
+    /// cover.
+    private static ByteSource fetch(InputFile inputFile, CoalescedRanges... structures) throws IOException {
+        int count = 0;
+        for (CoalescedRanges ranges : structures) {
+            count += ranges.requestCount();
+        }
+        long[] starts = new long[count];
+        ByteBuffer[] buffers = new ByteBuffer[count];
+        int request = 0;
+        for (CoalescedRanges ranges : structures) {
+            for (int r = 0; r < ranges.requestCount(); r++, request++) {
+                starts[request] = ranges.requestStart(r);
+                buffers[request] = ReadRanges.read(inputFile, starts[request],
+                        Math.toIntExact(ranges.requestEnd(r) - starts[request]));
+            }
         }
         return (offset, length) -> {
-            int request = ranges.requestHolding(offset, length);
-            ByteBuffer buffer = buffers[request];
-            return buffer.slice(Math.toIntExact(offset - ranges.requestStart(request)), length);
+            for (int r = 0; r < buffers.length; r++) {
+                if (starts[r] <= offset && offset + length <= starts[r] + buffers[r].remaining()) {
+                    return buffers[r].slice(Math.toIntExact(offset - starts[r]), length);
+                }
+            }
+            return null;
         };
     }
 
@@ -115,9 +122,12 @@ public class RowGroupIndexBuffers {
         }
     }
 
-    /// Takes a row group's slices from the requests its [#addRanges] call planned.
+    /// Takes a row group's slices from `bytes`, which hold the requests its [#addRanges] call
+    /// planned.
+    ///
+    /// @throws IllegalStateException if `bytes` does not hold a slice
     static RowGroupIndexBuffers slice(RowGroup rowGroup, BitSet offsetIndexColumns,
-            BitSet columnIndexColumns, Slices offsetIndexes, Slices columnIndexes) throws IOException {
+            BitSet columnIndexColumns, ByteSource bytes) throws IOException {
         List<ColumnChunk> chunks = rowGroup.columns();
         ColumnIndexBuffers[] result = new ColumnIndexBuffers[chunks.size()];
         BitSet fetched = (BitSet) offsetIndexColumns.clone();
@@ -125,13 +135,21 @@ public class RowGroupIndexBuffers {
         for (int c = fetched.nextSetBit(0); c >= 0; c = fetched.nextSetBit(c + 1)) {
             ColumnChunk chunk = chunks.get(c);
             ByteBuffer offsetIndex = offsetIndexColumns.get(c) && chunk.offsetIndexOffset() != null
-                    ? offsetIndexes.slice(chunk.offsetIndexOffset(), chunk.offsetIndexLength())
+                    ? slice(bytes, chunk.offsetIndexOffset(), chunk.offsetIndexLength())
                     : null;
             ByteBuffer columnIndex = columnIndexColumns.get(c) && chunk.columnIndexOffset() != null
-                    ? columnIndexes.slice(chunk.columnIndexOffset(), chunk.columnIndexLength())
+                    ? slice(bytes, chunk.columnIndexOffset(), chunk.columnIndexLength())
                     : null;
             result[c] = new ColumnIndexBuffers(offsetIndex, columnIndex);
         }
         return new RowGroupIndexBuffers(result, fetched);
+    }
+
+    private static ByteBuffer slice(ByteSource bytes, long offset, int length) throws IOException {
+        ByteBuffer slice = bytes.read(offset, length);
+        if (slice == null) {
+            throw new IllegalStateException("Range [" + offset + ", " + (offset + length) + ") is not present");
+        }
+        return slice;
     }
 }

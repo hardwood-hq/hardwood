@@ -29,8 +29,6 @@ class CoalescedRangesTest {
         assertThat(ranges.fetchedBytes()).isEqualTo(2000);
         assertThat(ranges.requestStart(0)).isEqualTo(100);
         assertThat(ranges.requestEnd(0)).isEqualTo(2100);
-        assertThat(ranges.requestHolding(1000, 10)).isZero();
-        assertThat(ranges.requestHolding(2000, 100)).isZero();
     }
 
     @Test
@@ -103,25 +101,13 @@ class CoalescedRangesTest {
 
         assertThat(ranges.requestCount()).isEqualTo(1);
         assertThat(ranges.fetchedBytes()).isEqualTo(300);
-        assertThat(ranges.requestHolding(50, 10)).isZero();
-        assertThat(ranges.requestHolding(0, 300)).isZero();
+        assertThat(ranges.requestStart(0)).isZero();
+        assertThat(ranges.requestEnd(0)).isEqualTo(300);
     }
 
     @Test
     void anEmptySetHasNoRequest() {
         assertThat(CoalescedRanges.builder().build().requestCount()).isZero();
-    }
-
-    @Test
-    void aRangeNoRequestHoldsIsRejected() {
-        CoalescedRanges ranges = CoalescedRanges.builder().add(100, 10).build();
-
-        assertThatThrownBy(() -> ranges.requestHolding(105, 10))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("No request holds the range [105, 115)");
-        assertThatThrownBy(() -> ranges.requestHolding(50, 10))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("No request holds the range [50, 60)");
     }
 
     @Test

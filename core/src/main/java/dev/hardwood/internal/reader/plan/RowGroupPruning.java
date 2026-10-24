@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
@@ -61,20 +60,19 @@ final class RowGroupPruning {
     }
 
     /// Sharpens the decisions planning recorded with the row group's bloom filters, then with its
-    /// dictionaries for every leaf they leave undecided, over the bytes the read holds: the
-    /// window's bloom filters (`bloomFilterBytes`, one per column), and what `bytes` holds of
-    /// filters without a length and of dictionary pages. A filter or dictionary `bytes` does not
-    /// hold counts as absent; the caller sees from `bytes` whether any was, and only a drop then
-    /// stands. `probe` keeps the dictionaries read and the leaves decided across evaluations.
-    Arrival probeOnArrival(WorkItem workItem, ByteBuffer[] bloomFilterBytes, ByteSource bytes, Probe probe)
+    /// dictionaries for every leaf they leave undecided, over the bytes the read holds: what
+    /// `bloomFilters` holds of the filters, and what `bytes` holds of dictionary pages. A filter or
+    /// dictionary not held counts as absent; the caller sees from `bytes` whether any was, and only
+    /// a drop then stands. `probe` keeps the dictionaries read and the leaves decided across evaluations.
+    Arrival probeOnArrival(WorkItem workItem, ByteSource bloomFilters, ByteSource bytes, Probe probe)
             throws IOException {
         RowGroupFilterEvaluator.LeafDecisions leafDecisions = workItem.leafDecisions();
         if (!workItem.bloomFilterColumns().isEmpty()) {
             RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
-            RowGroupBloomFilterSource bloomFilters = new RowGroupBloomFilterSource(workItem.inputFile(), bytes,
-                    workItem.rowGroup(), bloomFilterBytes);
+            RowGroupBloomFilterSource filters = new RowGroupBloomFilterSource(workItem.inputFile(), bloomFilters,
+                    workItem.rowGroup());
             if (RowGroupFilterEvaluator.refineWithBloomFilters(workItem.columnOrdinals().filter(),
-                    workItem.rowGroup(), workItem.leafDecisions(), bloomFilters, refined) == FilterDecision.CANNOT_MATCH) {
+                    workItem.rowGroup(), workItem.leafDecisions(), filters, refined) == FilterDecision.CANNOT_MATCH) {
                 return new Arrival(true, null, bloomFilterDropEvent(workItem));
             }
             leafDecisions = refined;

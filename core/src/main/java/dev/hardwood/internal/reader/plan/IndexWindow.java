@@ -20,6 +20,7 @@ import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -31,12 +32,12 @@ import dev.hardwood.reader.ParquetReadException;
 /// ([CoalescedRanges]), the OffsetIndex slices into others, the bloom-filter slices into a third
 /// set.
 ///
-/// Formed while the file is planned, each structure's requests held by every member in a
-/// [PlanningReads]. No request starts until the planning of a member needs it: the bloom filters'
-/// for the first member that probes them ([#bloomFiltersNeed]), the page index's for the first
-/// member its Bloom filters and dictionaries keep ([#indexNeed]). Either starts every request of
-/// its structure and returns the first one not present, which the planning waits on before it
-/// slices the member's bytes. The requests are released once every member has been released
+/// Formed while the file is planned, the page index's requests and the bloom filters' each held
+/// by every member in a [PlanningReads]. No request starts until the planning of a member needs it:
+/// the bloom filters' for the first member that probes them ([#bloomFiltersNeed]), the page
+/// index's for the first member its Bloom filters and dictionaries keep ([#indexNeed]). Either
+/// starts every request it holds and returns the first one not present, which the planning waits
+/// on before it slices the member's bytes. The requests are released once every member has been released
 /// ([#release]), or when the read closes ([#releaseAll]).
 final class IndexWindow {
 
@@ -58,9 +59,9 @@ final class IndexWindow {
     private final CoalescedRanges offsetIndexes;
     private final CoalescedRanges columnIndexes;
     private final CoalescedRanges bloomFilters;
-    /// Each structure's requests; `null` until [#insertSections].
-    private PlanningReads offsetIndexReads;
-    private PlanningReads columnIndexReads;
+    /// The page index's requests, OffsetIndex and ColumnIndex; `null` until [#insertSections].
+    private PlanningReads indexReads;
+    /// The bloom filters' requests; `null` until [#insertSections].
     private PlanningReads bloomFilterReads;
 
     private IndexWindow(InputFile inputFile, int firstWorkItemIndex, List<Member> members) {
@@ -208,23 +209,17 @@ final class IndexWindow {
     /// Inserts the window's requests into `sequence`, each held by every member. Called once, as
     /// the file is planned.
     void insertSections(FetchSequence sequence) {
-        offsetIndexReads = reads(sequence, offsetIndexes, " indexes");
-        columnIndexReads = reads(sequence, columnIndexes, " indexes");
-        bloomFilterReads = reads(sequence, bloomFilters, " pruning");
-    }
-
-    private PlanningReads reads(FetchSequence sequence, CoalescedRanges ranges, String purpose) {
-        PlanningReads reads = new PlanningReads(sequence, inputFile, rowGroupLabel + purpose, members.size());
-        reads.insert(ranges);
-        return reads;
+        indexReads = new PlanningReads(sequence, inputFile, rowGroupLabel, members.size());
+        indexReads.insert(offsetIndexes, PlanningReads.INDEXES);
+        indexReads.insert(columnIndexes, PlanningReads.INDEXES);
+        bloomFilterReads = new PlanningReads(sequence, inputFile, rowGroupLabel, members.size());
+        bloomFilterReads.insert(bloomFilters, PlanningReads.PRUNING);
     }
 
     /// What reading the window's page index waits for: the first of its requests not present,
     /// after starting every one not started; `null` once all are present.
     Need indexNeed() throws IOException {
-        Need need = offsetIndexReads.start();
-        Need columnIndexNeed = columnIndexReads.start();
-        return need != null ? need : columnIndexNeed;
+        return indexReads.start();
     }
 
     /// What reading the window's bloom filters waits for, as [#indexNeed].
@@ -237,67 +232,47 @@ final class IndexWindow {
     /// @throws IllegalStateException if the work item is not a member, or a section request is not
     ///                               present
     RowGroupIndexBuffers buffersFor(int workItemIndex) throws IOException {
-        int member = member(workItemIndex);
-        requirePresent(offsetIndexReads, workItemIndex);
-        requirePresent(columnIndexReads, workItemIndex);
-        Member window = members.get(member);
-        return RowGroupIndexBuffers.slice(window.rowGroup(), window.offsetIndexColumns(),
-                window.columnIndexColumns(), (offset, length) -> slice(offsetIndexReads, offset, length),
-                (offset, length) -> slice(columnIndexReads, offset, length));
+        Member member = members.get(member(workItemIndex));
+        if (!indexReads.present()) {
+            throw new IllegalStateException("Page index of work item " + workItemIndex
+                    + " is not present: the window was not read, or was released");
+        }
+        return RowGroupIndexBuffers.slice(member.rowGroup(), member.offsetIndexColumns(),
+                member.columnIndexColumns(), indexReads);
     }
 
-    /// The bloom-filter bytes of the work item at `workItemIndex`, one entry per column of its row
-    /// group: the filter's bytes for a column this window reads it for, `null` for every other;
-    /// once [#bloomFiltersNeed] has none.
+    /// The bytes the bloom filters of the work item at `workItemIndex` are read from, once
+    /// [#bloomFiltersNeed] has none: a filter this window reads from the window, which fails with
+    /// an `IllegalStateException` if the window's bytes are not present, any other from `rest`.
     ///
-    /// @throws IllegalStateException if the work item is not a member, or a section request is not
-    ///                               present
-    ByteBuffer[] bloomFiltersFor(int workItemIndex) throws IOException {
-        int member = member(workItemIndex);
-        List<ColumnChunk> chunks = members.get(member).rowGroup().columns();
-        ByteBuffer[] result = new ByteBuffer[chunks.size()];
-        BitSet columns = members.get(member).bloomFilterColumns();
-        for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
-            ColumnMetaData metaData = chunks.get(c).metaData();
-            if (RowGroupBloomFilterSource.hasKnownExtent(metaData)) {
-                result[c] = slice(bloomFilterReads, metaData.bloomFilterOffset(), metaData.bloomFilterLength());
+    /// @throws IllegalStateException if the work item is not a member
+    ByteSource bloomFilters(int workItemIndex, ByteSource rest) {
+        member(workItemIndex);
+        return (offset, length) -> {
+            if (!bloomFilterReads.holds(offset, length)) {
+                return rest.read(offset, length);
             }
-        }
-        return result;
+            ByteBuffer bytes = bloomFilterReads.read(offset, length);
+            if (bytes == null) {
+                throw new IllegalStateException("Bloom filters of work item " + workItemIndex
+                        + " are not present: the window was not read, or was released");
+            }
+            return bytes;
+        };
     }
 
     /// Releases the window's requests for one member, which drops them once every member is
     /// released.
     void release(int workItemIndex) {
         member(workItemIndex);
-        offsetIndexReads.release();
-        columnIndexReads.release();
+        indexReads.release();
         bloomFilterReads.release();
     }
 
     /// Releases every request, as the read closes.
     void releaseAll() {
-        offsetIndexReads.discard();
-        columnIndexReads.discard();
+        indexReads.discard();
         bloomFilterReads.discard();
-    }
-
-    /// Fails unless `reads` hold every request, as they do once [#indexNeed] or [#bloomFiltersNeed]
-    /// has none and until the window is released.
-    private static void requirePresent(PlanningReads reads, int workItemIndex) throws IOException {
-        if (!reads.present()) {
-            throw new IllegalStateException("Page index of work item " + workItemIndex
-                    + " is not present: the window was not read, or was released");
-        }
-    }
-
-    /// The range `[offset, offset + length)` from `reads`, which hold it.
-    private static ByteBuffer slice(PlanningReads reads, long offset, int length) throws IOException {
-        ByteBuffer bytes = reads.read(offset, length);
-        if (bytes == null) {
-            throw new IllegalStateException("Range [" + offset + ", " + (offset + length) + ") is not present");
-        }
-        return bytes;
     }
 
     private int member(int workItemIndex) {

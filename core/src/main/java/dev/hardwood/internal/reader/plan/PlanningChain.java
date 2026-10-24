@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -40,6 +39,7 @@ import dev.hardwood.internal.reader.plan.RowGroupIterator.RowGroupPlans;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.SharedRowGroupMetadata;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
 import dev.hardwood.internal.reader.select.RowRanges;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.internal.reader.step.ReadExecutor;
@@ -194,8 +194,9 @@ final class PlanningChain {
     static final class Planning {
 
         final WorkItem workItem;
-        final PlanningReads pruningReads;
-        final PlanningReads probeReads;
+        /// The bytes its stages read outside a window: Bloom filters without a length, dictionary
+        /// pages and page-format probes.
+        final PlanningReads reads;
         final RowGroupPruning.Probe probe = new RowGroupPruning.Probe();
         RowGroupPruning.Arrival arrival;
         SharedRowGroupMetadata shared;
@@ -211,9 +212,7 @@ final class PlanningChain {
 
         Planning(WorkItem workItem, FetchSequence sequence) {
             this.workItem = workItem;
-            String rowGroup = "rg=" + workItem.rowGroupIndex();
-            this.pruningReads = new PlanningReads(sequence, workItem.inputFile(), rowGroup + " pruning", 1);
-            this.probeReads = new PlanningReads(sequence, workItem.inputFile(), rowGroup + " indexes", 1);
+            this.reads = new PlanningReads(sequence, workItem.inputFile(), "rg=" + workItem.rowGroupIndex(), 1);
         }
     }
 
@@ -676,22 +675,22 @@ final class PlanningChain {
         }
         chunkExtents(planning);
         try {
-            ByteBuffer[] bloomFilterBytes = new ByteBuffer[workItem.rowGroup().columns().size()];
+            ByteSource bloomFilters = planning.reads;
             if (!workItem.bloomFilterColumns().isEmpty()) {
                 Need need = workItem.indexWindow().bloomFiltersNeed();
                 if (need != null) {
                     return need;
                 }
-                bloomFilterBytes = workItem.indexWindow().bloomFiltersFor(workItem.workItemIndex());
+                bloomFilters = workItem.indexWindow().bloomFilters(workItem.workItemIndex(), planning.reads);
             }
-            planning.pruningReads.clearMissing();
-            RowGroupPruning.Arrival arrival = pruning.probeOnArrival(workItem, bloomFilterBytes,
-                    planning.pruningReads, planning.probe);
+            planning.reads.clearMissing();
+            RowGroupPruning.Arrival arrival = pruning.probeOnArrival(workItem, bloomFilters, planning.reads,
+                    planning.probe);
             // A filter or dictionary not yet read counted as absent: a drop stands, a keep is
             // probed again once it has arrived
-            Parsed<?> missing = planning.pruningReads.missing();
+            Parsed<?> missing = planning.reads.missing();
             if (!arrival.dropped() && missing != null) {
-                return planning.pruningReads.need(missing);
+                return planning.reads.need(missing, PlanningReads.PRUNING);
             }
             planning.arrival = arrival;
             return null;
@@ -755,11 +754,11 @@ final class PlanningChain {
         WorkItem workItem = planning.workItem;
         chunkExtents(planning);
         try {
-            planning.probeReads.clearMissing();
+            planning.reads.clearMissing();
             Parsed<Boolean> applicable = FetchPlanBuilder.masksApplicableForRowGroup(projection.decoded(),
-                    workItem.rowGroup(), workItem.fileSchema(), workItem.columnOrdinals(), planning.probeReads);
+                    workItem.rowGroup(), workItem.fileSchema(), workItem.columnOrdinals(), planning.reads);
             if (applicable.needsBytes()) {
-                return planning.probeReads.need(applicable);
+                return planning.reads.need(applicable, PlanningReads.INDEXES);
             }
             planning.mask = applicable.value() ? MaskCapability.YES : MaskCapability.NO;
             return null;
@@ -1300,8 +1299,7 @@ final class PlanningChain {
             return false;
         }
         plannings.remove(index);
-        planning.pruningReads.release();
-        planning.probeReads.release();
+        planning.reads.release();
         workItem.indexWindow().release(index);
         // Every column has passed the work item, and so every file before its own
         footerReadAhead.filesDoneBefore(workItem.fileIndex());
@@ -1334,8 +1332,7 @@ final class PlanningChain {
         executor.tasks().await(() -> !scheduled.get(), executor instanceof ReadQueue queue ? queue : null);
         for (Planning planning : plannings.values()) {
             planning.workItem.indexWindow().releaseAll();
-            planning.pruningReads.discard();
-            planning.probeReads.discard();
+            planning.reads.discard();
         }
         plannings.clear();
         return progress.failure() instanceof Error error && !failureTaken ? error : null;

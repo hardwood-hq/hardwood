@@ -31,24 +31,32 @@ import dev.hardwood.internal.reader.step.Parsed;
 /// A parse reads through it as a [ByteSource]: a range it holds is returned, one it does not is
 /// `null`, and the first such range since [#clearMissing] is kept ([#missing]). The planning then
 /// demands a section request for that range ([#need]) and parses again once it has arrived. A
-/// window inserts its ranges up front ([#insert]) and starts them together ([#start]).
+/// window inserts its ranges up front ([#insert]) and starts them together ([#start]). Each section
+/// request is read under the label of the work items it serves and its purpose ([#PRUNING],
+/// [#INDEXES]), the fetch reason S3 logs and the I/O budget name it by.
 ///
 /// The planning chain alone inserts and reads; a release may come from any column, once the
 /// chain is done with the work items it releases.
 final class PlanningReads implements ByteSource {
 
+    /// The purpose of Bloom filters and dictionary pages, read to prune row groups.
+    static final String PRUNING = "pruning";
+    /// The purpose of page indexes and page-format probes.
+    static final String INDEXES = "indexes";
+
     private final FetchSequence sequence;
     private final InputFile inputFile;
-    private final String reason;
+    /// The work items the section requests serve, such as `rg=3` or `rg=0-4`.
+    private final String label;
     /// The work items each section request serves, which release it.
     private final int holders;
     private final List<SectionRequest> sections = new ArrayList<>();
     private Parsed<?> missing;
 
-    PlanningReads(FetchSequence sequence, InputFile inputFile, String reason, int holders) {
+    PlanningReads(FetchSequence sequence, InputFile inputFile, String label, int holders) {
         this.sequence = sequence;
         this.inputFile = inputFile;
-        this.reason = reason;
+        this.label = label;
         this.holders = holders;
     }
 
@@ -57,7 +65,7 @@ final class PlanningReads implements ByteSource {
         SectionRequest section = holding(offset, length);
         if (section == null) {
             section = FetchSequence.inPlace(FetchSequence.PLANNING, inputFile,
-                    new FetchSequence.Span(offset, length, reason, holders));
+                    new FetchSequence.Span(offset, length, label, holders));
             if (section != null) {
                 sections.add(section);
             }
@@ -81,22 +89,28 @@ final class PlanningReads implements ByteSource {
         missing = null;
     }
 
+    /// Whether a section request holds `[offset, offset + length)`, present or not.
+    boolean holds(long offset, int length) {
+        return holding(offset, length) != null;
+    }
+
     /// What the planning waits for before it parses again: the section request holding the range
-    /// `parsed` needs, inserted if none does, and demanded.
-    Need need(Parsed<?> parsed) {
+    /// `parsed` needs, inserted for `purpose` if none does, and demanded.
+    Need need(Parsed<?> parsed, String purpose) {
         SectionRequest section = holding(parsed.needOffset(), parsed.needLength());
         if (section == null) {
-            section = insert(parsed.needOffset(), parsed.needLength());
+            section = insert(parsed.needOffset(), parsed.needLength(), purpose);
         }
         section.issue();
         return section;
     }
 
-    /// Inserts a section request for each request of `ranges`, which [#start] starts.
-    void insert(CoalescedRanges ranges) {
+    /// Inserts a section request for `purpose` for each request of `ranges`, which [#start]
+    /// starts.
+    void insert(CoalescedRanges ranges, String purpose) {
         for (int r = 0; r < ranges.requestCount(); r++) {
             long start = ranges.requestStart(r);
-            insert(start, Math.toIntExact(ranges.requestEnd(r) - start));
+            insert(start, Math.toIntExact(ranges.requestEnd(r) - start), purpose);
         }
     }
 
@@ -139,8 +153,8 @@ final class PlanningReads implements ByteSource {
         }
     }
 
-    private SectionRequest insert(long offset, int length) {
-        SectionRequest section = sequence.plannedSection(inputFile, offset, length, reason, holders);
+    private SectionRequest insert(long offset, int length, String purpose) {
+        SectionRequest section = sequence.plannedSection(inputFile, offset, length, label + " " + purpose, holders);
         sections.add(section);
         return section;
     }

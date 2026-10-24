@@ -28,8 +28,9 @@ import dev.hardwood.reader.ParquetReadException;
 
 /// [BloomFilterSource] backed by one `(InputFile, RowGroup)` pair.
 ///
-/// A filter whose bytes the read has already fetched (see [#hasKnownExtent]) is parsed from them;
-/// any other is read from the file. Each column's filter is read lazily (only when [#forColumn]
+/// Each filter is read from a [ByteSource]: the file, or within a read the bytes the read holds,
+/// which serve the filters a page-index window fetched ([#hasKnownExtent]) from the window. Each
+/// column's filter is read lazily (only when [#forColumn]
 /// is first called for it), and the result (including absence) is cached for the lifetime of
 /// this source, so an `IN` list probing the same column reads its filter once. The cache is a pair of arrays indexed by column position;
 /// a row group is evaluated single-threaded (a sequential `stream().filter(...)`), so it needs no
@@ -43,50 +44,35 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     private static final int HEADER_PROBE_BYTES = 64;
 
     private final InputFile inputFile;
-    /// Where a filter the read has not fetched is read from.
+    /// Where the filters are read from.
     private final ByteSource bytes;
     private final RowGroup rowGroup;
-    /// Per-column filter bytes fetched ahead of this source, or `null` for a column read from the
-    /// file.
-    private final ByteBuffer[] fetched;
     /// Per-column filter cache indexed by column position; `null` entries mean either "not read yet"
     /// or "read, no filter" — `read[i]` disambiguates so absence is cached, not re-fetched.
     private final BloomFilter[] filters;
     private final boolean[] read;
-    /// File length, resolved at most once and only on the legacy (length-absent) path. `-1` means
-    /// "not yet fetched"; a Parquet file is never zero-length, so the sentinel is unambiguous.
+    /// File length, resolved at most once, when a filter is first read. `-1` means "not yet
+    /// fetched"; a Parquet file is never zero-length, so the sentinel is unambiguous.
     private long fileLength = -1;
 
+    /// A source reading the filters from `inputFile`.
     public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup) {
-        this(inputFile, rowGroup, new ByteBuffer[rowGroup.columns().size()]);
+        this(inputFile, ByteSource.of(inputFile), rowGroup);
     }
 
-    /// @param fetched per column, the bytes `[bloom_filter_offset, bloom_filter_offset +
-    ///        bloom_filter_length)` of its filter where the read fetched them, `null` elsewhere
-    /// @throws IllegalArgumentException if `fetched` does not have one entry per column
-    public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup, ByteBuffer[] fetched) {
-        this(inputFile, ByteSource.of(inputFile), rowGroup, fetched);
-    }
-
-    /// As [#RowGroupBloomFilterSource(InputFile, RowGroup, ByteBuffer[])], reading a filter not
-    /// fetched from `bytes`.
-    public RowGroupBloomFilterSource(InputFile inputFile, ByteSource bytes, RowGroup rowGroup, ByteBuffer[] fetched) {
+    /// A source reading the filters from `bytes`.
+    public RowGroupBloomFilterSource(InputFile inputFile, ByteSource bytes, RowGroup rowGroup) {
         int columnCount = rowGroup.columns().size();
-        if (fetched.length != columnCount) {
-            throw new IllegalArgumentException("Expected fetched bloom filter bytes for "
-                    + columnCount + " columns, got " + fetched.length);
-        }
         this.inputFile = inputFile;
         this.bytes = bytes;
         this.rowGroup = rowGroup;
-        this.fetched = fetched;
         this.filters = new BloomFilter[columnCount];
         this.read = new boolean[columnCount];
     }
 
     /// Whether the footer locates the chunk's filter in full: a positive `bloom_filter_offset`
     /// and a positive `bloom_filter_length`. Only such a filter can be fetched before it is
-    /// probed; any other is read, or declined, by this source.
+    /// probed; any other is located by this source, which probes its header first.
     public static boolean hasKnownExtent(ColumnMetaData metaData) {
         Long offset = metaData.bloomFilterOffset();
         Integer length = metaData.bloomFilterLength();
@@ -135,9 +121,6 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             return Parsed.of(null);
         }
         try {
-            if (fetched[columnIndex] != null) {
-                return Parsed.of(BloomFilterReader.read(new ThriftCompactReader(fetched[columnIndex])));
-            }
             return readFilter(metaData);
         }
         catch (UnsupportedOperationException e) {
@@ -211,8 +194,7 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
                 : Parsed.of(BloomFilterReader.read(new ThriftCompactReader(buffer)));
     }
 
-    /// File length, fetched at most once, and only once a filter is read from the source rather
-    /// than from the bytes the read fetched.
+    /// File length, fetched at most once, and only once a filter is read.
     private long fileLength() throws IOException {
         if (fileLength < 0) {
             fileLength = inputFile.length();

@@ -10,7 +10,7 @@ package dev.hardwood.internal.reader.fetch;
 import java.util.Arrays;
 
 /// Byte ranges a read needs from one file, merged into as few requests as [CoalescingPolicy]
-/// allows, each range then served from the request that holds it ([#requestHolding]).
+/// allows, each range then served from the request that holds it.
 ///
 /// Ranges that overlap are first joined into extents, so every range lies within exactly one
 /// request and no byte is fetched twice. Consecutive extents, touching ones included, are then
@@ -51,19 +51,6 @@ public final class CoalescedRanges {
             bytes += requestEnds[i] - requestStarts[i];
         }
         return bytes;
-    }
-
-    /// The request holding the range `[offset, offset + length)`.
-    ///
-    /// @throws IllegalArgumentException if no request holds the range
-    public int requestHolding(long offset, int length) {
-        int found = Arrays.binarySearch(requestStarts, offset);
-        int request = found >= 0 ? found : -found - 2;
-        if (request < 0 || offset + length > requestEnds[request]) {
-            throw new IllegalArgumentException("No request holds the range [" + offset + ", "
-                    + (offset + length) + ")");
-        }
-        return request;
     }
 
     /// Collects the ranges, in any order, and plans the requests for them.

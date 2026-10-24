@@ -25,6 +25,7 @@ import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -58,24 +59,29 @@ class IndexWindowBloomFilterTest {
     }
 
     @Test
-    void aMemberWithoutBloomFilterColumnsFetchesNothingAndOneWithFetchesTheWindowsFiltersOnce() throws Exception {
+    void theWindowsFiltersAreFetchedOnceAndServeEveryMemberFromTheWindow() throws Exception {
         CountingInputFile file = countingFile();
         BitSet[] columns = { new BitSet(), column(CODE), column(CODE) };
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, members(rowGroups().subList(0, 3), columns))
                 .getFirst();
         window.insertSections(FetchSequence.demandOnly(context));
-
-        assertThat(window.bloomFiltersFor(0)).containsOnlyNulls();
         assertThat(file.reads()).isEmpty();
 
         IndexWindowTest.awaitMet(window.bloomFiltersNeed());
-        ByteBuffer first = window.bloomFiltersFor(1)[CODE];
-        ByteBuffer second = window.bloomFiltersFor(2)[CODE];
+        ByteSource outsideTheWindow = (offset, length) -> {
+            throw new AssertionError("Range at " + offset + " read outside the window");
+        };
+        ColumnMetaData firstCode = metaData(rowGroups().get(1));
+        ByteBuffer first = window.bloomFilters(1, outsideTheWindow)
+                .read(firstCode.bloomFilterOffset(), firstCode.bloomFilterLength());
+        ColumnMetaData secondCode = metaData(rowGroups().get(2));
+        ByteBuffer second = window.bloomFilters(2, outsideTheWindow)
+                .read(secondCode.bloomFilterOffset(), secondCode.bloomFilterLength());
 
         assertThat(file.reads()).extracting(CountingInputFile.Read::reason).containsExactly("rg=0-2 pruning");
-        ColumnMetaData code = metaData(rowGroups().get(1));
-        assertThat(first).isEqualTo(countingFile().readRange(code.bloomFilterOffset(), code.bloomFilterLength()));
-        assertThat(second.remaining()).isEqualTo(metaData(rowGroups().get(2)).bloomFilterLength());
+        assertThat(first).isEqualTo(countingFile().readRange(firstCode.bloomFilterOffset(),
+                firstCode.bloomFilterLength()));
+        assertThat(second.remaining()).isEqualTo(secondCode.bloomFilterLength());
     }
 
     @Test
@@ -86,12 +92,11 @@ class IndexWindowBloomFilterTest {
                 members(List.of(withoutLength), new BitSet[] { column(CODE) })).getFirst();
         window.insertSections(FetchSequence.demandOnly(context));
         assertThat(window.bloomFiltersNeed()).isNull();
-
-        ByteBuffer[] fetched = window.bloomFiltersFor(0);
-
-        assertThat(fetched).containsOnlyNulls();
         assertThat(file.reads()).isEmpty();
-        BloomFilter filter = new RowGroupBloomFilterSource(file, withoutLength, fetched).forColumn(CODE);
+
+        BloomFilter filter = new RowGroupBloomFilterSource(file, window.bloomFilters(0, ByteSource.of(file)),
+                withoutLength).forColumn(CODE);
+
         assertThat(filter).isNotNull();
         assertThat(file.reads()).isNotEmpty();
     }
