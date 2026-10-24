@@ -25,6 +25,7 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.ColumnChunk;
@@ -104,7 +105,7 @@ class FixedWidthSchemaValidationTest {
             ColumnSchema digest = reader.getFileSchema().getColumn("digest");
             ColumnChunk chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(digest.columnIndex());
             input.open();
-            ByteBuffer page = DictionaryParser.readPage(input, chunk, "");
+            DataPage page = DictionaryParser.readPage(input, chunk, "");
             assertThat(page).as("digest's dictionary page").isNotNull();
 
             assertThatThrownBy(() -> DictionaryParser.parse(page, digest, chunk.metaData(), context))

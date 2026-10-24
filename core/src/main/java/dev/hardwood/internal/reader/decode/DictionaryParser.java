@@ -21,8 +21,6 @@ import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.internal.schema.FixedWidthValidator;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -66,14 +64,14 @@ public final class DictionaryParser {
     /// @param messagePrefix put in front of the message of each failure this method raises
     ///        itself, naming where the chunk is; may be empty
     /// @throws ParquetReadException if the offsets or the page header contradict the chunk
-    public static ByteBuffer readPage(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
+    public static DataPage readPage(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
             throws IOException {
         return readPage(ByteSource.of(inputFile), columnChunk, messagePrefix).get();
     }
 
     /// As [#readPage(InputFile, ColumnChunk, String)], over the bytes `bytes` holds: the page, or
     /// the range it needs, the opening read or then the whole page.
-    public static Parsed<ByteBuffer> readPage(ByteSource bytes, ColumnChunk columnChunk, String messagePrefix)
+    public static Parsed<DataPage> readPage(ByteSource bytes, ColumnChunk columnChunk, String messagePrefix)
             throws IOException {
         Extent extent = extent(columnChunk, messagePrefix);
         int openingRead = Math.toIntExact(Math.min(extent.openingRead(), extent.availableBytes()));
@@ -81,10 +79,12 @@ public final class DictionaryParser {
         if (region == null) {
             return Parsed.need(extent.start(), openingRead);
         }
-        int pageLength = pageLength(region);
-        if (pageLength < 0) {
+        DataPage opening = DataPage.parse(region);
+        PageHeader header = opening.header();
+        if (header.type() != PageType.DICTIONARY_PAGE) {
             return Parsed.of(null);
         }
+        int pageLength = opening.headerSize() + header.compressedPageSize();
         if (pageLength > extent.availableBytes()) {
             throw new ParquetReadException(messagePrefix
                     + "Malformed Parquet metadata: the dictionary page header declares "
@@ -92,10 +92,11 @@ public final class DictionaryParser {
                     + " bytes remain in the chunk");
         }
         if (pageLength <= region.remaining()) {
-            return Parsed.of(region.slice(0, pageLength));
+            return Parsed.of(new DataPage(header, opening.headerSize(), region.slice(0, pageLength)));
         }
         ByteBuffer page = bytes.read(extent.start(), pageLength);
-        return page != null ? Parsed.of(page) : Parsed.need(extent.start(), pageLength);
+        return page != null ? Parsed.of(new DataPage(header, opening.headerSize(), page))
+                : Parsed.need(extent.start(), pageLength);
     }
 
     /// Reads the header of a column chunk's dictionary page, or returns `null` when the chunk's
@@ -145,25 +146,6 @@ public final class DictionaryParser {
     private record Extent(long start, int availableBytes, long openingRead) {
     }
 
-    /// Total byte length of the dictionary page starting at the beginning of `region` — its header
-    /// plus its compressed body — or `-1` when the region does not begin with a dictionary page.
-    ///
-    /// A page header states its own body length, so a caller holding only the page's start offset
-    /// can read a bounded probe, call this, and learn exactly how many bytes the page occupies
-    /// without knowing where the following page begins.
-    ///
-    /// @param region buffer whose first bytes are a page header
-    /// @return the page's total length in bytes, or `-1` if it is not a dictionary page
-    public static int pageLength(ByteBuffer region) {
-        ThriftCompactReader reader = new ThriftCompactReader(region, 0);
-        PageHeader header = PageHeaderReader.read(reader);
-
-        if (header.type() != PageType.DICTIONARY_PAGE) {
-            return -1;
-        }
-        return reader.getBytesRead() + header.compressedPageSize();
-    }
-
     /// Where a column chunk's first page starts, which is where its dictionary page is when it
     /// has one: the declared `dictionary_page_offset`, or `data_page_offset` when the file
     /// declares none.
@@ -196,35 +178,21 @@ public final class DictionaryParser {
         return firstPage < firstDataPageOffset ? firstPage : 0;
     }
 
-    /// Parses a dictionary page from a byte region covering the dictionary area
-    /// of a column chunk (the bytes between the chunk start and the first data page), on the
-    /// context's pool, and waits for the dictionary.
+    /// Parses the dictionary page `page`, its header as parsed with it, on the context's pool, and
+    /// waits for the dictionary.
     ///
-    /// @param dictRegion buffer covering the dictionary region
     /// @param columnSchema the column schema (for type info)
     /// @param metaData the column metadata (for codec)
     /// @param context the hardwood context, whose pool parses the page
-    /// @return the parsed dictionary, or `null` if no dictionary page is found
-    public static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema,
+    /// @return the parsed dictionary, or `null` if `page` is no dictionary page
+    public static Dictionary parse(DataPage page, ColumnSchema columnSchema,
                             ColumnMetaData metaData, HardwoodContextImpl context) {
-        WorkingSet.Column workingSet = WorkingSet.standalone(columnSchema);
-        return context.decode(buffers -> parse(dictRegion, columnSchema, metaData, context, workingSet, buffers));
-    }
-
-    private static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema, ColumnMetaData metaData,
-                                    HardwoodContextImpl context, WorkingSet.Column workingSet,
-                                    DecodeBuffers buffers) {
-        ThriftCompactReader probeReader = new ThriftCompactReader(dictRegion, 0);
-        PageHeader header = PageHeaderReader.read(probeReader);
-
-        if (header.type() != PageType.DICTIONARY_PAGE) {
+        if (page.header().type() != PageType.DICTIONARY_PAGE) {
             return null;
         }
-
-        int headerSize = probeReader.getBytesRead();
-        ByteBuffer compressedData = dictRegion.slice(headerSize, header.compressedPageSize());
-
-        return parsePage(header, compressedData, columnSchema, metaData, context, workingSet, buffers);
+        WorkingSet.Column workingSet = WorkingSet.standalone(columnSchema);
+        return context.decode(buffers -> parsePage(page.header(), page.body(), columnSchema, metaData, context,
+                workingSet, buffers));
     }
 
     /// Parses a dictionary page whose header the caller has already read. Like [#parse], it
@@ -235,7 +203,7 @@ public final class DictionaryParser {
     /// CRC computed — a second time.
     ///
     /// This is the one place the page's own claims are checked, so every entry point validates
-    /// them alike: [#parse] reaches it too, once it has found a dictionary page to hand over.
+    /// them alike: [#parse] reaches it too.
     ///
     /// Both the page type and the body's length are checked rather than trusted: a body that is
     /// not the one the header describes — a region handed over whole, say — decodes to values

@@ -8,13 +8,13 @@
 package dev.hardwood.internal.predicate.dictionary;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.function.Predicate;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Parsed;
@@ -157,16 +157,16 @@ public final class RowGroupDictionaryFilterSource {
         // `dictionary_page_offset` points it at the dictionary page instead, which the page's own
         // header tells apart. A first data page preceding the dictionary page cannot be read at
         // all, so that fails rather than degrading to "no dictionary".
-        Parsed<ByteBuffer> read = DictionaryParser.readPage(bytes, columnChunk, columnPrefix(metaData));
+        Parsed<DataPage> read = DictionaryParser.readPage(bytes, columnChunk, columnPrefix(metaData));
         if (read.needsBytes()) {
             return read.asNeed();
         }
-        ByteBuffer page = read.value();
+        DataPage page = read.value();
         if (page == null) {
             return Parsed.of(null);
         }
         ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
-        long pageEnd = columnChunk.chunkStartOffset() + page.remaining();
+        long pageEnd = columnChunk.chunkStartOffset() + page.bytes().remaining();
         Dictionary dictionary = DictionaryParser.parse(page, columnSchema, metaData, context);
         pageEnds[columnIndex] = pageEnd;
         return Parsed.of(dictionary);
