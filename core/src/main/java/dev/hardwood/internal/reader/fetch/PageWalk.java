@@ -37,7 +37,7 @@ public interface PageWalk {
     /// What the last [#advance] stopped on, or `null` when it returned a page or ended the walk:
     /// bytes not present ([ByteNeed]), or a task of the read ending, before the dictionary page it
     /// reached can be parsed beside the read's other tasks
-    /// ([dev.hardwood.internal.reader.memory.WorkingSet#admitTask]).
+    /// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]).
     Need pending();
 
     /// Which page of the column chunk this walk is on: an ordinal,

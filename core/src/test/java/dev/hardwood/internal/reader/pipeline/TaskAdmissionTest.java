@@ -55,29 +55,32 @@ class TaskAdmissionTest {
     void firstLargeTaskIsTheReadsOwn() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
 
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.OWN_TASK);
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        assertThat(workingSet.admit(LARGE).admission()).isEqualTo(WorkingSet.OWN_TASK);
+        assertThat(workingSet.admit(LARGE).admitted()).isFalse();
     }
 
     @Test
     void taskWithinTheRetentionSizeStartsBesideTheReadsOwn() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
-        workingSet.admitTask(LARGE);
+        workingSet.admit(LARGE);
 
-        assertThat(workingSet.admitTask(DecodeBuffers.RETAINED_BYTES)).isZero();
+        WorkingSet.Admission small = workingSet.admit(DecodeBuffers.RETAINED_BYTES);
+
+        assertThat(small.admitted()).isTrue();
+        assertThat(small.admission()).isZero();
     }
 
     @Test
     void taskBesideTheReadsOwnIsChargedToTheReadAheadBuffer() {
         ReadAheadBuffer readAhead = new ReadAheadBuffer(LARGE);
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, readAhead);
-        workingSet.admitTask(LARGE);
+        workingSet.admit(LARGE);
 
-        long admission = workingSet.admitTask(LARGE);
+        long admission = workingSet.admit(LARGE).admission();
 
         assertThat(admission).isEqualTo(LARGE);
         assertThat(readAhead.held()).isEqualTo(LARGE);
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        assertThat(workingSet.admit(LARGE).admitted()).isFalse();
         workingSet.taskEnded(admission);
         assertThat(readAhead.held()).isZero();
     }
@@ -85,29 +88,29 @@ class TaskAdmissionTest {
     @Test
     void refusedTaskResumesOnceTheReadsOwnEnds() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
-        long own = workingSet.admitTask(LARGE);
-        long seen = workingSet.tasksEnded();
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        long own = workingSet.admit(LARGE).admission();
+        WorkingSet.Admission refused = workingSet.admit(LARGE);
+        assertThat(refused.admitted()).isFalse();
         AtomicInteger resumed = new AtomicInteger();
-        workingSet.taskEndAfter(seen).whenMet(resumed::incrementAndGet);
+        refused.refused().whenMet(resumed::incrementAndGet);
 
         assertThat(resumed).hasValue(0);
         workingSet.taskEnded(own);
 
         assertThat(resumed).hasValue(1);
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.OWN_TASK);
+        assertThat(workingSet.admit(LARGE).admission()).isEqualTo(WorkingSet.OWN_TASK);
     }
 
     @Test
     void refusedTaskResumesAtOnceWhenATaskEndedBeforeItWaits() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, new ReadAheadBuffer(0));
-        long own = workingSet.admitTask(LARGE);
-        long seen = workingSet.tasksEnded();
-        assertThat(workingSet.admitTask(LARGE)).isEqualTo(WorkingSet.REFUSED);
+        long own = workingSet.admit(LARGE).admission();
+        WorkingSet.Admission refused = workingSet.admit(LARGE);
+        assertThat(refused.admitted()).isFalse();
         workingSet.taskEnded(own);
         AtomicInteger resumed = new AtomicInteger();
 
-        workingSet.taskEndAfter(seen).whenMet(resumed::incrementAndGet);
+        refused.refused().whenMet(resumed::incrementAndGet);
 
         assertThat(resumed).hasValue(1);
     }
@@ -116,8 +119,8 @@ class TaskAdmissionTest {
     void taskOutsideAReadIsNotAdmitted() {
         WorkingSet workingSet = new WorkingSet(1, Long.MAX_VALUE, null);
 
-        assertThat(workingSet.admitTask(LARGE)).isZero();
-        assertThat(workingSet.admitTask(LARGE)).isZero();
+        assertThat(workingSet.admit(LARGE).admission()).isZero();
+        assertThat(workingSet.admit(LARGE).admission()).isZero();
     }
 
     @Test
