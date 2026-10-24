@@ -85,7 +85,7 @@ final class FetchSequence {
     }
 
     /// The work item of an entry planning reads ([#plannedEntry]), which no work item holds.
-    private static final int PLANNING = -1;
+    static final int PLANNING = -1;
 
     private final PrefetchTasks tasks;
     private final ReadAheadBuffer readAhead;
@@ -194,11 +194,11 @@ final class FetchSequence {
     /// does not start, sliced in place.
     List<Entry> insert(int workItemIndex, InputFile inputFile, List<Span> spans) {
         if (RangeRead.inMemory(inputFile)) {
-            List<Entry> inPlace = new ArrayList<>(spans.size());
+            List<Entry> inMemory = new ArrayList<>(spans.size());
             for (Span span : spans) {
-                inPlace.add(new Entry(null, inputFile, span, workItemIndex, null));
+                inMemory.add(inPlace(workItemIndex, inputFile, span));
             }
-            return inPlace;
+            return inMemory;
         }
         List<Entry> inserted;
         RangeRead first = null;
@@ -210,10 +210,10 @@ final class FetchSequence {
             }
             inserted = new ArrayList<>(spans.size());
             for (Span span : spans) {
-                ByteBuffer inTail = TailedInputFile.sliceTail(inputFile, span.start(), span.length());
+                Entry inTail = inPlace(workItemIndex, inputFile, span);
                 if (inTail != null) {
                     // Present already: as far as planning ahead goes, started
-                    inserted.add(new Entry(null, inputFile, span, workItemIndex, inTail));
+                    inserted.add(inTail);
                     lastStarted = Math.max(lastStarted, workItemIndex);
                     continue;
                 }
@@ -246,9 +246,9 @@ final class FetchSequence {
     /// since the walk demands it at once.
     Entry insertDemanded(int workItemIndex, InputFile inputFile, long start, int length, String reason) {
         Span span = new Span(start, length, reason, 1);
-        ByteBuffer inTail = TailedInputFile.sliceTail(inputFile, start, length);
-        if (RangeRead.inMemory(inputFile) || inTail != null) {
-            return new Entry(null, inputFile, span, workItemIndex, inTail);
+        Entry inPlace = inPlace(workItemIndex, inputFile, span);
+        if (inPlace != null) {
+            return inPlace;
         }
         Entry entry = new Entry(this, inputFile, span, workItemIndex, null);
         lock.lock();
@@ -265,11 +265,13 @@ final class FetchSequence {
     /// An entry of `length` bytes at `start` that the read's planning reads, released once each of
     /// its `holders` has released it: a window's request, a dictionary page, a probe. It is neither
     /// queued nor kept by work item: it starts when planning demands it ([Entry#issue]), and is
-    /// charged to neither F nor R. For a file in memory, an entry sliced in place.
+    /// charged to neither F nor R. For a file in memory, and for a range inside the file's tail, an
+    /// entry sliced in place.
     Entry plannedEntry(InputFile inputFile, long start, int length, String reason, int holders) {
         Span span = new Span(start, length, reason, holders);
-        if (RangeRead.inMemory(inputFile)) {
-            return new Entry(null, inputFile, span, PLANNING, null);
+        Entry inPlace = inPlace(PLANNING, inputFile, span);
+        if (inPlace != null) {
+            return inPlace;
         }
         Entry entry = new Entry(this, inputFile, span, PLANNING, null);
         lock.lock();
@@ -280,6 +282,17 @@ final class FetchSequence {
             lock.unlock();
         }
         return entry;
+    }
+
+    /// An entry for `span` that needs no read: of a file in memory, sliced on its first poll, or
+    /// inside the file's tail, sliced now, since the tail may be dropped before the entry is read.
+    /// `null` for any other span.
+    static Entry inPlace(int workItemIndex, InputFile inputFile, Span span) {
+        if (RangeRead.inMemory(inputFile)) {
+            return new Entry(null, inputFile, span, workItemIndex, null);
+        }
+        ByteBuffer inTail = TailedInputFile.sliceTail(inputFile, span.start(), span.length());
+        return inTail != null ? new Entry(null, inputFile, span, workItemIndex, inTail) : null;
     }
 
     /// The entries inserted for work item `workItemIndex`, `null` when it has none.
