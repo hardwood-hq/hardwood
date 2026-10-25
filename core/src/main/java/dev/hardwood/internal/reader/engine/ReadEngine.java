@@ -91,6 +91,9 @@ public final class ReadEngine implements Closeable, Sections {
     private final long indexWindowBytes = InternalProperty.longValue("hardwood.internal.indexWindowBytes",
             16L * 1024 * 1024, 1, "a positive byte count");
 
+    /// Batch byte budgets a read decodes at most ahead of its first unpublished row (READ_PIPELINE.md,
+    /// the cap).
+    private static final int CAP_BUDGETS = 8;
     /// The admission of a page task the working set refused.
     private static final long REFUSED = Long.MIN_VALUE;
 
@@ -156,7 +159,8 @@ public final class ReadEngine implements Closeable, Sections {
 
     private Column[] columns;
     private int batchCapacity;
-    private long budgetRows;
+    /// The cap: the rows a page may start past the read's first unpublished row.
+    private long capRows;
     /// Pages placed and waiting for their decode, in row order across columns.
     private final TreeMap<Key, Ready> ready = new TreeMap<>();
     /// Every open column's first unpublished row, as a multiset: its least is the read's.
@@ -353,7 +357,7 @@ public final class ReadEngine implements Closeable, Sections {
         lock.lock();
         try {
             this.batchCapacity = batchSize;
-            this.budgetRows = budgetRows;
+            this.capRows = CAP_BUDGETS * budgetRows;
             this.maxDecodes = Math.max(1, 2 * executor.decodeThreads());
             columns = new Column[decoded.getProjectedColumnCount()];
             for (int i = 0; i < columns.length; i++) {
@@ -550,7 +554,7 @@ public final class ReadEngine implements Closeable, Sections {
                 .append(ready.isEmpty() ? "" : " readyHead=" + ready.firstKey())
                 .append(" decodesInFlight=").append(decodesInFlight).append(" waitingForTask=").append(waitingForTask)
                 .append(" cap=")
-                .append(firstUnpublishedRow() + budgetRows).append(" requests=").append(requests.size())
+                .append(firstUnpublishedRow() + capRows).append(" requests=").append(requests.size())
                 .append(" queued=").append(queued.size()).append(" queuedHead=").append(queued.peek())
                 .append(" nextList=").append(nextList).append('/').append(fileCount).append(" listed=").append(listed)
                 .append(" reachedFile=").append(reachedFile).append(" failedFrom=").append(failedFrom);
@@ -873,7 +877,7 @@ public final class ReadEngine implements Closeable, Sections {
     /// Runs each column's walk while its bytes are present, it has room for pages, and its next
     /// row is within the read-ahead; moves a column whose walk ended to its next unit.
     private void walk() {
-        long limit = firstUnpublishedRow() + budgetRows + batchCapacity;
+        long limit = firstUnpublishedRow() + capRows + batchCapacity;
         for (int k = runnable.size(); k > 0; k--) {
             Column c = runnable.pollFirst();
             c.candidate = false;
@@ -1033,7 +1037,7 @@ public final class ReadEngine implements Closeable, Sections {
     /// unpublished row. A page whose task the working set does not admit ([WorkingSet#admit])
     /// holds the pages after it until a task of the read ends or R releases room.
     private void decode() {
-        long cap = firstUnpublishedRow() + budgetRows;
+        long cap = firstUnpublishedRow() + capRows;
         Iterator<Map.Entry<Key, Ready>> it = ready.entrySet().iterator();
         while (it.hasNext() && decodesInFlight < maxDecodes) {
             Map.Entry<Key, Ready> entry = it.next();
