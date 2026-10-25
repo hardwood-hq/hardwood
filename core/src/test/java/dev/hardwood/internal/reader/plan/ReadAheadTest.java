@@ -47,7 +47,7 @@ import static dev.hardwood.internal.reader.plan.GatedReads.awaitSettled;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// How far a read fetches ahead of its consumer (READ_PIPELINE.md, Back-pressure chain;
-/// FETCH_PLANNING.md, Section requests): the next unit's first request starts before any column
+/// FETCH_PLANNING.md, Requests): the next unit's first request starts before any column
 /// reaches its row group, also where F leaves no room, and a consumer that stops reading stops the
 /// fetching once the read holds what the read-ahead cap and F allow.
 class ReadAheadTest {

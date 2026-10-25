@@ -38,7 +38,7 @@ Stages 2 and 3 can run in parallel; stage 3's gate needs stage 2.
 Done (#1287). One scheduler per read submits the pages of every column to the decode pool in
 row order, and each page task writes its values once, from the decompressed page straight into
 the arrays of the batches its rows belong to. The design is in
-[READ_PIPELINE.md](../_designs/READ_PIPELINE.md#scheduled-columns),
+[READ_PIPELINE.md](../_designs/READ_PIPELINE.md#decoded-columns),
 [NESTED_DECODE.md](../_designs/NESTED_DECODE.md#cells) and
 [VALUE_DECODE.md](../_designs/VALUE_DECODE.md#page-decode).
 

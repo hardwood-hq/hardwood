@@ -31,9 +31,9 @@ import java.util.function.Function;
 /// new set, dropped when it is given back. A context without a pool keeps a set per processor,
 /// for the threads driving its reads at once.
 ///
-/// A decode a thread waits for ([#decode]) and a column's fetch step ([#executeFirst]) run ahead
+/// A decode a thread waits for ([#decode]) and a read's walk job ([#executeFirst]) run ahead
 /// of the tasks already queued on a pool built on [#newWorkQueue()]: the waiting thread is a read
-/// that cannot go on without the decode, and the read waits for the pages a fetch step fetches,
+/// that cannot go on without the decode, and the read waits for the pages a walk job finds,
 /// while the queued tasks are read-ahead. Every other task runs in the order it arrived.
 ///
 /// A task of the pool decodes in place ([#decodeInPlace]): it holds a thread of the pool already,
@@ -60,7 +60,7 @@ public final class DecodeExecutor {
     }
 
     /// Runs `task` on the pool without a set of buffers, at the head of the queue: a column's
-    /// fetch step, which the read waits for.
+    /// walk job, which the read waits for.
     ///
     /// @throws RejectedExecutionException if the pool is shut down
     public void executeFirst(Runnable task) {
@@ -99,7 +99,7 @@ public final class DecodeExecutor {
         return await(result);
     }
 
-    /// The work queue for a context's pool: a decode a thread waits for and a fetch step go to its
+    /// The work queue for a context's pool: a decode a thread waits for and a walk job go to its
     /// head, every other task to its tail.
     public static BlockingQueue<Runnable> newWorkQueue() {
         return new AwaitedFirstQueue();
