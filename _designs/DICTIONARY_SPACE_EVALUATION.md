@@ -44,4 +44,4 @@ A batch records an entry id per value ([VALUE_DECODE.md](VALUE_DECODE.md)) and d
 
 The wrapper reads no other view. `ColumnBatchMatcher.readsEveryValueView()` returns `false` for it, and for a same-column `AND` or `OR` whose sides both do, so the column leaves the batch's dictionary values with their views deferred ([COLUMN_READER.md](COLUMN_READER.md)). A filtered read that consumes the column through its dictionary ids or its strings then never builds the views. The first `-1` row of a batch with deferred views builds them, as any reader's first view access does.
 
-Tests: `DictionaryBinaryBatchMatcherTest`, `DictionarySpaceEvaluationTest`, `ShortValueEqualityTest`, `ScheduledBinaryViewsTest`.
+Tests: `DictionaryBinaryBatchMatcherTest`, `DictionarySpaceEvaluationTest`, `ShortValueEqualityTest`, `FlatColumnBinaryViewsTest`.

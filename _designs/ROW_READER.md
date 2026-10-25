@@ -4,7 +4,7 @@ Describes how `RowReader` presents the published batches of the read pipeline as
 
 Related documents:
 
-- [READ_PIPELINE.md](READ_PIPELINE.md): the pipeline that produces the batches (scheduled columns, exchanges, batch sizing, multi-file planning, `ReaderConfig`)
+- [READ_PIPELINE.md](READ_PIPELINE.md): the read that produces the batches (decoded columns, exchanges, batch sizing, multi-file planning, `ReaderConfig`)
 - [NESTED_DECODE.md](NESTED_DECODE.md): how levels become nested batches
 - [VALUE_DECODE.md](VALUE_DECODE.md): leaf decoding
 - [LOGICAL_TYPES.md](LOGICAL_TYPES.md): annotation, timestamp and Variant accessor semantics
@@ -23,11 +23,11 @@ Related documents:
 
 Both clauses are required. An unannotated repeated primitive is a top-level primitive whose column still has a repetition level above zero. A non-repeated leaf under a group, such as `account.id`, has repetition level zero and still fails the primitive-field clause, because flat accessors address a column by its leaf name and report leaf columns where the nested reader reports top-level fields.
 
-A file that contains a struct or a repeated column reads through `FlatRowReader` when the decoded projection leaves those columns out. A scalar payload filtered on a list or a struct stays on `NestedRowReader`: `FlatRowReader.create` builds a `ScheduledFlatColumn` for every decoded column, and its predicate view reads flat batches. `FileSchema.isFlatSchema()` stays the file-wide test.
+A file that contains a struct or a repeated column reads through `FlatRowReader` when the decoded projection leaves those columns out. A scalar payload filtered on a list or a struct stays on `NestedRowReader`: `FlatRowReader.create` starts a `FlatColumn` for every decoded column, and its predicate view reads flat batches. `FileSchema.isFlatSchema()` stays the file-wide test.
 
 Both are `final`, implement `RowReader` through the internal `FileAwareRowReader`, and share no base class, though their iteration code is similar. `FlatRowReader` keeps every hot method in one concrete class so the JIT sees monomorphic call sites and inlines `hasNext`, `next` and the primitive accessors into the caller's loop; a base class carrying the nested path's delegation would put that indirection on the flat path. A change that pulls shared behaviour up into a superclass needs that trade-off argued again.
 
-**Wiring.** Each reader's `create` builds one `ScheduledColumn` and one `BatchExchange` in recycling mode per decoded column, all drawing from one `RowGroupIterator` and submitted by one `ReadScheduler`, starts the columns and loads the first batch. The reader owns the iterator: no column does, so the reader releases it on close, and that release is what stops the owning `ParquetFileReader` tracking it. Batch size is resolved once by `ParquetFileReader.resolveBatchSize`, the same funnel the column readers use, so a projection batches the same whichever reader reads it.
+**Wiring.** Each reader's `create` builds one `BatchExchange` in recycling mode per decoded column, starts the read's columns on its `RowGroupIterator`, each publishing into its exchange, and loads the first batch. The reader owns the read: it closes it on close, before it recycles the batch holders, and that close is what stops the owning `ParquetFileReader` tracking it. Batch size is resolved once by `ParquetFileReader.resolveBatchSize`, the same funnel the column readers use, so a projection batches the same whichever reader reads it.
 
 **Flat accessor state.** At construction `FlatRowReader` precomputes, per payload column, the physical type, the column schema, a `LeafKind` for `getValue` and whether `getString` may read it. Per batch it holds the column's value array and validity bitmap. A column whose batch has no nulls points its validity slot at a shared all-ones sentinel sized for the largest batch, so the per-row null test is one word load and mask with no null guard.
 

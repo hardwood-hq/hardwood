@@ -164,7 +164,7 @@ The mode is set on `S3Source`, not per file, because it follows the workload: in
 Composition with the layers around it:
 
 - The tail sits below the cache, in the fetcher. Under `SPARSE_TEMPFILE` the core's read of the tail fills the mapping from the tail buffer, and neither layer counts it as network traffic.
-- The read's fetch sequence sits above it ([FETCH_PLANNING.md](FETCH_PLANNING.md)). A section request's bytes are released once every column has passed it; the same bytes stay in the file-level cache, so a later section request covering the same range is a cache hit.
+- The read's requests sit above it ([FETCH_PLANNING.md](FETCH_PLANNING.md#requests)). A request's bytes are released once every column has passed it; the same bytes stay in the file-level cache, so a later request covering the same range is a cache hit.
 - Local files do not use it: `MappedInputFile` already is a whole-file mapping ([INPUT_FILES.md](INPUT_FILES.md)).
 
 Constraints of the mode:

@@ -103,7 +103,7 @@ A file whose top-level fields are all primitive and whose columns have no repeti
 The public API (`PqIntList`, `getLong()`, `ColumnReader`'s typed arrays) avoids boxing wherever possible. Internal code uses primitive arrays (`int[]`, `long[]`) rather than `List<Integer>`.
 
 ### Row-Ordered Decode into Batches
-Each decoded column (the projection plus any filter-only predicate columns) fetches its pages in steps on a fixed platform-thread pool owned by the `HardwoodContext`, and its reads run on virtual threads. One scheduler per read submits every column's pages, in row order, to the same pool, where they are decoded straight into batches, with back-pressure towards the consumer ([READ_PIPELINE.md](_designs/READ_PIPELINE.md), [THREADING.md](_designs/THREADING.md)).
+Each read holds its state under one lock and decides what runs next in one place, its `RowGroupIterator`. Its walks over each decoded column's pages (the projection plus any filter-only predicate columns), its planning and its decodes run as jobs on a fixed platform-thread pool owned by the `HardwoodContext`, and its reads run on virtual threads. The read starts every column's decodes in row order, where they are decoded straight into batches, with back-pressure towards the consumer ([READ_PIPELINE.md](_designs/READ_PIPELINE.md), [THREADING.md](_designs/THREADING.md)).
 
 ### Minimal Dependencies
 `hardwood-core` has no required runtime dependency. GZIP goes through the JDK; the other codecs use compression libraries that are optional, needed only for the codecs a file uses. LZO is not supported. `hardwood-s3` implements its S3 client and SigV4 signing without the AWS SDK.
@@ -142,5 +142,5 @@ The read path in `core` is split into packages by responsibility. Each package d
 | `internal.reader.footer` | Reading and parsing a file's footer | [FILE_METADATA.md](_designs/FILE_METADATA.md) |
 | `internal.reader.plan` | The planning of a read: work items, pruning, fetch plans per row group, the batch plan | [READ_PIPELINE.md](_designs/READ_PIPELINE.md), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) |
 | `internal.reader.pipeline` | Decoded pages into batches: the decoded columns, cells, segments and fills | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) |
-| `internal.reader.engine` | A read with a single decision point (`RowGroupIterator`): the planning, requests, walks and decodes of every column and row read | [READ_PIPELINE.md](_designs/READ_PIPELINE.md), [THREADING.md](_designs/THREADING.md) |
+| `internal.reader.engine` | A read with a single decision point (`RowGroupIterator`): the planning, requests, walks and decodes of every column and row read | [READ_PIPELINE.md](_designs/READ_PIPELINE.md#one-decision-point), [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md#requests), [THREADING.md](_designs/THREADING.md) |
 | `internal.reader.row` | The row readers, their flyweights and accessors, record filtering | [ROW_READER.md](_designs/ROW_READER.md), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) |
