@@ -142,8 +142,6 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Whether the read has a filter, under which its Bloom filters and dictionaries may drop work
     /// items and its batches close where the always-match flag changes.
     private boolean filtered;
-    /// The read's decoded columns, each of which passes every unit.
-    private int columnCount;
     private WorkingSet workingSet;
     private int fileCount;
     /// The files after the one the read has reached whose footers start ahead of it.
@@ -156,6 +154,9 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     // ==================== State, guarded by the lock ====================
 
+    /// Where the read is in its life: the poll does nothing but in [Phase#ASKING] and
+    /// [Phase#RUNNING].
+    private Phase phase = Phase.IDLE;
     /// The next unit to plan, the stage need it waits for, and whether a stage job runs.
     private int nextPlan;
     private Need planNeed;
@@ -176,9 +177,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     private int doneBefore;
     /// The furthest unit a column has entered, or [#hasLiveWorkItem] has reached.
     private int furthestUnit;
-    /// The unit a question asked before the columns start probes, `-1` while none is asked, what
-    /// the question is, and its answer once decided.
-    private int probe = -1;
+    /// The unit the question asked ([Phase#ASKING]) probes, what the question is, and its answer
+    /// once decided.
+    private int probe;
     private Probe probeMode;
     private Boolean probeAnswer;
     /// Footers waiting for another read's load of them.
@@ -199,9 +200,10 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Requests demanded since the last poll: a walk or planning stopped on them.
     private final List<Request> demands = new ArrayList<>();
 
-    private Column[] columns;
-    /// The columns whose placement has not ended at the row cap, each of which holds the units
-    /// listed from the one it is in on.
+    /// The read's decoded columns, none before they start.
+    private Column[] columns = new Column[0];
+    /// The decoded columns whose placement has not ended at the row cap, each of which holds the
+    /// units listed from the one it is in on: before the columns start, every decoded column.
     private int placingColumns;
     private int batchCapacity;
     /// The cap: the rows a page may start past the read's first unpublished row.
@@ -232,7 +234,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     private boolean repoll;
     /// The bytes the read released from R under the lock, returned once it lets go of it.
     private long toRelease;
-    private boolean closed;
+    /// The failure that ended the read ([Phase#FAILED]), kept once the read closes.
     private Throwable failure;
     /// An `Error` a footer read failed with that no listing has raised yet, which the read's close
     /// raises.
@@ -257,6 +259,26 @@ public final class RowGroupIterator implements Closeable, Sections {
     }
 
     private record Ready(int column, DecodedColumn.Page page) {
+    }
+
+    /// A read's phase. A read fails or closes in any phase; a read that failed still closes, and a
+    /// read that closed stays closed when a job's failure reaches it.
+    private enum Phase {
+        /// The columns have not started, and no question is asked of the read.
+        IDLE,
+        /// A question is asked of the read before its columns start ([#ask]), which its jobs
+        /// answer while the caller waits.
+        ASKING,
+        /// The columns have started.
+        RUNNING,
+        /// The read failed ([#failure]): the poll decides nothing more, and the jobs in flight end;
+        /// its footer loads go on, so that the reader's other reads find them complete: a footer
+        /// whose read was in flight is read again once or parsed, and one another read's load
+        /// ended is claimed again.
+        FAILED,
+        /// The read is closed: the poll decides nothing more, and the jobs in flight end; a footer
+        /// whose read was in flight is still parsed.
+        CLOSED
     }
 
     /// One unit of the read, a work item: its file, whether it is planned, the columns still to
@@ -403,7 +425,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         this.referenceSchema = schema;
         this.filtered = filter != null;
         this.fetchAheadBytes = maxRows > 0 ? 0 : defaultFetchAheadBytes(maxSpan);
-        this.columnCount = projection.decoded().getProjectedColumnCount();
+        int columnCount = projection.decoded().getProjectedColumnCount();
         WorkingSet workingSet = new WorkingSet(columnCount, readAhead);
         this.planning = new ReadPlanning(files, this, context, schema, rowGroups, projection, filter,
                 metadataFiltering, maxRows, physicalSkip, maxSpan, indexWindowBytes, workingSet);
@@ -414,6 +436,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         ReadPlanning.FileListing first = planning.listFile(0, 0);
         lock.lock();
         try {
+            placingColumns = columnCount;
             footers = new FileState[fileCount];
             for (int i = 0; i < fileCount; i++) {
                 footers[i] = new FileState(i);
@@ -433,9 +456,8 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Appends `count` units of file `file`, with every column whose placement goes on still to
     /// pass each.
     private void appendUnits(int file, int count) {
-        int holders = columns == null ? columnCount : placingColumns;
         for (int i = 0; i < count; i++) {
-            units.add(new Unit(file, holders));
+            units.add(new Unit(file, placingColumns));
         }
     }
 
@@ -526,6 +548,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     private boolean ask(Probe mode) throws IOException {
         lock.lock();
         try {
+            if (phase == Phase.IDLE) {
+                phase = Phase.ASKING;
+            }
             probe = 0;
             probeMode = mode;
             probeAnswer = null;
@@ -539,7 +564,9 @@ public final class RowGroupIterator implements Closeable, Sections {
         WorkItem failedAt;
         lock.lock();
         try {
-            probe = -1;
+            if (phase == Phase.ASKING) {
+                phase = Phase.IDLE;
+            }
             if (probeAnswer != null) {
                 return probeAnswer;
             }
@@ -559,7 +586,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     private boolean probeDecided() {
         lock.lock();
         try {
-            return probeAnswer != null || failure != null || closed || probe >= failedFrom;
+            return probeAnswer != null || finished() || probe >= failedFrom;
         }
         finally {
             unlock();
@@ -624,6 +651,9 @@ public final class RowGroupIterator implements Closeable, Sections {
             this.batchCapacity = batchSize;
             this.capRows = CAP_BUDGETS * budgetRows;
             this.maxDecodes = Math.max(1, 2 * executor.decodeThreads());
+            if (phase == Phase.IDLE) {
+                phase = Phase.RUNNING;
+            }
             columns = new Column[decoded.getProjectedColumnCount()];
             placingColumns = columns.length;
             for (int i = 0; i < columns.length; i++) {
@@ -1034,27 +1064,33 @@ public final class RowGroupIterator implements Closeable, Sections {
     private void fail(Throwable t) {
         if (failure == null) {
             failure = t;
-            if (columns != null) {
-                for (Column c : columns) {
-                    c.ended = true;
-                    if (!c.side.ended()) {
-                        c.side.fail(t);
-                    }
+            if (phase != Phase.CLOSED) {
+                phase = Phase.FAILED;
+            }
+            for (Column c : columns) {
+                c.ended = true;
+                if (!c.side.ended()) {
+                    c.side.fail(t);
                 }
             }
         }
+    }
+
+    /// Whether the read has failed or closed, so that the poll decides nothing more.
+    private boolean finished() {
+        return phase == Phase.FAILED || phase == Phase.CLOSED;
     }
 
     /// Fails the read where nothing is in flight, nothing was emitted, nothing outside the read is
     /// waited for, and a column has not ended: nothing could make progress any more, which only a
     /// rule of the read that misses a case brings about.
     private void checkStall(List<Runnable> emitted) {
-        if (closed || failure != null || inFlight > 0 || !emitted.isEmpty() || waitingForRoom
+        if (finished() || inFlight > 0 || !emitted.isEmpty() || waitingForRoom
                 || waitingForTask || pendingFooters > 0 || planNeed != null && !(planNeed instanceof Request)) {
             return;
         }
-        if (columns == null) {
-            if (probe >= 0 && probeAnswer == null && probe < failedFrom) {
+        if (phase != Phase.RUNNING) {
+            if (phase == Phase.ASKING && probeAnswer == null && probe < failedFrom) {
                 fail(new IllegalStateException("Read stalled: " + describe()));
             }
             return;
@@ -1093,7 +1129,7 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     private String describe() {
         StringBuilder b = new StringBuilder();
-        b.append("nextPlan=").append(nextPlan).append('/').append(units.size()).append(" planRunning=").append(planRunning)
+        b.append("phase=").append(phase).append(" nextPlan=").append(nextPlan).append('/').append(units.size()).append(" planRunning=").append(planRunning)
                 .append(" planNeed=").append(planNeed).append(" ready=").append(ready.size())
                 .append(ready.isEmpty() ? "" : " readyHead=" + ready.firstKey())
                 .append(" decodesInFlight=").append(decodesInFlight).append(" waitingForTask=").append(waitingForTask)
@@ -1107,7 +1143,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         if (nextList < fileCount) {
             b.append(" nextListFooter=").append(footers[nextList]);
         }
-        for (int i = 0; columns != null && i < columns.length; i++) {
+        for (int i = 0; i < columns.length; i++) {
             Column c = columns[i];
             b.append("\n  column ").append(i).append(": unit=").append(c.unit).append(" walk=").append(c.walk != null)
                     .append(" walking=").append(c.walking).append(" waitingOn=").append(c.waitingOn)
@@ -1120,23 +1156,21 @@ public final class RowGroupIterator implements Closeable, Sections {
     // ==================== What happens next ====================
 
     private List<Runnable> poll() {
-        if (!closed && failure == null) {
-            if (columns != null) {
-                // once every column's placement has ended at the row cap, the read reaches no
-                // further file and plans nothing more
-                if (placingColumns > 0) {
-                    filesReached();
-                    plan();
-                }
-                walk();
-                startRequests();
-                decode();
-            }
-            else if (probe >= 0 && probeAnswer == null) {
+        if (phase == Phase.RUNNING) {
+            // once every column's placement has ended at the row cap, the read reaches no
+            // further file and plans nothing more
+            if (placingColumns > 0) {
                 filesReached();
-                probe();
-                startRequests();
+                plan();
             }
+            walk();
+            startRequests();
+            decode();
+        }
+        else if (phase == Phase.ASKING && probeAnswer == null) {
+            filesReached();
+            probe();
+            startRequests();
         }
         tasks.signal();
         return out;
@@ -1381,9 +1415,6 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     /// Queues the columns that wait for a unit from `from` on to be listed or planned.
     private void wakeColumnsFrom(int from) {
-        if (columns == null) {
-            return;
-        }
         for (Column c : columns) {
             if (c.walk == null && c.unit >= from) {
                 markRunnable(c);
@@ -1402,7 +1433,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     private void filesReached() {
         int consumer = consumerUnit();
         // before the columns start, the read has reached the unit the probe has
-        int unit = columns == null ? furthestUnit : Math.max(furthestUnit, consumer + 1);
+        int unit = phase == Phase.ASKING ? furthestUnit : Math.max(furthestUnit, consumer + 1);
         int file = unit < units.size() ? units.get(unit).file : listed ? fileCount : nextList;
         if (file == fileCount && !units.isEmpty()) {
             // the file of the last unit is reached before every file is
@@ -1481,7 +1512,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     private void footerPendingDone(FileState f) {
         f.pending = false;
         pendingFooters--;
-        if (!closed) {
+        if (phase != Phase.CLOSED) {
             startFooter(f, false);
         }
     }
@@ -1525,7 +1556,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     private void footerReadFailed(FileState f, Exception e) {
         uncharge(f);
         LOG.get().log(System.Logger.Level.DEBUG, "Read ahead of demand failed: {0}", f, e);
-        if (closed) {
+        if (phase == Phase.CLOSED) {
             return;
         }
         if (!f.retried) {
@@ -2432,15 +2463,13 @@ public final class RowGroupIterator implements Closeable, Sections {
     public void close() {
         lock.lock();
         try {
-            if (closed) {
+            if (phase == Phase.CLOSED) {
                 return;
             }
-            closed = true;
-            if (columns != null) {
-                for (Column c : columns) {
-                    c.ended = true;
-                    c.side.stop();
-                }
+            phase = Phase.CLOSED;
+            for (Column c : columns) {
+                c.ended = true;
+                c.side.stop();
             }
         }
         finally {
