@@ -17,7 +17,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.locks.ReentrantLock;
@@ -60,6 +62,7 @@ import dev.hardwood.internal.reader.step.ReadQueue;
 import dev.hardwood.internal.reader.step.ReadTasks;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -97,6 +100,8 @@ import dev.hardwood.schema.FileSchema;
 public final class RowGroupIterator implements Closeable, Sections {
 
     public static final String FETCH_AHEAD_BYTES_PROPERTY = "hardwood.internal.fetchAheadBytes";
+
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RowGroupIterator.class.getName()));
 
     private final FileMetadataCache files;
     private final HardwoodContextImpl context;
@@ -236,6 +241,12 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// An `Error` a footer read failed with that no listing has raised yet, which the read's close
     /// raises.
     private Error untakenError;
+    /// The requests read ahead whose read failed with an `Error`: the read raises it where it
+    /// reaches the request, and its close raises the first nothing took.
+    private final List<Request> erred = new ArrayList<>();
+    /// The `Error`s of [#erred], which a walk's job tells from an `Error` of its own outside the
+    /// lock.
+    private final Set<Throwable> requestErrors = ConcurrentHashMap.newKeySet();
     private List<Runnable> out;
 
     private record Key(long row, int column, long seq) implements Comparable<Key> {
@@ -329,7 +340,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         /// Whether the column's placement has ended at the row cap.
         boolean placed;
         /// The failure its walk met, applied once every page taken before it is decoded.
-        Exception walkFailure;
+        Throwable walkFailure;
         /// Whether the walk's failure ends the column behind its open cell, sealed, rather than
         /// abandoning it: the failure was met between two batches.
         boolean sealAtFailure;
@@ -1035,7 +1046,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             return;
         }
         if (planNeed != null) {
-            if (planNeed instanceof Request r && r.bytes == null && r.failure == null) {
+            if (planNeed instanceof Request r && !r.done()) {
                 return;
             }
             planNeed = null;
@@ -1094,7 +1105,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             return;
         }
         if (planNeed != null) {
-            if (planNeed instanceof Request r && r.bytes == null && r.failure == null) {
+            if (planNeed instanceof Request r && !r.done()) {
                 return;
             }
             planNeed = null;
@@ -1341,6 +1352,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// meanwhile leaves the load to its close, which gives it up.
     private void footerReadFailed(FileState f, Exception e) {
         uncharge(f);
+        LOG.get().log(System.Logger.Level.DEBUG, "Read ahead of demand failed: {0}", f, e);
         if (closed) {
             return;
         }
@@ -1431,7 +1443,7 @@ public final class RowGroupIterator implements Closeable, Sections {
                 c.unitTaken = false;
             }
             if (c.waitingOn instanceof Request r) {
-                if (r.bytes == null && r.failure == null) {
+                if (!r.done()) {
                     continue;
                 }
             }
@@ -1469,6 +1481,13 @@ public final class RowGroupIterator implements Closeable, Sections {
                             walk.currentPage());
                     return read -> read.walked(column, unit, workItem, batches, pages, ordinals, placed);
                 }
+                catch (Error e) {
+                    if (!requestErrors.contains(e)) {
+                        throw e;
+                    }
+                    // a request's read failed with it: the column fails where it reached the bytes
+                    return read -> read.walked(column, unit, workItem, batches, pages, ordinals, e);
+                }
                 Need pending = pages.size() < room ? walk.pending() : null;
                 boolean ended = pages.size() < room && pending == null;
                 return e -> e.walked(column, unit, workItem, batches, pages, ordinals, pending, ended);
@@ -1503,7 +1522,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// whose batches close the batch left open is met between two batches: the open cell, which
     /// every column ends at the same row, is sealed and published ahead of the failure.
     private void walked(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
-                        List<PageInfo> pages, List<Integer> ordinals, Exception failure) {
+                        List<PageInfo> pages, List<Integer> ordinals, Throwable failure) {
         Column c = columns[column];
         c.walking = false;
         if (c.placed || c.ended) {
@@ -1521,7 +1540,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         walkFailed(c, failure);
     }
 
-    private void walkFailed(Column c, Exception failure) {
+    private void walkFailed(Column c, Throwable failure) {
         c.walk = null;
         c.walkFailure = failure;
         endAtWalkFailure(c);
@@ -1606,7 +1625,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             c.waitingOn = pending;
             if (pending instanceof Request r) {
                 demands.add(r);
-                if (r.bytes != null || r.failure != null) {
+                if (r.done()) {
                     // arrived while the walk ran
                     markRunnable(c);
                 }
@@ -1894,6 +1913,9 @@ public final class RowGroupIterator implements Closeable, Sections {
                 // a checked exception the file threw undeclared fails the request as one it declared
                 return read -> read.requestFailed(r, e);
             }
+            catch (Error e) {
+                return read -> read.requestErred(r, e);
+            }
             return read -> read.arrived(r, bytes);
         });
     }
@@ -1916,6 +1938,10 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// final, and fails what reads it.
     private void requestFailed(Request r, Exception e) {
         uncharge(r);
+        if (!awaited(r)) {
+            // the walk or the stage that reaches the request reports its failure
+            LOG.get().log(System.Logger.Level.DEBUG, "Read ahead of demand failed: {0}", r, e);
+        }
         if (r.released) {
             return;
         }
@@ -1929,6 +1955,23 @@ public final class RowGroupIterator implements Closeable, Sections {
                     + "Failed to fetch data at offset " + r.span.start() + " (length " + r.span.length() + ")", e);
             wakeWaiting(r);
         }
+    }
+
+    /// A request whose read failed with an `Error` is not read again: the walk or the planning stage
+    /// that reaches it, or that waits for it and runs again at once, raises the `Error` there, a
+    /// walk as its column's failure and a stage as a planning failure of its work item; the read's
+    /// close raises it if none does.
+    private void requestErred(Request r, Error e) {
+        uncharge(r);
+        r.error = e;
+        requestErrors.add(e);
+        erred.add(r);
+        wakeWaiting(r);
+    }
+
+    /// Whether a walk, or the planning stage the read runs next, stopped on `r`.
+    private boolean awaited(Request r) {
+        return !r.waiting.isEmpty() || planNeed == r;
     }
 
     private void uncharge(Request r) {
@@ -2018,6 +2061,10 @@ public final class RowGroupIterator implements Closeable, Sections {
         final Span span;
         volatile ByteBuffer bytes;
         volatile IOException failure;
+        /// The `Error` the request's read failed with, which is not read again, and whether a walk
+        /// or a planning stage raised it.
+        volatile Error error;
+        volatile boolean errorTaken;
         boolean started;
         /// A read planning makes, started only when demanded.
         boolean planning;
@@ -2069,7 +2116,17 @@ public final class RowGroupIterator implements Closeable, Sections {
             if (b == null && failure != null) {
                 throw failure;
             }
+            Error e = error;
+            if (b == null && e != null) {
+                errorTaken = true;
+                throw e;
+            }
             return b;
+        }
+
+        /// Whether the request's read has completed: its bytes arrived, or it failed for good.
+        boolean done() {
+            return bytes != null || failure != null || error != null;
         }
 
         @Override
@@ -2151,7 +2208,8 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Stops the read and waits until no job of it is in flight, then releases what it holds.
     /// Interrupts nothing. Idempotent.
     ///
-    /// @throws Error the `Error` a footer read ahead failed with that the read never reached
+    /// @throws Error the `Error` a footer read or a request read ahead failed with that the read
+    ///         never reached
     @Override
     public void close() {
         lock.lock();
@@ -2176,6 +2234,12 @@ public final class RowGroupIterator implements Closeable, Sections {
         try {
             untaken = untakenError;
             untakenError = null;
+            for (Request r : erred) {
+                if (untaken == null && !r.errorTaken && r.error != failure) {
+                    untaken = r.error;
+                }
+                r.errorTaken = true;
+            }
             for (List<Request> unit : byUnit.values()) {
                 for (Request r : unit) {
                     uncharge(r);
