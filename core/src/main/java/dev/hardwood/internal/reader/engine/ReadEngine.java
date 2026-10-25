@@ -320,6 +320,11 @@ public final class ReadEngine implements Closeable, Sections {
         boolean placed;
         /// The failure its walk met, applied once every page taken before it is decoded.
         Exception walkFailure;
+        /// Whether the walk's failure ends the column behind its open cell, sealed, rather than
+        /// abandoning it: the failure was met between two batches.
+        boolean sealAtFailure;
+        /// Whether the column has placed a page of the unit it is in.
+        boolean unitTaken;
 
         Column(EngineColumn side, int index) {
             this.side = side;
@@ -1254,6 +1259,7 @@ public final class ReadEngine implements Closeable, Sections {
                 planning.enterUnit(c.unit);
                 planning.enter(i, c.unit);
                 c.walk = plan.walk();
+                c.unitTaken = false;
             }
             if (c.waitingOn instanceof Request r) {
                 if (r.bytes == null && r.failure == null) {
@@ -1324,7 +1330,9 @@ public final class ReadEngine implements Closeable, Sections {
     }
 
     /// Places the pages a walk took before it failed, and ends the column with `failure` once they
-    /// are decoded ([#endAtWalkFailure]).
+    /// are decoded ([#endAtWalkFailure]). A failure met before the walk took a page of a work item
+    /// whose batches close the batch left open is met between two batches: the open cell, which
+    /// every column ends at the same row, is sealed and published ahead of the failure.
     private void walked(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
                         List<PageInfo> pages, List<Integer> ordinals, Exception failure) {
         Column c = columns[column];
@@ -1332,6 +1340,7 @@ public final class ReadEngine implements Closeable, Sections {
         if (c.placed || c.ended) {
             return;
         }
+        c.sealAtFailure = pages.isEmpty() && !c.unitTaken && batches.closesOpenBatch();
         if (!place(c, workItem, batches, pages, ordinals)) {
             return;
         }
@@ -1356,7 +1365,12 @@ public final class ReadEngine implements Closeable, Sections {
             return;
         }
         c.ended = true;
-        c.side.walkFailed(c.walkFailure);
+        if (c.sealAtFailure) {
+            c.side.end(c.walkFailure);
+        }
+        else {
+            c.side.walkFailed(c.walkFailure);
+        }
         sealed(c);
         c.side.publish();
         refresh(c);
@@ -1366,6 +1380,7 @@ public final class ReadEngine implements Closeable, Sections {
     /// column as a walk's failure does, behind the segments placed before it.
     private boolean place(Column c, WorkItem workItem, BatchPlan.RowGroupBatches batches,
                           List<PageInfo> pages, List<Integer> ordinals) {
+        c.unitTaken |= !pages.isEmpty();
         try {
             for (int p = 0; p < pages.size(); p++) {
                 ready(c, c.side.place(pages.get(p), batches, workItem.inputFile().name(), workItem.rowGroupIndex(),
@@ -1659,8 +1674,8 @@ public final class ReadEngine implements Closeable, Sections {
             demands.add(r);
         }
         else {
-            r.failure = new IOException(r.inputFile.name() + ": failed to fetch data at offset " + r.span.start()
-                    + " (length " + r.span.length() + ")", e);
+            r.failure = new IOException(ExceptionContext.filePrefix(r.inputFile.name())
+                    + "Failed to fetch data at offset " + r.span.start() + " (length " + r.span.length() + ")", e);
             wakeWaiting(r);
         }
     }
