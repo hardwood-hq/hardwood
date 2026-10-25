@@ -17,7 +17,7 @@ import dev.hardwood.schema.FileSchema;
 /// A filtered read decodes the columns its predicate references whether or not the caller
 /// projected them. `payload` is the caller's projection, the only columns a reader's accessors
 /// reach. `decoded` is the payload plus the predicate columns it does not cover, which every
-/// scheduled column, exchange and fetch plan spans. The payload's columns and top-level fields lead
+/// decoded column, exchange and fetch plan spans. The payload's columns and top-level fields lead
 /// `decoded`, at the indices they hold in `payload`, so a decoded index below
 /// [#payloadColumnCount()] names the same column in both. A decoded column past it is
 /// **filter-only**: it serves the predicate and nothing else. See

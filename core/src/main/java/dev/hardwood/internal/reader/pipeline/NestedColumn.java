@@ -211,9 +211,14 @@ public final class NestedColumn implements DecodedColumn {
         return task;
     }
 
+    @Override
+    public boolean decodes(Page page) {
+        return !placementEnded;
+    }
+
     /// Marks a page measured and places the measured pages at the head of the pages not yet placed.
     @Override
-    public void decoded(Object result) throws Exception {
+    public void decoded(Object result) {
         ((NestedPageTask) result).measured = true;
         placeMeasured();
     }
@@ -258,7 +263,11 @@ public final class NestedColumn implements DecodedColumn {
             goesOn = placer.place(page, page.measure, repeated);
         }
         catch (RuntimeException e) {
-            throw rethrowable(placed(e, page.fileName, page.rowGroup, page.pageIndex));
+            // a failure inside a work item: the column ends behind the cells before the open one
+            placementEnded = true;
+            abandonAt(placed(e, page.fileName, page.rowGroup, page.pageIndex));
+            publisher.publish();
+            return;
         }
         // Every cell the page reaches holds its segment, and none of them is filled before the
         // read's lock is released
@@ -298,19 +307,10 @@ public final class NestedColumn implements DecodedColumn {
             placer.end();
         }
         catch (RuntimeException e) {
-            throw lastPlaced == null
-                    ? e
-                    : rethrowable(placed(e, lastPlaced.fileName, lastPlaced.rowGroup, lastPlaced.pageIndex));
+            // the column is short of the plan at the read's end
+            abandonAt(lastPlaced == null ? e : placed(e, lastPlaced.fileName, lastPlaced.rowGroup,
+                    lastPlaced.pageIndex));
         }
-    }
-
-    /// `placed`, a placed runtime failure, as the runtime failure it is; a placed failure keeps
-    /// the type of the failure it places.
-    private static RuntimeException rethrowable(Exception placed) {
-        if (placed instanceof RuntimeException runtime) {
-            return runtime;
-        }
-        throw new IllegalStateException("A placement failure lost its type", placed);
     }
 
     @Override

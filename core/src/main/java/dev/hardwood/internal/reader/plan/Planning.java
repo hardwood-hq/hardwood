@@ -8,14 +8,12 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
 import dev.hardwood.internal.reader.fetch.Sections;
 
-/// One work item's state: what its stages have decided so far and the bytes they read, written
-/// by the chain, and the columns that hold it and whether the read has entered it and reported
-/// its drop.
+/// One work item's state: what its stages have decided so far and the bytes they read, and
+/// whether the read has entered it and reported its drop.
 final class Planning {
 
     final WorkItem workItem;
@@ -30,13 +28,11 @@ final class Planning {
     /// The validated chunk extents of the decoded columns, taken before any stage reads a
     /// chunk (`Planner.chunkExtents`).
     Extent[] extents;
-    /// The columns that took the work item and have not released it, `0` before the first takes it.
-    final AtomicInteger holders = new AtomicInteger();
     final AtomicBoolean entered = new AtomicBoolean();
     final AtomicBoolean reported = new AtomicBoolean();
 
-    Planning(WorkItem workItem, Sections sequence) {
+    Planning(WorkItem workItem, Sections sections) {
         this.workItem = workItem;
-        this.reads = new PlanningReads(sequence, workItem.inputFile(), "rg=" + workItem.rowGroupIndex(), 1);
+        this.reads = new PlanningReads(sections, workItem.inputFile(), "rg=" + workItem.rowGroupIndex(), 1);
     }
 }

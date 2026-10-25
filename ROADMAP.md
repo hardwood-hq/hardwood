@@ -250,14 +250,14 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Data page reading and decoding
 - [x] Page decompression
 - [x] Parallel column batch fetching
-- [x] Pages decoded straight into batch arrays, each value written once, and submitted to the decode pool in row order across a read's columns by one scheduler per read (#1287; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#decoded-columns))
+- [x] Pages decoded straight into batch arrays, each value written once, and submitted to the decode pool in row order across a read's columns by the read's `RowGroupIterator` (#1287; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#decoded-columns))
 - [x] Every decode of a read, dictionary pages included, on the context's pool, leaving no buffer on the application's threads (#1568, #1570; see [`_designs/VALUE_DECODE.md`](_designs/VALUE_DECODE.md#decode-buffers))
 - [x] Prefetches and footer loads on virtual threads of the context's I/O executor rather than the JVM's common pool, with no monitor held across a fetch or a wait (#1560; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
 - [x] Footers of later files, page indexes and dictionary checks parsed and scanned on the context's pool, so its size bounds a read's CPU (#1589; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
-- [x] A column's fetcher run as steps on the context's pool rather than a virtual thread per column (#1597; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
-- [x] A fetch step never waits for page bytes: a page's read runs on a virtual thread and the step yields on it, while a file in memory is sliced in place (#1598; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
-- [x] One fetch sequence per read issues every byte request: each row group's needed ranges from every column coalesced once, read ahead within a per-read budget and the context's read-ahead buffer, and released as the read passes them (#1662; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#fetch-sequence))
-- [x] Planning (footers, Bloom filters, dictionaries, page indexes) runs as one step on the read's executor that never waits for I/O, its reads section requests of the fetch sequence (#1662, #1649; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#planning-ahead))
+- [x] A column's walk run as walk advances on the context's pool rather than a virtual thread per column (#1597; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
+- [x] A walk advance never waits for page bytes: a page's read runs on a virtual thread and the walk stops until it has arrived, while a file in memory is sliced in place (#1598; see [`_designs/THREADING.md`](_designs/THREADING.md#thread-inventory))
+- [x] One `RowGroupIterator` per read issues every byte request: each row group's needed ranges from every column coalesced once, read ahead within a per-read budget and the context's read-ahead buffer, and released as the read passes them (#1662; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#requests))
+- [x] Planning (footers, Bloom filters, dictionaries, page indexes) runs as planning jobs on the read's executor that never wait for I/O, their reads requests of the read's `RowGroupIterator` (#1662, #1649; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#planning-ahead))
 - [x] A page-index window read only once one of its row groups survives its Bloom filters and dictionaries (#1659; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#page-index-windows))
 - [x] The next files of a multi-file read opened ahead, up to 64 files, their footers charged to the read-ahead buffer (#1665; see [`_designs/FETCH_PLANNING.md`](_designs/FETCH_PLANNING.md#opening-files-ahead))
 - [x] A context of zero threads, `HardwoodContext.create(0)`, whose reads and writes run on the threads calling them (#1022; see [`_designs/THREADING.md`](_designs/THREADING.md#a-context-of-zero-threads))
@@ -405,7 +405,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ### 9.5 Fixed-size-list read fast path
 - [x] Detect fixed-width fixed-*k* `LIST` pages from level streams alone (`FixedSizeListDetector`): O(1) definition-level gate + O(rows) repetition verification
 - [x] SWAR word-at-a-time tiled compare for the small-*k* bit-packed regime
-- [x] Skip level materialization + record reconstruction on `DataPageV2` and `DataPageV1` (RLE-encoded levels); arithmetic offsets and all-present validity, transparent per-page fallback (`PageDecoder`, `ScheduledNestedColumn`, `ColumnReader`)
+- [x] Skip level materialization + record reconstruction on `DataPageV2` and `DataPageV1` (RLE-encoded levels); arithmetic offsets and all-present validity, transparent per-page fallback (`PageDecoder`, `NestedColumn`, `ColumnReader`)
 - [x] Decode benchmark vs. naive `LIST` and flat-column floor (`FixedSizeListDecodeBenchmark`); recovers ~85–87% of the reconstruction gap; the fast path is described in `_designs/NESTED_DECODE.md#fixed-size-list-fast-path`
 - [x] `ReaderConfig` — immutable per-read behaviour value (mirrors `WriterConfig`), carrying the fast-path toggle; passed to `ParquetFileReader.open(...)`, keeping `HardwoodContext` resources-only (see `_designs/READ_PIPELINE.md#configuration-readerconfig`)
 - [ ] Nullable-vector (null-row) support — follow-up

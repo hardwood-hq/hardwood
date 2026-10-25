@@ -159,7 +159,7 @@ class IndexWindowTest {
     }
 
     /// The index buffers of `workItem`, once the window's page index has arrived: each need names
-    /// one request not present, so it is asked again until none is, as the planning chain does.
+    /// one request not present, so it is asked again until none is, as the read's planning does.
     private static RowGroupIndexBuffers buffers(IndexWindow window, int workItem) throws Exception {
         for (Need need = window.indexNeed(); need != null; need = window.indexNeed()) {
             awaitMet(need);

@@ -48,7 +48,7 @@ public interface PageWalk {
     /// Which page of the column chunk this walk is on: an ordinal,
     /// [ExceptionContext#DICTIONARY_PAGE], or [ExceptionContext#UNKNOWN_PAGE].
     ///
-    /// Read by the fetcher when a page is handed on and when one is not — a header that
+    /// Read by the column's walk advance when a page is handed on and when one is not — a header that
     /// will not parse fails before any [PageInfo] exists.
     ///
     /// @return the page this walk is on

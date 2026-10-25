@@ -117,7 +117,7 @@ class ReaderCloseMidReadTest {
     /// Opens a row reader over the full projection, reads a handful of rows, and closes it.
     ///
     /// The rows matter for the same reason the single batch does on the column path: they are
-    /// what gets the fetchers running and their exchanges occupied. Reading only a
+    /// what gets the columns' walks running and their exchanges occupied. Reading only a
     /// handful — rather than the whole file — is what leaves them parked mid-file when close()
     /// arrives.
     private static void rowReaderCloseAfterFewRows(
@@ -150,7 +150,7 @@ class ReaderCloseMidReadTest {
 
     /// Opens the projection, consumes exactly one batch, and closes it.
     ///
-    /// The batch matters: it is what gets the fetchers running and the ready queues
+    /// The batch matters: it is what gets the columns' walks running and the ready queues
     /// occupied, which is the state a close has to unwind. Closing a reader that never read
     /// does not reach the path this is about.
     private static void closeAfterOneBatch(Hardwood hardwood, byte[] file, String[] columns)

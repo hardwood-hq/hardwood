@@ -75,9 +75,14 @@ public sealed interface DecodedColumn permits FlatColumn, NestedColumn {
     Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex, int pageIndex)
             throws PlaceFailure;
 
-    /// Whether the column's placement has ended at the read's row cap: it takes no further page,
-    /// and its batches end with the cells placed.
+    /// Whether the column's placement has ended, at the read's row cap or, for a column decoded
+    /// through levels, at a failure of its placement: it takes no further page, and its batches
+    /// end with the cells placed.
     boolean placementEnded();
+
+    /// Whether `page`, taken and not decoded, is still to be decoded: a column decoded through
+    /// levels decodes no page once its placement has ended, since it places none.
+    boolean decodes(Page page);
 
     /// The pages taken and not yet released: not decoded for a flat column, not placed for a
     /// column decoded through levels. The read bounds them per column.
@@ -106,10 +111,10 @@ public sealed interface DecodedColumn permits FlatColumn, NestedColumn {
     /// @throws Exception the failure, placed at the page's file, row group and ordinal
     Object decode(Page page, DecodeBuffers buffers) throws Exception;
 
-    /// Applies a [#decode] result.
-    ///
-    /// @throws Exception a placement's failure, placed at the page it was met at
-    void decoded(Object result) throws Exception;
+    /// Applies a [#decode] result. A column decoded through levels places its measured pages
+    /// here; a placement's failure ends the column behind the cells before its open one, which is
+    /// abandoned.
+    void decoded(Object result);
 
     /// The cells sealed and left to finish, for a job ([#finishSealed]).
     List<Object> takeSealed();

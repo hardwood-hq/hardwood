@@ -63,7 +63,7 @@ public final class CoalescingPolicy {
     public record Extent(int column, String name, long start, long end) {
     }
 
-    /// Coalesces `ranges`, in offset order, into the spans of a row group's section requests, the
+    /// Coalesces `ranges`, in offset order, into the spans of a row group's requests, the
     /// requests [CoalescedRanges] plans for them: a span bridges gaps of at most G and is at most S
     /// long unless one range alone is longer. Each span is held by every column whose extent
     /// overlaps it, and its reason names every column whose range it holds.

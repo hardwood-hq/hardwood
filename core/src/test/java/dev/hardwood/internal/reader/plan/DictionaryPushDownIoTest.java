@@ -150,8 +150,8 @@ class DictionaryPushDownIoTest {
     @Test
     void eachRowGroupsDictionaryIsReadOnceWhenTheReadOutpacesItsPrefetch() throws Exception {
         // Every row group of the fixture is dropped by its dictionary, so the read passes each one
-        // as soon as it is planned and releases it, and closes before the prefetch tasks planning
-        // the row group after it have all run. None of those tasks may plan a released row group,
+        // as soon as it is planned and releases it, and closes before the planning jobs of the row
+        // group after it have all run. None of those jobs may plan a released row group,
         // or one of a closed read, a second time.
         FilterPredicate absentFromEveryRowGroup = FilterPredicate.in("i64",
                 -3_990_000_000_000L, -1_990_000_000_000L, 10_000_000_000L, 2_010_000_000_000L);
@@ -166,7 +166,7 @@ class DictionaryPushDownIoTest {
                     rows++;
                 }
             }
-            // The reader's close has waited for every prefetch task it admitted; one that had
+            // The reader's close has waited for every planning job it emitted; one that had
             // not started by then has returned without reading.
 
             assertThat(rows).isZero();

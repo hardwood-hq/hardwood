@@ -824,7 +824,7 @@ public class ParquetFileReader implements Closeable {
                 BatchSizing.valuesPerRow(projected, rowGroups), availableRows(rowGroups));
     }
 
-    /// The rows of the read's batch byte budget, which bound its scheduler's read-ahead
+    /// The rows of the read's batch byte budget, which bound its read-ahead
     /// ([BatchSizing#readAheadBudgetRows]), from the same metadata [#resolveBatchSize] sizes
     /// batches by.
     private static long readAheadBudgetRows(ProjectedSchema projected, List<RowGroup> rowGroups) {

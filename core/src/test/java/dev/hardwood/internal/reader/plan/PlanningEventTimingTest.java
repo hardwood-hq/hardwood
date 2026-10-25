@@ -126,10 +126,10 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
                 });
     }
 
-    /// A footer read ahead that no read parses reports no open.
+    /// A footer read that no read parses reports no open.
     @Tag("pool")
     @Test
-    void aFooterReadAheadThatIsNeverParsedReportsNoOpen() throws Exception {
+    void aFooterReadThatIsNeverParsedReportsNoOpen() throws Exception {
         enable("dev.hardwood.FileOpened");
         List<InputFile> files = List.of(new NamedFile("f0", write(0), null), new NamedFile("f1", write(1), null));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {

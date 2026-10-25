@@ -68,6 +68,8 @@ public final class FlatColumn implements DecodedColumn {
     private PageDecoder decoder;
     /// Pages placed and not decoded.
     private int undecoded;
+    /// The last page placed, which a failure at the end of the pages is placed with.
+    private PageTask lastPlaced;
 
     /// @param columnFilter the column's filter fragment, which writes each batch's `matches` as the
     ///        batch completes; `null` for none
@@ -127,6 +129,7 @@ public final class FlatColumn implements DecodedColumn {
             }
             throw new PlaceFailure(placed(e, fileName, rowGroupIndex, pageIndex), placed);
         }
+        lastPlaced = task;
         rowInRowGroup = info.isBoundaryMarker() ? batches.plannedRows() : rowInRowGroup + info.records();
         if (task.segments.isEmpty()) {
             return null;
@@ -145,6 +148,12 @@ public final class FlatColumn implements DecodedColumn {
         return placementEnded;
     }
 
+    /// A flat page is placed before it is decoded, so every page taken fills a cell.
+    @Override
+    public boolean decodes(Page page) {
+        return true;
+    }
+
     /// Ends the column's pages: every cell is sealed and the read's end queued behind them; or,
     /// with `failure`, a failure between two work items, the open cell sealed, or abandoned where
     /// the column is short of the plan ([Placer#sealOpenCell]), and `failure` queued behind them.
@@ -152,17 +161,30 @@ public final class FlatColumn implements DecodedColumn {
     public void end(Throwable failure) {
         if (failure == null) {
             publisher.endWith(null);
-            placer.end();
+            try {
+                placer.end();
+            }
+            catch (RuntimeException e) {
+                // the column is short of the plan at the read's end
+                abandon(placer.abandonOpenCell());
+                publisher.endWith(lastPlaced == null ? e : placed(e, lastPlaced.fileName, lastPlaced.rowGroup,
+                        lastPlaced.pageIndex));
+                publisher.endRead();
+            }
             return;
         }
-        Cell abandoned = placer.sealOpenCell(failure, column.fieldPath().toString());
+        abandon(placer.sealOpenCell(failure, column.fieldPath().toString()));
+        publisher.endWith(failure);
+        publisher.endRead();
+    }
+
+    /// Takes out `abandoned`, if any, which its pages in flight still fill: they must not complete
+    /// it.
+    private void abandon(Cell abandoned) {
         if (abandoned != null) {
-            // its pages in flight still fill it; they must not complete it
             abandoned.pending.incrementAndGet();
             publisher.remove(abandoned);
         }
-        publisher.endWith(failure);
-        publisher.endRead();
     }
 
     @Override
@@ -265,10 +287,19 @@ public final class FlatColumn implements DecodedColumn {
     }
 
     /// Completes the batches of cells [#takeSealed] took, on a job; returns them.
+    ///
+    /// @throws Exception the failure, placed at the last page of the cell it was met at
     @Override
-    public List<Object> finishSealed(List<Object> cells, DecodeBuffers buffers) {
-        for (Object cell : cells) {
-            completeBatch((Cell) cell);
+    public List<Object> finishSealed(List<Object> cells, DecodeBuffers buffers) throws Exception {
+        for (Object c : cells) {
+            Cell cell = (Cell) c;
+            PageTask page = cell.lastPage();
+            try {
+                completeBatch(cell);
+            }
+            catch (RuntimeException e) {
+                throw page == null ? e : placed(e, page.fileName, page.rowGroup, page.pageIndex);
+            }
         }
         return cells;
     }

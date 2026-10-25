@@ -128,12 +128,12 @@ public class BatchExchange<B> {
     ///
     /// Three batches are pre-allocated (`READY_QUEUE_CAPACITY + 1`): one filling
     /// plus up to two queued. The consumer must return consumed batches to `freeQueue()`.
-    /// A scheduled column fills holders past those three while it decodes ahead
+    /// A decoded column fills holders past those three while it decodes ahead
     /// ([#newBatch]); the free queue keeps at most three of the holders returned, for holders
     /// whose arrays are allocated per batch anyway.
     ///
     /// @param columnName column name for error messages
-    /// @param batchFactory creates the initial batch holders, and those a scheduled column
+    /// @param batchFactory creates the initial batch holders, and those a decoded column
     ///        needs beyond them
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]
@@ -142,12 +142,12 @@ public class BatchExchange<B> {
     }
 
     /// Creates a recycling exchange whose free queue keeps every holder returned, the ones a
-    /// scheduled column filled past the three pre-allocated while it decoded ahead included, so
+    /// decoded column filled past the three pre-allocated while it decoded ahead included, so
     /// that a read reuses the arrays of every holder its read-ahead filled rather than allocating
     /// new ones. The holders kept are at most those the read-ahead filled at once.
     ///
     /// @param columnName column name for error messages
-    /// @param batchFactory creates the initial batch holders, and those a scheduled column
+    /// @param batchFactory creates the initial batch holders, and those a decoded column
     ///        needs beyond them
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]

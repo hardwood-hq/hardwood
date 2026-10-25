@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +40,7 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -89,6 +91,44 @@ class FilesAheadTest {
         }
     }
 
+    /// A read with a row limit may need no further file, so it reads only the next file's footer
+    /// ahead.
+    @Test
+    void aReadWithARowLimitReadsOnlyTheNextFootersAhead() throws Exception {
+        System.setProperty(MAX_FILES_AHEAD, "4");
+        ReadGate gate = footerGate();
+        List<InputFile> files = gatedFiles(12, gate);
+        ObservedPool pool = new ObservedPool(4, "files-ahead-test");
+        QuiescentExecutor io = new QuiescentExecutor();
+        try (HardwoodContextImpl context = pool.context(io);
+             ParquetFileReader reader = ParquetFileReader.openAll(files, context)) {
+            gate.arm();
+            AtomicLong rows = new AtomicLong();
+            Thread consumer = Thread.ofPlatform().name("consumer").start(() -> {
+                try (RowReader rowReader = reader.buildRowReader().head(ROWS + 10).build()) {
+                    while (rowReader.hasNext()) {
+                        rowReader.next();
+                        rows.incrementAndGet();
+                    }
+                }
+                catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+
+            // The read has reached the second file, which its next work item lies in: that file's
+            // footer and the next one's, and none of the four files ahead after them
+            assertThat(gate.awaitInFlight(2)).as("footer reads in flight").isTrue();
+            awaitSettled(io, gate, pool);
+            assertThat(gate.maxInFlight()).as("most footer reads in flight at once").isEqualTo(2);
+
+            gate.release();
+            consumer.join(TimeUnit.SECONDS.toMillis(30));
+            assertThat(consumer.isAlive()).as("consumer still reading").isFalse();
+            assertThat(rows.get()).isEqualTo(ROWS + 10);
+        }
+    }
+
     @Test
     void aRunOfPrunedFilesIsOpenedAhead() throws Exception {
         System.setProperty(MAX_FILES_AHEAD, "4");
@@ -126,7 +166,7 @@ class FilesAheadTest {
             assertThat(context.readAheadBuffer().held()).as("read-ahead held once read").isZero();
         }
         // Every file after the first was planned ahead while the first was held, its data in one
-        // section request
+        // request
         for (int i = 1; i < files.size(); i++) {
             assertThat(dataReads(files.get(i)))
                     .as("data reads of file %d", i)

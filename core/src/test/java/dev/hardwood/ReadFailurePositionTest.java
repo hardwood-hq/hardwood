@@ -308,8 +308,8 @@ class ReadFailurePositionTest {
                                                             + failure);
     }
 
-    /// A page no reader takes, here `RLE` declared over an `INT32` column, is refused on the
-    /// scheduled path with the page's place.
+    /// A page no reader takes, here `RLE` declared over an `INT32` column, is refused by its
+    /// decode with the page's place.
     @Test
     void aRefusedPageNamesItsPlace() throws Exception {
         FileSchema schema = FileSchema.builder("schema")

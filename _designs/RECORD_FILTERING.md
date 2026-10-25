@@ -6,7 +6,7 @@ Related documents:
 
 - [PREDICATE_MODEL.md](PREDICATE_MODEL.md): the public predicate, its literal rules and its resolution to `ResolvedPredicate`
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decision for row groups and pages
-- [READ_PIPELINE.md](READ_PIPELINE.md): pipeline mechanics shared with unfiltered reads (the batch plan, the scheduled columns)
+- [READ_PIPELINE.md](READ_PIPELINE.md): pipeline mechanics shared with unfiltered reads (the batch plan, the decoded columns)
 - [FETCH_PLANNING.md](FETCH_PLANNING.md): fetch plans and page row masks, shared with unfiltered reads
 - [docs/content/concepts/row-selection.md](../docs/content/concepts/row-selection.md): the user-facing semantics of row selection
 

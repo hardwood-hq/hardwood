@@ -37,7 +37,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// An `Error` a request read ahead of the read fails with fails the read only where the read
 /// reaches the request: a read that never reaches it reads on, and its close throws the `Error`; a
-/// read that reaches it fails there, after the batches before it.
+/// read that reaches it fails there, after the batches before it. An `Error` a footer read ahead
+/// fails with is thrown by the close of a read that never lists its file.
 ///
 /// Uses diff_order_multi.parquet: four row groups of 50 rows, whose data are requests of their own.
 class SpeculativeErrorTest {
@@ -72,6 +73,34 @@ class SpeculativeErrorTest {
             assertThatThrownBy(iterator::close).isSameAs(file.error);
         }
         assertThat(batches).containsExactly(10, 10);
+    }
+
+    /// The footer of a file ahead is read ahead of the read; an `Error` its read fails with is
+    /// thrown by the close of a read that never lists the file.
+    @ParameterizedTest(name = "threads: {0}")
+    @ValueSource(ints = {0, 2})
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void anErrorOfAFooterReadAheadThatTheReadNeverListsIsThrownByTheClose(int threads) throws Exception {
+        FooterErrorFile third = new FooterErrorFile(InputFile.of(FILE));
+        ColumnProjection projection = ColumnProjection.columns("__row__");
+        FileSchema schema;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
+            schema = reader.getFileSchema();
+        }
+        ProjectedSchema decoded = ProjectedSchema.create(schema, projection);
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
+            RowGroupIterator iterator = RowGroupIterators.initialized(
+                    List.of(InputFile.of(FILE), InputFile.of(FILE), third), context, projection, null, 0);
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("__row__", 10);
+            List<NestedLevelComputer.Layers> flat = new ArrayList<>();
+            flat.add(null);
+            iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 1, 0, List.of(exchange), null);
+            assertThat(takeBatch(exchange)).isEqualTo(10);
+            iterator.awaitQuiescent();
+            assertThat(third.failed.getCount()).as("the third file's footer read failed").isZero();
+
+            assertThatThrownBy(iterator::close).isSameAs(third.error);
+        }
     }
 
     private static int takeBatch(BatchExchange<BatchExchange.Batch> exchange) throws Exception {
@@ -126,6 +155,45 @@ class SpeculativeErrorTest {
                 throw error;
             }
             return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() throws IOException {
+            return delegate.length();
+        }
+
+        @Override
+        public String name() {
+            return delegate.name();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+    }
+
+    /// Fails every read with an `Error`, its footer's first. Not a file whose bytes are in memory,
+    /// so the read reads its footer ahead.
+    private static final class FooterErrorFile implements InputFile {
+
+        private final InputFile delegate;
+        final Error error = new InjectedError();
+        final CountDownLatch failed = new CountDownLatch(1);
+
+        FooterErrorFile(InputFile delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) {
+            failed.countDown();
+            throw error;
         }
 
         @Override

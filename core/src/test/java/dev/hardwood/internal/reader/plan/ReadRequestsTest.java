@@ -48,7 +48,7 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// The requests a read makes (FETCH_PLANNING.md, Section requests): what a walk inserts, what
+/// The requests a read makes (FETCH_PLANNING.md, Requests): what a walk inserts, what
 /// planning rejects and how requests are named.
 class ReadRequestsTest {
 
@@ -130,9 +130,9 @@ class ReadRequestsTest {
                         + (bStart + bytes.length) + ") lies outside the file of " + fileLength + " bytes");
     }
 
-    /// A section request that serves several columns names each of them, in file order.
+    /// A request that serves several columns names each of them, in file order.
     @Test
-    void aSectionRequestNamesEveryColumnItServes() throws Exception {
+    void aRequestNamesEveryColumnItServes() throws Exception {
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(write(ROWS_PER_ROW_GROUP, ROWS_PER_ROW_GROUP,
                 "a", "b")));
         file.open();

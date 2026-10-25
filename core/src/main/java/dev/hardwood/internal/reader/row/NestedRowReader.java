@@ -171,7 +171,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         // The views and the matcher are built from the schema alone, and the views reject
         // what the reader cannot assemble (a shredded Variant `typed_value` of a type the
         // shredding spec does not allow), so all three are built before any column starts: a failure
-        // here leaves no fetcher running.
+        // here leaves no column running.
         NestedBatchDataView dataView;
         PredicateView predicateView;
         try {

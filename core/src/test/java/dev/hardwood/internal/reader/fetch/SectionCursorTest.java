@@ -19,13 +19,11 @@ import dev.hardwood.internal.io.CountingInputFile;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
-/// How a walk takes bytes from the section requests that hold its chunk (FETCH_PLANNING.md, Fetch
-/// plans).
+/// How a walk takes bytes from the requests that hold its chunk (FETCH_PLANNING.md, Fetch plans).
 class SectionCursorTest {
 
-    /// A range the walk's section requests hold is sliced from them, and only the part no section
-    /// request holds is inserted, up to the next section request; a range straddling a cut is
-    /// copied from both.
+    /// A range the walk's requests hold is sliced from them, and only the part no request holds is
+    /// inserted, up to the next request; a range straddling a cut is copied from both.
     @Test
     void aHeldRangeIsSlicedAndOnlyTheGapIsInserted() throws Exception {
         ByteBuffer bytes = ByteBuffer.allocate(300);
@@ -58,9 +56,9 @@ class SectionCursorTest {
         assertThat(file.readCount()).as("the held section sliced again").isEqualTo(3);
     }
 
-    /// A walk passes the section requests that end before where it reads next, once each.
+    /// A walk passes the requests that end before where it reads next, once each.
     @Test
-    void aWalkPassesTheSectionRequestsBehindIt() {
+    void aWalkPassesTheRequestsBehindIt() {
         ReleaseCounting first = new ReleaseCounting(0, 100);
         ReleaseCounting second = new ReleaseCounting(100, 200);
         SectionCursor cursor = new SectionCursor(new ArrayList<>(List.of(first, second)), null);

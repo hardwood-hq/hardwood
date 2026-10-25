@@ -64,9 +64,8 @@ import dev.hardwood.schema.FileSchema;
 /// sections that overlap its column chunk, located by offset.
 ///
 /// A row group whose rows are all read and that no Bloom filter or dictionary can drop has its
-/// section requests built from its chunks' extents in the footer ([#chunkSpans]), before its page
-/// index is read, so they can start ahead of it; its plans then locate their pages in those section
-/// requests.
+/// requests built from its chunks' extents in the footer ([#chunkSpans]), before its page index is
+/// read, so they can start ahead of it; its plans then locate their pages in those requests.
 public final class FetchPlanBuilder {
 
     private final ReadProjection projection;
@@ -110,13 +109,13 @@ public final class FetchPlanBuilder {
     }
 
     /// Builds the fetch plan of every decoded column of `workItem`'s row group from its offset
-    /// indexes, inserting the row group's section requests into `sequence` unless [#chunkSpans]
-    /// did. Reads nothing: the section requests start by the sequence's rules.
+    /// indexes, inserting the row group's requests into `readSections` unless [#chunkSpans] did.
+    /// Reads nothing: the requests start by the read's rules.
     ///
     /// @param chunkExtents the work item's validated chunk extents ([#extents])
     /// @throws ParquetReadException if a needed range lies outside its column chunk
     Plans columnPlans(WorkItem workItem, SharedRowGroupMetadata shared, RowRanges matchingRows,
-                      boolean pageFilterApplied, long perRgMaxRows, Sections sequence, Extent[] chunkExtents) {
+                      boolean pageFilterApplied, long perRgMaxRows, Sections readSections, Extent[] chunkExtents) {
         int projectedCount = projection.decoded().getProjectedColumnCount();
         RowGroup rowGroup = workItem.rowGroup();
         InputFile inputFile = workItem.inputFile();
@@ -203,10 +202,10 @@ public final class FetchPlanBuilder {
 
         Extent[] extents = read(chunkExtents, reads);
         checkWithinExtents(workItem, ranges, reads);
-        List<? extends Section> sections = sequence.sections(workItem.workItemIndex());
+        List<? extends Section> sections = readSections.sections(workItem.workItemIndex());
         if (sections == null) {
             ranges.sort(Comparator.comparingLong(Range::start));
-            sections = sequence.insert(workItem.fileIndex(), workItem.workItemIndex(), inputFile,
+            sections = readSections.insert(workItem.fileIndex(), workItem.workItemIndex(), inputFile,
                     CoalescingPolicy.coalesce(ranges, extents, names(workItem), workItem.rowGroupIndex(), maxSpan,
                             HeldBytes.heldFrom(inputFile)));
         }
@@ -218,7 +217,7 @@ public final class FetchPlanBuilder {
                             read.firstDataPageOffset(), read.schema(), read.chunk(), context,
                             workItem.rowGroupIndex(), inputFile.name(), read.preloadedDictionary(),
                             workingSet.column(extent.column(), read.schema()))
-                    : sequentialPlan(workItem, read, overlapping, matchingRows, perRgMaxRows, sequence);
+                    : sequentialPlan(workItem, read, overlapping, matchingRows, perRgMaxRows, readSections);
         }
         return new Plans(plans, events);
     }
@@ -251,7 +250,7 @@ public final class FetchPlanBuilder {
     /// its chunk on demand where a row limit left it out.
     private SequentialFetchPlan sequentialPlan(WorkItem workItem, ColumnRead read,
                                                List<? extends Section> sections,
-                                               RowRanges matchingRows, long perRgMaxRows, Sections sequence) {
+                                               RowRanges matchingRows, long perRgMaxRows, Sections readSections) {
         int fileOrdinal = workItem.columnOrdinals().fileOrdinal(projection.decoded().toOriginalIndex(read.column()));
         // Inline page statistics are bounds like any other, so a column whose bounds this file
         // records in an order this reader cannot read hands over no leaves to drop pages with
@@ -263,7 +262,7 @@ public final class FetchPlanBuilder {
                 : List.of();
         String name = read.schema().name();
         SectionCursor.Rest rest = !read.restLeftOut() ? null
-                : SectionCursor.rest(sequence, workItem.workItemIndex(), workItem.inputFile(), read.start() + read.length(),
+                : SectionCursor.rest(readSections, workItem.workItemIndex(), workItem.inputFile(), read.start() + read.length(),
                         "rg=" + workItem.rowGroupIndex() + " col=" + name, maxSpan);
         return new SequentialFetchPlan(read.start(), read.length(), read.schema(), read.chunk(), context,
                 perRgMaxRows, workItem.rowGroupIndex(), workItem.inputFile().name(), leaves,
@@ -272,7 +271,7 @@ public final class FetchPlanBuilder {
                 workingSet.column(read.column(), read.schema()), sections, rest);
     }
 
-    /// The section requests of a row group whose rows are all read and that no Bloom filter or
+    /// The requests of a row group whose rows are all read and that no Bloom filter or
     /// dictionary can drop, from its chunks' extents in the footer: every decoded column the row
     /// group reads, whole, cut into pieces of at most S and coalesced under G and S. Its plans
     /// locate their pages in them once its page index is read.
@@ -373,7 +372,7 @@ public final class FetchPlanBuilder {
         return names;
     }
 
-    /// The section requests of `sections`, in offset order, that overlap `[start, end)`.
+    /// The requests in `sections`, in offset order, that overlap `[start, end)`.
     private static List<Section> overlapping(List<? extends Section> sections, long start, long end) {
         List<Section> overlapping = new ArrayList<>();
         for (Section section : sections) {

@@ -25,14 +25,14 @@ import dev.hardwood.internal.reader.step.Parsed;
 /// Bloom filters, a work item's dictionary pages, Bloom filters without a length and page-format
 /// probes. Each range is a section of the read ([Sections]), held by the work items it
 /// serves and released once each has released it. A range inside the file's tail while the tail is
-/// held, or of a file in memory, is a section request sliced in place, which needs no read; one
+/// held, or of a file in memory, is a request sliced in place, which needs no read; one
 /// inside the tail is sliced as it is inserted and kept, since the tail is the reader's and another
 /// read may drop it before this one reads the range.
 ///
 /// A parse reads through it as a [ByteSource]: a range it holds is returned, one it does not is
 /// `null`, and the first such range since [#clearMissing] is kept ([#missing]). The planning then
-/// demands a section request for that range ([#need]) and parses again once it has arrived. A
-/// window inserts its ranges up front ([#insert]) and starts them together ([#start]). Each section
+/// demands a request for that range ([#need]) and parses again once it has arrived. A
+/// window inserts its ranges up front ([#insert]) and starts them together ([#start]). Each
 /// request is read under the label of the work items it serves and its purpose ([#PRUNING],
 /// [#INDEXES]), the fetch reason S3 logs and the I/O budget name it by.
 ///
@@ -45,17 +45,17 @@ final class PlanningReads implements ByteSource {
     /// The purpose of page indexes and page-format probes.
     static final String INDEXES = "indexes";
 
-    private final Sections sequence;
+    private final Sections readSections;
     private final InputFile inputFile;
-    /// The work items the section requests serve, such as `rg=3` or `rg=0-4`.
+    /// The work items the requests serve, such as `rg=3` or `rg=0-4`.
     private final String label;
-    /// The work items each section request serves, which release it.
+    /// The work items each request serves, which release it.
     private final int holders;
     private final List<Section> sections = new ArrayList<>();
     private Parsed<?> missing;
 
-    PlanningReads(Sections sequence, InputFile inputFile, String label, int holders) {
-        this.sequence = sequence;
+    PlanningReads(Sections readSections, InputFile inputFile, String label, int holders) {
+        this.readSections = readSections;
         this.inputFile = inputFile;
         this.label = label;
         this.holders = holders;
@@ -65,7 +65,7 @@ final class PlanningReads implements ByteSource {
     public ByteBuffer read(long offset, int length) throws IOException {
         Section section = holding(offset, length);
         if (section == null) {
-            section = sequence.heldInPlace(inputFile, new Span(offset, length, label, holders));
+            section = readSections.heldInPlace(inputFile, new Span(offset, length, label, holders));
             if (section != null) {
                 sections.add(section);
             }
@@ -89,12 +89,12 @@ final class PlanningReads implements ByteSource {
         missing = null;
     }
 
-    /// Whether a section request holds `[offset, offset + length)`, present or not.
+    /// Whether a request holds `[offset, offset + length)`, present or not.
     boolean holds(long offset, int length) {
         return holding(offset, length) != null;
     }
 
-    /// What the planning waits for before it parses again: the section request holding the range
+    /// What the planning waits for before it parses again: the request holding the range
     /// `parsed` needs, inserted for `purpose` if none does, and demanded.
     Need need(Parsed<?> parsed, String purpose) {
         Section section = holding(parsed.needOffset(), parsed.needLength());
@@ -105,8 +105,8 @@ final class PlanningReads implements ByteSource {
         return section;
     }
 
-    /// Inserts a section request for `purpose` for each request of `ranges`, which [#start]
-    /// starts.
+    /// Inserts a request for `purpose` for each of the coalesced requests of `ranges`, which
+    /// [#start] starts.
     void insert(CoalescedRanges ranges, String purpose) {
         for (int r = 0; r < ranges.requestCount(); r++) {
             long start = ranges.requestStart(r);
@@ -114,7 +114,7 @@ final class PlanningReads implements ByteSource {
         }
     }
 
-    /// Starts every section request not present, so they are read together, and returns the first
+    /// Starts every request not present, so they are read together, and returns the first
     /// of them, `null` when all are present.
     Need start() throws IOException {
         Need first = null;
@@ -129,7 +129,7 @@ final class PlanningReads implements ByteSource {
         return first;
     }
 
-    /// Whether every section request is present.
+    /// Whether every request is present.
     boolean present() throws IOException {
         for (Section section : sections) {
             if (section.poll() == null) {
@@ -139,14 +139,14 @@ final class PlanningReads implements ByteSource {
         return true;
     }
 
-    /// Releases the section requests for one of their holders.
+    /// Releases the requests for one of their holders.
     void release() {
         for (Section section : sections) {
             section.release();
         }
     }
 
-    /// Releases the section requests whatever their holders, as the read closes.
+    /// Releases the requests whatever their holders, as the read closes.
     void discard() {
         for (Section section : sections) {
             section.discard();
@@ -154,7 +154,7 @@ final class PlanningReads implements ByteSource {
     }
 
     private Section insert(long offset, int length, String purpose) {
-        Section section = sequence.planned(inputFile, offset, length, label + " " + purpose, holders);
+        Section section = readSections.planned(inputFile, offset, length, label + " " + purpose, holders);
         sections.add(section);
         return section;
     }

@@ -1,10 +1,10 @@
 # Nested decode
 
-Describes how the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding, how a scheduled column's cells are measured, placed and filled, what each `NestedIndexMode` derives, the real-items view, and the fixed-size-list fast path.
+Describes how the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding, how a decoded column's cells are measured, placed and filled, what each `NestedIndexMode` derives, the real-items view, and the fixed-size-list fast path.
 
 Related documents:
 
-- [READ_PIPELINE.md](READ_PIPELINE.md): the scheduled columns, threading, the batch plan and batch sizing
+- [READ_PIPELINE.md](READ_PIPELINE.md): the decoded columns, threading, the batch plan and batch sizing
 - [COLUMN_READER.md](COLUMN_READER.md): what `ColumnReader` exposes (layers, offsets, `Validity`, variable-length leaves, the cursor and scan)
 - [ROW_READER.md](ROW_READER.md): how `NestedRowReader` reads the all-items batch
 - [VALUE_DECODE.md](VALUE_DECODE.md): value decoders, dictionaries and leaf kinds

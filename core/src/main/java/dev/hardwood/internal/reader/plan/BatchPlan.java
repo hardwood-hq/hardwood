@@ -36,8 +36,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// is known once a row group's fetch plans are: the kept rows come from the row ranges its page
 /// masks apply, which apply to every decoded column of the row group or to none.
 ///
-/// Planning is synchronized, since the first column to reach a row group plans it on its own
-/// fetcher, or the previous row group's prefetch does on a speculative task.
+/// Planning is synchronized, since the read's planning jobs, one at a time, may run on different
+/// threads.
 public final class BatchPlan {
 
     /// The plan of a row group after the row cap ended the read; no column reaches it.

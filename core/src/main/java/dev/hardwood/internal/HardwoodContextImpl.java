@@ -35,9 +35,10 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 /// speculative reads run on ([#ioExecutor()]), the libdeflate decompressor pool for native GZIP
 /// decompression, and the decompressor factory.
 ///
-/// A context of zero threads has no pool ([#hasPool()]): each read keeps its steps and tasks in a
-/// queue of its own ([dev.hardwood.internal.reader.step.ReadQueue]), which the threads calling the
-/// reader run, and `compute` and `decode` run in place on the calling thread.
+/// A context of zero threads has no pool ([#hasPool()]): each read keeps its walk advances,
+/// decodes and planning jobs in a queue of its own
+/// ([dev.hardwood.internal.reader.step.ReadQueue]), which the threads calling the reader run, and
+/// `compute` and `decode` run in place on the calling thread.
 public class HardwoodContextImpl implements HardwoodContext {
 
     private static final String USE_LIBDEFLATE_PROPERTY = "hardwood.uselibdeflate";
@@ -123,7 +124,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         return Boolean.getBoolean(ZERO_THREADS_PROPERTY) ? 0 : threads;
     }
 
-    /// Create a context whose page tasks and fetch steps run on `executor`, which the context
+    /// Create a context whose page tasks and walk advances run on `executor`, which the context
     /// takes as having `threads` threads, run by `poolThreads`, and shuts down when it closes;
     /// for tests that decide the order a read's tasks run in.
     public static HardwoodContextImpl create(ExecutorService executor, int threads, Set<Thread> poolThreads) {
@@ -232,11 +233,11 @@ public class HardwoodContextImpl implements HardwoodContext {
         decodeExecutor.runInPlace(task);
     }
 
-    /// Runs a column's fetch step on the context's pool, at the head of its queue.
+    /// Runs a column's walk advance on the context's pool, at the head of its queue.
     ///
     /// @throws RejectedExecutionException if the context is closed
-    public void executeStep(Runnable step) {
-        decodeExecutor.executeFirst(step);
+    public void executeStep(Runnable advance) {
+        decodeExecutor.executeFirst(advance);
     }
 
     /// Runs speculative CPU work on the context's pool, at the tail of its queue.
@@ -247,8 +248,8 @@ public class HardwoodContextImpl implements HardwoodContext {
     }
 
     /// Runs `work` on the context's pool, with a set of its decode buffers, and waits for its
-    /// result; on a thread of the pool, such as a column's fetch step, and on a context without a
-    /// pool, it runs in place. A failure of `work` is thrown as it was thrown.
+    /// result; on a thread of the pool, such as a column's walk advance, and on a context without
+    /// a pool, it runs in place. A failure of `work` is thrown as it was thrown.
     ///
     /// @throws IllegalStateException if the context is closed
     public <T> T decode(Function<DecodeBuffers, T> work) {
@@ -398,8 +399,8 @@ public class HardwoodContextImpl implements HardwoodContext {
         return new IllegalStateException(CONTEXT_CLOSED, e);
     }
 
-    /// Whether `e` is the failure [#contextClosed] makes, which a fetch step and the read's planning
-    /// chain each meet when the pool refuses them.
+    /// Whether `e` is the failure [#contextClosed] makes, which a walk advance and the read's planning
+    /// jobs each meet when the pool refuses them.
     public static boolean isContextClosed(Throwable e) {
         return e instanceof IllegalStateException && CONTEXT_CLOSED.equals(e.getMessage())
                 && e.getCause() instanceof RejectedExecutionException;

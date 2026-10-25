@@ -33,7 +33,7 @@ import dev.hardwood.row.PqInterval;
 /// region as a humongous object, and the smallest region is 1 MB. A dictionary's bytes are the
 /// column chunk's, held once for every batch that draws on it.
 ///
-/// A batch is filled positionally by the segments of a scheduled column's cell ([#prepareForFill],
+/// A batch is filled positionally by the segments of a decoded column's cell ([#prepareForFill],
 /// [dev.hardwood.internal.reader.pipeline.BinaryFill],
 /// [dev.hardwood.internal.reader.pipeline.NestedFill]): each segment writes its own values' entry
 /// ids, views, buffer ids and chunks at its own positions, so the segments are independent of each

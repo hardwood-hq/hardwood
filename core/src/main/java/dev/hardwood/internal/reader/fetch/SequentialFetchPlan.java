@@ -46,8 +46,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// Pages are discovered lazily by scanning headers in the bytes of the row group's [Section]s
 /// that hold the column chunk: the whole chunk, cut into requests of at most S,
 /// or, under a row limit, a first part sized by [#computeChunkSize]. A page or a header peek that
-/// straddles the cut between two section requests is copied from both into one buffer. Under a row
-/// limit, a walk that reads past the first part inserts the rest of the chunk as a demanded section
+/// straddles the cut between two requests is copied from both into one buffer. Under a row
+/// limit, a walk that reads past the first part inserts the rest of the chunk as a demanded
 /// request ([SectionCursor.Rest]), so a read the limit covers fetches nothing more.
 ///
 /// The first part's size, under a row limit: the full column chunk when it is at most 4 MiB;
@@ -97,9 +97,9 @@ public final class SequentialFetchPlan implements FetchPlan {
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
     private final WorkingSet.Column workingSet;
-    /// The section requests overlapping the chunk, in offset order.
+    /// The requests overlapping the chunk, in offset order.
     private final List<? extends Section> sections;
-    /// Inserts the rest of the chunk a row limit left out, or `null` when the section requests hold
+    /// Inserts the rest of the chunk a row limit left out, or `null` when the requests hold
     /// it all.
     private final SectionCursor.Rest rest;
     /// Page headers the most recent walk scanned, final once that walk runs to exhaustion and zero
@@ -252,16 +252,16 @@ public final class SequentialFetchPlan implements FetchPlan {
         return Math.toIntExact(bounded);
     }
 
-    /// Discovers pages by scanning headers in the section requests that hold the chunk, as a state
+    /// Discovers pages by scanning headers in the requests that hold the chunk, as a state
     /// machine over the bytes present.
     ///
     /// The page under way is held in fields: its parsed header, the peek it was parsed from, its
-    /// record count once its repetition levels are read, and its inline-statistics decision. An
-    /// section request the page needs that is not present stops [#advance] with the page's state in
+    /// record count once its repetition levels are read, and its inline-statistics decision. A
+    /// request the page needs that is not present stops [#advance] with the page's state in
     /// place, and the next call resumes it, so no header is parsed twice and no byte is read twice.
     /// The counters of the walk ([#position], [#valuesRead], [#recordsRead], [#pageCount]) move
     /// only when a page is done with. No read starts before the header of the page under way, so
-    /// the walk passes the section requests that end at or before it.
+    /// the walk passes the requests that end at or before it.
     private class SequentialPageWalk implements PageWalk {
 
         private final ColumnMetaData metaData = columnChunk.metaData();
@@ -370,10 +370,10 @@ public final class SequentialFetchPlan implements FetchPlan {
             return true;
         }
 
-        /// The `length` bytes at chunk-relative `relPos`: a slice of the section request holding
+        /// The `length` bytes at chunk-relative `relPos`: a slice of the request holding
         /// them, or a copy when they straddle a cut.
         ///
-        /// @return the bytes, or `null` when a section request holding them is not present, which
+        /// @return the bytes, or `null` when a request holding them is not present, which
         ///         is then [#pending]
         private ByteBuffer readBytes(int relPos, int length) throws IOException {
             ByteBuffer bytes = cursor.read(columnChunkOffset + relPos, length);

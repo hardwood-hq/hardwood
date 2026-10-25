@@ -199,7 +199,7 @@ final class Planner {
     }
 
     /// The states of one file's planned work items, each with the [IndexWindow] it falls into,
-    /// whose section requests the sequence then holds.
+    /// whose requests the read's sections then hold.
     private List<Planning> withIndexWindows(List<WorkItem> planned) throws IOException {
         if (planned.isEmpty()) {
             return List.of();
@@ -362,7 +362,7 @@ final class Planner {
         }
         WorkItem workItem = planning.workItem;
         chunkExtents(planning);
-        // Before the page index, which the plans need and these section requests do not: they start
+        // Before the page index, which the plans need and these requests do not: they start
         // while it is read
         insertChunkSections(planning);
         Need need = shared(planning);
@@ -414,7 +414,7 @@ final class Planner {
         return null;
     }
 
-    /// Inserts the section requests of `workItem`'s row group from its chunks' extents, once, where
+    /// Inserts the requests of `workItem`'s row group from its chunks' extents, once, where
     /// every row of it is read and nothing can drop it, so they start before its page index is
     /// read.
     private void insertChunkSections(Planning planning) throws IOException {
@@ -441,7 +441,7 @@ final class Planner {
     }
 
     /// Whether every row of `workItem`'s row group is read and no Bloom filter or dictionary can
-    /// drop it, so its section requests follow from its chunks' extents in the footer alone: no
+    /// drop it, so its requests follow from its chunks' extents in the footer alone: no
     /// filter narrows its pages, no tail or row limit cuts it, and its chunks are in this file.
     private boolean readsAllRows(WorkItem workItem) {
         long perRgMaxRows = perRgMaxRows(workItem);

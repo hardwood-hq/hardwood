@@ -310,6 +310,9 @@ public final class RowGroupIterator implements Closeable, Sections {
         boolean pending;
         /// Whether the footer is loaded or failed, so that the file can be listed.
         boolean loaded;
+        /// Whether its read failed twice ahead of demand: the claim was given up, and the read
+        /// claims the footer again once it lists the file.
+        boolean failedAhead;
 
         FileState(int file) {
             super(file, -1, 0);
@@ -339,6 +342,9 @@ public final class RowGroupIterator implements Closeable, Sections {
         boolean ended;
         /// Whether the column's placement has ended at the row cap.
         boolean placed;
+        /// Whether the column has passed the unit it is in and every unit after it, as its
+        /// placement ended at the row cap or the column ended.
+        boolean passedAll;
         /// The failure its walk met, applied once every page taken before it is decoded.
         Throwable walkFailure;
         /// Whether the walk's failure ends the column behind its open cell, sealed, rather than
@@ -787,17 +793,19 @@ public final class RowGroupIterator implements Closeable, Sections {
         try {
             return poll();
         }
-        catch (RuntimeException e) {
+        catch (RuntimeException | Error e) {
             fail(e);
             return out;
         }
     }
 
+    /// Applies `u`; a failure, an `Error` included, fails the read, so that the jobs the updates
+    /// and polls emitted still run and the read's consumer does not wait for ever.
     private void apply(Update u) {
         try {
             u.apply(this);
         }
-        catch (Exception e) {
+        catch (Exception | Error e) {
             fail(e);
         }
     }
@@ -1170,6 +1178,11 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Lists the next file once its footer is loaded, within the bound planning has
     /// ([#plannedFarEnough]).
     private void list() {
+        if (!listed && footers[nextList].failedAhead) {
+            FileState f = footers[nextList];
+            f.failedAhead = false;
+            startFooter(f, false);
+        }
         if (listed || !footers[nextList].loaded || plannedFarEnough()) {
             return;
         }
@@ -1204,9 +1217,6 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// and each column ends with the failure once it reaches the unit.
     private void planFailed(int from, Throwable t, WorkItem workItem) {
         planRunning = false;
-        if (t == untakenError) {
-            untakenError = null;
-        }
         if (planFailure == null) {
             planFailure = t;
             failedFrom = from;
@@ -1342,14 +1352,24 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// find its load completed.
     private void parseFooter(FileState f) {
         emit(Kind.PLANNING, buffers -> {
-            planning.parseFooter(f.file);
-            return read -> f.loaded = true;
+            Error erred = planning.parseFooter(f.file);
+            return read -> {
+                f.loaded = true;
+                if (erred != null && read.untakenError == null) {
+                    // raised by the read's close unless the listing of the file raises it
+                    read.untakenError = erred;
+                }
+            };
         });
     }
 
-    /// A footer read that failed the first time is started again at once, uncharged; a second
-    /// failure is final, and fails the read where its listing reaches the file. A read closed
-    /// meanwhile leaves the load to its close, which gives it up.
+    /// A footer read that failed the first time is started again at once, uncharged. A second
+    /// failure of the footer the listing needs next is final, and fails the read where its listing
+    /// reaches the file; a second failure ahead of demand gives up the claim, so that the file's
+    /// entry fails no other read of the reader, and the footer is claimed again once the listing
+    /// needs it. A read closed meanwhile leaves the load to its close, which gives it up. The
+    /// load is completed or given up once the lock is let go of, since that runs what other reads
+    /// wait for.
     private void footerReadFailed(FileState f, Exception e) {
         uncharge(f);
         LOG.get().log(System.Logger.Level.DEBUG, "Read ahead of demand failed: {0}", f, e);
@@ -1360,8 +1380,14 @@ public final class RowGroupIterator implements Closeable, Sections {
             f.retried = true;
             readFooter(f);
         }
+        else if (listed || f.file != nextList) {
+            out.add(planning.abandonFooter(f.file));
+            f.started = false;
+            f.retried = false;
+            f.failedAhead = true;
+        }
         else {
-            planning.failFooter(f.file, e);
+            out.add(planning.failFooter(f.file, e));
             f.loaded = true;
         }
     }
@@ -1370,7 +1396,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// its listing reaches the file, and is raised by the read's close if the read never does.
     private void footerReadErred(FileState f, Error e) {
         uncharge(f);
-        planning.failFooter(f.file, e);
+        out.add(planning.failFooter(f.file, e));
         f.loaded = true;
         untakenError = e;
     }
@@ -1424,6 +1450,10 @@ public final class RowGroupIterator implements Closeable, Sections {
             }
             if (c.walk == null) {
                 if (c.unit >= failedFrom) {
+                    if (planFailure == untakenError) {
+                        // raised where the column reaches the failure, not by the close
+                        untakenError = null;
+                    }
                     end(c, placedPlanFailure(c));
                     continue;
                 }
@@ -1498,6 +1528,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Ends `c` behind the cells it has placed: with the read's end, or with `failure`.
     private void end(Column c, Throwable failure) {
         c.ended = true;
+        columnEnded(c);
         // the end seals the open cell, whose completion may then fall to a job
         c.side.end(failure);
         sealed(c);
@@ -1526,7 +1557,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         Column c = columns[column];
         c.walking = false;
         if (c.placed || c.ended) {
-            stopPlacedWalk(c);
+            stopWalk(c);
             return;
         }
         c.sealAtFailure = pages.isEmpty() && !c.unitTaken && batches.closesOpenBatch();
@@ -1554,6 +1585,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             return;
         }
         c.ended = true;
+        columnEnded(c);
         if (c.sealAtFailure) {
             c.side.end(c.walkFailure);
         }
@@ -1600,7 +1632,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         c.walking = false;
         if (c.placed || c.ended) {
             // the placement ended at the row cap, or the column failed, while the walk ran
-            stopPlacedWalk(c);
+            stopWalk(c);
             return;
         }
         if (!place(c, workItem, batches, pages, ordinals)) {
@@ -1654,6 +1686,25 @@ public final class RowGroupIterator implements Closeable, Sections {
         if (!c.walking) {
             stopWalk(c);
         }
+        passAll(c);
+    }
+
+    /// Takes up that `c` ended, with the read's end or a failure: as at the row cap, its walk
+    /// stops once no advance of it runs, and it passes the unit it is in and every unit after it,
+    /// so the other columns' planning and the release of what the units hold do not wait for it.
+    private void columnEnded(Column c) {
+        if (!c.walking) {
+            stopWalk(c);
+        }
+        passAll(c);
+    }
+
+    /// Lets `c` pass the unit it is in and every unit listed after it, once.
+    private void passAll(Column c) {
+        if (c.passedAll) {
+            return;
+        }
+        c.passedAll = true;
         placingColumns--;
         for (int unit = c.unit; unit < unitCount; unit++) {
             int left = unitHolders.get(unit) - 1;
@@ -1661,13 +1712,6 @@ public final class RowGroupIterator implements Closeable, Sections {
             if (left == 0) {
                 passed(unit);
             }
-        }
-    }
-
-    /// Stops the walk of a column whose placement ended at the row cap while the walk advanced.
-    private void stopPlacedWalk(Column c) {
-        if (c.placed) {
-            stopWalk(c);
         }
     }
 
@@ -1767,8 +1811,9 @@ public final class RowGroupIterator implements Closeable, Sections {
             Map.Entry<Key, Ready> entry = it.next();
             Ready r = entry.getValue();
             Column c = columns[r.column()];
-            if (c.side.ended()) {
-                // the column failed: its pages are not decoded
+            if (c.side.ended() || !c.side.decodes(r.page())) {
+                // the column failed, or its placement ended where it places no page decoded
+                // after: its pages are not decoded
                 it.remove();
                 continue;
             }
@@ -1790,7 +1835,10 @@ public final class RowGroupIterator implements Closeable, Sections {
                 catch (Exception failure) {
                     return e -> {
                         e.decodesInFlight--;
-                        e.columnFailed(c, failure);
+                        // a page the column's placement ended before holds no row of the read
+                        if (c.side.decodes(r.page())) {
+                            e.columnFailed(c, failure);
+                        }
                     };
                 }
                 finally {
@@ -1807,6 +1855,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// order raises the failure of the first column it takes, whichever failed first.
     private void columnFailed(Column c, Exception failure) {
         c.ended = true;
+        columnEnded(c);
         if (!c.side.ended()) {
             c.side.fail(failure);
         }
@@ -1934,8 +1983,8 @@ public final class RowGroupIterator implements Closeable, Sections {
         r.waiting.clear();
     }
 
-    /// A request that failed the first time is started again once needed; a second failure is
-    /// final, and fails what reads it.
+    /// A request that failed the first time is started again at once, as a demanded request, by
+    /// the next poll; a second failure is final, and fails what reads it.
     private void requestFailed(Request r, Exception e) {
         uncharge(r);
         if (!awaited(r)) {
@@ -1963,8 +2012,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// close raises it if none does.
     private void requestErred(Request r, Error e) {
         uncharge(r);
-        r.error = e;
+        // known as a request's before a walk can find it on the request
         requestErrors.add(e);
+        r.error = e;
         erred.add(r);
         wakeWaiting(r);
     }
@@ -2230,6 +2280,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
         tasks.await(this::quiescent, executor instanceof ReadQueue queue ? queue : null);
         Error untaken;
+        Runnable abandon = null;
         lock.lock();
         try {
             untaken = untakenError;
@@ -2250,7 +2301,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             }
             if (planning != null) {
                 planning.discard();
-                planning.abandonFooters();
+                abandon = planning.abandonFooters();
             }
             if (footers != null) {
                 dropFilesBefore(nextFooter);
@@ -2258,6 +2309,10 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
         finally {
             unlock();
+        }
+        if (abandon != null) {
+            // what other reads wait for runs outside the lock
+            abandon.run();
         }
         closeListener.accept(this);
         if (untaken != null) {

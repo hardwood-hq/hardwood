@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -172,31 +173,49 @@ public final class ReadPlanning {
 
     /// Parses the claimed footer of `fileIndex`, on a CPU thread, completing its load. A failure is
     /// kept for the listing of the file.
-    public void parseFooter(int fileIndex) {
+    ///
+    /// @return the `Error` the parse failed with, which the read raises at its close unless the
+    ///         listing of the file raises it; `null` for none
+    public Error parseFooter(int fileIndex) {
         ClaimedLoad load = loads.get(fileIndex);
+        Error erred = null;
         try {
             prepared.put(fileIndex, load.parse());
         }
-        catch (IOException | RuntimeException | Error e) {
+        catch (IOException | RuntimeException e) {
             failed.put(fileIndex, e);
         }
-        loads.remove(fileIndex);
-    }
-
-    /// Completes the claimed load of `fileIndex` with `failure`, its read's last, which the listing
-    /// of the file raises.
-    public void failFooter(int fileIndex, Throwable failure) {
-        ClaimedLoad load = loads.remove(fileIndex);
-        load.fail(failure);
-        failed.put(fileIndex, failure);
-    }
-
-    /// Gives up the loads claimed and not completed, as the read closes.
-    public void abandonFooters() {
-        for (Iterator<ClaimedLoad> it = loads.values().iterator(); it.hasNext(); ) {
-            it.next().abandon();
-            it.remove();
+        catch (Error e) {
+            failed.put(fileIndex, e);
+            erred = e;
         }
+        loads.remove(fileIndex);
+        return erred;
+    }
+
+    /// Takes the claimed load of `fileIndex` as failed with `failure`, its read's last, which the
+    /// listing of the file raises; returns the completion of the load, which the driver runs once
+    /// it has let go of its lock, since it runs what other reads wait for.
+    public Runnable failFooter(int fileIndex, Throwable failure) {
+        ClaimedLoad load = loads.remove(fileIndex);
+        failed.put(fileIndex, failure);
+        return () -> load.fail(failure);
+    }
+
+    /// Gives up the claimed load of `fileIndex`, which failed ahead of demand, so that the reader's
+    /// other reads load it afresh and the read claims it again once it needs the file; returns the
+    /// giving up, which the driver runs once it has let go of its lock.
+    public Runnable abandonFooter(int fileIndex) {
+        ClaimedLoad load = loads.remove(fileIndex);
+        return load::abandon;
+    }
+
+    /// Gives up the loads claimed and not completed, as the read closes; returns the giving up,
+    /// which the driver runs once it has let go of its lock.
+    public Runnable abandonFooters() {
+        List<ClaimedLoad> abandoned = new ArrayList<>(loads.values());
+        loads.clear();
+        return () -> abandoned.forEach(ClaimedLoad::abandon);
     }
 
     /// Drops the tail of `fileIndex` and, but for the first file's, its footer from the reader's

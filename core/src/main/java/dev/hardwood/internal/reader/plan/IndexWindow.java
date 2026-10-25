@@ -206,13 +206,13 @@ final class IndexWindow {
         return members.size();
     }
 
-    /// Inserts the window's requests into `sequence`, each held by every member. Called once, as
+    /// Inserts the window's requests into the read's sections, each held by every member. Called once, as
     /// the file is planned.
-    void insertSections(Sections sequence) {
-        indexReads = new PlanningReads(sequence, inputFile, rowGroupLabel, members.size());
+    void insertSections(Sections sections) {
+        indexReads = new PlanningReads(sections, inputFile, rowGroupLabel, members.size());
         indexReads.insert(offsetIndexes, PlanningReads.INDEXES);
         indexReads.insert(columnIndexes, PlanningReads.INDEXES);
-        bloomFilterReads = new PlanningReads(sequence, inputFile, rowGroupLabel, members.size());
+        bloomFilterReads = new PlanningReads(sections, inputFile, rowGroupLabel, members.size());
         bloomFilterReads.insert(bloomFilters, PlanningReads.PRUNING);
     }
 
@@ -229,7 +229,7 @@ final class IndexWindow {
 
     /// The index buffers of the work item at `workItemIndex`, once [#indexNeed] has none.
     ///
-    /// @throws IllegalStateException if the work item is not a member, or a section request is not
+    /// @throws IllegalStateException if the work item is not a member, or a request is not
     ///                               present
     RowGroupIndexBuffers buffersFor(int workItemIndex) throws IOException {
         Member member = members.get(member(workItemIndex));

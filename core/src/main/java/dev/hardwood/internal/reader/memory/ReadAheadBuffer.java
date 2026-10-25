@@ -20,11 +20,11 @@ import dev.hardwood.internal.reader.step.Need;
 /// the footers a multi-file read reads for the files past the next one, each charged the tail it
 /// reads until the read is done with the file.
 ///
-/// Such a task, section request or footer read starts only while it fits; one that does not fit is
+/// Such a task, request or footer read starts only while it fits; one that does not fit is
 /// not started and is considered again on a later release, whose waiters run in registration order.
 /// Nothing waits for the buffer, so the reads of a context can share it: a read's own task, its
-/// demanded section requests, its next unit and its next file are never charged here, and every
-/// charge is released by a task ending, a section request every column has passed, a file being
+/// demanded requests, its next unit and its next file are never charged here, and every
+/// charge is released by a task ending, a request every column has passed, a file being
 /// planned, or the read closing, none of which depends on a read whose work was deferred.
 public final class ReadAheadBuffer {
 
