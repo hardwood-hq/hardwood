@@ -18,12 +18,14 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.reader.engine.ReadEngineSelection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -42,6 +44,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// size: under one page byte target, the `INT64` column cuts its pages at about half the rows the
 /// `INT32` columns do.
 class ReadSchedulerTest {
+
+    /// Tests the pipeline's own mechanics, which the read engine does not have.
+    @RegisterExtension
+    static final ReadEngineSelection PIPELINE = ReadEngineSelection.pipeline();
 
     private static final int ROWS = 60_000;
     private static final int THREADS = 3;

@@ -81,7 +81,7 @@ class WorkingSetLimitTest {
         // dictionaries before the first page's task runs; the read engine plans the third row
         // group behind that task, so the third dictionary crosses.
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
-        String crossing = "auto".equals(System.getProperty(ReadEngine.PROPERTY))
+        String crossing = ReadEngine.supports()
                 ? "[<memory>: row group 2, column 'c0', dictionary page] Dictionary page needs 2097152 bytes"
                 : "[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes";
         assertThatThrownBy(() -> countValues(file, 3 * PAGE_VALUES))
@@ -97,7 +97,7 @@ class WorkingSetLimitTest {
         // Each parse fits the limit alone; the batch holding all three row groups' rows does not.
         // The pipeline decodes the first page before the column takes the third row group's
         // dictionary; the read engine's walk takes the dictionary first, so that charge crosses.
-        String crossing = "auto".equals(System.getProperty(ReadEngine.PROPERTY))
+        String crossing = ReadEngine.supports()
                 ? "[<memory>: row group 2, column 'c0'] Dictionary page needs 1048576 bytes"
                 : "[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes";
         long workingSet = 3L * DICTIONARY_BYTES + 8_192 + 4_100;
@@ -168,7 +168,7 @@ class WorkingSetLimitTest {
             """)
     void everyPathChargesBeforeDecompressing(String file, String message, String engineMessage) {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, "1");
-        String expected = engineMessage != null && "auto".equals(System.getProperty(ReadEngine.PROPERTY))
+        String expected = engineMessage != null && ReadEngine.supports()
                 ? engineMessage
                 : message;
 

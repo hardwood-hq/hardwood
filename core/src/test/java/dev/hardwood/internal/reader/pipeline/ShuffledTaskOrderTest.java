@@ -113,7 +113,7 @@ class ShuffledTaskOrderTest {
         }
         // The counts come from the scheduler's submissions, which a read the read engine drives
         // makes none of; its pages still run in the seeded orders, and their values are checked.
-        if (!"auto".equals(System.getProperty(ReadEngine.PROPERTY))) {
+        if (!ReadEngine.supports()) {
             assertThat(counts.outOfOrder).as("pages run ahead of an earlier page of their column").isPositive();
         }
     }
@@ -134,7 +134,7 @@ class ShuffledTaskOrderTest {
         // The counts come from the scheduler's submissions and the scheduled column's fills, which a
         // read the read engine drives makes none of; its pages still run in the seeded orders, and
         // their records are checked.
-        if (!"auto".equals(System.getProperty(ReadEngine.PROPERTY))) {
+        if (!ReadEngine.supports()) {
             assertThat(counts.outOfOrder).as("pages measured ahead of an earlier page of their column").isPositive();
             assertThat(counts.outOfOrderInsideRecord).as("of them, pages beginning inside a record").isPositive();
             assertThat(counts.fills).as("cells filled").isPositive();

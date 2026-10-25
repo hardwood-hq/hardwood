@@ -20,11 +20,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.engine.ReadEngineSelection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -55,6 +57,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// filtered on it reads no `id` there: the column's fetch step places a boundary marker.
 @Tag("pool")
 class DecodeThreadTest {
+
+    /// Tests the pipeline's own mechanics, which the read engine does not have.
+    @RegisterExtension
+    static final ReadEngineSelection PIPELINE = ReadEngineSelection.pipeline();
 
     /// A Snappy dictionary page in a file of one row group, which the filter's probe reads.
     private static final Path SINGLE_ROW_GROUP = Path.of("src/test/resources/dict_compressed_page.parquet");

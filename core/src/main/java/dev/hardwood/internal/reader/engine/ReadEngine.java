@@ -94,7 +94,8 @@ import dev.hardwood.schema.FileSchema;
 /// once the pipeline it replaces is gone. It reads column reads and row reads ([#supports]).
 public final class ReadEngine implements Closeable, Sections {
 
-    /// Selects the engine for the reads it supports: `auto`; or never: `off`, the default.
+    /// Selects the engine for the reads it supports: `auto`, the default; or never: `off`, which
+    /// reads through the pipeline the engine replaces.
     public static final String PROPERTY = "hardwood.internal.readEngine";
 
     private final FileMetadataCache files;
@@ -342,9 +343,16 @@ public final class ReadEngine implements Closeable, Sections {
         this.readAhead = context.readAheadBuffer();
     }
 
-    /// Whether the engine reads a column read without a row limit: the property is on.
+    /// Whether the engine takes the reads it supports: the property is not `off`.
+    ///
+    /// @throws IllegalArgumentException if the property is neither `auto` nor `off`
     public static boolean supports() {
-        return "auto".equals(System.getProperty(PROPERTY, "off"));
+        String value = System.getProperty(PROPERTY, "auto");
+        return switch (value) {
+            case "auto" -> true;
+            case "off" -> false;
+            default -> throw new IllegalArgumentException(PROPERTY + " must be auto or off, but was: " + value);
+        };
     }
 
     /// Sets up the read's planning and lists its first file's work items.

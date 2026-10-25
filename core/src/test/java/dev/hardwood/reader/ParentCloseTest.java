@@ -26,12 +26,14 @@ import java.util.function.Predicate;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.reader.engine.ReadEngineSelection;
 import dev.hardwood.internal.reader.fetch.PrefetchTasks;
 import dev.hardwood.internal.reader.pipeline.ScheduledColumn;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -56,6 +58,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// behind it until the timeout.
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class ParentCloseTest {
+
+    /// Tests the pipeline's own mechanics, which the read engine does not have.
+    @RegisterExtension
+    static final ReadEngineSelection PIPELINE = ReadEngineSelection.pipeline();
 
     /// Wide enough that a row reader's batch holds 1,536 rows, so a batch is a small
     /// fraction of the file and the row reader's pipeline stops well short of its end.
