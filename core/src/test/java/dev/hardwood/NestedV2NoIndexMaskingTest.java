@@ -15,10 +15,13 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -82,6 +85,37 @@ class NestedV2NoIndexMaskingTest {
             assertThat(count)
                     .as("row count for range [%d, %d)", lo, hi)
                     .isEqualTo(hi - lo);
+        }
+    }
+
+    /// The same filter through column readers: each batch's `tags` pair with its `narrow` values.
+    @Test
+    void testFilterOnNarrowReturnsCorrectlyAlignedTagsThroughColumnReaders() throws Exception {
+        int lo = 400;
+        int hi = 1600;
+        FilterPredicate filter = FilterPredicate.and(
+                FilterPredicate.gtEq("narrow", lo),
+                FilterPredicate.lt("narrow", hi));
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("narrow", "tags"))
+                     .filter(filter).build()) {
+            ColumnReader narrowReader = columns.getColumnReader("narrow");
+            ColumnReader tagsReader = columns.getColumnReader(1);
+            int count = 0;
+            while (columns.nextBatch()) {
+                int[] narrow = narrowReader.getInts();
+                int[] offsets = tagsReader.getLayerOffsets(0);
+                String[] tags = tagsReader.getStrings();
+                for (int r = 0; r < columns.getRecordCount(); r++) {
+                    assertThat(narrow[r]).as("row %d: narrow", count).isEqualTo(lo + count);
+                    assertThat(offsets[r + 1] - offsets[r]).as("row %d: tags size", count).isEqualTo(2);
+                    assertThat(tags[offsets[r]]).as("row %d: tag", count)
+                            .isEqualTo(String.format("row=%05d", narrow[r]));
+                    count++;
+                }
+            }
+            assertThat(count).as("row count for range [%d, %d)", lo, hi).isEqualTo(hi - lo);
         }
     }
 

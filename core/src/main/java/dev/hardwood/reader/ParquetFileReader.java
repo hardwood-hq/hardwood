@@ -727,7 +727,8 @@ public class ParquetFileReader implements Closeable {
 
         if (resolved == null) {
             if (ReadEngine.supports()) {
-                return openEngineRead(ProjectedSchema.create(schema, requests, false), rowGroups, layers, batchSize);
+                return openEngineRead(ReadProjection.of(ProjectedSchema.create(schema, requests, false)), null,
+                        rowGroups, layers, batchSize);
             }
             RowGroupIterator iterator = trackedIterator(0, 0, 0);
             iterator.setFirstFile(schema, rowGroups);
@@ -752,6 +753,9 @@ public class ParquetFileReader implements Closeable {
         // `false`: the columnar paths read individual leaves, so the projection stays literal.
         ReadProjection readProjection = ReadProjection.withPredicateColumns(schema, requests,
                 SelectionEngine.predicateColumns(resolved), false);
+        if (ReadEngine.supports()) {
+            return openEngineRead(readProjection, resolved, rowGroups, layers, batchSize);
+        }
         RowGroupIterator iterator = trackedIterator(0, 0, 0);
         iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema decoded = iterator.initialize(readProjection, resolved, metadataFilteringEnabled);
@@ -775,19 +779,23 @@ public class ParquetFileReader implements Closeable {
         return new ColumnRead(scan, readProjection.payload(), layers);
     }
 
-    /// A column read of `projected` driven by the [ReadEngine].
-    private ColumnRead openEngineRead(ProjectedSchema projected, List<RowGroup> rowGroups,
-                                      NestedLevelComputer.Layers[] layers, int batchSize) throws IOException {
+    /// A column read of `projection` driven by the [ReadEngine], filtered by `resolved` unless it
+    /// is `null`; as the pipeline's, the batches are sized against the decoded columns, the
+    /// predicate columns included.
+    private ColumnRead openEngineRead(ReadProjection projection, ResolvedPredicate resolved,
+                                      List<RowGroup> rowGroups, NestedLevelComputer.Layers[] layers, int batchSize)
+            throws IOException {
         ReadEngine engine = new ReadEngine(fileMetadataCache, context, openChildren::remove);
         openChildren.put(engine, engine);
-        engine.initialize(schema, rowGroups, ReadProjection.of(projected));
+        engine.initialize(schema, rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled);
         if (!engine.hasLiveWorkItem()) {
-            return new ColumnRead(trackedChild(engine, ColumnScan.empty(engine)), projected, layers);
+            return new ColumnRead(trackedChild(engine, ColumnScan.empty(engine)), projection.payload(), layers);
         }
+        ProjectedSchema decoded = projection.decoded();
         ColumnScan scan = trackedChild(engine, ColumnScan.openEngine(engine, fixedListFastPathEnabled, schema, layers,
-                ReadProjection.of(projected), resolveBatchSize(batchSize, projected, rowGroups),
-                readAheadBudgetRows(projected, rowGroups)));
-        return new ColumnRead(scan, projected, layers);
+                projection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
+                readAheadBudgetRows(decoded, rowGroups)));
+        return new ColumnRead(scan, projection.payload(), layers);
     }
 
     /// Iterators still tracked for teardown by [#close()]. Visible for testing.

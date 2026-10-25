@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.Sections;
 import dev.hardwood.internal.reader.memory.WorkingSet;
@@ -24,6 +25,7 @@ import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.schema.ReadProjection;
+import dev.hardwood.jfr.PageFilterEvent;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
 import jdk.jfr.Event;
@@ -59,16 +61,21 @@ public final class EnginePlanning {
     /// their end ([#whenFooterDone]).
     private final Map<Integer, CompletableFuture<?>> pending = new ConcurrentHashMap<>();
 
+    /// @param filter the read's resolved filter, `null` for none
+    /// @param metadataFiltering whether the filter takes metadata-derived shortcuts: row-group
+    ///        pruning by statistics, Bloom filters and dictionaries, page skipping and the always-match
+    ///        decision
     public EnginePlanning(FileMetadataCache files, Sections sections, HardwoodContextImpl context,
                           FileSchema referenceSchema, List<RowGroup> firstFileRowGroups, ReadProjection projection,
-                          int maxSpan, long indexWindowBytes, WorkingSet workingSet) throws IOException {
+                          ResolvedPredicate filter, boolean metadataFiltering, int maxSpan, long indexWindowBytes,
+                          WorkingSet workingSet) throws IOException {
         this.files = files;
         this.workingSet = workingSet;
-        SchemaCompatibility compatibility = new SchemaCompatibility(referenceSchema, projection.decoded(), null);
+        SchemaCompatibility compatibility = new SchemaCompatibility(referenceSchema, projection.decoded(), filter);
         compatibility.validateReferenceColumns(files.inputFiles().getFirst().name());
-        this.planner = new Planner(sections, referenceSchema, firstFileRowGroups, projection, null, compatibility,
-                new RowGroupPruning(context, null, true),
-                new FetchPlanBuilder(projection, null, true, context, workingSet, maxSpan),
+        this.planner = new Planner(sections, referenceSchema, firstFileRowGroups, projection, filter, compatibility,
+                new RowGroupPruning(context, filter, metadataFiltering),
+                new FetchPlanBuilder(projection, filter, metadataFiltering, context, workingSet, maxSpan),
                 0, 0, 0, indexWindowBytes);
         prepared.put(0, files.getFile(0));
     }
@@ -238,6 +245,41 @@ public final class EnginePlanning {
     /// arrived; never on two threads at once, nor with [#listFile].
     public Need plan(int index) throws IOException {
         return planner.plans(plannings.get(index));
+    }
+
+    /// Takes work item `index` through its Bloom filters and dictionaries as far as the bytes the
+    /// read holds allow: `null` once decided ([#dropped]), else what it lacks. Run again once it has
+    /// arrived; never on two threads at once, nor with [#listFile] or [#plan].
+    public Need arrival(int index) throws IOException {
+        return planner.arrival(plannings.get(index));
+    }
+
+    /// Whether work item `index`'s Bloom filters or dictionaries dropped it, once [#arrival] decided.
+    public boolean dropped(int index) {
+        return plannings.get(index).arrival.dropped();
+    }
+
+    /// Commits the drop of work item `index` by its Bloom filters or dictionaries, once, when the
+    /// read reaches it, however far ahead its planning ran. Under the driver's lock.
+    public void report(int index) {
+        Planning planning = plannings.get(index);
+        RowGroupPruning.Arrival arrival = planning != null ? planning.arrival : null;
+        if (arrival != null && arrival.dropEvent() != null && planning.reported.compareAndSet(false, true)) {
+            arrival.dropEvent().commit();
+        }
+    }
+
+    /// Records that the read enters work item `index`, once planned: the first time, commits its
+    /// drop's event and the [PageFilterEvent]s its plans decided. Under the driver's lock.
+    public void enterUnit(int index) {
+        Planning planning = plannings.get(index);
+        if (!planning.entered.compareAndSet(false, true)) {
+            return;
+        }
+        report(index);
+        for (PageFilterEvent event : planning.plans.pageFilterEvents()) {
+            event.commit();
+        }
     }
 
     public WorkItem workItem(int index) {

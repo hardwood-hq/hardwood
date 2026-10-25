@@ -101,7 +101,8 @@ final class ColumnScan implements Closeable {
         }
         SelectionEngine engine = filter == null
                 ? null
-                : createSelectionEngine(schema, decoded, filter, cursors, batchSize, rowGroupIterator);
+                : createSelectionEngine(schema, decoded, filter, cursors, batchSize,
+                        rowGroupIterator.referenceFileName());
         return new ColumnScan(cursors, projection.payloadColumnCount(), engine, rowGroupIterator);
     }
 
@@ -111,7 +112,7 @@ final class ColumnScan implements Closeable {
     /// before it propagates, naming the file whose schema it was found in.
     private static SelectionEngine createSelectionEngine(FileSchema schema, ProjectedSchema decoded,
                                                          ResolvedPredicate filter, ColumnCursor[] cursors,
-                                                         int batchSize, RowGroupIterator rowGroupIterator) {
+                                                         int batchSize, String referenceFileName) {
         try {
             return SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
         }
@@ -119,7 +120,7 @@ final class ColumnScan implements Closeable {
             for (ColumnCursor cursor : cursors) {
                 cursor.close();
             }
-            throw ExceptionContext.addFileContext(rowGroupIterator.referenceFileName(), e);
+            throw ExceptionContext.addFileContext(referenceFileName, e);
         }
     }
 
@@ -129,11 +130,15 @@ final class ColumnScan implements Closeable {
         return new ColumnScan(new ColumnCursor[0], 0, null, read);
     }
 
-    /// An unfiltered scan over every decoded column of `projection`, driven by `engine`.
-    /// `layers` holds the layers of every column of `schema`, indexed by column index.
+    /// A scan over every decoded column of `projection`, driven by `engine`, as [#open] builds one
+    /// over a [RowGroupIterator]. `layers` holds the layers of every column of `schema`, indexed by
+    /// column index.
     static ColumnScan openEngine(ReadEngine engine, boolean fixedListFastPathEnabled, FileSchema schema,
-                                 NestedLevelComputer.Layers[] layers, ReadProjection projection, int batchSize,
-                                 long budgetRows) {
+                                 NestedLevelComputer.Layers[] layers, ReadProjection projection,
+                                 ResolvedPredicate filter, int batchSize, long budgetRows) {
+        NestedIndexMode indexMode = filter == null
+                ? NestedIndexMode.REAL_VIEW
+                : NestedIndexMode.REAL_VIEW_KEEP_LEVELS;
         ProjectedSchema decoded = projection.decoded();
         List<NestedLevelComputer.Layers> nestedLayers = new ArrayList<>();
         for (int i = 0; i < decoded.getProjectedColumnCount(); i++) {
@@ -141,13 +146,16 @@ final class ColumnScan implements Closeable {
             NestedLevelComputer.Layers columnLayers = layers[column.columnIndex()];
             nestedLayers.add(ColumnCursor.isNested(columnLayers, column) ? columnLayers : null);
         }
-        List<EngineColumn> sides = engine.start(decoded, nestedLayers, NestedIndexMode.REAL_VIEW,
-                fixedListFastPathEnabled, batchSize, budgetRows);
+        List<EngineColumn> sides = engine.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled,
+                batchSize, budgetRows);
         ColumnCursor[] cursors = new ColumnCursor[sides.size()];
         for (int i = 0; i < cursors.length; i++) {
             cursors[i] = ColumnCursor.engine(schema.getColumn(decoded.toOriginalIndex(i)), sides.get(i));
         }
-        return new ColumnScan(cursors, projection.payloadColumnCount(), null, engine);
+        SelectionEngine selection = filter == null
+                ? null
+                : createSelectionEngine(schema, decoded, filter, cursors, batchSize, engine.referenceFileName());
+        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, engine);
     }
 
     /// The cursor of payload column `index`.

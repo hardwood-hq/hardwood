@@ -11,12 +11,16 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.fetch.IoBudget;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -95,5 +99,34 @@ class MaskProbeIoTest {
                 .filteredOn(read -> read.reason().endsWith(" indexes"))
                 .extracting(read -> read.reason())
                 .containsExactly("rg=0 indexes", "rg=1 indexes");
+    }
+
+    /// A filter whose Column Index keeps one page of `id` puts a page mask on the row group, so
+    /// the gate is probed: one page-header read of the v1 `tags` column, which closes it, beside
+    /// the read of the page index.
+    ///
+    /// Uses page_index_empty_ranges_unindexed_column.parquet: `id` (0–149) with a page index, a
+    /// flat `value` and a nested v1 `tags` column without one.
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void aFilteredReadWhosePageFilterKeepsAPageProbesTheNestedColumn(ReadKind kind) throws Exception {
+        CountingInputFile inputFile = new CountingInputFile(
+                InputFile.of(Path.of("src/test/resources/page_index_empty_ranges_unindexed_column.parquet")));
+        inputFile.open();
+        long rows;
+        long tagsPage;
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
+            tagsPage = reader.getFileMetaData().rowGroups().get(0).columns().get(2).metaData().dataPageOffset();
+            rows = kind.count(reader, ColumnProjection.all(), FilterPredicate.eq("id", 120));
+        }
+
+        assertThat(rows).isEqualTo(1);
+        List<CountingInputFile.Read> indexReads = inputFile.reads().stream()
+                .filter(read -> read.reason().endsWith(" indexes"))
+                .toList();
+        // The ColumnIndex and the OffsetIndex of `id`, and the probe of `tags`
+        assertThat(indexReads).extracting(CountingInputFile.Read::reason)
+                .containsExactly("rg=0 indexes", "rg=0 indexes", "rg=0 indexes");
+        assertThat(indexReads).filteredOn(read -> read.offset() == tagsPage).hasSize(1);
     }
 }

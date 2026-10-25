@@ -14,6 +14,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.CountingInputFile;
@@ -38,20 +40,14 @@ class IndexWindowIoTest {
     private static final int C05 = 5;
     private static final int[][] WINDOWS = { { 0, 11 } };
 
-    @Test
-    void aFilteredReadFetchesEachWindowInOneRequestPerStructure() throws Exception {
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void aFilteredReadFetchesEachWindowInOneRequestPerStructure(ReadKind kind) throws Exception {
         FileMetaData metaData = metaData();
         CountingInputFile file = countingFile();
-        int rows = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(file);
-                RowReader rowReader = reader.buildRowReader()
-                        .projection(ColumnProjection.columns("c00", "c05"))
-                        .filter(FilterPredicate.lt("c00", 100L))
-                        .build()) {
-            while (rowReader.hasNext()) {
-                rowReader.next();
-                rows++;
-            }
+        long rows;
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            rows = kind.count(reader, ColumnProjection.columns("c00", "c05"), FilterPredicate.lt("c00", 100L));
         }
 
         assertThat(rows).isEqualTo(12 * 100);
@@ -71,17 +67,13 @@ class IndexWindowIoTest {
         assertNoByteFetchedTwice(indexReads(file));
     }
 
-    @Test
-    void windowsOfAFilteredReadFetchDisjointBytesOneRequestPerStructureEach() throws Exception {
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void windowsOfAFilteredReadFetchDisjointBytesOneRequestPerStructureEach(ReadKind kind) throws Exception {
         CountingInputFile file = countingFile();
-        try (ParquetFileReader reader = ParquetFileReader.open(file);
-                RowReader rowReader = IndexWindowLifecycleTest.withBudget(4000, () -> reader.buildRowReader()
-                        .projection(ColumnProjection.columns("c00", "c05"))
-                        .filter(FilterPredicate.lt("c00", 100L))
-                        .build())) {
-            while (rowReader.hasNext()) {
-                rowReader.next();
-            }
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            IndexWindowLifecycleTest.withBudget(4000, () -> kind.count(reader,
+                    ColumnProjection.columns("c00", "c05"), FilterPredicate.lt("c00", 100L)));
         }
 
         List<CountingInputFile.Read> reads = indexReads(file);
@@ -114,20 +106,14 @@ class IndexWindowIoTest {
         assertThat(indexReads(file)).containsExactlyInAnyOrderElementsOf(expected);
     }
 
-    @Test
-    void aReadStatisticsProveFetchesNoColumnIndexAndNoIndexOfItsFilterOnlyColumn() throws Exception {
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void aReadStatisticsProveFetchesNoColumnIndexAndNoIndexOfItsFilterOnlyColumn(ReadKind kind) throws Exception {
         FileMetaData metaData = metaData();
         CountingInputFile file = countingFile();
-        int rows = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(file);
-                RowReader rowReader = reader.buildRowReader()
-                        .projection(ColumnProjection.columns("c05"))
-                        .filter(FilterPredicate.gtEq("c00", 0L))
-                        .build()) {
-            while (rowReader.hasNext()) {
-                rowReader.next();
-                rows++;
-            }
+        long rows;
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            rows = kind.count(reader, ColumnProjection.columns("c05"), FilterPredicate.gtEq("c00", 0L));
         }
 
         // Statistics prove every row group, so the read is the unfiltered read of `c05`.
