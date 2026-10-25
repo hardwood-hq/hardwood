@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -146,7 +145,6 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// The read's decoded columns, each of which passes every unit.
     private int columnCount;
     private WorkingSet workingSet;
-    private int unitCount;
     private int fileCount;
     /// The files after the one the read has reached whose footers start ahead of it.
     private int filesAhead;
@@ -162,10 +160,8 @@ public final class RowGroupIterator implements Closeable, Sections {
     private int nextPlan;
     private Need planNeed;
     private boolean planRunning;
-    /// The units planned, the columns still to pass each, and each one's file.
-    private final List<Boolean> planned = new ArrayList<>();
-    private final List<Integer> unitHolders = new ArrayList<>();
-    private final List<Integer> unitFiles = new ArrayList<>();
+    /// The units listed, in order.
+    private final List<Unit> units = new ArrayList<>();
 
     /// Each file's footer.
     private FileState[] footers;
@@ -193,9 +189,6 @@ public final class RowGroupIterator implements Closeable, Sections {
     private int failedFrom = Integer.MAX_VALUE;
     private WorkItem failedWorkItem;
 
-    /// The data requests of each work item not every column has passed: a work item's are forgotten
-    /// once every column has passed it ([#forget]).
-    private final Map<Integer, List<Request>> byUnit = new HashMap<>();
     /// The requests and footers that start ahead of need, in position order: by file, then by work
     /// item, then by offset, a file's footer before its data.
     private final PriorityQueue<Positioned> queued = new PriorityQueue<>();
@@ -264,6 +257,22 @@ public final class RowGroupIterator implements Closeable, Sections {
     }
 
     private record Ready(int column, DecodedColumn.Page page) {
+    }
+
+    /// One unit of the read, a work item: its file, whether it is planned, the columns still to
+    /// pass it, and its data requests.
+    private static final class Unit {
+        final int file;
+        boolean planned;
+        int holders;
+        /// The data requests planning inserted, `null` before it does and once every column has
+        /// passed the unit ([#forget]).
+        List<Request> requests;
+
+        Unit(int file, int holders) {
+            this.file = file;
+            this.holders = holders;
+        }
     }
 
     /// A question a reader asks before the read's columns start, which the read's jobs answer
@@ -426,11 +435,13 @@ public final class RowGroupIterator implements Closeable, Sections {
     private void appendUnits(int file, int count) {
         int holders = columns == null ? columnCount : placingColumns;
         for (int i = 0; i < count; i++) {
-            planned.add(false);
-            unitHolders.add(holders);
-            unitFiles.add(file);
+            units.add(new Unit(file, holders));
         }
-        unitCount += count;
+    }
+
+    /// The data requests of `unit`, `null` for a unit not listed, not inserted or forgotten.
+    private List<Request> requests(int unit) {
+        return unit < units.size() ? units.get(unit).requests : null;
     }
 
     /// Whether the read has a row group of at least one row left once it reaches them. Without a
@@ -446,7 +457,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         if (!filtered) {
             lock.lock();
             try {
-                for (int i = 0; i < unitCount; i++) {
+                for (int i = 0; i < units.size(); i++) {
                     if (hasRows(i)) {
                         return true;
                     }
@@ -472,7 +483,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         boolean listedFirst;
         lock.lock();
         try {
-            listedFirst = unitCount > 0 || listed;
+            listedFirst = !units.isEmpty() || listed;
         }
         finally {
             unlock();
@@ -1082,7 +1093,7 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     private String describe() {
         StringBuilder b = new StringBuilder();
-        b.append("nextPlan=").append(nextPlan).append('/').append(unitCount).append(" planRunning=").append(planRunning)
+        b.append("nextPlan=").append(nextPlan).append('/').append(units.size()).append(" planRunning=").append(planRunning)
                 .append(" planNeed=").append(planNeed).append(" ready=").append(ready.size())
                 .append(ready.isEmpty() ? "" : " readyHead=" + ready.firstKey())
                 .append(" decodesInFlight=").append(decodesInFlight).append(" waitingForTask=").append(waitingForTask)
@@ -1133,7 +1144,7 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     /// The first unit a column has not passed.
     private int consumerUnit() {
-        while (heldFrom < unitCount && unitHolders.get(heldFrom) == 0) {
+        while (heldFrom < units.size() && units.get(heldFrom).holders == 0) {
             heldFrom++;
         }
         return heldFrom;
@@ -1191,7 +1202,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         if (planRunning || nextPlan >= failedFrom) {
             return;
         }
-        if (nextPlan >= unitCount) {
+        if (nextPlan >= units.size()) {
             list();
             return;
         }
@@ -1230,20 +1241,20 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
         if (probeMode == Probe.LIVE) {
             // a work item of no rows is not live; without a filter, any other is
-            while (probe < unitCount && probe < failedFrom && !hasRows(probe)) {
+            while (probe < units.size() && probe < failedFrom && !hasRows(probe)) {
                 probe++;
                 furthestUnit = Math.max(furthestUnit, probe);
             }
             if (probe >= failedFrom) {
                 return;
             }
-            if (probe < unitCount && !filtered) {
+            if (probe < units.size() && !filtered) {
                 probeAnswer = true;
                 return;
             }
         }
-        if (probeMode == Probe.LISTED || probe >= unitCount) {
-            if (probe < unitCount) {
+        if (probeMode == Probe.LISTED || probe >= units.size()) {
+            if (probe < units.size()) {
                 probeAnswer = true;
             }
             else if (listed) {
@@ -1297,7 +1308,7 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     /// Whether every unit kept takes a page mask, once [Probe#MASKS] probed every unit.
     private boolean masksOpen() {
-        for (int i = 0; i < unitCount; i++) {
+        for (int i = 0; i < units.size(); i++) {
             if (planning.maskClosed(i)) {
                 return false;
             }
@@ -1330,7 +1341,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
         planRunning = true;
         int file = nextList;
-        int before = unitCount;
+        int before = units.size();
         emit(Kind.PLANNING, buffers -> {
             ReadPlanning.FileListing listing;
             try {
@@ -1345,7 +1356,7 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     private void fileListed(int file, ReadPlanning.FileListing listing) {
         planRunning = false;
-        int before = unitCount;
+        int before = units.size();
         appendUnits(file, planning.append(listing));
         // a file the read reached before it was listed reports its pruning as it is listed
         planning.reportFiles(reachedFile);
@@ -1392,13 +1403,13 @@ public final class RowGroupIterator implements Closeable, Sections {
         int consumer = consumerUnit();
         // before the columns start, the read has reached the unit the probe has
         int unit = columns == null ? furthestUnit : Math.max(furthestUnit, consumer + 1);
-        int file = unit < unitCount ? unitFiles.get(unit) : listed ? fileCount : nextList;
-        if (file == fileCount && unitCount > 0) {
+        int file = unit < units.size() ? units.get(unit).file : listed ? fileCount : nextList;
+        if (file == fileCount && !units.isEmpty()) {
             // the file of the last unit is reached before every file is
-            reach(unitFiles.get(unitCount - 1));
+            reach(units.getLast().file);
         }
         reach(file);
-        int done = consumer > 0 ? unitFiles.get(consumer - 1) : 0;
+        int done = consumer > 0 ? units.get(consumer - 1).file : 0;
         dropFilesBefore(done);
     }
 
@@ -1561,9 +1572,10 @@ public final class RowGroupIterator implements Closeable, Sections {
     private void planStepped(int index, Need need) {
         planRunning = false;
         if (need == null) {
-            planned.set(index, true);
+            Unit u = units.get(index);
+            u.planned = true;
             nextPlan++;
-            if (unitHolders.get(index) == 0) {
+            if (u.holders == 0) {
                 // every column's placement ended at the row cap while it was planned
                 passed(index);
             }
@@ -1598,13 +1610,13 @@ public final class RowGroupIterator implements Closeable, Sections {
                     end(c, placedPlanFailure(c));
                     continue;
                 }
-                if (c.unit >= unitCount) {
+                if (c.unit >= units.size()) {
                     if (listed) {
                         end(c, null);
                     }
                     continue;
                 }
-                if (!planned.get(c.unit)) {
+                if (!units.get(c.unit).planned) {
                     continue;
                 }
                 FetchPlan plan = planning.plans(c.unit)[i];
@@ -1787,9 +1799,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             c.walk = null;
             c.unit++;
             furthestUnit = Math.max(furthestUnit, c.unit);
-            int left = unitHolders.get(unit) - 1;
-            unitHolders.set(unit, left);
-            if (left == 0) {
+            if (--units.get(unit).holders == 0) {
                 planning.release(unit);
                 forget(unit);
             }
@@ -1849,10 +1859,8 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
         c.passedAll = true;
         placingColumns--;
-        for (int unit = c.unit; unit < unitCount; unit++) {
-            int left = unitHolders.get(unit) - 1;
-            unitHolders.set(unit, left);
-            if (left == 0) {
+        for (int unit = c.unit; unit < units.size(); unit++) {
+            if (--units.get(unit).holders == 0) {
                 passed(unit);
             }
         }
@@ -1869,7 +1877,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// and index windows are released and its requests forgotten; a unit planned later is at the
     /// end of its planning ([#planStepped]).
     private void passed(int unit) {
-        if (planned.get(unit)) {
+        if (units.get(unit).planned) {
             planning.release(unit);
             forget(unit);
         }
@@ -1878,7 +1886,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Forgets the requests of `unit`, which every column has passed: each is released whatever
     /// holders it has left, its bytes dropped and its charges returned.
     private void forget(int unit) {
-        List<Request> unitRequests = byUnit.remove(unit);
+        Unit u = units.get(unit);
+        List<Request> unitRequests = u.requests;
+        u.requests = null;
         if (unitRequests != null) {
             for (Request r : unitRequests) {
                 r.drop();
@@ -1891,8 +1901,10 @@ public final class RowGroupIterator implements Closeable, Sections {
         lock.lock();
         try {
             int held = 0;
-            for (List<Request> unit : byUnit.values()) {
-                held += unit.size();
+            for (Unit unit : units) {
+                if (unit.requests != null) {
+                    held += unit.requests.size();
+                }
             }
             return held;
         }
@@ -1906,8 +1918,11 @@ public final class RowGroupIterator implements Closeable, Sections {
         lock.lock();
         try {
             long held = 0;
-            for (List<Request> unit : byUnit.values()) {
-                for (Request r : unit) {
+            for (Unit unit : units) {
+                if (unit.requests == null) {
+                    continue;
+                }
+                for (Request r : unit.requests) {
                     if (r.bytes != null && !HeldBytes.inMemory(r.inputFile)) {
                         held += r.span.length();
                     }
@@ -2054,7 +2069,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             }
         }
         demands.clear();
-        List<Request> next = byUnit.get(consumerUnit() + 1);
+        List<Request> next = requests(consumerUnit() + 1);
         if (next != null && !next.isEmpty() && !next.getFirst().started) {
             start(next.getFirst());
         }
@@ -2191,7 +2206,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     public List<? extends Section> sections(int workItemIndex) {
         lock.lock();
         try {
-            return byUnit.get(workItemIndex);
+            return requests(workItemIndex);
         }
         finally {
             unlock();
@@ -2202,9 +2217,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     public List<? extends Section> insert(int fileIndex, int workItemIndex, InputFile inputFile, List<Span> spans) {
         lock.lock();
         try {
-            List<Request> existing = byUnit.get(workItemIndex);
-            if (existing != null) {
-                return existing;
+            Unit unit = units.get(workItemIndex);
+            if (unit.requests != null) {
+                return unit.requests;
             }
             List<Request> inserted = new ArrayList<>(spans.size());
             for (Span span : spans) {
@@ -2216,7 +2231,7 @@ public final class RowGroupIterator implements Closeable, Sections {
                     queuedBytes += span.length();
                 }
             }
-            byUnit.put(workItemIndex, inserted);
+            unit.requests = inserted;
             return inserted;
         }
         finally {
@@ -2444,8 +2459,11 @@ public final class RowGroupIterator implements Closeable, Sections {
                 }
                 r.errorTaken = true;
             }
-            for (List<Request> unit : byUnit.values()) {
-                for (Request r : unit) {
+            for (Unit unit : units) {
+                if (unit.requests == null) {
+                    continue;
+                }
+                for (Request r : unit.requests) {
                     uncharge(r);
                 }
             }
