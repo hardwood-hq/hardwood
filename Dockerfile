@@ -29,6 +29,7 @@ RUN microdnf install -y --nodocs \
       util-linux-script \
       procps-ng \
       time \
+      rsync \
       hyperfine \
       fontconfig \
       dejavu-sans-fonts \
