@@ -71,9 +71,13 @@ import dev.hardwood.schema.FileSchema;
 /// lock, and [#poll] is the only place that decides what happens next. The work leaves as jobs
 /// (a planning stage, a walk's advance, a page's decode, a request's read), which run outside the
 /// lock on the read's [ReadExecutor] or, for a read, on a virtual thread, and whose results are
-/// applied under the lock ([#update]), each batch of them followed by a poll. On a read of several
-/// decode threads a job's thread does not wait for the lock held by another: it queues its result,
-/// which the thread that holds the lock applies.
+/// applied under the lock ([#update]), each batch of them followed by a poll. A job returns its
+/// result as a [Fact], data that names what happened, as does a callback from outside the read;
+/// [#take] is the one place a fact changes the read's state. A planning stage, and a walk that
+/// reaches the part of a chunk a row limit left out, add their requests through this read's
+/// [Sections] as they run, under the lock. On a read of several decode threads
+/// a job's thread does not wait for the lock held by another: it queues its result, which the
+/// thread that holds the lock applies.
 ///
 /// A read of several files lists them in order, each once its footer is loaded. The footers are
 /// jobs of the read like its requests: the next file's footer after the one the read has reached
@@ -125,15 +129,14 @@ public final class RowGroupIterator implements Closeable, Sections {
     private static final long REFUSED = Long.MIN_VALUE;
 
     private final ReentrantLock lock = new ReentrantLock();
-    /// Updates queued for the thread that holds the lock ([#update]).
-    private final ConcurrentLinkedQueue<Update> pending = new ConcurrentLinkedQueue<>();
-    /// Whether a thread waits for the lock to apply its update: on a read of one decode thread,
+    /// Facts queued for the thread that holds the lock ([#update]).
+    private final ConcurrentLinkedQueue<Fact> pending = new ConcurrentLinkedQueue<>();
+    /// Whether a thread waits for the lock to apply its fact: on a read of one decode thread,
     /// which no other job thread contends with, and whose job, applying its own result, goes on to
     /// the job its poll emits without a hand-off.
     private final boolean waitForLock;
-    /// Runs [#update] with nothing to apply: a release of R this read waited for.
-    private final Runnable wake = () -> update(e -> {
-    });
+    /// Runs [#update] with [PlanNeedMet]: a need a stage job lacked was met.
+    private final Runnable planNeedMet = () -> update(new PlanNeedMet());
 
     private FileSchema referenceSchema;
     private ReadPlanning planning;
@@ -228,7 +231,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// R, before its task is admitted ([WorkingSet#admit]).
     private boolean waitingForTask;
     /// Re-runs the poll once a task of the read ended or R released room after a page was refused.
-    private final Runnable taskEndedWake = () -> update(e -> e.waitingForTask = false);
+    private final Runnable taskEndedWake = () -> update(new TaskEnded());
 
     /// Jobs emitted and not yet applied.
     private int inFlight;
@@ -519,8 +522,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         finally {
             unlock();
         }
-        update(e -> {
-        });
+        update(new ProbeAsked());
         tasks.await(this::probeDecided, executor instanceof ReadQueue queue ? queue : null);
         Throwable failed;
         WorkItem failedAt;
@@ -642,10 +644,7 @@ public final class RowGroupIterator implements Closeable, Sections {
                 }
                 Column c = new Column(side, i);
                 columns[i] = c;
-                exchange.setRoomListener(() -> update(e -> {
-                    side.publish();
-                    e.refresh(c);
-                }));
+                exchange.setRoomListener(() -> update(new RoomMade(c)));
                 sides.add(side);
             }
             for (Column c : columns) {
@@ -656,8 +655,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         finally {
             unlock();
         }
-        update(e -> {
-        });
+        update(new ColumnsStarted());
         return sides;
     }
 
@@ -668,50 +666,165 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     // ==================== Driver ====================
 
-    /// A result to apply under the lock.
-    private interface Update {
-        void apply(RowGroupIterator read) throws Exception;
+    /// What the read takes in under the lock ([#take]): a job's result, or a callback from outside
+    /// the read. Each record names what happened and carries the data its handler needs.
+    private sealed interface Fact {
+    }
+
+    /// A job ended with `result`; its count in [ReadTasks] ends once the result is applied.
+    private record JobEnded(Fact result) implements Fact {
+    }
+
+    /// A job failed with `failure`, or the context refused it.
+    private record JobFailed(Throwable failure) implements Fact {
+    }
+
+    /// A stage job took unit `unit` through a planning stage, or stopped on `need`.
+    private record PlanStepped(int unit, Need need) implements Fact {
+    }
+
+    /// A stage job took unit `unit` through the stage a question probes, or stopped on `need`.
+    private record Probed(int unit, Need need) implements Fact {
+    }
+
+    /// A stage job of unit `unit` failed.
+    private record StageFailed(int unit, Throwable failure) implements Fact {
+    }
+
+    /// File `file` was listed.
+    private record FileListed(int file, ReadPlanning.FileListing listing) implements Fact {
+    }
+
+    /// The listing of the file whose units start at `from` failed.
+    private record ListingFailed(int from, Throwable failure) implements Fact {
+    }
+
+    /// A footer's bytes were read.
+    private record FooterRead(FileState footer) implements Fact {
+    }
+
+    /// A footer's read failed.
+    private record FooterReadFailed(FileState footer, Exception failure) implements Fact {
+    }
+
+    /// A footer's read failed with an `Error`.
+    private record FooterReadErred(FileState footer, Error error) implements Fact {
+    }
+
+    /// A footer was parsed, `error` the `Error` its parse failed with, `null` for none.
+    private record FooterParsed(FileState footer, Error error) implements Fact {
+    }
+
+    /// Another read's load of a footer this read waited for completed.
+    private record PendingFooterDone(FileState footer) implements Fact {
+    }
+
+    /// A walk advance of column `column` over unit `unit` took `pages`, and ended, stopped on
+    /// `pending`, or ran out of room.
+    private record Walked(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
+                          List<PageInfo> pages, List<Integer> ordinals, Need pending, boolean ended) implements Fact {
+    }
+
+    /// A walk advance of column `column` over unit `unit` took `pages` and then failed.
+    private record WalkFailed(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
+                              List<PageInfo> pages, List<Integer> ordinals, Throwable failure) implements Fact {
+    }
+
+    /// A need a column's walk stopped on, other than one of the read's requests, was met.
+    private record NeedMet(Column column) implements Fact {
+    }
+
+    /// A page of `column` was decoded.
+    private record Decoded(Column column, Object decoded) implements Fact {
+    }
+
+    /// The decode of `page` of `column` failed.
+    private record DecodeFailed(Column column, DecodedColumn.Page page, Exception failure) implements Fact {
+    }
+
+    /// The cells a placement of `column` sealed were finished.
+    private record CellsFinished(Column column, List<Object> completed) implements Fact {
+    }
+
+    /// Finishing the cells a placement of `column` sealed failed.
+    private record ColumnFailed(Column column, Exception failure) implements Fact {
+    }
+
+    /// A request's bytes arrived.
+    private record RequestRead(Request request, ByteBuffer bytes) implements Fact {
+    }
+
+    /// A request's read failed.
+    private record RequestFailed(Request request, Exception failure) implements Fact {
+    }
+
+    /// A request's read failed with an `Error`.
+    private record RequestErred(Request request, Error error) implements Fact {
+    }
+
+    /// The consumer made room in `column`'s exchange.
+    private record RoomMade(Column column) implements Fact {
+    }
+
+    /// R released room after a charge of the read did not fit.
+    private record ReadAheadReleased() implements Fact {
+    }
+
+    /// A task of the read ended, or R released room, after a page's task was refused.
+    private record TaskEnded() implements Fact {
+    }
+
+    /// A need a stage job lacked, other than one of the read's requests, was met.
+    private record PlanNeedMet() implements Fact {
+    }
+
+    /// A reader asked a question of the read before its columns start.
+    private record ProbeAsked() implements Fact {
+    }
+
+    /// The read's columns started.
+    private record ColumnsStarted() implements Fact {
     }
 
     /// A job's work outside the lock, returning its result.
     private interface Work {
-        Update run(DecodeBuffers buffers) throws Exception;
+        Fact run(DecodeBuffers buffers) throws Exception;
     }
 
-    /// Applies `u`, polls, and runs what the poll emitted once the lock is released. An update
+    /// Applies `fact`, polls, and runs what the poll emitted once the lock is released. A fact
     /// that a callback brings about on the thread applying another, such as a need met at once, is
     /// applied in place, and the poll runs again after it.
     ///
-    /// On a read of several decode threads no thread waits for the lock to apply an update: where
-    /// another thread holds it, the update is queued, and that thread applies it, with every other
-    /// update queued meanwhile, before it lets go of the lock. A job that ends while another thread
+    /// On a read of several decode threads no thread waits for the lock to apply a fact: where
+    /// another thread holds it, the fact is queued, and that thread applies it, with every other
+    /// fact queued meanwhile, before it lets go of the lock. A job that ends while another thread
     /// polls goes on to its next job at once, and the polls of a read that many threads feed take
     /// the results in batches.
-    private void update(Update u) {
+    private void update(Fact fact) {
         if (lock.isHeldByCurrentThread() && out != null) {
-            apply(u);
+            apply(fact);
             repoll = true;
             return;
         }
-        submit(u, false);
+        submit(fact);
     }
 
     /// Applies a job's result as [#update] does, and ends the job's count in [ReadTasks] once the
     /// result is applied and what its poll emitted is dispatched: a thread that finds the read idle
     /// finds the job's effects published.
-    private void ended(Update u) {
-        submit(u, true);
+    private void ended(Fact result) {
+        submit(new JobEnded(result));
     }
 
-    /// Applies `u` at once where the lock is free, or once it is on a read that waits for it
+    /// Applies `fact` at once where the lock is free, or once it is on a read that waits for it
     /// ([#waitForLock]), else queues it for the thread that holds the lock; a thread that holds it
     /// already applies it as it lets go of it ([#unlock]).
-    private void submit(Update u, boolean ends) {
+    private void submit(Fact fact) {
         if (!lock.isHeldByCurrentThread() && (waitForLock ? lockNow() : lock.tryLock())) {
-            applyHeld(u, ends);
+            applyHeld(fact);
         }
         else {
-            pending.add(ends ? new Ending(u) : u);
+            pending.add(fact);
         }
         drain();
     }
@@ -722,31 +835,23 @@ public final class RowGroupIterator implements Closeable, Sections {
         return true;
     }
 
-    /// A job's result queued, whose application ends the job's count.
-    private record Ending(Update u) implements Update {
-        @Override
-        public void apply(RowGroupIterator read) throws Exception {
-            u.apply(read);
-        }
-    }
-
-    /// Applies the queued updates while the lock is free. An update queued while another thread
+    /// Applies the queued facts while the lock is free. A fact queued while another thread
     /// holds the lock is applied by that thread, which looks at the queue again once it has let go
     /// of the lock. Returns at once where the calling thread holds the lock.
     private void drain() {
         while (!lock.isHeldByCurrentThread() && !pending.isEmpty() && lock.tryLock()) {
-            applyHeld(null, false);
+            applyHeld(null);
         }
     }
 
-    /// Applies `first`, where not `null`, and the queued updates under the lock the calling thread
-    /// has just taken, and polls, until no update is queued; then lets go of the lock, runs what the
-    /// updates and the polls emitted, and ends the count of each job whose result it applied.
-    private void applyHeld(Update first, boolean firstEnds) {
+    /// Applies `first`, where not `null`, and the queued facts under the lock the calling thread
+    /// has just taken, and polls, until no fact is queued; then lets go of the lock, runs what the
+    /// facts and the polls emitted, and ends the count of each job whose result it applied.
+    private void applyHeld(Fact first) {
         List<Runnable> emitted = List.of();
-        int endings = firstEnds ? 1 : 0;
+        int endings = first instanceof JobEnded ? 1 : 0;
         try {
-            // what the updates emit is run with what the poll emits
+            // what the facts emit is run with what the poll emits
             out = new ArrayList<>();
             if (first != null) {
                 apply(first);
@@ -754,12 +859,12 @@ public final class RowGroupIterator implements Closeable, Sections {
             // results queued while the poll ran are applied before the lock is let go of: their
             // jobs' threads have moved on, and would otherwise wait for the next acquisition
             do {
-                Update u;
-                while ((u = pending.poll()) != null) {
-                    if (u instanceof Ending) {
+                Fact fact;
+                while ((fact = pending.poll()) != null) {
+                    if (fact instanceof JobEnded) {
                         endings++;
                     }
-                    apply(u);
+                    apply(fact);
                 }
                 do {
                     repoll = false;
@@ -799,18 +904,62 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
     }
 
-    /// Applies `u`; a failure, an `Error` included, fails the read, so that the jobs the updates
+    /// Applies `fact`; a failure, an `Error` included, fails the read, so that the jobs the facts
     /// and polls emitted still run and the read's consumer does not wait for ever.
-    private void apply(Update u) {
+    private void apply(Fact fact) {
         try {
-            u.apply(this);
+            take(fact);
         }
         catch (Exception | Error e) {
             fail(e);
         }
     }
 
-    /// Lets go of the lock, and then applies the updates other threads queued while it was held
+    /// Takes in `fact`: the one place a job's result or a callback from outside the read changes
+    /// the read's state, through the handler of what happened.
+    private void take(Fact fact) throws Exception {
+        switch (fact) {
+            case JobEnded f -> {
+                inFlight--;
+                take(f.result());
+            }
+            case JobFailed f -> fail(f.failure());
+            case PlanStepped f -> planStepped(f.unit(), f.need());
+            case Probed f -> probed(f.unit(), f.need());
+            case StageFailed f -> planFailed(f.unit(), f.failure(), planning.workItem(f.unit()));
+            case FileListed f -> fileListed(f.file(), f.listing());
+            case ListingFailed f -> planFailed(f.from(), f.failure(), null);
+            case FooterRead f -> parseFooter(f.footer());
+            case FooterReadFailed f -> footerReadFailed(f.footer(), f.failure());
+            case FooterReadErred f -> footerReadErred(f.footer(), f.error());
+            case FooterParsed f -> footerParsed(f.footer(), f.error());
+            case PendingFooterDone f -> footerPendingDone(f.footer());
+            case Walked f -> walked(f.column(), f.unit(), f.workItem(), f.batches(), f.pages(), f.ordinals(),
+                    f.pending(), f.ended());
+            case WalkFailed f -> walked(f.column(), f.unit(), f.workItem(), f.batches(), f.pages(), f.ordinals(),
+                    f.failure());
+            case NeedMet f -> needMet(f.column());
+            case Decoded f -> decoded(f.column(), f.decoded());
+            case DecodeFailed f -> decodeFailed(f.column(), f.page(), f.failure());
+            case CellsFinished f -> cellsFinished(f.column(), f.completed());
+            case ColumnFailed f -> columnFailed(f.column(), f.failure());
+            case RequestRead f -> arrived(f.request(), f.bytes());
+            case RequestFailed f -> requestFailed(f.request(), f.failure());
+            case RequestErred f -> requestErred(f.request(), f.error());
+            case RoomMade f -> roomMade(f.column());
+            case ReadAheadReleased f -> waitingForRoom = false;
+            case TaskEnded f -> waitingForTask = false;
+            // nothing to take in: the poll that follows looks at the read again
+            case PlanNeedMet f -> {
+            }
+            case ProbeAsked f -> {
+            }
+            case ColumnsStarted f -> {
+            }
+        }
+    }
+
+    /// Lets go of the lock, and then applies the facts other threads queued while it was held
     /// ([#drain]).
     private void unlock() {
         releaseLock();
@@ -851,10 +1000,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             }
             catch (RejectedExecutionException e) {
                 // a closed context refuses the job: it ends here, and fails the read
-                ended(read -> {
-                    read.inFlight--;
-                    read.fail(HardwoodContextImpl.contextClosed(e));
-                });
+                ended(new JobFailed(HardwoodContextImpl.contextClosed(e)));
             }
         });
     }
@@ -864,18 +1010,14 @@ public final class RowGroupIterator implements Closeable, Sections {
     }
 
     private void run(Work work, DecodeBuffers buffers) {
-        Update result;
+        Fact result;
         try {
             result = work.run(buffers);
         }
         catch (Throwable t) {
-            result = e -> e.fail(t);
+            result = new JobFailed(t);
         }
-        Update applied = result;
-        ended(e -> {
-            e.inFlight--;
-            applied.apply(e);
-        });
+        ended(result);
     }
 
     private void fail(Throwable t) {
@@ -1070,9 +1212,9 @@ public final class RowGroupIterator implements Closeable, Sections {
                 need = planning.plan(index);
             }
             catch (Exception | Error t) {
-                return e -> e.planFailed(index, t, e.planning.workItem(index));
+                return new StageFailed(index, t);
             }
-            return e -> e.planStepped(index, need);
+            return new PlanStepped(index, need);
         });
     }
 
@@ -1127,9 +1269,9 @@ public final class RowGroupIterator implements Closeable, Sections {
                 need = masks ? planning.masked(index) : planning.arrival(index);
             }
             catch (Exception | Error t) {
-                return e -> e.planFailed(index, t, e.planning.workItem(index));
+                return new StageFailed(index, t);
             }
-            return e -> e.probed(index, need);
+            return new Probed(index, need);
         });
     }
 
@@ -1171,7 +1313,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             demands.add(r);
         }
         else {
-            need.whenMet(wake);
+            need.whenMet(planNeedMet);
         }
     }
 
@@ -1195,9 +1337,9 @@ public final class RowGroupIterator implements Closeable, Sections {
                 listing = planning.listFile(file, before);
             }
             catch (Exception | Error t) {
-                return e -> e.planFailed(before, t, null);
+                return new ListingFailed(before, t);
             }
-            return e -> e.fileListed(file, listing);
+            return new FileListed(file, listing);
         });
     }
 
@@ -1304,7 +1446,7 @@ public final class RowGroupIterator implements Closeable, Sections {
                 f.pending = true;
                 pendingFooters++;
                 returnCharge(charged);
-                out.add(() -> planning.whenFooterDone(f.file, () -> update(e -> e.footerPendingDone(f))));
+                out.add(() -> planning.whenFooterDone(f.file, () -> update(new PendingFooterDone(f))));
             }
             case CLAIMED -> {
                 if (planning.footerReadsInPlace(f.file)) {
@@ -1339,28 +1481,27 @@ public final class RowGroupIterator implements Closeable, Sections {
                 planning.readFooter(f.file);
             }
             catch (IOException | RuntimeException e) {
-                return read -> read.footerReadFailed(f, e);
+                return new FooterReadFailed(f, e);
             }
             catch (Error e) {
-                return read -> read.footerReadErred(f, e);
+                return new FooterReadErred(f, e);
             }
-            return read -> read.parseFooter(f);
+            return new FooterRead(f);
         });
     }
 
     /// Parses `f`'s footer on a job, also once the read closed, so that the reader's other reads
     /// find its load completed.
     private void parseFooter(FileState f) {
-        emit(Kind.PLANNING, buffers -> {
-            Error erred = planning.parseFooter(f.file);
-            return read -> {
-                f.loaded = true;
-                if (erred != null && read.untakenError == null) {
-                    // raised by the read's close unless the listing of the file raises it
-                    read.untakenError = erred;
-                }
-            };
-        });
+        emit(Kind.PLANNING, buffers -> new FooterParsed(f, planning.parseFooter(f.file)));
+    }
+
+    private void footerParsed(FileState f, Error erred) {
+        f.loaded = true;
+        if (erred != null && untakenError == null) {
+            // raised by the read's close unless the listing of the file raises it
+            untakenError = erred;
+        }
     }
 
     /// A footer read that failed the first time is started again at once, uncharged. A second
@@ -1509,18 +1650,18 @@ public final class RowGroupIterator implements Closeable, Sections {
                     // the pages taken before the failure are placed ahead of it
                     Exception placed = c.side.placed(e, workItem.inputFile().name(), workItem.rowGroupIndex(),
                             walk.currentPage());
-                    return read -> read.walked(column, unit, workItem, batches, pages, ordinals, placed);
+                    return new WalkFailed(column, unit, workItem, batches, pages, ordinals, placed);
                 }
                 catch (Error e) {
                     if (!requestErrors.contains(e)) {
                         throw e;
                     }
                     // a request's read failed with it: the column fails where it reached the bytes
-                    return read -> read.walked(column, unit, workItem, batches, pages, ordinals, e);
+                    return new WalkFailed(column, unit, workItem, batches, pages, ordinals, e);
                 }
                 Need pending = pages.size() < room ? walk.pending() : null;
                 boolean ended = pages.size() < room && pending == null;
-                return e -> e.walked(column, unit, workItem, batches, pages, ordinals, pending, ended);
+                return new Walked(column, unit, workItem, batches, pages, ordinals, pending, ended);
             });
         }
     }
@@ -1667,15 +1808,17 @@ public final class RowGroupIterator implements Closeable, Sections {
             }
             else {
                 c.needMet = false;
-                pending.whenMet(() -> update(e -> {
-                    c.needMet = true;
-                    e.markRunnable(c);
-                }));
+                pending.whenMet(() -> update(new NeedMet(c)));
             }
         }
         else {
             markRunnable(c);
         }
+    }
+
+    private void needMet(Column c) {
+        c.needMet = true;
+        markRunnable(c);
     }
 
     /// Takes up the end of `c`'s placement at the row cap: its walk stops, passing the sections it
@@ -1789,14 +1932,22 @@ public final class RowGroupIterator implements Closeable, Sections {
                     completed = c.side.finishSealed(cells, buffers);
                 }
                 catch (Exception failure) {
-                    return e -> e.columnFailed(c, failure);
+                    return new ColumnFailed(c, failure);
                 }
-                return e -> {
-                    c.side.completed(completed);
-                    e.refresh(c);
-                };
+                return new CellsFinished(c, completed);
             });
         }
+    }
+
+    private void cellsFinished(Column c, List<Object> completed) {
+        c.side.completed(completed);
+        refresh(c);
+    }
+
+    /// Takes up the room the consumer made in `c`'s exchange.
+    private void roomMade(Column c) {
+        c.side.publish();
+        refresh(c);
     }
 
     /// Decodes ready pages in row order within the read-ahead cap, at most `maxDecodes` at once: a
@@ -1833,20 +1984,22 @@ public final class RowGroupIterator implements Closeable, Sections {
                     decoded = c.side.decode(r.page(), buffers);
                 }
                 catch (Exception failure) {
-                    return e -> {
-                        e.decodesInFlight--;
-                        // a page the column's placement ended before holds no row of the read
-                        if (c.side.decodes(r.page())) {
-                            e.columnFailed(c, failure);
-                        }
-                    };
+                    return new DecodeFailed(c, r.page(), failure);
                 }
                 finally {
                     // outside the lock: the release runs what waits for it, this read's poll among them
                     workingSet.taskEnded(admission);
                 }
-                return e -> e.decoded(c, decoded);
+                return new Decoded(c, decoded);
             });
+        }
+    }
+
+    private void decodeFailed(Column c, DecodedColumn.Page page, Exception failure) {
+        decodesInFlight--;
+        // a page the column's placement ended before holds no row of the read
+        if (c.side.decodes(page)) {
+            columnFailed(c, failure);
         }
     }
 
@@ -1942,7 +2095,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
         if (!waitingForRoom) {
             waitingForRoom = true;
-            readAhead.whenReleased(readAhead.releases(), () -> update(e -> e.waitingForRoom = false));
+            readAhead.whenReleased(readAhead.releases(), () -> update(new ReadAheadReleased()));
         }
         return false;
     }
@@ -1960,12 +2113,12 @@ public final class RowGroupIterator implements Closeable, Sections {
             }
             catch (Exception e) {
                 // a checked exception the file threw undeclared fails the request as one it declared
-                return read -> read.requestFailed(r, e);
+                return new RequestFailed(r, e);
             }
             catch (Error e) {
-                return read -> read.requestErred(r, e);
+                return new RequestErred(r, e);
             }
-            return read -> read.arrived(r, bytes);
+            return new RequestRead(r, bytes);
         });
     }
 
