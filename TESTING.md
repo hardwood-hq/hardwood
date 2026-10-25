@@ -1,6 +1,6 @@
 # Testing
 
-This document describes how Hardwood's automated tests are organised and how to run them: the split between unit and integration tests, the tags that keep some tests out of an ordinary build, the runs at small batch capacities, and the differential tests that compare Hardwood against DuckDB. It ends with manual recipes for scenarios the automated suite does not cover. The Maven profiles, Error Prone checks and CI jobs are described in [_designs/BUILD_INFRASTRUCTURE.md](_designs/BUILD_INFRASTRUCTURE.md), the native CLI build in [NATIVE_BUILD.md](NATIVE_BUILD.md), and benchmarks in [PERFORMANCE.md](PERFORMANCE.md).
+This document describes how Hardwood's automated tests are organised and how to run them: the split between unit and integration tests, the tags that keep some tests out of an ordinary build, the runs at small batch capacities, the differential tests that compare Hardwood against DuckDB, and the fuzz targets over files the reader did not write. It ends with manual recipes for scenarios the automated suite does not cover. The Maven profiles, Error Prone checks and CI jobs are described in [_designs/BUILD_INFRASTRUCTURE.md](_designs/BUILD_INFRASTRUCTURE.md), the native CLI build in [NATIVE_BUILD.md](NATIVE_BUILD.md), and benchmarks in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Integration tests
 
@@ -177,6 +177,31 @@ A new differential case extends `tools/simple-datagen.py` with a fixture carryin
 ### Other reference readers
 
 The `parquet-testing-runner` module uses parquet-java as the reference instead of DuckDB: `ParquetComparisonTest` compares Hardwood's rows field by field against parquet-java, and `ParquetColumnComparisonTest` its batch columns, for every file in the [apache/parquet-testing](https://github.com/apache/parquet-testing) repository (cloned on first use by `ParquetTestingRepoCloner`), and the writer interop tests (`WriterInteropTest` and its nested and logical-type siblings) read Hardwood-written files back through parquet-java.
+
+## Fuzzing
+
+`dev.hardwood.fuzz` in `core` holds [Jazzer](https://github.com/CodeIntelligenceTesting/jazzer) fuzz targets over the reader's handling of files it did not write:
+
+| Target | Input | Read |
+|--------|-------|------|
+| `MetadataFuzzTest#footer` | a footer | parsed (`FileMetaDataReader`), and its schema derived (`ParquetMetadataReader.schemaOf`) |
+| `MetadataFuzzTest#pageHeader`, `#offsetIndex`, `#columnIndex`, `#bloomFilter` | one Thrift structure | parsed by its reader |
+| `FileFuzzTest#read` | a file | through the public API on a context of zero threads: every column through `ColumnReaders`, every row through a `RowReader` with each value converted, and the rows an equality predicate on each of the first three columns selects, which consults statistics, the page index, dictionaries and bloom filters |
+
+A read may return, or fail with `ParquetReadException` or `UnsupportedOperationException`. `FileFuzzTest` also accepts a `DateTimeException` from a value conversion, for a stored value outside its Java type ([LOGICAL_TYPES.md](_designs/LOGICAL_TYPES.md)), and the footer target the two exceptions the reader restates where it reads a footer: the internal one an encrypted footer raises, and the `IllegalArgumentException` of a schema `FileSchema` rejects. Any other throwable is a finding, `StackOverflowError` and `OutOfMemoryError` included. A `ParquetReadException` the reader builds around another exception (`ExceptionContext.asReadFailure`) is accepted, so an `ArrayIndexOutOfBoundsException` raised inside a read and classified there is not a finding.
+
+`Seeds` builds the seeds: every core test fixture of at most 64 KiB; files crafted to break a bound, namely a data page header understating its page under each codec, a data page declaring 2^31 - 1 values, and a schema and a skipped Thrift value each nested one level past its bound; and the footers, page headers, page indexes and bloom filters cut from those files. A finding is checked in, named after its shape, under `core/src/test/resources/dev/hardwood/fuzz/<target class>Inputs/<method>/`, together with the fix it needs.
+
+Every build replays the seeds and the checked-in findings once, in about ten seconds, in the `fuzz-regression` Surefire execution of `core`. Jazzer attaches an agent to the JVM it runs in, which hooks every class that JVM loads, so the default execution excludes `*FuzzTest`; `core` allows the self-attach in every execution, so that a `-Dtest` selection, which runs in the default one, reaches the targets too.
+
+Fuzzing mode mutates the seeds of the one target a `-Dtest` selection names, guided by coverage, until `jazzer.max_duration` has passed:
+
+```bash
+JAZZER_FUZZ=1 ./mvnw test -pl core -Dtest='FileFuzzTest' -Djazzer.max_duration=10m -Djazzer.keep_going=100
+JAZZER_FUZZ=1 ./mvnw test -pl core -Dtest='MetadataFuzzTest#footer' -Djazzer.max_duration=10m
+```
+
+`jazzer.keep_going` continues past a finding, up to that many distinct ones; without it a run stops at the first. Jazzer writes each finding's input to the target's directory under `src/test/resources`, where the next regression run replays it, and the inputs that reach new coverage to `core/.cifuzz-corpus/`, which git ignores and the next run of the target starts from. No workflow runs fuzzing mode.
 
 ## Manual S3 testing
 

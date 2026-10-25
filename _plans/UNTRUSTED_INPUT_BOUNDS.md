@@ -298,9 +298,12 @@ context's requests in flight with demand ahead of speculative ones.
 
 ### Stage 7: #1630 fuzzing
 
-Jazzer targets over the footer, page headers and page index, in regression mode in the PR build
-and fuzzing mode on a schedule. Seed the corpus with the stage 3 file and parquet-testing's
-`bad_data`. Coming after stages 2–5, every out-of-memory a target reports is a new finding.
+Jazzer targets over the footer, page headers, page index and whole-file reads, seeded with the
+stage 2, 3 and #1658 files, replay their corpus in regression mode in the PR build
+([TESTING.md](../TESTING.md#fuzzing)). The defects a first round of fuzzing found are fixed under
+#1715. Open: the release gate for 1.1.0.CR1, a clean run of every target in fuzzing mode for a
+bounded time, which the whole-file target has not had yet. Coming after stages 2–5, every
+out-of-memory a target reports is a new finding.
 
 ## End state
 
