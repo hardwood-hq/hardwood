@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -68,7 +69,9 @@ import dev.hardwood.schema.FileSchema;
 /// lock, and [#poll] is the only place that decides what happens next. The work leaves as jobs
 /// (a planning stage, a walk's advance, a page's decode, a request's read), which run outside the
 /// lock on the read's [ReadExecutor] or, for a read, on a virtual thread, and whose results are
-/// applied under the lock ([#update]), each followed by a poll.
+/// applied under the lock ([#update]), each batch of them followed by a poll. On a read of several
+/// decode threads a job's thread does not wait for the lock held by another: it queues its result,
+/// which the thread that holds the lock applies.
 ///
 /// A read of several files lists them in order, each once its footer is loaded. The footers are
 /// jobs of the read like its requests: the next file's footer after the one the read has reached
@@ -120,6 +123,12 @@ public final class ReadEngine implements Closeable, Sections {
     private static final long REFUSED = Long.MIN_VALUE;
 
     private final ReentrantLock lock = new ReentrantLock();
+    /// Updates queued for the thread that holds the lock ([#update]).
+    private final ConcurrentLinkedQueue<Update> pending = new ConcurrentLinkedQueue<>();
+    /// Whether a thread waits for the lock to apply its update: on a read of one decode thread,
+    /// which no other job thread contends with, and whose job, applying its own result, goes on to
+    /// the job its poll emits without a hand-off.
+    private final boolean waitForLock;
     /// Runs [#update] with nothing to apply: a release of R this read waited for.
     private final Runnable wake = () -> update(e -> {
     });
@@ -341,6 +350,7 @@ public final class ReadEngine implements Closeable, Sections {
         this.executor = ReadExecutor.forContext(context);
         this.tasks = executor.tasks();
         this.readAhead = context.readAheadBuffer();
+        this.waitForLock = executor.decodeThreads() <= 1;
     }
 
     /// Whether the engine takes the reads it supports: the property is not `off`.
@@ -389,7 +399,7 @@ public final class ReadEngine implements Closeable, Sections {
             listed = fileCount == 1 || !planning.budgetLeft();
         }
         finally {
-            lock.unlock();
+            unlock();
         }
         this.workingSet = workingSet;
     }
@@ -433,7 +443,7 @@ public final class ReadEngine implements Closeable, Sections {
             listedFirst = unitCount > 0 || listed;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
         if (!listedFirst && !ask(Probe.LISTED)) {
             return 0;
@@ -478,7 +488,7 @@ public final class ReadEngine implements Closeable, Sections {
             probeAnswer = null;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
         update(e -> {
         });
@@ -495,7 +505,7 @@ public final class ReadEngine implements Closeable, Sections {
             failedAt = failure != null ? null : failedWorkItem;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
         if (failed == null) {
             // closed while it probed
@@ -510,7 +520,7 @@ public final class ReadEngine implements Closeable, Sections {
             return probeAnswer != null || failure != null || closed || probe >= failedFrom;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
     }
 
@@ -615,7 +625,7 @@ public final class ReadEngine implements Closeable, Sections {
             }
         }
         finally {
-            lock.unlock();
+            unlock();
         }
         update(e -> {
         });
@@ -642,31 +652,108 @@ public final class ReadEngine implements Closeable, Sections {
     /// Applies `u`, polls, and runs what the poll emitted once the lock is released. An update
     /// that a callback brings about on the thread applying another, such as a need met at once, is
     /// applied in place, and the poll runs again after it.
+    ///
+    /// On a read of several decode threads no thread waits for the lock to apply an update: where
+    /// another thread holds it, the update is queued, and that thread applies it, with every other
+    /// update queued meanwhile, before it lets go of the lock. A job that ends while another thread
+    /// polls goes on to its next job at once, and the polls of a read that many threads feed take
+    /// the results in batches.
     private void update(Update u) {
         if (lock.isHeldByCurrentThread() && out != null) {
             apply(u);
             repoll = true;
             return;
         }
-        List<Runnable> emitted;
+        submit(u, false);
+    }
+
+    /// Applies a job's result as [#update] does, and ends the job's count in [ReadTasks] once the
+    /// result is applied and what its poll emitted is dispatched: a thread that finds the read idle
+    /// finds the job's effects published.
+    private void ended(Update u) {
+        submit(u, true);
+    }
+
+    /// Applies `u` at once where the lock is free, or once it is on a read that waits for it
+    /// ([#waitForLock]), else queues it for the thread that holds the lock; a thread that holds it
+    /// already applies it as it lets go of it ([#unlock]).
+    private void submit(Update u, boolean ends) {
+        if (!lock.isHeldByCurrentThread() && (waitForLock ? lockNow() : lock.tryLock())) {
+            applyHeld(u, ends);
+        }
+        else {
+            pending.add(ends ? new Ending(u) : u);
+        }
+        drain();
+    }
+
+    /// Takes the lock, waiting for it.
+    private boolean lockNow() {
         lock.lock();
+        return true;
+    }
+
+    /// A job's result queued, whose application ends the job's count.
+    private record Ending(Update u) implements Update {
+        @Override
+        public void apply(ReadEngine engine) throws Exception {
+            u.apply(engine);
+        }
+    }
+
+    /// Applies the queued updates while the lock is free. An update queued while another thread
+    /// holds the lock is applied by that thread, which looks at the queue again once it has let go
+    /// of the lock. Returns at once where the calling thread holds the lock.
+    private void drain() {
+        while (!lock.isHeldByCurrentThread() && !pending.isEmpty() && lock.tryLock()) {
+            applyHeld(null, false);
+        }
+    }
+
+    /// Applies `first`, where not `null`, and the queued updates under the lock the calling thread
+    /// has just taken, and polls, until no update is queued; then lets go of the lock, runs what the
+    /// updates and the polls emitted, and ends the count of each job whose result it applied.
+    private void applyHeld(Update first, boolean firstEnds) {
+        List<Runnable> emitted = List.of();
+        int endings = firstEnds ? 1 : 0;
         try {
-            // what the update emits is run with what the poll emits
+            // what the updates emit is run with what the poll emits
             out = new ArrayList<>();
-            apply(u);
-            do {
-                repoll = false;
-                emitted = poll();
+            if (first != null) {
+                apply(first);
             }
-            while (repoll);
+            // results queued while the poll ran are applied before the lock is let go of: their
+            // jobs' threads have moved on, and would otherwise wait for the next acquisition
+            do {
+                Update u;
+                while ((u = pending.poll()) != null) {
+                    if (u instanceof Ending) {
+                        endings++;
+                    }
+                    apply(u);
+                }
+                do {
+                    repoll = false;
+                    emitted = poll();
+                }
+                while (repoll);
+            }
+            while (!pending.isEmpty());
             checkStall(emitted);
         }
         finally {
             out = null;
-            unlock();
-        }
-        for (Runnable r : emitted) {
-            r.run();
+            releaseLock();
+            try {
+                for (Runnable r : emitted) {
+                    r.run();
+                }
+            }
+            finally {
+                for (int i = 0; i < endings; i++) {
+                    tasks.ended();
+                }
+            }
         }
     }
 
@@ -679,10 +766,19 @@ public final class ReadEngine implements Closeable, Sections {
         }
     }
 
+    /// Lets go of the lock, and then applies the updates other threads queued while it was held
+    /// ([#drain]).
+    private void unlock() {
+        releaseLock();
+        if (!pending.isEmpty()) {
+            drain();
+        }
+    }
+
     /// Lets go of the lock, and returns to R what the read released under it once the lock is let
     /// go of entirely: R runs its waiters, other reads' among them, on the releasing thread, which
     /// must hold no lock they could wait for.
-    private void unlock() {
+    private void releaseLock() {
         long released = 0;
         if (lock.getHoldCount() == 1) {
             released = toRelease;
@@ -711,15 +807,10 @@ public final class ReadEngine implements Closeable, Sections {
             }
             catch (RejectedExecutionException e) {
                 // a closed context refuses the job: it ends here, and fails the read
-                try {
-                    update(engine -> {
-                        engine.inFlight--;
-                        engine.fail(HardwoodContextImpl.contextClosed(e));
-                    });
-                }
-                finally {
-                    tasks.ended();
-                }
+                ended(engine -> {
+                    engine.inFlight--;
+                    engine.fail(HardwoodContextImpl.contextClosed(e));
+                });
             }
         });
     }
@@ -737,15 +828,10 @@ public final class ReadEngine implements Closeable, Sections {
             result = e -> e.fail(t);
         }
         Update applied = result;
-        try {
-            update(e -> {
-                e.inFlight--;
-                applied.apply(e);
-            });
-        }
-        finally {
-            tasks.ended();
-        }
+        ended(e -> {
+            e.inFlight--;
+            applied.apply(e);
+        });
     }
 
     private void fail(Throwable t) {
@@ -1705,7 +1791,7 @@ public final class ReadEngine implements Closeable, Sections {
             return byUnit.get(workItemIndex);
         }
         finally {
-            lock.unlock();
+            unlock();
         }
     }
 
@@ -1732,7 +1818,7 @@ public final class ReadEngine implements Closeable, Sections {
             return inserted;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
     }
 
@@ -1749,7 +1835,7 @@ public final class ReadEngine implements Closeable, Sections {
             return r;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
     }
 
@@ -1766,7 +1852,7 @@ public final class ReadEngine implements Closeable, Sections {
             return r;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
     }
 
@@ -1867,7 +1953,7 @@ public final class ReadEngine implements Closeable, Sections {
                 demands.add(this);
             }
             finally {
-                lock.unlock();
+                unlock();
             }
         }
 
@@ -1928,7 +2014,7 @@ public final class ReadEngine implements Closeable, Sections {
             }
         }
         finally {
-            lock.unlock();
+            unlock();
         }
         tasks.await(this::quiescent, executor instanceof ReadQueue queue ? queue : null);
         Error untaken;
@@ -1965,7 +2051,7 @@ public final class ReadEngine implements Closeable, Sections {
             return inFlight == 0;
         }
         finally {
-            lock.unlock();
+            unlock();
         }
     }
 }
