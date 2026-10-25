@@ -9,6 +9,7 @@ package dev.hardwood.reader;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
@@ -21,6 +22,7 @@ import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.ReadEngine;
+import dev.hardwood.internal.reader.pipeline.EngineColumn;
 import dev.hardwood.internal.reader.pipeline.ReadScheduler;
 import dev.hardwood.internal.reader.plan.RowGroupIterator;
 import dev.hardwood.internal.reader.row.RecordFilterTally;
@@ -128,13 +130,22 @@ final class ColumnScan implements Closeable {
     }
 
     /// An unfiltered scan over every decoded column of `projection`, driven by `engine`.
-    static ColumnScan openEngine(ReadEngine engine, FileSchema schema, ReadProjection projection, int batchSize,
+    /// `layers` holds the layers of every column of `schema`, indexed by column index.
+    static ColumnScan openEngine(ReadEngine engine, boolean fixedListFastPathEnabled, FileSchema schema,
+                                 NestedLevelComputer.Layers[] layers, ReadProjection projection, int batchSize,
                                  long budgetRows) {
         ProjectedSchema decoded = projection.decoded();
-        List<BatchExchange<BatchExchange.Batch>> exchanges = engine.start(decoded, batchSize, budgetRows);
-        ColumnCursor[] cursors = new ColumnCursor[exchanges.size()];
+        List<NestedLevelComputer.Layers> nestedLayers = new ArrayList<>();
+        for (int i = 0; i < decoded.getProjectedColumnCount(); i++) {
+            ColumnSchema column = schema.getColumn(decoded.toOriginalIndex(i));
+            NestedLevelComputer.Layers columnLayers = layers[column.columnIndex()];
+            nestedLayers.add(ColumnCursor.isNested(columnLayers, column) ? columnLayers : null);
+        }
+        List<EngineColumn> sides = engine.start(decoded, nestedLayers, NestedIndexMode.REAL_VIEW,
+                fixedListFastPathEnabled, batchSize, budgetRows);
+        ColumnCursor[] cursors = new ColumnCursor[sides.size()];
         for (int i = 0; i < cursors.length; i++) {
-            cursors[i] = ColumnCursor.engine(schema.getColumn(decoded.toOriginalIndex(i)), exchanges.get(i));
+            cursors[i] = ColumnCursor.engine(schema.getColumn(decoded.toOriginalIndex(i)), sides.get(i));
         }
         return new ColumnScan(cursors, projection.payloadColumnCount(), null, engine);
     }

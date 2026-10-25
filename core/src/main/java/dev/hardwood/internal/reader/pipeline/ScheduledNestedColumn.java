@@ -65,8 +65,12 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     static final int SCRATCH_POOL = 4;
 
     /// Scratch of pages whose cells are all filled, for the column's next pages.
-    private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool =
-            new ArrayBlockingQueue<>(SCRATCH_POOL);
+    private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool = newScratchPool();
+
+    /// A pool for the scratch of a column's pages whose cells are all filled.
+    static ArrayBlockingQueue<PageDecoder.LevelScratch> newScratchPool() {
+        return new ArrayBlockingQueue<>(SCRATCH_POOL);
+    }
 
     /// Told of every cell as it is filled, on the filling thread; for tests of where cells are
     /// filled. `null` for none.
@@ -381,16 +385,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     }
 
     private void measureAndPlace(NestedPageTask page, DecodeBuffers buffers) {
-        PageInfo info = page.info;
-        PageRowMask mask = info.mask();
-        PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
-                ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch, true)
-                : page.decoder.decodeNestedInPlace(info.dataPage(), info.dictionary(), page.scratch, buffers);
-        if (!mask.isAll()) {
-            inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
-        }
-        page.inPlace = inPlace;
-        page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
+        measure(page, buffers);
         lock.lock();
         try {
             page.measured = true;
@@ -401,12 +396,49 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         }
     }
 
+    /// Decodes a page's levels into its scratch, its values left in place, trims it to its mask
+    /// and measures it; the page is then ready to be placed.
+    static void measure(NestedPageTask page, DecodeBuffers buffers) {
+        PageInfo info = page.info;
+        PageRowMask mask = info.mask();
+        PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
+                ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch, true)
+                : page.decoder.decodeNestedInPlace(info.dataPage(), info.dictionary(), page.scratch, buffers);
+        if (!mask.isAll()) {
+            inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
+        }
+        page.inPlace = inPlace;
+        page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
+    }
+
     /// Returns a page's scratch to the column's pool; the page reads it no more.
     private void releaseScratch(NestedPageTask page) {
+        releaseScratch(page, scratchPool);
+    }
+
+    /// Returns a page's scratch to `pool`, where it has room; the page reads it no more.
+    static void releaseScratch(NestedPageTask page, ArrayBlockingQueue<PageDecoder.LevelScratch> pool) {
         page.inPlace = null;
         page.measure = null;
         page.scratch.trim();
-        scratchPool.offer(page.scratch);
+        pool.offer(page.scratch);
+    }
+
+    /// Fills a sealed `cell` ([NestedFill]) and drops its segments, returning the scratch of each
+    /// page whose cells are then all filled to `pool`.
+    static void fill(NestedCell cell, BatchExchange<NestedBatch> exchange, ColumnSchema column,
+                     NestedLevelComputer.Layers layers, NestedIndexMode indexMode,
+                     BinaryBatchValues.ViewDemand viewDemand, DecodeBuffers buffers,
+                     ArrayBlockingQueue<PageDecoder.LevelScratch> pool) {
+        cell.filled(NestedFill.fill(cell, exchange, column, layers, indexMode, viewDemand, buffers));
+        for (NestedSegment segment : cell.segments()) {
+            if (segment.page.unfilledSegments.decrementAndGet() == 0) {
+                releaseScratch(segment.page, pool);
+            }
+        }
+        // The cell holds what it was filled from no longer: a cell waiting for room in the
+        // exchange would otherwise keep its pages' arrays alive
+        cell.dropSegments();
     }
 
     /// Fills, completes and publishes the cells sealed so far, outside the lock.
@@ -428,15 +460,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
                 observer.filling(this, cell);
             }
             try {
-                cell.filled(NestedFill.fill(cell, exchange, column, layers, indexMode, viewDemand, buffers));
-                for (NestedSegment segment : cell.segments()) {
-                    if (segment.page.unfilledSegments.decrementAndGet() == 0) {
-                        releaseScratch(segment.page);
-                    }
-                }
-                // The cell holds what it was filled from no longer: a cell waiting for room in the
-                // exchange would otherwise keep its pages' arrays alive
-                cell.dropSegments();
+                fill(cell, exchange, column, layers, indexMode, viewDemand, buffers, scratchPool);
             }
             catch (RuntimeException e) {
                 // The cell cannot complete, and a failure queued behind it would never be raised

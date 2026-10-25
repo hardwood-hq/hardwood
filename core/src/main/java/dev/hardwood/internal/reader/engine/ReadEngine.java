@@ -30,6 +30,9 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.NestedBatch;
+import dev.hardwood.internal.reader.batch.NestedIndexMode;
+import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
@@ -43,6 +46,8 @@ import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.pipeline.EngineColumn;
+import dev.hardwood.internal.reader.pipeline.EngineFlatColumn;
+import dev.hardwood.internal.reader.pipeline.EngineNestedColumn;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.internal.reader.plan.EnginePlanning;
 import dev.hardwood.internal.reader.plan.FileMetadataCache;
@@ -72,7 +77,7 @@ import dev.hardwood.schema.FileSchema;
 /// before it and then ends with it.
 ///
 /// Interim name: the engine takes over [dev.hardwood.internal.reader.plan.RowGroupIterator]'s name
-/// once the pipeline it replaces is gone. It reads flat columns without a filter or a row limit
+/// once the pipeline it replaces is gone. It reads column reads without a filter or a row limit
 /// ([#supports]).
 public final class ReadEngine implements Closeable, Sections {
 
@@ -91,6 +96,9 @@ public final class ReadEngine implements Closeable, Sections {
     private final long indexWindowBytes = InternalProperty.longValue("hardwood.internal.indexWindowBytes",
             16L * 1024 * 1024, 1, "a positive byte count");
 
+    /// Pages a column holds at most: not decoded for a flat column, not placed for one decoded
+    /// through levels.
+    private static final int MAX_PAGES_HELD = 8;
     /// Batch byte budgets a read decodes at most ahead of its first unpublished row (READ_PIPELINE.md,
     /// the cap).
     private static final int CAP_BUDGETS = 8;
@@ -265,8 +273,6 @@ public final class ReadEngine implements Closeable, Sections {
         /// The section the walk stopped on, or another need it waits for.
         Need waitingOn;
         boolean needMet = true;
-        /// Pages placed and not decoded.
-        int queued;
         boolean ended;
 
         Column(EngineColumn side, int index) {
@@ -285,19 +291,9 @@ public final class ReadEngine implements Closeable, Sections {
         this.readAhead = context.readAheadBuffer();
     }
 
-    /// Whether the engine reads a column read over `projected`: flat columns, no filter, the
-    /// property on.
-    public static boolean supports(ProjectedSchema projected, FileSchema schema, boolean filtered) {
-        if (!"auto".equals(System.getProperty(PROPERTY, "off")) || filtered) {
-            return false;
-        }
-        for (int i = 0; i < projected.getProjectedColumnCount(); i++) {
-            ColumnSchema column = schema.getColumn(projected.toOriginalIndex(i));
-            if (column.maxRepetitionLevel() > 0 || column.fieldPath().elements().size() > 1) {
-                return false;
-            }
-        }
-        return true;
+    /// Whether the engine reads an unfiltered column read without a row limit: the property is on.
+    public static boolean supports() {
+        return "auto".equals(System.getProperty(PROPERTY, "off"));
     }
 
     /// Sets up the read's planning and lists its first file's work items.
@@ -349,11 +345,17 @@ public final class ReadEngine implements Closeable, Sections {
         return files.inputFiles().getFirst().name();
     }
 
-    /// Starts the read's decoded columns and returns the exchange of each, in decoded order.
-    public List<BatchExchange<BatchExchange.Batch>> start(ProjectedSchema decoded, int batchSize, long budgetRows) {
+    /// Starts the read's decoded columns and returns each, in decoded order.
+    ///
+    /// @param layers the layers of each decoded column decoded through levels, `null` for a flat
+    ///        one, in decoded order
+    /// @param indexMode what the batches of a column decoded through levels carry for their reader
+    public List<EngineColumn> start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
+                                    NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize,
+                                    long budgetRows) {
         planning.setBatchPlan(new BatchPlan(batchSize,
                 BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()), false, 0));
-        List<BatchExchange<BatchExchange.Batch>> exchanges = new ArrayList<>();
+        List<EngineColumn> sides = new ArrayList<>();
         lock.lock();
         try {
             this.batchCapacity = batchSize;
@@ -362,19 +364,33 @@ public final class ReadEngine implements Closeable, Sections {
             columns = new Column[decoded.getProjectedColumnCount()];
             for (int i = 0; i < columns.length; i++) {
                 ColumnSchema column = referenceSchema.getColumn(decoded.toOriginalIndex(i));
-                BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
+                NestedLevelComputer.Layers columnLayers = layers.get(i);
+                BatchExchange<?> exchange;
+                EngineColumn side;
+                if (columnLayers == null) {
+                    BatchExchange<BatchExchange.Batch> flat = BatchExchange.detachingFlat(column.name(), batchSize);
+                    side = new EngineFlatColumn(column, flat, batchSize, context.decompressorFactory(),
+                            workingSet.column(i, column), planning.footersSupplied());
+                    exchange = flat;
+                }
+                else {
+                    // A nested batch's arrays are allocated for it when its cell is filled
+                    BatchExchange<NestedBatch> nested = BatchExchange.detachingNested(column.name(), batchSize);
+                    side = new EngineNestedColumn(column, nested, batchSize, context.decompressorFactory(),
+                            workingSet.column(i, column), planning.footersSupplied(), columnLayers, indexMode,
+                            fixedListFastPathEnabled);
+                    exchange = nested;
+                }
                 if (executor instanceof ReadQueue queue) {
                     exchange.setQueue(queue);
                 }
-                EngineColumn side = new EngineColumn(column, exchange, batchSize, context.decompressorFactory(),
-                        workingSet.column(i, column), planning.footersSupplied());
                 Column c = new Column(side, i);
                 columns[i] = c;
                 exchange.setRoomListener(() -> update(e -> {
                     side.publish();
                     e.refresh(c);
                 }));
-                exchanges.add(exchange);
+                sides.add(side);
             }
             for (int i = 0; i < unitCount; i++) {
                 unitHolders.set(i, columns.length);
@@ -389,7 +405,7 @@ public final class ReadEngine implements Closeable, Sections {
         }
         update(e -> {
         });
-        return exchanges;
+        return sides;
     }
 
     // ==================== Driver ====================
@@ -565,7 +581,7 @@ public final class ReadEngine implements Closeable, Sections {
             Column c = columns[i];
             b.append("\n  column ").append(i).append(": unit=").append(c.unit).append(" walk=").append(c.walk != null)
                     .append(" walking=").append(c.walking).append(" waitingOn=").append(c.waitingOn)
-                    .append(" queued=").append(c.queued).append(" ended=").append(c.ended).append(' ')
+                    .append(" ended=").append(c.ended).append(' ')
                     .append(c.side.describe());
         }
         return b.toString();
@@ -911,7 +927,7 @@ public final class ReadEngine implements Closeable, Sections {
             else if (c.waitingOn != null && !c.needMet) {
                 continue;
             }
-            if (c.queued >= 8) {
+            if (c.side.pagesHeld() >= MAX_PAGES_HELD) {
                 continue;
             }
             if (c.side.nextRow() >= limit) {
@@ -923,7 +939,7 @@ public final class ReadEngine implements Closeable, Sections {
             int column = i;
             PageWalk walk = c.walk;
             int unit = c.unit;
-            int room = 8 - c.queued;
+            int room = MAX_PAGES_HELD - c.side.pagesHeld();
             WorkItem workItem = planning.workItem(unit);
             BatchPlan.RowGroupBatches batches = planning.batches(unit);
             emit(Kind.STEP, buffers -> {
@@ -976,7 +992,6 @@ public final class ReadEngine implements Closeable, Sections {
             EngineColumn.Page page = c.side.place(pages.get(p), batches, workItem.inputFile().name(),
                     workItem.rowGroupIndex(), ordinals.get(p));
             if (page != null) {
-                c.queued++;
                 ready.put(new Key(page.firstRow(), column, readySeq++), new Ready(column, page));
             }
         }
@@ -1018,12 +1033,14 @@ public final class ReadEngine implements Closeable, Sections {
         }
     }
 
-    /// Completes, on a job, the cells the column's placement sealed after their last fill.
+    /// Finishes, on a job, the cells the column's placement sealed and left to finish: a flat
+    /// column's sealed after their last fill, which the job completes; the cells of a column decoded
+    /// through levels, which the job fills.
     private void sealed(Column c) {
         List<Object> cells = c.side.takeSealed();
         if (!cells.isEmpty()) {
             emit(Kind.DECODE, buffers -> {
-                List<Object> completed = EngineColumn.complete(c.side, cells);
+                List<Object> completed = c.side.finishSealed(cells, buffers);
                 return e -> {
                     c.side.completed(completed);
                     e.refresh(c);
@@ -1033,8 +1050,8 @@ public final class ReadEngine implements Closeable, Sections {
     }
 
     /// Decodes ready pages in row order within the read-ahead cap, at most `maxDecodes` at once: a
-    /// page past the cap still decodes when it starts within one batch of its column's first
-    /// unpublished row. A page whose task the working set does not admit ([WorkingSet#admit])
+    /// page past the cap still decodes when it starts at most one batch past its column's first
+    /// unpublished row, which the page a nested column's open cell waits for to be sealed does. A page whose task the working set does not admit ([WorkingSet#admit])
     /// holds the pages after it until a task of the read ends or R releases room.
     private void decode() {
         long cap = firstUnpublishedRow() + capRows;
@@ -1044,7 +1061,7 @@ public final class ReadEngine implements Closeable, Sections {
             Ready r = entry.getValue();
             Column c = columns[r.column()];
             long row = entry.getKey().row();
-            if (row >= cap && row >= c.side.firstUnpublishedRow() + batchCapacity) {
+            if (row >= cap && row > c.side.firstUnpublishedRow() + batchCapacity) {
                 break;
             }
             long admission = admit(r.page());
@@ -1054,15 +1071,15 @@ public final class ReadEngine implements Closeable, Sections {
             it.remove();
             decodesInFlight++;
             emit(Kind.DECODE, buffers -> {
-                List<Object> completed;
+                Object decoded;
                 try {
-                    completed = c.side.decode(r.page(), buffers);
+                    decoded = c.side.decode(r.page(), buffers);
                 }
                 finally {
                     // outside the lock: the release runs what waits for it, this read's poll among them
                     workingSet.taskEnded(admission);
                 }
-                return e -> e.decoded(c, completed);
+                return e -> e.decoded(c, decoded);
             });
         }
     }
@@ -1085,10 +1102,9 @@ public final class ReadEngine implements Closeable, Sections {
         return REFUSED;
     }
 
-    private void decoded(Column c, List<Object> completed) {
+    private void decoded(Column c, Object decoded) throws Exception {
         decodesInFlight--;
-        c.queued--;
-        c.side.completed(completed);
+        c.side.decoded(decoded);
         sealed(c);
         refresh(c);
         markRunnable(c);

@@ -726,9 +726,8 @@ public class ParquetFileReader implements Closeable {
         NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
 
         if (resolved == null) {
-            ProjectedSchema requested = ProjectedSchema.create(schema, requests, false);
-            if (ReadEngine.supports(requested, schema, false)) {
-                return openEngineRead(requested, rowGroups, layers, batchSize);
+            if (ReadEngine.supports()) {
+                return openEngineRead(ProjectedSchema.create(schema, requests, false), rowGroups, layers, batchSize);
             }
             RowGroupIterator iterator = trackedIterator(0, 0, 0);
             iterator.setFirstFile(schema, rowGroups);
@@ -785,8 +784,9 @@ public class ParquetFileReader implements Closeable {
         if (!engine.hasLiveWorkItem()) {
             return new ColumnRead(trackedChild(engine, ColumnScan.empty(engine)), projected, layers);
         }
-        ColumnScan scan = trackedChild(engine, ColumnScan.openEngine(engine, schema, ReadProjection.of(projected),
-                resolveBatchSize(batchSize, projected, rowGroups), readAheadBudgetRows(projected, rowGroups)));
+        ColumnScan scan = trackedChild(engine, ColumnScan.openEngine(engine, fixedListFastPathEnabled, schema, layers,
+                ReadProjection.of(projected), resolveBatchSize(batchSize, projected, rowGroups),
+                readAheadBudgetRows(projected, rowGroups)));
         return new ColumnRead(scan, projected, layers);
     }
 

@@ -15,6 +15,9 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.pipeline.EngineColumn;
+import dev.hardwood.internal.reader.pipeline.EngineFlatColumn;
+import dev.hardwood.internal.reader.pipeline.EngineNestedColumn;
 import dev.hardwood.internal.reader.pipeline.ReadScheduler;
 import dev.hardwood.internal.reader.pipeline.ScheduledColumn;
 import dev.hardwood.internal.reader.pipeline.ScheduledFlatColumn;
@@ -93,10 +96,15 @@ final class ColumnCursor {
         return new ColumnCursor(column, exchange, null, scheduled::close);
     }
 
-    /// The cursor of a flat column the read engine drives, over its exchange.
-    static ColumnCursor engine(ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange) {
-        return new ColumnCursor(column, exchange, null, () -> {
-        });
+    /// The cursor of a column the read engine drives, over its exchange. The read's close stops
+    /// the column.
+    static ColumnCursor engine(ColumnSchema column, EngineColumn side) {
+        Runnable stop = () -> {
+        };
+        return switch (side) {
+            case EngineFlatColumn flat -> new ColumnCursor(column, flat.exchange(), null, stop);
+            case EngineNestedColumn nested -> new ColumnCursor(column, null, nested.exchange(), stop);
+        };
     }
 
     /// Takes the next batch from the exchange.

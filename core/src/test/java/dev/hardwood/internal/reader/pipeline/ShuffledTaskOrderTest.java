@@ -131,10 +131,15 @@ class ShuffledTaskOrderTest {
             assertThat(readList(seed, Path.of(LONG_RECORDS), 3))
                     .as("long records, seed %d", seed).isEqualTo(longRecords);
         }
-        assertThat(counts.outOfOrder).as("pages measured ahead of an earlier page of their column").isPositive();
-        assertThat(counts.outOfOrderInsideRecord).as("of them, pages beginning inside a record").isPositive();
-        assertThat(counts.fills).as("cells filled").isPositive();
-        assertThat(counts.fillsOutsideTasks).as("cells filled outside a page task").isZero();
+        // The counts come from the scheduler's submissions and the scheduled column's fills, which a
+        // read the read engine drives makes none of; its pages still run in the seeded orders, and
+        // their records are checked.
+        if (!"auto".equals(System.getProperty(ReadEngine.PROPERTY))) {
+            assertThat(counts.outOfOrder).as("pages measured ahead of an earlier page of their column").isPositive();
+            assertThat(counts.outOfOrderInsideRecord).as("of them, pages beginning inside a record").isPositive();
+            assertThat(counts.fills).as("cells filled").isPositive();
+            assertThat(counts.fillsOutsideTasks).as("cells filled outside a page task").isZero();
+        }
     }
 
     // ==================== Reads ====================
