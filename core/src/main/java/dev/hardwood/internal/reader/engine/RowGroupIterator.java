@@ -728,7 +728,7 @@ public final class RowGroupIterator implements Closeable, Sections {
                 }
                 do {
                     repoll = false;
-                    emitted = poll();
+                    emitted = pollFailing();
                 }
                 while (repoll);
             }
@@ -748,6 +748,19 @@ public final class RowGroupIterator implements Closeable, Sections {
                     tasks.ended();
                 }
             }
+        }
+    }
+
+    /// Polls, and fails the read where the poll throws, so that a rule of the engine that throws
+    /// ends the read with that failure instead of leaving the consumer waiting. What the poll emitted
+    /// before it threw is returned: those jobs are counted and must run.
+    private List<Runnable> pollFailing() {
+        try {
+            return poll();
+        }
+        catch (RuntimeException e) {
+            fail(e);
+            return out;
         }
     }
 
