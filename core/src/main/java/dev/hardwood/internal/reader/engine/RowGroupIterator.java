@@ -115,7 +115,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     private static final int MAX_PAGES_HELD = 8;
     /// Batch byte budgets a read decodes at most ahead of its first unpublished row (READ_PIPELINE.md,
     /// the cap).
-    private static final int CAP_BUDGETS = 8;
+    public static final int CAP_BUDGETS = 8;
     /// The admission of a page task the working set refused.
     private static final long REFUSED = Long.MIN_VALUE;
 

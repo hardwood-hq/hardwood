@@ -83,8 +83,11 @@ public sealed interface DecodedColumn permits FlatColumn, NestedColumn {
     /// column decoded through levels. The read bounds them per column.
     int pagesHeld();
 
-    /// Ends the column's pages: every cell is sealed once the pages taken before are placed, and
-    /// the read's end, or `failure` where it is not `null`, is queued behind them.
+    /// Ends the column's pages once the pages taken before are placed: at the read's end, every
+    /// cell is sealed and the end queued behind them; at `failure`, where it is not `null`, a
+    /// failure met between two work items, the open cell is sealed, or abandoned where the column
+    /// holds fewer rows of its row group than the plan takes, with the shortfall attached to
+    /// `failure` as a suppressed "Batch plan mismatch", and `failure` queued behind the cells.
     void end(Throwable failure);
 
     /// Ends the column with the `failure` its walk met inside a work item, once every page it took

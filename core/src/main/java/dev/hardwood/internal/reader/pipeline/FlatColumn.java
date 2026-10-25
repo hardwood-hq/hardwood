@@ -145,12 +145,24 @@ public final class FlatColumn implements DecodedColumn {
         return placementEnded;
     }
 
-    /// Ends the column's pages: every cell is sealed and the read's end, or `failure` where it is
-    /// not `null`, queued behind them.
+    /// Ends the column's pages: every cell is sealed and the read's end queued behind them; or,
+    /// with `failure`, a failure between two work items, the open cell sealed, or abandoned where
+    /// the column is short of the plan ([Placer#sealOpenCell]), and `failure` queued behind them.
     @Override
     public void end(Throwable failure) {
+        if (failure == null) {
+            publisher.endWith(null);
+            placer.end();
+            return;
+        }
+        Cell abandoned = placer.sealOpenCell(failure, column.fieldPath().toString());
+        if (abandoned != null) {
+            // its pages in flight still fill it; they must not complete it
+            abandoned.pending.incrementAndGet();
+            publisher.remove(abandoned);
+        }
         publisher.endWith(failure);
-        placer.end();
+        publisher.endRead();
     }
 
     @Override

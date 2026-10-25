@@ -146,6 +146,32 @@ final class Placer<C> {
         }
     }
 
+    /// Stops where the read failed between two work items. Every column that placed every record
+    /// the plan takes from its last row group ends its batch at the same row there, so the open
+    /// cell, if any, is sealed; a column short of the plan holds a batch no other column ends at
+    /// that row, and its open cell is returned unsealed, as [#abandonOpenCell] does. The
+    /// shortfall is attached to `failure` as a suppressed "Batch plan mismatch" naming the file,
+    /// row group and column, since a failure between work items can be one every column shares.
+    ///
+    /// @param failure the failure that ended the read
+    /// @param column the column's path, for the shortfall's message
+    /// @return the open cell, unsealed, if the column is short of the plan; `null` otherwise
+    C sealOpenCell(Throwable failure, String column) {
+        if (stopped) {
+            return null;
+        }
+        stopped = true;
+        if (!placedRowGroup()) {
+            failure.addSuppressed(ExceptionContext.addReadContext(rowGroupBatches.fileName(), rowGroup, column,
+                    shortOfPlan()));
+            C cell = openCell;
+            openCell = null;
+            return cell;
+        }
+        sealOpen();
+        return null;
+    }
+
     /// Whether the column placed every record the plan takes from its current row group.
     private boolean placedRowGroup() {
         BatchPlan.RowGroupBatches batches = rowGroupBatches;

@@ -280,8 +280,20 @@ public final class NestedColumn implements DecodedColumn {
         publisher.endRead();
     }
 
+    /// Ends the placement at the read's end, or, with `failure`, at a failure between two work
+    /// items: the open cell is sealed, or abandoned where the column is short of the plan
+    /// ([Placer#sealOpenCell]).
     private void endPlacement(Throwable failure) {
-        publisher.endWith(failure);
+        if (failure != null) {
+            NestedCell abandoned = placer.sealOpenCell(failure, column.fieldPath().toString());
+            if (abandoned != null) {
+                publisher.remove(abandoned);
+            }
+            publisher.endWith(failure);
+            publisher.endRead();
+            return;
+        }
+        publisher.endWith(null);
         try {
             placer.end();
         }
