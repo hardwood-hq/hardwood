@@ -15,6 +15,8 @@ import java.util.List;
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.decode.BinaryPageValues;
 import dev.hardwood.internal.reader.decode.FlatPageValues;
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
@@ -24,7 +26,8 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// One flat decoded column of a read the read engine drives: it places the pages its walk hands
 /// out into the cells of the batch plan ([Placer]), decodes and fills them on jobs, and publishes
-/// its completed cells in plan order to its [BatchExchange].
+/// its completed cells in plan order to its [BatchExchange]. A binary column's pages copy their
+/// segments' plain bytes into chunks of their own, or write dictionary ids ([BinaryFill]).
 ///
 /// Placement, marking cells completed and publishing run under the engine's lock, which also
 /// guards the cells' bookkeeping; decoding, filling and completing a cell's batch run on jobs,
@@ -40,6 +43,11 @@ public final class EngineColumn {
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers, which a failure hints at.
     private final boolean footersSupplied;
     private final int maxDefinitionLevel;
+    /// Whether the column is binary, its cells filled through [BinaryFill].
+    private final boolean binary;
+    /// Raised once a reader needed the views of deferred dictionary values; the column builds them
+    /// as its cells complete from then on.
+    private final BinaryBatchValues.ViewDemand viewDemand = new BinaryBatchValues.ViewDemand();
     private final Placer<Cell> placer;
     /// The cells in plan order, then [#END] once the read has ended.
     private final ArrayDeque<Object> publishOrder = new ArrayDeque<>();
@@ -68,6 +76,12 @@ public final class EngineColumn {
         public long firstRow() {
             return task.firstRow;
         }
+
+        /// The buffers the page's task takes, which the read admits before it starts
+        /// ([WorkingSet#admit]).
+        public long taskBytes() {
+            return task.info == null ? 0 : task.info.taskBytes();
+        }
     }
 
     public EngineColumn(ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange, int batchCapacity,
@@ -79,6 +93,10 @@ public final class EngineColumn {
         this.decompressorFactory = decompressorFactory;
         this.workingSet = workingSet;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
+        this.binary = switch (column.type()) {
+            case INT32, INT64, FLOAT, DOUBLE, BOOLEAN -> false;
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> true;
+        };
         this.placer = new Placer<>(new Sink(), batchCapacity);
     }
 
@@ -148,22 +166,48 @@ public final class EngineColumn {
         PageInfo info = task.info;
         PageDecoder.LevelScratch scratch = ScheduledFlatColumn.scratch(buffers);
         try {
-            FlatPageValues values = info.isNullPlaceholder()
-                    ? task.decoder.nullsInPlace(info.placeholderNumValues(), scratch, false).flat()
-                    : task.decoder.decodeFlat(info.dataPage(), info.dictionary(), scratch, buffers);
-            ScheduledFlatColumn.checkRows(info, values.size());
-            List<Object> completed = new ArrayList<>(1);
-            for (Segment segment : task.segments) {
-                Cell cell = segment.cell;
-                FlatFill.fill(segment, values, cell.allocate(exchange, column).values, maxDefinitionLevel);
-                if (cell.pending.decrementAndGet() == 0) {
-                    completed.add(completeBatch(cell));
-                }
-            }
-            return completed;
+            return binary ? decodeBinary(task, info, scratch, buffers) : decodeFixed(task, info, scratch, buffers);
         }
         finally {
             scratch.trim();
+        }
+    }
+
+    private List<Object> decodeFixed(PageTask task, PageInfo info, PageDecoder.LevelScratch scratch,
+                                     DecodeBuffers buffers) {
+        FlatPageValues values = info.isNullPlaceholder()
+                ? task.decoder.nullsInPlace(info.placeholderNumValues(), scratch, false).flat()
+                : task.decoder.decodeFlat(info.dataPage(), info.dictionary(), scratch, buffers);
+        ScheduledFlatColumn.checkRows(info, values.size());
+        List<Object> completed = new ArrayList<>(1);
+        for (Segment segment : task.segments) {
+            Cell cell = segment.cell;
+            FlatFill.fill(segment, values, cell.allocate(exchange, column).values, maxDefinitionLevel);
+            filled(cell, completed);
+        }
+        return completed;
+    }
+
+    private List<Object> decodeBinary(PageTask task, PageInfo info, PageDecoder.LevelScratch scratch,
+                                      DecodeBuffers buffers) {
+        BinaryPageValues values = info.isNullPlaceholder()
+                ? task.decoder.nullsInPlace(info.placeholderNumValues(), scratch, false).binary()
+                : task.decoder.decodeFlatBinary(info.dataPage(), info.dictionary(), scratch, buffers);
+        ScheduledFlatColumn.checkRows(info, values.size());
+        List<Object> completed = new ArrayList<>(1);
+        for (Segment segment : task.segments) {
+            Cell cell = segment.cell;
+            BinaryFill.fill(segment, values, (BinaryBatchValues) cell.allocate(exchange, column).values,
+                    maxDefinitionLevel);
+            filled(cell, completed);
+        }
+        return completed;
+    }
+
+    /// Counts one of `cell`'s tokens given up, and completes it into `completed` at its last.
+    private void filled(Cell cell, List<Object> completed) {
+        if (cell.pending.decrementAndGet() == 0) {
+            completed.add(completeBatch(cell));
         }
     }
 
@@ -185,6 +229,13 @@ public final class EngineColumn {
         batch.validity = validity == null || validity.length == words ? validity : Arrays.copyOf(validity, words);
         batch.fileName = cell.fileName;
         batch.filterAlwaysMatches = cell.alwaysMatches;
+        if (batch.values instanceof BinaryBatchValues values) {
+            BinaryFill.finish(cell, values, viewDemand);
+            // Views are built here once a reader needed them.
+            if (viewDemand.requested) {
+                values.ensureViews();
+            }
+        }
         return cell;
     }
 

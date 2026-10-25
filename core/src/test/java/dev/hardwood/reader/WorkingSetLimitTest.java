@@ -18,6 +18,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -75,13 +76,18 @@ class WorkingSetLimitTest {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet));
         assertThat(countValues(file, 3 * PAGE_VALUES)).isEqualTo(3 * PAGE_VALUES);
 
-        // The fetch step parses the three dictionaries before the first page's task runs
+        // The same total crosses the limit whichever order the charges come in; which charge
+        // crosses it depends on that order. The pipeline's fetch step parses the three
+        // dictionaries before the first page's task runs; the read engine plans the third row
+        // group behind that task, so the third dictionary crosses.
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
+        String crossing = "auto".equals(System.getProperty(ReadEngine.PROPERTY))
+                ? "[<memory>: row group 2, column 'c0', dictionary page] Dictionary page needs 2097152 bytes"
+                : "[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes";
         assertThatThrownBy(() -> countValues(file, 3 * PAGE_VALUES))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes to decode, "
-                        + "which takes the read's working set to 4202496 bytes, more than its limit of 4202495 "
-                        + "(hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage(crossing + " to decode, which takes the read's working set to 4202496 bytes, more than "
+                        + "its limit of 4202495 (hardwood.internal.maxWorkingSetBytes)");
     }
 
     @Test

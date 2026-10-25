@@ -43,6 +43,7 @@ public final class EnginePlanning {
 
     private final FileMetadataCache files;
     private final Planner planner;
+    private final WorkingSet workingSet;
     /// The work items listed and not released, by index.
     private final Map<Integer, Planning> plannings = new ConcurrentHashMap<>();
     /// The loads the driver claimed and has not completed, by file.
@@ -62,6 +63,7 @@ public final class EnginePlanning {
                           FileSchema referenceSchema, List<RowGroup> firstFileRowGroups, ReadProjection projection,
                           int maxSpan, long indexWindowBytes, WorkingSet workingSet) throws IOException {
         this.files = files;
+        this.workingSet = workingSet;
         SchemaCompatibility compatibility = new SchemaCompatibility(referenceSchema, projection.decoded(), null);
         compatibility.validateReferenceColumns(files.inputFiles().getFirst().name());
         this.planner = new Planner(sections, referenceSchema, firstFileRowGroups, projection, null, compatibility,
@@ -250,6 +252,14 @@ public final class EnginePlanning {
     /// The batches of work item `index`, once planned.
     public BatchPlan.RowGroupBatches batches(int index) {
         return plannings.get(index).plans.batches();
+    }
+
+    /// Tells the working set that decoded column `column` enters work item `index`, once planned,
+    /// so that the dictionaries its batches hold are counted from where the batch plan places the
+    /// row group ([WorkingSet#enter]).
+    public void enter(int column, int index) {
+        BatchPlan.RowGroupBatches batches = batches(index);
+        workingSet.enter(column, batches.batchStartRow(), batches.readRowsBefore() + batches.plannedRows());
     }
 
     /// Releases what work item `index`'s planning holds, once every column has passed it.

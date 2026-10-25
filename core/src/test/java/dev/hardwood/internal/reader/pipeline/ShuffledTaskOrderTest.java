@@ -30,6 +30,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -110,7 +111,11 @@ class ShuffledTaskOrderTest {
                         .as("dict, seed %d, batch %d", seed, batchSize).isEqualTo(dictValues);
             }
         }
-        assertThat(counts.outOfOrder).as("pages run ahead of an earlier page of their column").isPositive();
+        // The counts come from the scheduler's submissions, which a read the read engine drives
+        // makes none of; its pages still run in the seeded orders, and their values are checked.
+        if (!"auto".equals(System.getProperty(ReadEngine.PROPERTY))) {
+            assertThat(counts.outOfOrder).as("pages run ahead of an earlier page of their column").isPositive();
+        }
     }
 
     @Test

@@ -72,8 +72,8 @@ import dev.hardwood.schema.FileSchema;
 /// before it and then ends with it.
 ///
 /// Interim name: the engine takes over [dev.hardwood.internal.reader.plan.RowGroupIterator]'s name
-/// once the pipeline it replaces is gone. It reads flat, non-binary columns without a filter or a
-/// row limit ([#supports]).
+/// once the pipeline it replaces is gone. It reads flat columns without a filter or a row limit
+/// ([#supports]).
 public final class ReadEngine implements Closeable, Sections {
 
     /// Selects the engine for the reads it supports: `auto`; or never: `off`, the default.
@@ -90,6 +90,9 @@ public final class ReadEngine implements Closeable, Sections {
     private final long fetchAheadBytes = FetchSequence.fetchAheadBytes(maxSpan);
     private final long indexWindowBytes = InternalProperty.longValue("hardwood.internal.indexWindowBytes",
             16L * 1024 * 1024, 1, "a positive byte count");
+
+    /// The admission of a page task the working set refused.
+    private static final long REFUSED = Long.MIN_VALUE;
 
     private final ReentrantLock lock = new ReentrantLock();
     /// Runs [#update] with nothing to apply: a release of R this read waited for.
@@ -168,6 +171,11 @@ public final class ReadEngine implements Closeable, Sections {
     private long readySeq;
     private int decodesInFlight;
     private int maxDecodes;
+    /// Whether the page at the head of [#ready] waits for a task of the read to end, or for room in
+    /// R, before its task is admitted ([WorkingSet#admit]).
+    private boolean waitingForTask;
+    /// Re-runs the poll once a task of the read ended or R released room after a page was refused.
+    private final Runnable taskEndedWake = () -> update(e -> e.waitingForTask = false);
 
     /// Jobs emitted and not yet applied.
     private int inFlight;
@@ -273,11 +281,9 @@ public final class ReadEngine implements Closeable, Sections {
         this.readAhead = context.readAheadBuffer();
     }
 
-    /// Whether the engine reads a column read over `projected` whose first file's row groups are
-    /// `rowGroups`: flat columns of fixed width, every chunk of the first file with an OffsetIndex,
-    /// no filter, the property on.
-    public static boolean supports(ProjectedSchema projected, FileSchema schema, List<RowGroup> rowGroups,
-                                   boolean filtered) {
+    /// Whether the engine reads a column read over `projected`: flat columns, no filter, the
+    /// property on.
+    public static boolean supports(ProjectedSchema projected, FileSchema schema, boolean filtered) {
         if (!"auto".equals(System.getProperty(PROPERTY, "off")) || filtered) {
             return false;
         }
@@ -285,18 +291,6 @@ public final class ReadEngine implements Closeable, Sections {
             ColumnSchema column = schema.getColumn(projected.toOriginalIndex(i));
             if (column.maxRepetitionLevel() > 0 || column.fieldPath().elements().size() > 1) {
                 return false;
-            }
-            switch (column.type()) {
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
-                    return false;
-                }
-                default -> {
-                }
-            }
-            for (RowGroup rowGroup : rowGroups) {
-                if (rowGroup.columns().get(column.columnIndex()).offsetIndexOffset() == null) {
-                    return false;
-                }
             }
         }
         return true;
@@ -534,7 +528,7 @@ public final class ReadEngine implements Closeable, Sections {
     /// rule of the engine that misses a case brings about.
     private void checkStall(List<Runnable> emitted) {
         if (closed || failure != null || columns == null || inFlight > 0 || !emitted.isEmpty() || waitingForRoom
-                || pendingFooters > 0 || planNeed != null && !(planNeed instanceof Request)) {
+                || waitingForTask || pendingFooters > 0 || planNeed != null && !(planNeed instanceof Request)) {
             return;
         }
         boolean open = false;
@@ -554,7 +548,8 @@ public final class ReadEngine implements Closeable, Sections {
         b.append("nextPlan=").append(nextPlan).append('/').append(unitCount).append(" planRunning=").append(planRunning)
                 .append(" planNeed=").append(planNeed).append(" ready=").append(ready.size())
                 .append(ready.isEmpty() ? "" : " readyHead=" + ready.firstKey())
-                .append(" decodesInFlight=").append(decodesInFlight).append(" cap=")
+                .append(" decodesInFlight=").append(decodesInFlight).append(" waitingForTask=").append(waitingForTask)
+                .append(" cap=")
                 .append(firstUnpublishedRow() + budgetRows).append(" requests=").append(requests.size())
                 .append(" queued=").append(queued.size()).append(" queuedHead=").append(queued.peek())
                 .append(" nextList=").append(nextList).append('/').append(fileCount).append(" listed=").append(listed)
@@ -901,6 +896,7 @@ public final class ReadEngine implements Closeable, Sections {
                     continue;
                 }
                 FetchPlan plan = planning.plans(c.unit)[i];
+                planning.enter(i, c.unit);
                 c.walk = plan.walk();
             }
             if (c.waitingOn instanceof Request r) {
@@ -1034,7 +1030,8 @@ public final class ReadEngine implements Closeable, Sections {
 
     /// Decodes ready pages in row order within the read-ahead cap, at most `maxDecodes` at once: a
     /// page past the cap still decodes when it starts within one batch of its column's first
-    /// unpublished row.
+    /// unpublished row. A page whose task the working set does not admit ([WorkingSet#admit])
+    /// holds the pages after it until a task of the read ends or R releases room.
     private void decode() {
         long cap = firstUnpublishedRow() + budgetRows;
         Iterator<Map.Entry<Key, Ready>> it = ready.entrySet().iterator();
@@ -1046,13 +1043,42 @@ public final class ReadEngine implements Closeable, Sections {
             if (row >= cap && row >= c.side.firstUnpublishedRow() + batchCapacity) {
                 break;
             }
+            long admission = admit(r.page());
+            if (admission == REFUSED) {
+                break;
+            }
             it.remove();
             decodesInFlight++;
             emit(Kind.DECODE, buffers -> {
-                List<Object> completed = c.side.decode(r.page(), buffers);
+                List<Object> completed;
+                try {
+                    completed = c.side.decode(r.page(), buffers);
+                }
+                finally {
+                    // outside the lock: the release runs what waits for it, this read's poll among them
+                    workingSet.taskEnded(admission);
+                }
                 return e -> e.decoded(c, completed);
             });
         }
+    }
+
+    /// The admission of a page's task, [#REFUSED] while it waits for a task of the read to end or
+    /// for room in R, which then re-runs the poll.
+    private long admit(EngineColumn.Page page) {
+        long bytes = page.taskBytes();
+        if (bytes == 0) {
+            return 0;
+        }
+        WorkingSet.Admission admitted = workingSet.admit(bytes);
+        if (admitted.admitted()) {
+            return admitted.admission();
+        }
+        if (!waitingForTask) {
+            waitingForTask = true;
+            admitted.refused().whenMet(taskEndedWake);
+        }
+        return REFUSED;
     }
 
     private void decoded(Column c, List<Object> completed) {
@@ -1398,6 +1424,9 @@ public final class ReadEngine implements Closeable, Sections {
         try {
             for (Request r : requests) {
                 uncharge(r);
+            }
+            if (workingSet != null) {
+                workingSet.cancelWait(taskEndedWake);
             }
             if (planning != null) {
                 planning.discard();

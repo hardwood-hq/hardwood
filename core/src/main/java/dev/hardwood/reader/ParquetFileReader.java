@@ -727,7 +727,7 @@ public class ParquetFileReader implements Closeable {
 
         if (resolved == null) {
             ProjectedSchema requested = ProjectedSchema.create(schema, requests, false);
-            if (ReadEngine.supports(requested, schema, rowGroups, false)) {
+            if (ReadEngine.supports(requested, schema, false)) {
                 return openEngineRead(requested, rowGroups, layers, batchSize);
             }
             RowGroupIterator iterator = trackedIterator(0, 0, 0);
