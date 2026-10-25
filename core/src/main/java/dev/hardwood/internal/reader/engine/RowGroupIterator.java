@@ -142,6 +142,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     private int fileCount;
     /// The files after the one the read has reached whose footers start ahead of it.
     private int filesAhead;
+    /// Whether every file's bytes are in memory, so that no data request waits to start and F does
+    /// not bound planning.
+    private boolean allInMemory;
     /// The charge to R of a footer started ahead of the file after the one the read has reached.
     private final int footerCharge = TailedInputFile.tailBytes();
 
@@ -377,7 +380,7 @@ public final class RowGroupIterator implements Closeable, Sections {
                 metadataFiltering, maxRows, physicalSkip, maxSpan, indexWindowBytes, workingSet);
         List<InputFile> inputFiles = files.inputFiles();
         fileCount = inputFiles.size();
-        boolean allInMemory = inputFiles.stream().allMatch(HeldBytes::inMemory);
+        allInMemory = inputFiles.stream().allMatch(HeldBytes::inMemory);
         filesAhead = ReadPlanning.filesAhead(!allInMemory && maxRows <= 0, fileCount);
         ReadPlanning.FileListing first = planning.listFile(0, 0);
         lock.lock();
@@ -896,6 +899,26 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
     }
 
+    /// Where the read's planning stands against its columns, for tests.
+    record PlanningPosition(int slowestUnit, int furthestUnit, int plannedThrough) {
+    }
+
+    /// Waits until no job of the read is in flight, running the read's queue meanwhile on a context
+    /// of zero threads, for tests.
+    void awaitQuiescent() {
+        tasks.await(this::quiescent, executor instanceof ReadQueue queue ? queue : null);
+    }
+
+    PlanningPosition planningPosition() {
+        lock.lock();
+        try {
+            return new PlanningPosition(consumerUnit(), furthestUnit, nextPlan - 1);
+        }
+        finally {
+            unlock();
+        }
+    }
+
     private String describe() {
         StringBuilder b = new StringBuilder();
         b.append("nextPlan=").append(nextPlan).append('/').append(unitCount).append(" planRunning=").append(planRunning)
@@ -989,8 +1012,20 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
     }
 
-    /// Plans the units the columns are in and the next, and further while the requests planned and
-    /// not started stay below F, one stage job at a time.
+    /// Whether planning has gone as far as the read plans ahead of its columns: past the unit the
+    /// slowest column is in and the next, and, for a read of files not all in memory, as far as the
+    /// requests planned and not started reach F. A read of files in memory plans one unit past the
+    /// slowest column's on a pool, and on a context of zero threads no unit past the furthest a
+    /// column has entered, so that its walks plan each unit as they reach it.
+    private boolean plannedFarEnough() {
+        if (!allInMemory) {
+            return nextPlan > consumerUnit() + 1 && queuedBytes >= fetchAheadBytes;
+        }
+        return nextPlan > (executor instanceof ReadQueue ? furthestUnit : consumerUnit() + 1);
+    }
+
+    /// Plans the units the columns are in and the next, and further as [#plannedFarEnough] allows,
+    /// one stage job at a time.
     private void plan() {
         if (planRunning || nextPlan >= failedFrom) {
             return;
@@ -1005,7 +1040,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             }
             planNeed = null;
         }
-        if (nextPlan > consumerUnit() + 1 && queuedBytes >= fetchAheadBytes) {
+        if (plannedFarEnough()) {
             return;
         }
         planRunning = true;
@@ -1121,11 +1156,10 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
     }
 
-    /// Lists the next file once its footer is loaded, within the bound planning has: the units the
-    /// columns are in and the next, and further while the requests not started stay below F.
+    /// Lists the next file once its footer is loaded, within the bound planning has
+    /// ([#plannedFarEnough]).
     private void list() {
-        if (listed || !footers[nextList].loaded
-                || nextPlan > consumerUnit() + 1 && queuedBytes >= fetchAheadBytes) {
+        if (listed || !footers[nextList].loaded || plannedFarEnough()) {
             return;
         }
         planRunning = true;
