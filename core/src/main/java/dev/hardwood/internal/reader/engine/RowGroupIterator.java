@@ -252,8 +252,8 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// A question a reader asks before the read's columns start, which the read's jobs answer
     /// while the caller waits.
     private enum Probe {
-        /// Whether a work item survives its Bloom filters and dictionaries: probes them in order up
-        /// to the first kept.
+        /// Whether a work item of at least one row survives its Bloom filters and dictionaries:
+        /// probes them in order up to the first kept.
         LIVE,
         /// Whether every work item kept takes a page mask: probes the page index and the mask of
         /// every work item.
@@ -410,19 +410,34 @@ public final class RowGroupIterator implements Closeable, Sections {
         unitCount += count;
     }
 
-    /// Whether the read has a row group left once it reaches them. Without a filter: its first file
-    /// has one, or it reads further files, which it lists once it runs. With one: the work items
-    /// are listed and their Bloom filters and dictionaries probed in order, on the read's jobs while
-    /// the caller waits, until one is kept, and each drop is reported as the probe reaches it; the
+    /// Whether the read has a row group of at least one row left once it reaches them. Without a
+    /// filter: its first file has one, or else the files after it are listed, on the read's jobs
+    /// while the caller waits, until one has. With one: the work items are listed and their Bloom
+    /// filters and dictionaries probed in order, on the read's jobs while the caller waits, until
+    /// one of at least one row is kept, and each drop is reported as the probe reaches it; the
     /// decisions are kept for the read's planning. Asked once, before the columns start.
     ///
     /// @throws IOException the failure that ended planning at or before the first work item kept,
     ///         as planning raised it
     public boolean hasLiveWorkItem() throws IOException {
         if (!filtered) {
-            return unitCount > 0 || fileCount > 1;
+            lock.lock();
+            try {
+                for (int i = 0; i < unitCount; i++) {
+                    if (hasRows(i)) {
+                        return true;
+                    }
+                }
+            }
+            finally {
+                unlock();
+            }
         }
         return ask(Probe.LIVE);
+    }
+
+    private boolean hasRows(int unit) {
+        return planning.workItem(unit).rowGroup().numRows() > 0;
     }
 
     /// The leading rows of the first work item the reader discards: the residue of the physical
@@ -1009,12 +1024,27 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     /// Takes the unit a question probes through the stage it asks of, one stage job at a time,
     /// listing files as far as it, and leaves a planning failure at or before it for the caller.
-    /// [Probe#LIVE] answers `true` at the first unit kept and `false` past the last unit;
+    /// [Probe#LIVE] passes the units of no rows, answers `true` at the first other unit kept, which
+    /// without a filter it takes through no stage, and `false` past the last unit;
     /// [Probe#MASKS] answers past the last unit; [Probe#LISTED] answers once a unit is listed, or
     /// `false` once every file is and none is.
     private void probe() {
         if (planRunning || probe >= failedFrom) {
             return;
+        }
+        if (probeMode == Probe.LIVE) {
+            // a work item of no rows is not live; without a filter, any other is
+            while (probe < unitCount && probe < failedFrom && !hasRows(probe)) {
+                probe++;
+                furthestUnit = Math.max(furthestUnit, probe);
+            }
+            if (probe >= failedFrom) {
+                return;
+            }
+            if (probe < unitCount && !filtered) {
+                probeAnswer = true;
+                return;
+            }
         }
         if (probeMode == Probe.LISTED || probe >= unitCount) {
             if (probe < unitCount) {

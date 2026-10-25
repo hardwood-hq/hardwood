@@ -206,7 +206,7 @@ The read runs one planning job at a time, a listing or a stage of the work item 
 | Where do batches close, and does the row cap still hold under a filter? | Per row group, by the batch plan, as the row group's fetch plans are computed ([When a batch closes](#when-a-batch-closes), [row limits](#row-limits)) |
 | Batch-matcher or per-row filter evaluation? | From the predicate's shape alone (`BatchFilterCompiler.tryCompile`) |
 | Batch size | From the first file ([batch sizing](#batch-sizing)) |
-| Does the read have any work? | `hasLiveWorkItem()`, asked by every reader before it starts its columns. Without a filter: the first file has a row group, or the read has more files. With one: the read's jobs list files and probe the work items' Bloom filters and dictionaries in order, while the caller waits, until the first one they do not drop, reporting each drop as they reach it; the page index of that work item is left to planning |
+| Does the read have any work? | `hasLiveWorkItem()`, asked by every reader before it starts its columns. A row group of no rows is not live, and a read without one starts no column. Without a filter: the first file has a row group of at least one row, or else the read's jobs list the files after it, while the caller waits, until one has. With one: the read's jobs list files and probe the work items' Bloom filters and dictionaries in order, while the caller waits, until the first one of at least one row they do not drop, reporting each drop as they reach it; the page index of that work item is left to planning |
 
 Two more questions are asked before the columns start and plan only as far as they must, on the read's jobs while the caller waits. `firstRowGroupSkip()` lists files as far as the first work item, where the value is written. `canFastSkipAllRowGroups()`, asked by the tail-read path, takes every work item through its page index and mask probe; that path is single-file, so it reads one footer.
 
@@ -218,7 +218,7 @@ Two more questions are asked before the columns start and plan only as far as th
 
 The user-facing contract (reference schema, when a mismatch surfaces) is in [multi-file.md](../docs/content/how-to/multi-file.md).
 
-Tests: `MultiFilePlanningTest`, `SchemaCompatibilityTest`, `CrossFileColumnOrderTest`, `MultiFileRowReaderTest`, `LiveWorkItemTest`, `PlanningFailureTest`, `LaterFileFailureTest`, `LaterFileDataFailureTest`.
+Tests: `MultiFilePlanningTest`, `SchemaCompatibilityTest`, `CrossFileColumnOrderTest`, `MultiFileRowReaderTest`, `LiveWorkItemTest`, `EmptyFilesReadTest`, `PlanningFailureTest`, `LaterFileFailureTest`, `LaterFileDataFailureTest`.
 
 ### Row-group and file transitions
 
