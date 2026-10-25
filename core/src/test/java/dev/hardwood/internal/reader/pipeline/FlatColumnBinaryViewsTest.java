@@ -24,26 +24,25 @@ import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Compari
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
-import dev.hardwood.internal.reader.plan.PageSource;
-import dev.hardwood.internal.reader.plan.RowGroupIterator;
+import dev.hardwood.internal.reader.batch.NestedIndexMode;
+import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.internal.reader.plan.RowGroupIterators;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The views of a scheduled binary column's dictionary values are built when a reader first needs
+/// The views of a flat binary column's dictionary values are built when a reader first needs
 /// them: a reader of entry ids alone never gets them, nor their arrays; a filter that decides by
 /// entry ids leaves them deferred, and one that reads every value's view has them built as each
 /// cell completes. The first reader that builds deferred views switches the column to building
 /// them as its cells complete.
 ///
 /// The fixture has two row groups of 100 dictionary-encoded strings, read in batches of 10.
-class ScheduledBinaryViewsTest {
+class FlatColumnBinaryViewsTest {
 
     private static final Path FILE = Path.of("src/test/resources/dict_cross_chunk.parquet");
 
@@ -109,51 +108,49 @@ class ScheduledBinaryViewsTest {
         return read(readViews, filter, false, new BinaryBatchValues.ViewDemand());
     }
 
-    /// Reads the fixture's column through a [ScheduledColumn] in batches of 10, building the views
-    /// of the first batch if `readViews`, with the column's view demand raised before the read
-    /// if `requestViews`. `demand` receives the column's demand as the read ends.
+    /// Reads the fixture's column through a [FlatColumn] in batches of 10, building the views of the
+    /// first batch if `readViews`, with the column's view demand raised before the read if
+    /// `requestViews`. `demand` receives the column's demand as the read ends. On a context of zero
+    /// threads, so that no job of the read runs before the consumer polls.
     private static List<BinaryBatchValues> read(boolean readViews, ColumnBatchMatcher filter, boolean requestViews,
                                                 BinaryBatchValues.ViewDemand demand) throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
-            FileSchema schema = reader.getFileSchema();
-            ColumnSchema column = schema.getColumn(0);
+        FileSchema schema;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
+            schema = reader.getFileSchema();
+        }
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(inputFile), context);
-            iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
-            iterator.planBatches(10, 0);
-
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
-                    column.name(), () -> {
-                        BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.matches = new long[1];
-                        return b;
-                    }, batch -> batch.capacity, 10);
-            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), 10, 10);
-            ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, new PageSource(iterator, 0), exchange, column,
-                    10, context.decompressorFactory(), filter);
-            if (requestViews) {
-                scheduled.viewDemand().requested = true;
-            }
-            scheduler.start();
-
-            List<BinaryBatchValues> batches = new ArrayList<>();
-            BatchExchange.Batch batch;
-            while ((batch = exchange.poll()) != null) {
-                BinaryBatchValues values = (BinaryBatchValues) batch.values;
-                if (readViews && batches.isEmpty()) {
-                    values.ensureViews();
+            try (RowGroupIterator iterator = RowGroupIterators.initialized(List.of(inputFile), context,
+                    ColumnProjection.all(), null, 0)) {
+                BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+                        schema.getColumn(0).name(), () -> {
+                            BatchExchange.Batch b = new BatchExchange.Batch();
+                            b.matches = new long[1];
+                            return b;
+                        }, batch -> batch.capacity, 10);
+                ProjectedSchema decoded = ProjectedSchema.create(schema, ColumnProjection.all());
+                List<NestedLevelComputer.Layers> flat = new ArrayList<>();
+                flat.add(null);
+                FlatColumn column = (FlatColumn) iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10,
+                        10, 0, List.of(exchange), new ColumnBatchMatcher[]{ filter }).getFirst();
+                if (requestViews) {
+                    column.viewDemand().requested = true;
                 }
-                batches.add(values);
+
+                List<BinaryBatchValues> batches = new ArrayList<>();
+                BatchExchange.Batch batch;
+                while ((batch = exchange.poll()) != null) {
+                    BinaryBatchValues values = (BinaryBatchValues) batch.values;
+                    if (readViews && batches.isEmpty()) {
+                        values.ensureViews();
+                    }
+                    batches.add(values);
+                }
+                exchange.checkError();
+                demand.requested = column.viewDemand().requested;
+                return batches;
             }
-            exchange.checkError();
-            demand.requested = scheduled.viewDemand().requested;
-            scheduled.close();
-            iterator.close();
-            inputFile.close();
-            return batches;
         }
     }
 }

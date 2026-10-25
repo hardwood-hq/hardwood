@@ -13,8 +13,9 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// The batch boundaries of one read, decided once for every decoded column.
 ///
-/// [RowGroupIterator] plans the row groups of a read in work-list order, as it computes their
-/// fetch plans, and hands each row group's [RowGroupBatches] to every decoded column. A column
+/// A read ([dev.hardwood.internal.reader.engine.RowGroupIterator]) plans its row groups in work-list
+/// order, as it computes their fetch plans, and hands each row group's [RowGroupBatches] to every
+/// decoded column. A column
 /// closes a batch where the plan closes it and takes the batch's file name and always-match flag
 /// from the plan, so every column of the read closes its batches at the same rows.
 ///

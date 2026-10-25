@@ -7,24 +7,28 @@
  */
 package dev.hardwood.internal.reader.pipeline;
 
+import java.io.IOException;
 import java.util.List;
 
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.plan.BatchPlan;
+import dev.hardwood.schema.ColumnSchema;
 
-/// One decoded column of a read the read engine drives: it takes the pages its walk hands out,
-/// has them decoded and its sealed cells finished on jobs, and publishes its completed cells in
+/// One decoded column of a read ([dev.hardwood.internal.reader.engine.RowGroupIterator]): it takes
+/// the pages its walk hands out, has them decoded and its sealed cells finished on jobs, and publishes its completed cells in
 /// plan order to its [dev.hardwood.internal.reader.batch.BatchExchange]. A flat column
-/// ([EngineFlatColumn]) places a page as it is handed out; a column decoded through levels
-/// ([EngineNestedColumn]) places it once its job has decoded and measured it.
+/// ([FlatColumn]) places a page as it is handed out; a column decoded through levels
+/// ([NestedColumn]) places it once its job has decoded and measured it.
 ///
-/// Every method runs under the engine's lock except [#decode] and [#finishSealed], which run on
+/// Every method runs under the read's lock except [#decode] and [#finishSealed], which run on
 /// jobs and touch only the page or the cells they are given. A job's result is applied under the
 /// lock ([#decoded], [#completed]).
-public sealed interface EngineColumn permits EngineFlatColumn, EngineNestedColumn {
+public sealed interface DecodedColumn permits FlatColumn, NestedColumn {
 
-    /// A page handed to the engine to decode: the read's row of its first record, or a lower bound
+    /// A page handed to the read to decode: the read's row of its first record, or a lower bound
     /// of it where no metadata gives the records before it.
     final class Page {
 
@@ -76,7 +80,7 @@ public sealed interface EngineColumn permits EngineFlatColumn, EngineNestedColum
     boolean placementEnded();
 
     /// The pages taken and not yet released: not decoded for a flat column, not placed for a
-    /// column decoded through levels. The engine bounds them per column.
+    /// column decoded through levels. The read bounds them per column.
     int pagesHeld();
 
     /// Ends the column's pages: every cell is sealed once the pages taken before are placed, and
@@ -137,4 +141,40 @@ public sealed interface EngineColumn permits EngineFlatColumn, EngineNestedColum
 
     /// The column's state, for a stall report.
     String describe();
+
+    /// A failure met reading `column`, typed ([#asReadFailure]) and placed with the file, row group
+    /// and page it came from. Where a [dev.hardwood.MetadataSource] supplied the footers
+    /// (`footersSupplied`), a read failure also says so
+    /// ([ExceptionContext#addSuppliedFooterHint]): the checks a supplied footer passes on open do
+    /// not catch every file rewritten since the footer was read.
+    static Exception placeFailure(Exception e, ColumnSchema column, boolean footersSupplied,
+                                  String fileName, int rowGroup, int page) {
+        if (HardwoodContextImpl.isContextClosed(e)) {
+            // The context's, not the file's, whichever thread of the read met the refusal first
+            return e;
+        }
+        Exception typed = asReadFailure(e);
+        if (fileName == null || fileName.isEmpty()) {
+            return typed;
+        }
+        String columnPath = column.fieldPath().toString();
+        if (typed instanceof RuntimeException re) {
+            RuntimeException placed = ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, re);
+            return footersSupplied ? ExceptionContext.addSuppliedFooterHint(placed) : placed;
+        }
+        if (typed instanceof IOException ioe) {
+            // Stays checked. The read carries a failure across its thread boundary as a
+            // `Throwable`, so nothing between here and the reader needs it wrapped, and the
+            // reader's own signature can declare it.
+            return ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, ioe);
+        }
+        return typed;
+    }
+
+    /// Delegates runtime-failure classification; checked transport failures pass through unchanged.
+    static Exception asReadFailure(Exception e) {
+        return e instanceof RuntimeException runtime
+                ? ExceptionContext.asReadFailure(runtime)
+                : e;
+    }
 }

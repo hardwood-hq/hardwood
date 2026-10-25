@@ -162,7 +162,7 @@ final class SchemaCompatibility {
 
         // The leaf's own repetition type matching does not imply its ancestors' do,
         // and both levels are read from the per-file leaf when a page is decoded but
-        // from the reference leaf when records are assembled from it (ScheduledColumn).
+        // from the reference leaf when records are assembled from it (DecodedColumn).
         // The same leaf path under an optional rather than a required ancestor group
         // misreads nulls; under a repeated rather than a non-repeated one it misreads
         // record boundaries.

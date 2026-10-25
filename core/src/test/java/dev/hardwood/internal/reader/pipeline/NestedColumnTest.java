@@ -35,12 +35,12 @@ import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.decode.ReferencePageDecoder;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.internal.reader.fetch.PageWalks;
 import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.internal.reader.plan.PageSource;
-import dev.hardwood.internal.reader.plan.RowGroupIterator;
 import dev.hardwood.internal.reader.plan.RowGroupIterators;
+import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.CompressionCodec;
@@ -50,7 +50,6 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
@@ -59,7 +58,7 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// A [ScheduledNestedColumn] publishes the records the [ReferencePageDecoder] decodes from the
+/// A [NestedColumn] publishes the records the [ReferencePageDecoder] decodes from the
 /// column's pages, whatever its batch capacity: read at capacities that put batch edges inside
 /// pages and pages inside batches, and at one whose batches end only at row groups, record by
 /// record its batches hold the reference's levels and values, every array allocated at the size
@@ -70,7 +69,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The fixtures cover lists, maps and structs, pages beginning inside a record, pages holding no
 /// record start, dictionary and plain binary leaves, fixed-size lists, and nested leaves in every
 /// encoding read in place, read in every index mode and under a row cap.
-class ScheduledNestedColumnTest {
+class NestedColumnTest {
 
     private static final String RESOURCES = "src/test/resources/";
 
@@ -214,37 +213,33 @@ class ScheduledNestedColumnTest {
         assertThat(pagesWithoutRecordStart).isPositive();
     }
 
-    /// Reads one column of `file` through a scheduled column with the fixed-size-list fast path on,
+    /// Reads one column of `file` through a [NestedColumn] with the fixed-size-list fast path on,
     /// ending at `maxRows` rows unless it is `0`.
     private static List<NestedBatch> read(Path file, int columnIndex, NestedIndexMode mode, int batchSize,
                                           long maxRows) throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
-            FileSchema schema = reader.getFileSchema();
-            ColumnSchema column = schema.getColumn(columnIndex);
+        FileSchema schema;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            schema = reader.getFileSchema();
+        }
+        ColumnSchema column = schema.getColumn(columnIndex);
+        NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema)[columnIndex];
+        ProjectedSchema decoded = ProjectedSchema.create(schema, ColumnRequests.ofColumns(columnIndex), false);
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             InputFile inputFile = InputFile.of(file);
             inputFile.open();
-            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(inputFile), context);
-            iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-            iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
-            iterator.planBatches(batchSize, maxRows);
-            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema)[columnIndex];
-            BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
-            PageSource pageSource = new PageSource(iterator, columnIndex);
-            ReadScheduler scheduler = new ReadScheduler(iterator.readExecutor(), batchSize, batchSize);
-            ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, pageSource, exchange, column,
-                    batchSize, context.decompressorFactory(), layers, mode, true);
-            scheduler.start();
-            List<NestedBatch> batches = new ArrayList<>();
-            NestedBatch batch;
-            while ((batch = exchange.poll()) != null && batch.recordCount > 0) {
-                batches.add(batch);
+            try (RowGroupIterator iterator = RowGroupIterators.initialized(List.of(inputFile), context,
+                    ignored -> ReadProjection.of(decoded), null, maxRows)) {
+                BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
+                iterator.start(decoded, List.of(layers), mode, true, batchSize, batchSize, maxRows,
+                        List.of(exchange), null);
+                List<NestedBatch> batches = new ArrayList<>();
+                NestedBatch batch;
+                while ((batch = exchange.poll()) != null && batch.recordCount > 0) {
+                    batches.add(batch);
+                }
+                exchange.checkError();
+                return batches;
             }
-            exchange.checkError();
-            scheduled.close();
-            iterator.close();
-            inputFile.close();
-            return batches;
         }
     }
 
@@ -337,7 +332,7 @@ class ScheduledNestedColumnTest {
             NestedLevelComputer.RealView view = NestedLevelComputer.computeRealView(def, repeated ? rep : null, count,
                     starts.length - 1, maxDefinitionLevel, layers);
             int[] map = view.realToRawLeaf();
-            return ScheduledNestedColumnTest.realRecords(view, layers, starts.length - 1,
+            return NestedColumnTest.realRecords(view, layers, starts.length - 1,
                     leaf -> values.get(map != null ? map[leaf] : leaf));
         }
     }

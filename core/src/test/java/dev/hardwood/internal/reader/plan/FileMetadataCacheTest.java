@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -33,10 +34,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.io.HeldBytes;
-import dev.hardwood.internal.reader.fetch.PrefetchTasks;
 import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
-import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.ParsedFooter;
 import dev.hardwood.reader.ParquetFileReader;
@@ -106,11 +104,11 @@ class FileMetadataCacheTest {
         }
     }
 
-    /// The read's planning chain never waits for a footer: a load another thread has registered is
-    /// a need, met once the load completes, after which the chain takes the file without waiting.
+    /// A read never waits for a footer: a load another thread has registered is a claim pending
+    /// on it, which completes with the load, after which the claim takes the file.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void theChainYieldsOnALoadAnotherThreadRegistered() throws Exception {
+    void aClaimFindsALoadAnotherThreadRegisteredPending() throws Exception {
         LatchInputFile inputFile = LatchInputFile.blocked(LATER_FILE);
         HardwoodContextImpl context = HardwoodContextImpl.create(1);
         contexts.add(context);
@@ -120,17 +118,15 @@ class FileMetadataCacheTest {
             Future<FileMetaData> offPool = callers.submit(() -> cache.getFileMetaData(0));
             assertThat(inputFile.awaitFooterRead()).isTrue();
 
-            Need need = cache.fileNeed(0, new PrefetchTasks(context.ioExecutor()));
-            assertThat(need).as("the load under way").isNotNull();
-            CountDownLatch met = new CountDownLatch(1);
-            need.whenMet(met::countDown);
-            assertThat(met.getCount()).as("met before the load completes").isOne();
+            FileMetadataCache.Claim claim = cache.claim(0);
+            assertThat(claim.pending()).as("the load under way").isNotNull();
+            assertThat(claim.load()).isNull();
+            assertThat(claim.pending().isDone()).as("done before the load completes").isFalse();
 
             inputFile.releaseFooterRead();
             FileMetaData metadata = offPool.get(WAIT_SECONDS, TimeUnit.SECONDS);
-            assertThat(met.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
-            assertThat(cache.fileNeed(0, new PrefetchTasks(context.ioExecutor()))).isNull();
-            assertThat(cache.getFile(0).metaData()).isSameAs(metadata);
+            claim.pending().get(WAIT_SECONDS, TimeUnit.SECONDS);
+            assertThat(cache.claim(0).file().metaData()).isSameAs(metadata);
         }
         finally {
             inputFile.releaseFooterRead();
@@ -140,7 +136,7 @@ class FileMetadataCacheTest {
     }
 
     @Test
-    void footerWithoutAPrefetchIsLoadedOnTheCallingThread() throws Exception {
+    void aFooterOutsideAReadIsLoadedOnTheCallingThread() throws Exception {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
         FileMetadataCache cache = cache(inputFile, task -> {
                     throw new AssertionError("a footer the caller waits for runs on the caller's thread");
@@ -156,22 +152,26 @@ class FileMetadataCacheTest {
         }
     }
 
+    /// A load a read claimed runs its read and parse where the read runs them, and a lookup of the
+    /// file meanwhile joins it rather than loading the file again.
     @Test
-    void prefetchLoadsOnTheExecutorAndALaterLookupJoinsIt() throws Exception {
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aLookupJoinsALoadAReadClaimed() throws Exception {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
-        List<Runnable> queued = new ArrayList<>();
-        FileMetadataCache cache = cache(inputFile, queued::add);
-        PrefetchTasks tasks = new PrefetchTasks(queued::add);
+        FileMetadataCache cache = cache(inputFile, Runnable::run);
 
-        try {
-            cache.prefetch(0, tasks, () -> {});
-            cache.prefetch(0, tasks, () -> {});
-            assertThat(queued).hasSize(1);
-            assertThat(inputFile.openCount()).isZero();
+        try (ExecutorService callers = Executors.newVirtualThreadPerTaskExecutor()) {
+            FileMetadataCache.ClaimedLoad load = cache.claim(0).load();
+            assertThat(load).isNotNull();
+            assertThat(load.readsInPlace()).isFalse();
+            assertThat(cache.claim(0).pending()).as("the claimed load under way").isNotNull();
+            Future<FileMetaData> lookup = callers.submit(() -> cache.getFileMetaData(0));
 
-            queued.getFirst().run();
-            assertThat(inputFile.openCount()).isEqualTo(1);
-            assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
+            load.read();
+            FileMetaData parsed = load.parse().metaData();
+
+            assertThat(lookup.get(WAIT_SECONDS, TimeUnit.SECONDS)).isSameAs(parsed);
+            assertThat(parsed.numRows()).isEqualTo(100);
             assertThat(inputFile.openCount()).isEqualTo(1);
         }
         finally {
@@ -180,40 +180,17 @@ class FileMetadataCacheTest {
         }
     }
 
-    /// A footer read the read drops while it is in flight drops the file's tail once it has read it.
+    /// A file whose bytes are in memory is read where its load's parse runs: a read on a thread of
+    /// its own would only move a slice of the mapping to another thread and back.
     @Test
-    void aFooterReadDroppedInFlightDropsItsTailOnceRead() throws Exception {
-        LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
-        List<Runnable> queued = new ArrayList<>();
-        FileMetadataCache cache = cache(inputFile, queued::add);
-        PrefetchTasks tasks = new PrefetchTasks(queued::add);
-
-        try {
-            cache.prefetch(0, tasks, () -> {});
-            cache.drop(0);
-            queued.getFirst().run();
-
-            assertThat(HeldBytes.heldFrom(cache.getFile(0).inputFile())).isEqualTo(Long.MAX_VALUE);
-        }
-        finally {
-            cache.close();
-            inputFile.close();
-        }
-    }
-
-    /// A file whose bytes are in memory is read where its load runs: a prefetch would only move a
-    /// slice of the mapping to another thread and back.
-    @Test
-    void prefetchOfAFileInMemoryStartsNoRead() throws Exception {
+    void aClaimedLoadOfAFileInMemoryReadsInPlace() throws Exception {
         InputFile inputFile = InputFile.of(Paths.get(LATER_FILE));
-        List<Runnable> queued = new ArrayList<>();
-        FileMetadataCache cache = cache(inputFile, queued::add);
+        FileMetadataCache cache = cache(inputFile, Runnable::run);
 
         try {
-            cache.prefetch(0, new PrefetchTasks(queued::add), () -> {});
-            assertThat(queued).isEmpty();
-            assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
-            assertThat(queued).isEmpty();
+            FileMetadataCache.ClaimedLoad load = cache.claim(0).load();
+            assertThat(load.readsInPlace()).isTrue();
+            assertThat(load.parse().metaData().numRows()).isEqualTo(100);
         }
         finally {
             cache.close();
@@ -221,11 +198,11 @@ class FileMetadataCacheTest {
         }
     }
 
-    /// A footer a `MetadataSource` supplies is prefetched for a file in memory too:
+    /// A footer a `MetadataSource` supplies is read on a virtual thread for a file in memory too:
     /// the source may wait for a remote store, which no thread of the pool may.
     @Test
     @Tag("pool")
-    void prefetchOfASuppliedFooterRunsOnAVirtualThreadForAFileInMemory() throws Exception {
+    void aSuppliedFooterIsReadOnAVirtualThreadForAFileInMemory() throws Exception {
         ParsedFooter footer;
         try (InputFile source = InputFile.of(Paths.get(LATER_FILE))) {
             source.open();
@@ -241,8 +218,18 @@ class FileMetadataCacheTest {
         FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), context);
 
         try {
-            cache.prefetch(0, new PrefetchTasks(context.ioExecutor()), () -> {});
-            assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
+            FileMetadataCache.ClaimedLoad load = cache.claim(0).load();
+            assertThat(load.readsInPlace()).isFalse();
+            Thread reader = Thread.ofVirtual().start(() -> {
+                try {
+                    load.read();
+                }
+                catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+            reader.join();
+            assertThat(load.parse().metaData().numRows()).isEqualTo(100);
             assertThat(callers).singleElement().satisfies(caller -> assertThat(caller.isVirtual()).isTrue());
         }
         finally {
@@ -257,7 +244,6 @@ class FileMetadataCacheTest {
         FileMetadataCache cache = cache(inputFile, Runnable::run);
 
         cache.close();
-        cache.prefetch(0, new PrefetchTasks(Runnable::run), () -> {});
 
         assertThat(inputFile.openCount()).isZero();
         assertThat(inputFile.closeCount()).isZero();

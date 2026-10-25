@@ -16,7 +16,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 
 /// The two ways a test reads a filtered projection of a file: through a [RowReader], or through
-/// [ColumnReaders], which the read engine takes when routing is on.
+/// [ColumnReaders].
 enum ReadKind {
 
     ROW_READER {

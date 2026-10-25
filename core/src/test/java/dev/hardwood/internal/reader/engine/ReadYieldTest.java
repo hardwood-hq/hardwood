@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader.fetch;
+package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -28,32 +28,32 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.io.HeldBytes;
-import dev.hardwood.internal.reader.decode.PageInfo;
-import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
-import dev.hardwood.internal.reader.step.Need;
-import dev.hardwood.metadata.FileMetaData;
-import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A column's fetch step never waits for the bytes of a page: the read of a chunk or region whose
-/// bytes are not in memory runs on a virtual thread, the step yields on it, and its completion
-/// queues the step again. A walk that stops on a read resumes where it stopped, reading no byte
-/// twice.
-class FetchStepYieldTest {
+/// A read never waits for the bytes of a page on a thread of its pool: the read of a chunk or region
+/// whose bytes are not in memory runs on a virtual thread, and the walk that stopped on it resumes
+/// where it stopped once it has arrived. A read that fails is read once more, and its second
+/// failure fails the read, naming the file, offset and length.
+class ReadYieldTest {
 
     /// Four row groups of 50 rows, with a page index.
     private static final Path INDEXED_FILE = Path.of("src/test/resources/differential/diff_order_multi.parquet");
@@ -97,122 +97,6 @@ class FetchStepYieldTest {
         assertThat(HeldBytes.inMemory(new ThreadRecordingInputFile(InputFile.of(INDEXED_FILE)))).isFalse();
     }
 
-    /// Walks a column whose dictionary page and data pages straddle 300-byte windows, stopping
-    /// wherever bytes are not present: the read issued for each stop is demand, and the walk yields
-    /// the pages a walk over the file in memory yields, reading every byte once.
-    @Test
-    void walkResumesWhereItStoppedAndReadsEachByteOnce() throws Exception {
-        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, "300");
-        InputFile local = InputFile.of(DICTIONARY_FILE);
-        local.open();
-        CountingInputFile remote = new CountingInputFile(InputFile.of(DICTIONARY_FILE));
-        remote.open();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
-            FileMetaData meta = ParquetMetadataReader.readMetadata(local);
-            FileSchema schema = FileSchema.fromSchemaElements(meta.schema());
-            ColumnSchema column = schema.getColumn("label");
-            RowGroup rowGroup = meta.rowGroups().get(0);
-
-            List<Integer> expected = new ArrayList<>();
-            PageWalks.Pages inMemory = PageWalks.of(SequentialFetchPlan.build(local, column,
-                    rowGroup.columns().get(column.columnIndex()), context, 0, local.name(), 0));
-            while (inMemory.hasNext()) {
-                expected.add(inMemory.next().pageData().remaining());
-            }
-
-            PageWalk walk = SequentialFetchPlan.build(remote, column,
-                    rowGroup.columns().get(column.columnIndex()), context, 0, remote.name(), 0).walk();
-            List<Integer> walked = new ArrayList<>();
-            int stops = 0;
-            while (true) {
-                PageInfo page = walk.advance();
-                if (page != null) {
-                    walked.add(page.pageData().remaining());
-                    continue;
-                }
-                Need pending = walk.pending();
-                if (pending == null) {
-                    break;
-                }
-                stops++;
-                // A walk outside a read has no read-ahead buffer to stop on
-                ((ByteNeed) pending).issue().await();
-            }
-
-            assertThat(walked).isEqualTo(expected);
-            assertThat(stops).as("stops on a read under way").isPositive();
-            assertThat(remote.reads()).extracting(CountingInputFile.Read::offset).doesNotHaveDuplicates();
-        }
-        finally {
-            local.close();
-            remote.close();
-        }
-    }
-
-    /// A walk issues no read: polling a section request of a file not in memory starts nothing, and
-    /// the read the step issues joins a speculative read under way rather than starting another.
-    @Test
-    void pollIssuesNoReadAndIssueJoinsASpeculativeRead() throws Exception {
-        CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(100));
-        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        SectionRequest section = section(sequence(tasks, false), file, 0);
-
-        assertThat(section.poll()).isNull();
-        assertThat(file.readCount()).isZero();
-
-        section.issue();
-        assertThat(section.poll()).isNotNull();
-        assertThat(file.readCount()).isEqualTo(1);
-
-        SectionRequest speculative = section(sequence(tasks, true), file, 10);
-        assertThat(file.readCount()).isEqualTo(2);
-        RequestAttempt<ByteBuffer> joined = speculative.issue();
-        assertThat(speculative.issue()).isSameAs(joined);
-        assertThat(speculative.poll()).isNotNull();
-        assertThat(file.readCount()).as("no read issued past the speculative one").isEqualTo(2);
-    }
-
-    /// A speculative read that failed leaves the bytes not present, and the read the step issues
-    /// for them reads them again.
-    @Test
-    void aFailedSpeculativeReadIsReadAgainOnDemand() throws Exception {
-        FailingInputFile file = new FailingInputFile(1, new IOException("connection reset"));
-        SectionRequest section = section(sequence(new PrefetchTasks(Runnable::run), true), file, 0);
-
-        assertThat(section.poll()).isNull();
-        assertThat(fetch(section).remaining()).isEqualTo(10);
-        assertThat(file.reads).isEqualTo(2);
-    }
-
-    /// A speculative read that failed with an `Error` is not read again: the step that reaches it
-    /// takes the `Error`, and the close of the read's tasks does not raise it again.
-    @Test
-    void aSpeculativeReadThatFailedWithAnErrorIsNotReadAgain() throws Exception {
-        SpeculativeError error = new SpeculativeError("read failed");
-        FailingInputFile file = new FailingInputFile(1, error);
-        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        SectionRequest section = section(sequence(tasks, true), file, 0);
-
-        assertThatThrownBy(section::poll)
-                .isSameAs(error)
-                .hasMessage("read failed");
-        assertThat(file.reads).isEqualTo(1);
-        tasks.awaitAll();
-    }
-
-    /// A demand read that fails raises its failure, naming the file, offset and length.
-    @Test
-    void aFailedDemandReadIsRaised() {
-        FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, new IOException("connection reset"));
-        SectionRequest section = section(sequence(new PrefetchTasks(Runnable::run), false), file, 20);
-
-        assertThatThrownBy(() -> fetch(section))
-                .isInstanceOf(IOException.class)
-                .hasMessage("[failing] Failed to fetch data at offset 20 (length 10)")
-                .cause()
-                .hasMessage("connection reset");
-    }
-
     /// A filtered read whose walks stop on reads resumes each masked page where it stopped: with
     /// 300-byte windows, the pages an inline-statistics drop or a row mask keeps or trims straddle
     /// windows, and the rows read match those of the same read over the file in memory.
@@ -246,92 +130,12 @@ class FetchStepYieldTest {
         assertColumnReadsOnVirtualThreads(remote);
     }
 
-    /// An `Error` a speculative read fails with that no step took is thrown by the close of its
-    /// tasks, not by the thread that started it.
-    @Test
-    void anErrorOfASpeculativeReadNoStepTookIsThrownByTheClose() {
-        AssertionError error = new AssertionError("prefetch broke");
-        FailingInputFile file = new FailingInputFile(1, error);
-        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        section(sequence(tasks, true), file, 0);
-
-        assertThat(file.reads).isEqualTo(1);
-        assertThatThrownBy(tasks::awaitAll)
-                .isSameAs(error)
-                .hasMessage("prefetch broke");
-    }
-
-    /// An `Error` a demand read fails with reaches the step that takes it, and the close does not
-    /// throw it a second time.
-    @Test
-    void anErrorOfADemandReadReachesTheStepOnly() {
-        AssertionError error = new AssertionError("read broke");
-        FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, error);
-        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        SectionRequest section = section(sequence(tasks, false), file, 0);
-
-        assertThatThrownBy(() -> fetch(section)).isSameAs(error);
-        tasks.awaitAll();
-    }
-
-    /// An `Error` a demand read fails with that no step takes, as when the read's column stopped
-    /// while it waited, is thrown by the close.
-    @Test
-    void anErrorNoStepTookIsThrownByTheClose() {
-        AssertionError error = new AssertionError("read broke");
-        FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, error);
-        PrefetchTasks tasks = new PrefetchTasks(Runnable::run);
-        SectionRequest section = section(sequence(tasks, false), file, 0);
-
-        section.issue();
-        assertThatThrownBy(tasks::awaitAll).isSameAs(error);
-    }
-
-    /// A checked exception an `InputFile` throws undeclared completes the read with it, so the step
-    /// waiting for the read resumes and fails instead of waiting forever.
-    @Test
-    @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void aCheckedExceptionThrownUndeclaredCompletesTheRead() {
-        FailingInputFile file = new FailingInputFile(Integer.MAX_VALUE, new TimeoutException("too slow"));
-        SectionRequest section = section(
-                sequence(new PrefetchTasks(task -> Thread.ofVirtual().start(task)), false), file, 0);
-
-        assertThatThrownBy(() -> fetch(section))
-                .isInstanceOf(IOException.class)
-                .hasMessage("[failing] Failed to fetch data at offset 0 (length 10)")
-                .cause()
-                .isInstanceOf(TimeoutException.class)
-                .hasMessage("too slow");
-    }
-
-    /// A sequence of one read's section requests on `tasks`, with room for any section request,
-    /// whose section requests start speculatively when `speculates`, and on demand only otherwise.
-    private static FetchSequence sequence(PrefetchTasks tasks, boolean speculates) {
-        return new FetchSequence(tasks, new ReadAheadBuffer(1 << 20), speculates ? 1 << 20 : 0, () -> {});
-    }
-
-    /// The section request of ten bytes at `offset` of `file` in `sequence`, held by one column.
-    private static SectionRequest section(FetchSequence sequence, InputFile file, long offset) {
-        return sequence.insert(0, 0, file, List.of(new Span(offset, 10, "chunk", 1))).getFirst();
-    }
-
-    /// `section`'s bytes, demanding them and waiting for them as a thread off the pool does.
-    private static ByteBuffer fetch(SectionRequest section) throws IOException {
-        while (true) {
-            ByteBuffer bytes = section.poll();
-            if (bytes != null) {
-                return bytes;
-            }
-            section.issue().await();
-        }
-    }
-
-    /// While a column's read is held, its step holds no thread of the pool: the pool's one thread
+    /// While a column's read is held, the read holds no thread of the pool: the pool's one thread
     /// runs other work. A close waits for the held read, and returns once it completes.
     @Tag("pool")
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void aStepWaitingForAReadHoldsNoThreadAndItsCloseWaitsForTheRead() throws Exception {
+    void aReadWaitingForBytesHoldsNoThreadAndItsCloseWaitsForTheRead() throws Exception {
         HeldInputFile file = new HeldInputFile(InputFile.of(INDEXED_FILE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
             ParquetFileReader reader = ParquetFileReader.open(file, context);
@@ -353,8 +157,8 @@ class FetchStepYieldTest {
         }
     }
 
-    /// A step whose read completes after its context was closed fails the read with the context's
-    /// closing rather than waiting for a pool that refuses it.
+    /// A read whose bytes arrive after its context was closed fails with the context's closing
+    /// rather than waiting for a pool that refuses it.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aReadCompletingOnAClosedContextFailsTheRead() throws Exception {
@@ -383,6 +187,49 @@ class FetchStepYieldTest {
                     .isInstanceOf(RejectedExecutionException.class);
             releaser.join();
         }
+    }
+
+    /// A column read that fails is read again, and the read goes on.
+    @Test
+    void aFailedColumnReadIsReadAgain() throws Exception {
+        FailingColumnReads file = new FailingColumnReads(InputFile.of(INDEXED_FILE), 1,
+                new IOException("connection reset"));
+
+        assertThat(readAllRows(file)).isEqualTo(200);
+        assertThat(file.failed).hasSize(1);
+        assertThat(file.reads).contains(file.failed.getFirst());
+    }
+
+    /// A column read that fails twice fails the read, naming the file, offset and length.
+    @Test
+    void aColumnReadThatFailsAgainFailsTheRead() throws Exception {
+        FailingColumnReads file = new FailingColumnReads(singleChunkFile(), Integer.MAX_VALUE,
+                new IOException("connection reset"));
+
+        assertThatThrownBy(() -> readAllRows(file))
+                .isInstanceOf(IOException.class)
+                .satisfies(e -> assertThat(e).hasMessage("[single_chunk.parquet] Failed to fetch data at offset "
+                        + file.failed.getFirst().offset() + " (length " + file.failed.getFirst().length() + ")"))
+                .cause()
+                .hasMessage("connection reset");
+        assertThat(file.failed).hasSize(2).containsOnly(file.failed.getFirst());
+    }
+
+    /// A checked exception an `InputFile` throws undeclared fails the read as one it declares,
+    /// instead of escaping it unplaced.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aCheckedExceptionThrownUndeclaredFailsTheRead() throws Exception {
+        FailingColumnReads file = new FailingColumnReads(singleChunkFile(), Integer.MAX_VALUE,
+                new TimeoutException("too slow"));
+
+        assertThatThrownBy(() -> readAllRows(file))
+                .isInstanceOf(IOException.class)
+                .satisfies(e -> assertThat(e).hasMessage("[single_chunk.parquet] Failed to fetch data at offset "
+                        + file.failed.getFirst().offset() + " (length " + file.failed.getFirst().length() + ")"))
+                .cause()
+                .isInstanceOf(TimeoutException.class)
+                .hasMessage("too slow");
     }
 
     private static void drainQuietly(ColumnReader column) {
@@ -456,37 +303,62 @@ class FetchStepYieldTest {
                 .isTrue());
     }
 
-    private static final class SpeculativeError extends Error {
-
-        SpeculativeError(String message) {
-            super(message);
+    /// One required `INT64` column of 100 rows in one row group: its data is one request.
+    private static InputFile singleChunkFile() throws IOException {
+        FileSchema schema = FileSchema.builder("single_chunk")
+                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        long[] values = new long[100];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
         }
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, WriterConfig.builder().build())) {
+            writer.columnWriter().writeBatch(batch -> batch.longs("v", values));
+        }
+        byte[] bytes = InMemoryFiles.toByteArray(out);
+        return new NamedInputFile(InputFile.of(ByteBuffer.wrap(bytes)), "single_chunk.parquet");
     }
 
-    /// Fails its first `failures` reads with `failure`, thrown whether the method declares it or
-    /// not, and serves ten zero bytes after that.
-    private static final class FailingInputFile implements InputFile {
+    /// A read of `length` bytes at `offset`.
+    record Range(long offset, int length) {
+    }
 
+    /// Fails the first `failures` reads of a column's pages with `failure`, thrown whether the
+    /// method declares it or not, recording the ranges it failed. Not a file whose bytes are in
+    /// memory, so every read of a column's pages goes to a virtual thread.
+    private static final class FailingColumnReads implements InputFile {
+
+        private final InputFile delegate;
         private final int failures;
         private final Throwable failure;
-        private int reads;
+        final List<Range> failed = new CopyOnWriteArrayList<>();
+        final List<Range> reads = new CopyOnWriteArrayList<>();
 
-        FailingInputFile(int failures, Throwable failure) {
+        FailingColumnReads(InputFile delegate, int failures, Throwable failure) {
+            this.delegate = delegate;
             this.failures = failures;
             this.failure = failure;
         }
 
         @Override
-        public void open() {
+        public void open() throws IOException {
+            delegate.open();
         }
 
         @Override
-        public synchronized ByteBuffer readRange(long offset, int length) throws IOException {
-            reads++;
-            if (reads <= failures) {
-                throw FailingInputFile.<RuntimeException>sneaky(failure);
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            Range range = new Range(offset, length);
+            if (FetchReason.current().contains(" col=")) {
+                synchronized (this) {
+                    if (failed.size() < failures) {
+                        failed.add(range);
+                        throw FailingColumnReads.<RuntimeException>sneaky(failure);
+                    }
+                }
+                reads.add(range);
             }
-            return ByteBuffer.allocate(length);
+            return delegate.readRange(offset, length);
         }
 
         @SuppressWarnings("unchecked")
@@ -495,17 +367,42 @@ class FetchStepYieldTest {
         }
 
         @Override
-        public long length() {
-            return 100;
+        public long length() throws IOException {
+            return delegate.length();
         }
 
         @Override
         public String name() {
-            return "failing";
+            return delegate.name();
         }
 
         @Override
-        public void close() {
+        public void close() throws IOException {
+            delegate.close();
+        }
+    }
+
+    /// `delegate` under `name`, not a file whose bytes are in memory.
+    private record NamedInputFile(InputFile delegate, String name) implements InputFile {
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() throws IOException {
+            return delegate.length();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
         }
     }
 

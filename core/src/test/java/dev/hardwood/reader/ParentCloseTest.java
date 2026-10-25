@@ -26,20 +26,15 @@ import java.util.function.Predicate;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.extension.RegisterExtension;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.reader.engine.ReadEngineSelection;
-import dev.hardwood.internal.reader.fetch.PrefetchTasks;
-import dev.hardwood.internal.reader.pipeline.ScheduledColumn;
-import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.internal.reader.step.ReadTasks;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -49,8 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// [ParquetFileReader#close()] closes the child readers the caller left open, and waits
-/// for the prefetches their reads started, before it closes the input files: no read
-/// is in flight when a file closes, and none starts afterwards.
+/// for the reads they started, before it closes the input files: no read is in flight when
+/// a file closes, and none starts afterwards.
 ///
 /// Each test holds one read inside the [InputFile] and closes the parent on another
 /// thread. The read is released once that thread waits where the close must wait for it;
@@ -58,10 +53,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// behind it until the timeout.
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class ParentCloseTest {
-
-    /// Tests the pipeline's own mechanics, which the read engine does not have.
-    @RegisterExtension
-    static final ReadEngineSelection PIPELINE = ReadEngineSelection.pipeline();
 
     /// Wide enough that a row reader's batch holds 1,536 rows, so a batch is a small
     /// fraction of the file and the row reader's pipeline stops well short of its end.
@@ -72,29 +63,23 @@ class ParentCloseTest {
     /// Three row groups of about 60 pages each, with an offset index, so planning a row
     /// group reads from the file.
     private static final Path INDEXED_FILE = Paths.get("src/test/resources/prefetch_page_index.parquet");
-    /// A small fraction of a page, so a column reader's fetcher stays in the first row group.
+    /// A small fraction of a page, so a column reader's read stays in the first row group.
     private static final int INDEXED_BATCH_SIZE = 16;
 
-    /// Where a close stops a column of a column or row read.
-    private static final String SCHEDULED_CLOSE = ScheduledColumn.class.getName() + "#close";
-    /// Where a close waits for the speculative tasks a read has started.
-    private static final String AWAIT_PREFETCHES = PrefetchTasks.class.getName() + "#awaitAll";
+    /// Where a close waits for the jobs of a column or row read in flight, its reads included.
+    private static final String READ_CLOSE = ReadTasks.class.getName() + "#await";
     /// Where a close waits for the child builds already under way.
     private static final String AWAIT_BUILDS = ReentrantReadWriteLock.WriteLock.class.getName() + "#lock";
 
     /// Serves a file's bytes. Once armed, holds the first read made on a thread the
-    /// arming predicate accepts until [#release()] or [#close()], and can hold the reads of a
-    /// range on every other thread until that read is held ([#holdOthersInRange]). Records a
-    /// read that is in flight when the file closes, and one that starts after it closed.
+    /// arming predicate accepts until [#release()] or [#close()]. Records a read that is in
+    /// flight when the file closes, and one that starts after it closed.
     private static final class GatedInputFile implements InputFile {
 
         private final ByteBuffer data;
         private final CountDownLatch entered = new CountDownLatch(1);
         private final CountDownLatch released = new CountDownLatch(1);
         private final AtomicReference<Predicate<Thread>> gate = new AtomicReference<>();
-        private volatile Predicate<Thread> armed;
-        private volatile long othersHeldFrom = Long.MAX_VALUE;
-        private volatile long othersHeldTo = Long.MAX_VALUE;
         private final AtomicInteger readsInFlight = new AtomicInteger();
         private final List<String> violations = new CopyOnWriteArrayList<>();
         private volatile boolean closed;
@@ -115,11 +100,6 @@ class ParentCloseTest {
             }
             readsInFlight.incrementAndGet();
             try {
-                Predicate<Thread> accepted = armed;
-                if (offset >= othersHeldFrom && offset < othersHeldTo && accepted != null
-                        && !accepted.test(Thread.currentThread())) {
-                    entered.await();
-                }
                 Predicate<Thread> held = gate.get();
                 if (held != null && held.test(Thread.currentThread()) && gate.compareAndSet(held, null)) {
                     entered.countDown();
@@ -157,15 +137,7 @@ class ParentCloseTest {
 
         /// Holds the next read made on a thread `held` accepts.
         void arm(Predicate<Thread> held) {
-            armed = held;
             gate.set(held);
-        }
-
-        /// Holds a read starting in `[from, to)` on a thread the arming predicate does not accept
-        /// until the armed read is held.
-        void holdOthersInRange(long from, long to) {
-            othersHeldFrom = from;
-            othersHeldTo = to;
         }
 
         void awaitHeldRead() throws InterruptedException {
@@ -201,15 +173,15 @@ class ParentCloseTest {
         consumer.start();
         file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
+        closeWhileHeld(reader, file, READ_CLOSE);
         consumer.join();
 
         assertThat(file.violations).isEmpty();
         rows.close();
     }
 
-    /// The gate is armed before the readers are built: their fetchers start reading as they are
-    /// built, and armed afterwards, the gate could miss every read the read makes. Building
+    /// The gate is armed before the readers are built: their reads start as they are built, and
+    /// armed afterwards, the gate could miss every read the read makes. Building
     /// column readers waits for none of those reads, so the held one does not hold the build.
     @Test
     void closeStopsUnclosedColumnReadersBeforeClosingTheFile() throws Exception {
@@ -226,47 +198,33 @@ class ParentCloseTest {
         consumer.start();
         file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
+        closeWhileHeld(reader, file, READ_CLOSE);
         consumer.join();
 
         assertThat(file.violations).isEmpty();
         columns.close();
     }
 
-    /// The read held is one a speculative task on the context's I/O executor started: the
-    /// prefetch of the second row group's first chunk. Nothing consumes, but the whole file is
-    /// within the read-ahead cap, so a column's fetch step may reach the second row group and
-    /// read that chunk on demand before the prefetch does, which would leave the prefetch nothing
-    /// to read; the fetch steps' reads of the second row group are held until the prefetch's read
-    /// is, and then wait for it. The close waits for the columns before it waits for the
-    /// prefetches. Two threads, so that a held fetch step leaves one for the row group's
-    /// planning, which starts the prefetch.
+    /// The read held is the first the read makes on the context's I/O executor, where every read of
+    /// a file not in memory runs, while nothing consumes. The close waits for it before it closes
+    /// the file.
     @Tag("pool")
     @Test
-    void closeWaitsForAStartedPrefetchBeforeClosingTheFile() throws Exception {
+    void closeWaitsForAReadOnTheIoExecutorBeforeClosingTheFile() throws Exception {
         GatedInputFile file = new GatedInputFile(Files.readAllBytes(INDEXED_FILE));
         try (HardwoodContext context = HardwoodContext.create(2)) {
             ParquetFileReader reader = ParquetFileReader.open(file, context);
-            List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
             file.arm(t -> t.getName().equals("hardwood-io"));
-            file.holdOthersInRange(firstByte(rowGroups.get(1)), firstByte(rowGroups.get(2)));
             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.all())
                     .batchSize(INDEXED_BATCH_SIZE)
                     .build();
             file.awaitHeldRead();
 
-            closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
+            closeWhileHeld(reader, file, READ_CLOSE);
 
             assertThat(file.violations).isEmpty();
             columns.close();
         }
-    }
-
-    /// The offset of a row group's first byte: its first column chunk's dictionary page, or its
-    /// first data page where it has none.
-    private static long firstByte(RowGroup rowGroup) {
-        ColumnMetaData first = rowGroup.columns().getFirst().metaData();
-        return first.dictionaryPageOffset() != null ? first.dictionaryPageOffset() : first.dataPageOffset();
     }
 
     @Test

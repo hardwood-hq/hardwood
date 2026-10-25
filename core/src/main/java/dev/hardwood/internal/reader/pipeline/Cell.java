@@ -39,7 +39,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// the cell's values without a lock; the validity words at the edges of a segment's bits are
 /// merged atomically ([FlatFill]). A binary column's segments copy their plain bytes into chunks
 /// of their own ([BinaryFill]), so no fill waits for another.
-final class Cell implements ScheduledCell<BatchExchange.Batch> {
+final class Cell implements BatchCell<BatchExchange.Batch> {
 
     /// [#plannedRecords] of a cell whose batch the plan leaves open past the row group it opens in.
     static final int UNKNOWN_RECORDS = -1;

@@ -22,12 +22,9 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.reader.fetch.PrefetchTasks;
-import dev.hardwood.internal.reader.fetch.RequestAttempt;
 import dev.hardwood.internal.reader.footer.FileFooter;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader.FooterRead;
-import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -38,16 +35,11 @@ import dev.hardwood.schema.FileSchema;
 /// Lazily opens input files and caches each parsed footer for one
 /// [dev.hardwood.reader.ParquetFileReader].
 ///
-/// Each file has one footer entry: the read of its footer, which opens the file and takes its tail
-/// ([ParquetMetadataReader#readFooter]), and the load that parses it. A footer a caller asks for is
-/// loaded on the caller's thread, and the load registers first, so a later request for the same
-/// file joins it and [#close()] waits for it. A read starts the footer read ahead of the load
-/// ([#prefetch]) as a task of its own [PrefetchTasks], whose close waits for it, as for any read of
-/// the read; the load of that file then parses what it read, on the read's planning chain, which
-/// never waits for the read itself. A read's failure is kept by its entry and raised by the load of
-/// the file, when a read reaches it; an `Error` it failed with that no load took is raised by the
-/// close of the read that started it, as for every [RequestAttempt]. A footer read its read's close dropped
-/// before it started is no read: the next request starts it again.
+/// Each file has one footer entry: its load, which opens the file, takes its tail and reads its
+/// footer ([ParquetMetadataReader#readFooter]), then parses it. A footer a caller outside a read
+/// asks for is loaded on the caller's thread ([#getFile]); a read claims the load instead and runs
+/// its read and parse as jobs of its own ([#claim]). Either way the load registers first, so a
+/// later request for the same file joins it and [#close()] waits for it.
 ///
 /// A read drops the footer of each file it is done with, but the first's ([#drop]): a read of many
 /// files holds the footers of the files it is reading, not of every file it has read. A later read
@@ -103,8 +95,7 @@ public final class FileMetadataCache {
     }
 
     /// Gets a prepared file, loading it on the calling thread unless a load is registered, which
-    /// it waits for. Called by a caller outside a read; the read's planning chain, which runs on
-    /// the pool, never waits for a load ([#fileNeed]).
+    /// it waits for. Called by a caller outside a read; a read never waits for a load ([#claim]).
     ///
     /// A failed load arrives twice-wrapped and leaves as neither. The loader cannot
     /// declare `IOException`, since its outcome goes to every caller through a future, so it wraps;
@@ -130,88 +121,10 @@ public final class FileMetadataCache {
             return outcome(footer);
         }
         catch (Abandoned e) {
-            // The read engine that claimed the load closed before it read the footer, and dropped
+            // The read that claimed the load closed before it read the footer, and dropped
             // the entry: the file is loaded afresh
             return getFile(fileIndex);
         }
-    }
-
-    /// What the read's planning chain waits for before it takes the prepared file of `fileIndex`
-    /// ([#getFile]) without waiting: the footer's read, which this starts on `tasks`, the read's,
-    /// if none is, or another thread's load of it; `null` once the file is loaded. Once the footer
-    /// has been read, or where the file's footer is read in place, the chain loads the file here,
-    /// on its own thread. A caller outside a read takes the load on itself instead ([#getFile]),
-    /// so that a close waits for it.
-    Need fileNeed(int fileIndex, PrefetchTasks tasks) {
-        Footer footer;
-        CompletableFuture<?> pending;
-        boolean loads = false;
-        synchronized (lifecycleLock) {
-            if (closeStarted) {
-                throw new IllegalStateException("FileMetadataCache is closed");
-            }
-            Objects.checkIndex(fileIndex, inputFiles.size());
-            footer = footers.computeIfAbsent(fileIndex, i -> new Footer());
-            // One look at the read, which completes on its own thread: a read that fails after it
-            // is waited for below, and taken by the next look, never loaded here
-            boolean readDone = footer.attempt != null && footer.attempt.isDone();
-            if (readDone && footer.attempt.failedAhead()) {
-                // Read again on demand, as a data read that failed ahead of demand is
-                footer.attempt = null;
-                readDone = false;
-            }
-            if (footer.loading) {
-                pending = footer.outcome;
-            }
-            else if (readsInPlace(fileIndex) || readDone) {
-                footer.loading = true;
-                loads = true;
-                pending = null;
-            }
-            else {
-                pending = footer.attempt != null ? footer.attempt.future() : null;
-            }
-        }
-        if (loads) {
-            load(fileIndex, footer);
-            return null;
-        }
-        if (pending == null) {
-            CompletableFuture<?> started = start(fileIndex, tasks, () -> {}, true);
-            // Null where another thread registered the read or the load since: look again
-            return started != null ? whenDone(started) : fileNeed(fileIndex, tasks);
-        }
-        return pending.isDone() ? null : whenDone(pending);
-    }
-
-    /// The prepared file of `fileIndex` once loaded, or what the read's planning chain waits for
-    /// before it is ([#fileNeed]): never a load that waits for I/O on the chain's thread, also
-    /// where another read drops the file's footer meanwhile, which starts its read again.
-    ///
-    /// @throws IOException the load's failure
-    Loading fileForPlanning(int fileIndex, PrefetchTasks tasks) throws IOException {
-        while (true) {
-            Need need = fileNeed(fileIndex, tasks);
-            if (need != null) {
-                return new Loading(null, need);
-            }
-            Footer footer;
-            synchronized (lifecycleLock) {
-                footer = footers.get(fileIndex);
-            }
-            if (footer != null && footer.outcome.isDone()) {
-                return new Loading(outcome(footer), null);
-            }
-        }
-    }
-
-    /// The prepared file of a footer loaded, or what loading it waits for.
-    record Loading(PreparedFile file, Need need) {
-    }
-
-    /// A need met once `future` completes, failed or not.
-    private static Need whenDone(CompletableFuture<?> future) {
-        return resume -> future.whenComplete((ignored, failure) -> resume.run());
     }
 
     /// The outcome of `footer`'s load, which has completed or is waited for.
@@ -234,70 +147,6 @@ public final class FileMetadataCache {
         }
     }
 
-    /// Starts reading the footer of `fileIndex` as a task of `tasks`, a read's, unless its entry has
-    /// started or loaded it, the index is past the last file, the cache is closed, or the file's
-    /// bytes are in memory and the footer is read from the file or the context has no pool. A
-    /// footer a [MetadataSource] supplies is read ahead on a context with a pool, since the source
-    /// may wait for a remote store. Runs `whenRead` once the footer has been read, by the read this
-    /// starts or by the entry's read or load already under way, on the thread that completes it,
-    /// or at once on the caller's where it is read in place or already read. Not run once the
-    /// cache is closed or for an index past the last file.
-    ///
-    /// @return the read this started, which completes once it has, whether or not it failed;
-    ///         `null` when it started none
-    public CompletableFuture<?> prefetch(int fileIndex, PrefetchTasks tasks, Runnable whenRead) {
-        return start(fileIndex, tasks, whenRead, false);
-    }
-
-    /// As [#prefetch], for a read the read's planning chain `demanded`, whose failure fails the
-    /// file, or one started ahead of demand, whose failure is read again once the file is needed.
-    private CompletableFuture<?> start(int fileIndex, PrefetchTasks tasks, Runnable whenRead, boolean demanded) {
-        if (readsInPlace(fileIndex)) {
-            // Its read waits for nothing, so the load on the thread that asks for the file reads it
-            whenRead.run();
-            return null;
-        }
-        RequestAttempt<OpenedFooter> attempt;
-        CompletableFuture<?> registered;
-        synchronized (lifecycleLock) {
-            if (closeStarted || fileIndex < 0 || fileIndex >= inputFiles.size()) {
-                return null;
-            }
-            Footer footer = footers.computeIfAbsent(fileIndex, i -> new Footer());
-            registered = footer.loading ? footer.outcome : footer.attempt != null ? footer.attempt.future() : null;
-            attempt = null;
-            if (registered == null) {
-                attempt = footerAttempt(fileIndex, footer, tasks, demanded);
-                footer.attempt = attempt;
-            }
-        }
-        if (registered != null) {
-            registered.whenComplete((ignored, failure) -> whenRead.run());
-            return null;
-        }
-        attempt.whenDone(whenRead);
-        attempt.submit();
-        return attempt.future().handle((ignored, failure) -> null);
-    }
-
-    /// The read of the footer of `fileIndex` for `footer`, its entry, on `tasks`.
-    private RequestAttempt<OpenedFooter> footerAttempt(int fileIndex, Footer footer, PrefetchTasks tasks, boolean demanded) {
-        InputFile inputFile = inputFiles.get(fileIndex);
-        return new RequestAttempt<>(ExceptionContext.filePrefix(inputFile.name()) + "Failed to read metadata", !demanded,
-                tasks, () -> readFooter(inputFile), () -> {
-                    // Dropped by the close of the read that started it: no read, so a later request
-                    // starts another rather than taking a failure no file caused. The entry's read
-                    // not completed is this one, since an entry takes another read only once its
-                    // read has failed ahead of demand (fileNeed)
-                    synchronized (lifecycleLock) {
-                        if (footer.attempt != null && !footer.attempt.isDone()) {
-                            footer.attempt = null;
-                        }
-                    }
-                    return null;
-                });
-    }
-
     /// Drops the tail of `fileIndex` once its footer has been read ([HeldBytes#dropHeld]), and,
     /// but for the first file's, its footer once loaded, for a read that is done with the file or
     /// will not reach it.
@@ -314,15 +163,6 @@ public final class FileMetadataCache {
         }
         if (footer.outcome.isDone() && !footer.outcome.isCompletedExceptionally()) {
             HeldBytes.drop(footer.outcome.join().inputFile());
-        }
-        RequestAttempt<OpenedFooter> attempt = footer.attempt;
-        if (attempt != null) {
-            // A footer read in flight drops its tail once it has read it
-            attempt.future().thenAccept(opened -> {
-                if (opened != null) {
-                    HeldBytes.drop(opened.read().inputFile());
-                }
-            });
         }
     }
 
@@ -343,8 +183,8 @@ public final class FileMetadataCache {
     }
 
     /// Prevents new loads, waits for every admitted load, and releases cached
-    /// results. Input-file ownership remains with the caller. The footer reads a read started are
-    /// its own, which its close waited for.
+    /// results. Input-file ownership remains with the caller. A load a read claimed is the read's
+    /// own, which its close completed or abandoned.
     public void close() {
         List<Footer> registered;
         synchronized (lifecycleLock) {
@@ -381,20 +221,17 @@ public final class FileMetadataCache {
     /// Runs the load of `fileIndex` and completes `footer` with its outcome.
     private void load(int fileIndex, Footer footer) {
         try {
-            footer.outcome.complete(loadFile(fileIndex, footer));
+            footer.outcome.complete(loadFile(fileIndex));
         }
         catch (RuntimeException | Error e) {
             footer.outcome.completeExceptionally(e);
         }
     }
 
-    /// A file's footer entry: the read of its footer, once [#prefetch] started it, and its load,
-    /// once a caller or the read's planning chain asked for the file.
+    /// A file's footer entry: its load, once a caller or a read asked for the file.
     private static final class Footer {
 
         final CompletableFuture<PreparedFile> outcome = new CompletableFuture<>();
-        /// The read [#prefetch] started; `null` when none was. Written under `lifecycleLock`.
-        volatile RequestAttempt<OpenedFooter> attempt;
         /// Whether a load has taken the entry. Guarded by `lifecycleLock`.
         boolean loading;
 
@@ -406,27 +243,15 @@ public final class FileMetadataCache {
         }
     }
 
-    private PreparedFile loadFile(int fileIndex, Footer footer) {
+    private PreparedFile loadFile(int fileIndex) {
         InputFile inputFile = inputFiles.get(fileIndex);
-        RequestAttempt<OpenedFooter> attempt = footer.attempt;
-        OpenedFooter opened;
-        try {
-            opened = attempt != null && !attempt.failedAhead() ? attempt.take() : null;
-        }
-        catch (IOException e) {
-            // A checked exception the file threw undeclared; getFile unwraps it again
-            throw new UncheckedIOException(e);
-        }
-        if (opened == null) {
-            opened = readFooter(inputFile);
-        }
-        return parsed(inputFile, opened);
+        return parsed(inputFile, readFooter(inputFile));
     }
 
     /// The prepared file of `opened`, the footer read of `inputFile`: its parse, and the commit of
     /// the event that spans its load.
     private PreparedFile parsed(InputFile inputFile, OpenedFooter opened) {
-        // In place on the planning chain, which runs on the pool or the read's queue; a caller
+        // In place on a read's planning job, which runs on the pool or the read's queue; a caller
         // outside a read hands the parse to the pool and waits for it
         FileFooter parsed = opened.read().parse(context);
         FileOpenedEvent event = opened.event();
@@ -449,19 +274,17 @@ public final class FileMetadataCache {
         }
     }
 
-    // ==================== Loads a read engine runs ====================
+    // ==================== Loads a read runs ====================
 
-    /// What a read engine finds for a file's footer ([#claim]): the prepared file, or the failure,
-    /// of a load that has completed; a load or a footer read of another read under way, `pending`,
-    /// after which it asks again; or the load, claimed for the caller, which runs its read and
-    /// parse as jobs of its own and completes it ([EngineLoad]). Exactly one is set.
-    record Claim(PreparedFile file, Throwable failure, CompletableFuture<?> pending, EngineLoad load) {
+    /// What a read finds for a file's footer ([#claim]): the prepared file, or the failure,
+    /// of a load that has completed; a load of another read or caller under way, `pending`, after
+    /// which it asks again; or the load, claimed for the caller, which runs its read and parse as
+    /// jobs of its own and completes it ([ClaimedLoad]). Exactly one is set.
+    record Claim(PreparedFile file, Throwable failure, CompletableFuture<?> pending, ClaimedLoad load) {
     }
 
-    /// Claims the load of `fileIndex` for a read engine, unless a load of it has completed or is
-    /// under way, or another read's footer read of it is in flight ([Claim]). A footer read another
-    /// read started ahead of demand that failed is read again by the claimed load; one that
-    /// completed is taken by its parse.
+    /// Claims the load of `fileIndex` for a read, unless a load of it has completed or is
+    /// under way ([Claim]).
     ///
     /// @throws IllegalStateException if the cache is closed
     Claim claim(int fileIndex) {
@@ -473,15 +296,8 @@ public final class FileMetadataCache {
             Objects.checkIndex(fileIndex, inputFiles.size());
             footer = footers.computeIfAbsent(fileIndex, i -> new Footer());
             if (!footer.loading) {
-                RequestAttempt<OpenedFooter> attempt = footer.attempt;
-                if (attempt != null && !attempt.isDone()) {
-                    return new Claim(null, null, attempt.future(), null);
-                }
-                if (attempt != null && attempt.failedAhead()) {
-                    footer.attempt = null;
-                }
                 footer.loading = true;
-                return new Claim(null, null, null, new EngineLoad(fileIndex, footer, footer.attempt != null));
+                return new Claim(null, null, null, new ClaimedLoad(fileIndex, footer));
             }
             if (!footer.outcome.isDone()) {
                 return new Claim(null, null, footer.outcome, null);
@@ -495,37 +311,31 @@ public final class FileMetadataCache {
         }
     }
 
-    /// The load of one file's footer a read engine claimed ([#claim]): its read, a job on an I/O
+    /// The load of one file's footer a read claimed ([#claim]): its read, a job on an I/O
     /// thread unless the footer is read in place ([#readsInPlace()]), and its parse, a CPU job, which
-    /// completes the file's entry for every read of the reader. The engine runs them one after the
+    /// completes the file's entry for every read of the reader. The read runs them one after the
     /// other, never at once, and orders them through its lock.
-    final class EngineLoad {
+    final class ClaimedLoad {
 
         private final int fileIndex;
         private final Footer footer;
-        /// Whether a footer read another read started is taken rather than read again.
-        private final boolean takesRead;
         private OpenedFooter opened;
 
-        private EngineLoad(int fileIndex, Footer footer, boolean takesRead) {
+        private ClaimedLoad(int fileIndex, Footer footer) {
             this.fileIndex = fileIndex;
             this.footer = footer;
-            this.takesRead = takesRead;
         }
 
         /// Whether the read waits for nothing, so that the parse's job reads the footer too: the
-        /// file's bytes are in memory, or another read's footer read has completed.
+        /// file's bytes are in memory.
         boolean readsInPlace() {
-            return takesRead || FileMetadataCache.this.readsInPlace(fileIndex);
+            return FileMetadataCache.this.readsInPlace(fileIndex);
         }
 
         /// Opens the file and reads its footer as far as I/O goes. Run again after a failure.
         ///
         /// @throws IOException the read's failure, naming the file
         void read() throws IOException {
-            if (takesRead) {
-                return;
-            }
             try {
                 opened = readFooter(inputFiles.get(fileIndex));
             }
@@ -540,15 +350,10 @@ public final class FileMetadataCache {
         /// @throws IOException the load's failure, as [#getFile] raises it
         PreparedFile parse() throws IOException {
             try {
-                if (takesRead) {
-                    footer.outcome.complete(loadFile(fileIndex, footer));
+                if (opened == null) {
+                    read();
                 }
-                else {
-                    if (opened == null) {
-                        read();
-                    }
-                    footer.outcome.complete(parsed(inputFiles.get(fileIndex), opened));
-                }
+                footer.outcome.complete(parsed(inputFiles.get(fileIndex), opened));
             }
             catch (IOException e) {
                 footer.outcome.completeExceptionally(new UncheckedIOException(e));
@@ -564,7 +369,7 @@ public final class FileMetadataCache {
             footer.outcome.completeExceptionally(failure instanceof IOException io ? new UncheckedIOException(io) : failure);
         }
 
-        /// Gives the load up as the engine's read closes before completing it: the entry is
+        /// Gives the load up as the read closes before completing it: the entry is
         /// dropped, so that the next request for the file loads it afresh, and a caller waiting
         /// for it asks again.
         void abandon() {
@@ -577,7 +382,7 @@ public final class FileMetadataCache {
         }
     }
 
-    /// The outcome of a load its read engine gave up, which [#getFile] takes as a reason to load
+    /// The outcome of a load its read gave up, which [#getFile] takes as a reason to load
     /// the file afresh.
     private static final class Abandoned extends RuntimeException {
 

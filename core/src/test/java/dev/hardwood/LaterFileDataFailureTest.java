@@ -15,9 +15,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 
-import dev.hardwood.internal.reader.engine.ReadEngineSelection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReaders;
@@ -34,10 +32,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// A later file whose footer reads but whose data does not fails the read once the read reaches
 /// its data: every row of the files before it is returned first (#1711).
 class LaterFileDataFailureTest {
-
-    /// The pipeline drops the rows of the file before the failure; the read engine replaces it.
-    @RegisterExtension
-    static final ReadEngineSelection ENGINE = ReadEngineSelection.engine();
 
     private static final Path FIRST = Paths.get("src/test/resources/multi_file_part0.parquet");
     private static final Path SECOND = Paths.get("src/test/resources/multi_file_part1.parquet");

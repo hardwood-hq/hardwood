@@ -134,13 +134,13 @@ The read path in `core` is split into packages by responsibility. Each package d
 |---|---|---|
 | `internal.io` | `InputFile` implementations and the validation of requested ranges | [INPUT_FILES.md](_designs/INPUT_FILES.md) |
 | `internal.reader.select` | Row selection: `RowRanges` and per-page `PageRowMask`s | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
-| `internal.reader.step` | How a read's work runs without blocking: its executor, the needs a step waits on, the parses over bytes a step holds | [THREADING.md](_designs/THREADING.md) |
+| `internal.reader.step` | How a read's work runs without blocking: its executor and the count of its jobs, the needs a walk or a planning stage stops on, the parses over bytes a read holds | [THREADING.md](_designs/THREADING.md) |
 | `internal.reader.batch` | The batches a read hands its consumers: `BatchExchange`, `NestedBatch`, `BinaryBatchValues`, `Dictionary`, the layers `NestedLevelComputer` derives from levels | [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) |
 | `internal.reader.memory` | The working-set limit and the context's read-ahead buffer | [VALUE_DECODE.md](_designs/VALUE_DECODE.md#page-decode) |
 | `internal.reader.decode` | Page bytes to page values: `PageDecoder`, the page values, dictionary parsing | [VALUE_DECODE.md](_designs/VALUE_DECODE.md) |
-| `internal.reader.fetch` | The bytes a read requests from its files (`FetchSequence`) and the walks of a column chunk's pages (`FetchPlan`) | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
+| `internal.reader.fetch` | The sections of a file a read reads its pages from (`Section`), their coalescing, and the walks of a column chunk's pages (`FetchPlan`) | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
 | `internal.reader.footer` | Reading and parsing a file's footer | [FILE_METADATA.md](_designs/FILE_METADATA.md) |
 | `internal.reader.plan` | The planning of a read: work items, pruning, fetch plans per row group, the batch plan | [READ_PIPELINE.md](_designs/READ_PIPELINE.md), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) |
-| `internal.reader.pipeline` | Decoded pages into batches: the scheduler, scheduled columns, cells, segments and fills | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) |
-| `internal.reader.engine` | A read with a single decision point (`ReadEngine`): the planning, requests, walks and decodes of the column reads it supports, selected by `hardwood.internal.readEngine` | — |
+| `internal.reader.pipeline` | Decoded pages into batches: the decoded columns, cells, segments and fills | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) |
+| `internal.reader.engine` | A read with a single decision point (`RowGroupIterator`): the planning, requests, walks and decodes of every column and row read | [READ_PIPELINE.md](_designs/READ_PIPELINE.md), [THREADING.md](_designs/THREADING.md) |
 | `internal.reader.row` | The row readers, their flyweights and accessors, record filtering | [ROW_READER.md](_designs/ROW_READER.md), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) |

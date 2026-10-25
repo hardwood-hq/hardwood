@@ -18,11 +18,11 @@ import dev.hardwood.schema.ColumnSchema;
 /// Walks the pages of one projected column in one row group without waiting for I/O.
 ///
 /// A walk is a state machine over the bytes present: it locates each page by its header or by the
-/// offset index and takes its bytes from the [FetchSequence] section requests that hold them. Where
+/// offset index and takes its bytes from the [Section]s that hold them. Where
 /// it needs bytes that are not present, [#advance] returns `null` and [#pending] names them; the
 /// walk issues no read, keeps the state it reached, a parsed page header included, and the next
-/// [#advance] resumes there. A column's fetch step drives the walk: it issues the read of the
-/// pending bytes ([ByteNeed#issue]) and yields on it. A walk over a file whose bytes are in memory
+/// [#advance] resumes there. The read drives the walk: it starts the read of the pending bytes
+/// and advances the walk again once they arrive. A walk over a file whose bytes are in memory
 /// never stops for bytes.
 ///
 /// Advancing declares [IOException]: a read the walk needs fails it.
@@ -35,7 +35,7 @@ public interface PageWalk {
     PageInfo advance() throws IOException;
 
     /// What the last [#advance] stopped on, or `null` when it returned a page or ended the walk:
-    /// bytes not present ([ByteNeed]), or a task of the read ending, before the dictionary page it
+    /// bytes not present ([Section]), or a task of the read ending, before the dictionary page it
     /// reached can be parsed beside the read's other tasks
     /// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]).
     Need pending();
@@ -72,7 +72,7 @@ public interface PageWalk {
             }
 
             @Override
-            public ByteNeed pending() {
+            public Need pending() {
                 return null;
             }
         };

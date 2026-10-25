@@ -11,16 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,7 +24,6 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -43,29 +36,25 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Reads columns whose cells span several pages with their page tasks run one at a time in
-/// seeded random orders ([TaskOrderExecutor#shuffling]), and checks every read against the
-/// values written, or, for a fixture, against a read on a context's own pool.
-///
-/// The orders reach the steps of the cell protocol that depend on which task comes first, and
-/// the test counts each, so that a change that stops the reads from reaching one fails here:
+/// Reads columns whose cells span several pages with their jobs run one at a time in seeded random
+/// orders ([TaskOrderExecutor#shuffling]), and checks every read against the values written, or,
+/// for a fixture, against a read on a context's own pool:
 ///
 /// - the pages of a binary cell fill their segments in any order, each copying its `PLAIN` values'
 ///   bytes into chunks of its own ([BinaryFill]), and the page that fills the cell's last segment,
 ///   not necessarily the cell's last page, completes it;
-/// - a page of a column decoded through levels measured before the page ahead of it waits, and
-///   the task of the page ahead places both ([ScheduledNestedColumn]), including pages that begin
-///   inside a record, whose leading values go into the cell of the record before; every cell of
-///   such a column is filled inside a page task, none on its fetch steps.
+/// - a page of a column decoded through levels measured before the page ahead of it waits, and is
+///   placed behind it ([NestedColumn]), including pages that begin inside a record, whose leading
+///   values go into the cell of the record before.
 ///
-/// The fetch steps run on the executor's thread too, among the page tasks. A failure names the
-/// seed; the order a seed gives also depends on when the executor's wait for more tasks times
-/// out, so a seed reproduces an order only most of the time.
+/// The walk advances run on the executor's thread too, among the decodes. A failure names the
+/// seed; the order a seed gives also depends on when the executor's wait for more jobs times out,
+/// so a seed reproduces an order only most of the time.
 class ShuffledTaskOrderTest {
 
     private static final int SEEDS = 10;
     private static final int THREADS = 4;
-    /// The pages a read with [#THREADS] threads has in flight at most.
+    /// The decodes a read with [#THREADS] threads has in flight at most.
     private static final int IN_FLIGHT = 2 * THREADS;
 
     private static final int ROWS = 400;
@@ -80,24 +69,10 @@ class ShuffledTaskOrderTest {
     private static List<String> dictValues;
     private static List<String> listRecords;
 
-    private OrderCounts counts;
-
     @BeforeAll
     static void writeFiles() throws Exception {
         writeStrings();
         writeLists();
-    }
-
-    @BeforeEach
-    void install() {
-        counts = new OrderCounts();
-        TaskOrderExecutor.install();
-    }
-
-    @AfterEach
-    void uninstall() {
-        TaskOrderExecutor.uninstall();
-        ScheduledNestedColumn.fillObserver = null;
     }
 
     @Test
@@ -111,18 +86,12 @@ class ShuffledTaskOrderTest {
                         .as("dict, seed %d, batch %d", seed, batchSize).isEqualTo(dictValues);
             }
         }
-        // The counts come from the scheduler's submissions, which a read the read engine drives
-        // makes none of; its pages still run in the seeded orders, and their values are checked.
-        if (!ReadEngine.supports()) {
-            assertThat(counts.outOfOrder).as("pages run ahead of an earlier page of their column").isPositive();
-        }
     }
 
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void nestedPagesArePlacedInPageOrderInEveryTaskOrder() throws Exception {
         List<String> longRecords = readList(HardwoodContextImpl.create(THREADS), Path.of(LONG_RECORDS), 3);
-        ScheduledNestedColumn.fillObserver = (column, cell) -> counts.filled();
         for (long seed = 0; seed < SEEDS; seed++) {
             for (int batchSize : new int[]{ 3, 11 }) {
                 assertThat(readList(seed, lists, batchSize))
@@ -131,21 +100,12 @@ class ShuffledTaskOrderTest {
             assertThat(readList(seed, Path.of(LONG_RECORDS), 3))
                     .as("long records, seed %d", seed).isEqualTo(longRecords);
         }
-        // The counts come from the scheduler's submissions and the scheduled column's fills, which a
-        // read the read engine drives makes none of; its pages still run in the seeded orders, and
-        // their records are checked.
-        if (!ReadEngine.supports()) {
-            assertThat(counts.outOfOrder).as("pages measured ahead of an earlier page of their column").isPositive();
-            assertThat(counts.outOfOrderInsideRecord).as("of them, pages beginning inside a record").isPositive();
-            assertThat(counts.fills).as("cells filled").isPositive();
-            assertThat(counts.fillsOutsideTasks).as("cells filled outside a page task").isZero();
-        }
     }
 
     // ==================== Reads ====================
 
     private List<String> readFlat(long seed, Path file, String column, int batchSize) throws Exception {
-        TaskOrderExecutor executor = TaskOrderExecutor.shuffling(seed, IN_FLIGHT, counts);
+        TaskOrderExecutor executor = TaskOrderExecutor.shuffling(seed, IN_FLIGHT);
         List<String> values = new ArrayList<>();
         try (HardwoodContextImpl context = executor.context(THREADS);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file), context);
@@ -162,7 +122,7 @@ class ShuffledTaskOrderTest {
     }
 
     private List<String> readList(long seed, Path file, int batchSize) throws Exception {
-        TaskOrderExecutor executor = TaskOrderExecutor.shuffling(seed, IN_FLIGHT, counts);
+        TaskOrderExecutor executor = TaskOrderExecutor.shuffling(seed, IN_FLIGHT);
         List<String> records = readList(executor.context(THREADS), file, batchSize);
         assertThat(executor.failure()).isNull();
         return records;
@@ -187,62 +147,6 @@ class ShuffledTaskOrderTest {
             }
         }
         return records;
-    }
-
-    // ==================== Order counts ====================
-
-    /// Counts the orders the tasks ran in. Runs on the
-    /// executor's one task thread, apart from [#submitted].
-    private static final class OrderCounts implements TaskOrderExecutor.Listener {
-
-        private final Map<ScheduledColumn<?>, List<PageTask>> submitted = new IdentityHashMap<>();
-        private final Set<PageTask> ran = Collections.newSetFromMap(new IdentityHashMap<>());
-        private int outOfOrder;
-        private int outOfOrderInsideRecord;
-        private final Set<PageTask> ranAhead = Collections.newSetFromMap(new IdentityHashMap<>());
-        /// The thread running a task, `null` between tasks.
-        private Thread running;
-        private int fills;
-        private int fillsOutsideTasks;
-
-        /// On the thread filling a cell.
-        synchronized void filled() {
-            fills++;
-            if (Thread.currentThread() != running) {
-                fillsOutsideTasks++;
-            }
-        }
-
-        @Override
-        public synchronized void submitted(ScheduledColumn<?> column, PageTask page) {
-            submitted.computeIfAbsent(column, c -> new ArrayList<>()).add(page);
-        }
-
-        @Override
-        public synchronized void beforeRun(ScheduledColumn<?> column, PageTask page) {
-            running = Thread.currentThread();
-            for (PageTask earlier : submitted.get(column)) {
-                if (earlier == page) {
-                    break;
-                }
-                if (!ran.contains(earlier)) {
-                    outOfOrder++;
-                    ranAhead.add(page);
-                    break;
-                }
-            }
-        }
-
-        @Override
-        public synchronized void afterRun(ScheduledColumn<?> column, PageTask page) {
-            running = null;
-            ran.add(page);
-            // A page measured ahead of the page before it waits for it, unplaced, with its measure
-            if (ranAhead.remove(page) && page instanceof NestedPageTask nested && nested.measure != null
-                    && nested.measure.leadingValues() > 0) {
-                outOfOrderInsideRecord++;
-            }
-        }
     }
 
     // ==================== Files ====================

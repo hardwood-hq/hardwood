@@ -23,23 +23,27 @@ import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.plan.BatchPlan;
+import dev.hardwood.internal.reader.select.PageRowMask;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
-/// One flat decoded column of a read the read engine drives: it places the pages its walk hands
-/// out into the cells of the batch plan ([Placer]) as it takes them, decodes and fills them on
+/// One flat decoded column of a read ([dev.hardwood.internal.reader.engine.RowGroupIterator]): it
+/// places the pages its walk hands out into the cells of the batch plan ([Placer]) as it takes them, decodes and fills them on
 /// jobs, and publishes its completed cells in plan order to its [BatchExchange]. A binary column's
 /// pages copy their segments' plain bytes into chunks of their own, or write dictionary ids
 /// ([BinaryFill]). A column with a filter fragment writes each batch's matches as the batch
 /// completes.
 ///
-/// Placement, marking cells completed and publishing run under the engine's lock, which also
+/// Placement, marking cells completed and publishing run under the read's lock, which also
 /// guards the cells' bookkeeping; decoding, filling and completing a cell's batch run on jobs,
-/// outside it. A job reports the cells it completed, which the engine marks under its lock.
-public final class EngineFlatColumn implements EngineColumn {
+/// outside it. A job reports the cells it completed, which the read marks under its lock.
+public final class FlatColumn implements DecodedColumn {
+
+    private static final DecodeBuffers.Slot<PageDecoder.LevelScratch> SCRATCH = DecodeBuffers.slot();
 
     private final ColumnSchema column;
     private final BatchExchange<BatchExchange.Batch> exchange;
-    private final EnginePublisher<BatchExchange.Batch> publisher;
+    private final CellPublisher<BatchExchange.Batch> publisher;
     private final DecompressorFactory decompressorFactory;
     private final WorkingSet.Column workingSet;
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers, which a failure hints at.
@@ -67,14 +71,14 @@ public final class EngineFlatColumn implements EngineColumn {
 
     /// @param columnFilter the column's filter fragment, which writes each batch's `matches` as the
     ///        batch completes; `null` for none
-    public EngineFlatColumn(ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange, int batchCapacity,
+    public FlatColumn(ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange, int batchCapacity,
                             DecompressorFactory decompressorFactory, WorkingSet.Column workingSet,
                             boolean footersSupplied, ColumnBatchMatcher columnFilter) {
         this.column = column;
         this.columnFilter = columnFilter;
         this.footersSupplied = footersSupplied;
         this.exchange = exchange;
-        this.publisher = new EnginePublisher<>(exchange);
+        this.publisher = new CellPublisher<>(exchange);
         this.decompressorFactory = decompressorFactory;
         this.workingSet = workingSet;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
@@ -83,6 +87,11 @@ public final class EngineFlatColumn implements EngineColumn {
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> true;
         };
         this.placer = new Placer<>(new Sink(), batchCapacity);
+    }
+
+    /// Whether a reader asked for the views of the column's deferred dictionary values, for tests.
+    BinaryBatchValues.ViewDemand viewDemand() {
+        return viewDemand;
     }
 
     public BatchExchange<BatchExchange.Batch> exchange() {
@@ -163,7 +172,7 @@ public final class EngineFlatColumn implements EngineColumn {
     /// The read's row of the first record not published: the first cell's, or the next row.
     @Override
     public long firstUnpublishedRow() {
-        ScheduledCell<BatchExchange.Batch> head = publisher.head();
+        BatchCell<BatchExchange.Batch> head = publisher.head();
         return head != null ? head.firstRow() : nextRow();
     }
 
@@ -190,13 +199,13 @@ public final class EngineFlatColumn implements EngineColumn {
 
     @Override
     public Exception placed(Exception e, String fileName, int rowGroup, int page) {
-        return ScheduledColumn.placeFailure(e, column, footersSupplied, fileName, rowGroup, page);
+        return DecodedColumn.placeFailure(e, column, footersSupplied, fileName, rowGroup, page);
     }
 
     private List<Object> decodeUnplaced(Page page, DecodeBuffers buffers) {
         PageTask task = page.task;
         PageInfo info = task.info;
-        PageDecoder.LevelScratch scratch = ScheduledFlatColumn.scratch(buffers);
+        PageDecoder.LevelScratch scratch = scratch(buffers);
         try {
             return binary ? decodeBinary(task, info, scratch, buffers) : decodeFixed(task, info, scratch, buffers);
         }
@@ -210,7 +219,7 @@ public final class EngineFlatColumn implements EngineColumn {
         FlatPageValues values = info.isNullPlaceholder()
                 ? task.decoder.nullsInPlace(info.placeholderNumValues(), scratch, false).flat()
                 : task.decoder.decodeFlat(info.dataPage(), info.dictionary(), scratch, buffers);
-        ScheduledFlatColumn.checkRows(info, values.size());
+        checkRows(info, values.size());
         List<Object> completed = new ArrayList<>(1);
         for (Segment segment : task.segments) {
             Cell cell = segment.cell;
@@ -225,7 +234,7 @@ public final class EngineFlatColumn implements EngineColumn {
         BinaryPageValues values = info.isNullPlaceholder()
                 ? task.decoder.nullsInPlace(info.placeholderNumValues(), scratch, false).binary()
                 : task.decoder.decodeFlatBinary(info.dataPage(), info.dictionary(), scratch, buffers);
-        ScheduledFlatColumn.checkRows(info, values.size());
+        checkRows(info, values.size());
         List<Object> completed = new ArrayList<>(1);
         for (Segment segment : task.segments) {
             Cell cell = segment.cell;
@@ -343,7 +352,7 @@ public final class EngineFlatColumn implements EngineColumn {
         publisher.fail(failure);
     }
 
-    /// What the placer's decisions do to the column; under the engine's lock.
+    /// What the placer's decisions do to the column; under the read's lock.
     private final class Sink implements Placer.Sink<Cell> {
 
         @Override
@@ -368,6 +377,28 @@ public final class EngineFlatColumn implements EngineColumn {
         @Override
         public void endRead() {
             publisher.endRead();
+        }
+    }
+
+    /// The task's scratch in `buffers`.
+    public static PageDecoder.LevelScratch scratch(DecodeBuffers buffers) {
+        PageDecoder.LevelScratch scratch = buffers.get(SCRATCH);
+        if (scratch == null) {
+            scratch = new PageDecoder.LevelScratch();
+            buffers.set(SCRATCH, scratch);
+        }
+        return scratch;
+    }
+
+    /// Checks that a decoded page holds the rows its placement took from its metadata: every row
+    /// of an unmasked page, and at least the rows up to its mask's last for a masked one.
+    ///
+    /// @throws ParquetReadException if it does not
+    private static void checkRows(PageInfo info, int values) {
+        PageRowMask mask = info.mask();
+        if (mask.isAll() ? values != info.records() : values < mask.end(mask.intervalCount() - 1)) {
+            throw new ParquetReadException("Page holds " + values + " values, but its metadata gives it "
+                    + (mask.isAll() ? info.records() : "at least " + mask.end(mask.intervalCount() - 1)) + " rows");
         }
     }
 }

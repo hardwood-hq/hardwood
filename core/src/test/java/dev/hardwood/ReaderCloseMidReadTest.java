@@ -31,21 +31,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// A reader closed mid-file returns from its close, through both consumer shapes,
 /// [ColumnReaders#close()] and [RowReader#close()].
 ///
-/// [dev.hardwood.internal.reader.pipeline.ScheduledColumn#close()] stops every column of the read
-/// and waits for its fetch steps and page tasks. The waits are untimed, so a column whose stop does
-/// not end its fetch, or whose last task does not wake the close, leaves the close waiting forever,
-/// which the `@Timeout` catches.
+/// [dev.hardwood.internal.reader.engine.RowGroupIterator#close()] stops every column of the read
+/// and waits for its jobs. The wait is untimed, so a column whose stop does not end its work, or
+/// whose last job does not wake the close, leaves the close waiting forever, which the `@Timeout`
+/// catches.
 ///
 /// When close() arrives mid-file, each column's ready queue is at its limit, so its completed cells
-/// wait for the consumer to publish them, the scheduler submits none of its pages past the
-/// read-ahead cap, and its fetch has stopped for room in the column's page queue. The close has to
-/// end that fetch, and its wait for the tasks has to end as the last task finishes. The cases
-/// differ in where the pipeline comes to rest: [ColumnReaders] uses the detaching `BatchExchange`
-/// mode, whose ready queue is limited in rows, and [RowReader] the recycling mode, whose ready
-/// queue is limited in batch holders; a flat column places its pages on its fetch steps
-/// ([dev.hardwood.internal.reader.pipeline.ScheduledFlatColumn]), and a struct field's column
-/// places them on its page tasks and also stops its fetch for room among its pages not yet placed
-/// ([dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn]).
+/// wait for the consumer to publish them, and the read decodes none of its pages past the
+/// read-ahead cap. The close has to end that read, and its wait for the jobs has to end as the
+/// last job finishes. The cases differ in where the read comes to rest: [ColumnReaders] uses the
+/// detaching `BatchExchange` mode, whose ready queue is limited in rows, and [RowReader] the
+/// recycling mode, whose ready queue is limited in batch holders; a flat column places its pages
+/// as its walk hands them out ([dev.hardwood.internal.reader.pipeline.FlatColumn]), and a struct
+/// field's column places them once decoded and holds its pages not yet placed
+/// ([dev.hardwood.internal.reader.pipeline.NestedColumn]).
 class ReaderCloseMidReadTest {
 
     /// Wide enough for the row-reader case to reproduce at all. Batch size there is
@@ -105,8 +104,8 @@ class ReaderCloseMidReadTest {
     }
 
     /// The nested row reader recycles its batch holders too, and its struct fields are
-    /// [dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn]s: they place their pages on
-    /// their page tasks, and their fetches also stop for room among the pages not yet placed.
+    /// [dev.hardwood.internal.reader.pipeline.NestedColumn]s: they place their pages once decoded,
+    /// and hold their pages not yet placed.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void nestedRowReaderCloseMidFileReturns() throws Exception {
@@ -174,8 +173,7 @@ class ReaderCloseMidReadTest {
     }
 
     /// A synthetic file of `COLUMNS` required `INT64` columns and `ROWS` rows. Nothing about
-    /// the values matters, only that every projected column has a chunk to decode. The read's
-    /// scheduler decodes these columns ([dev.hardwood.internal.reader.pipeline.ReadScheduler]).
+    /// the values matters, only that every projected column has a chunk to decode.
     private static byte[] writeSyntheticFile() throws Exception {
         FileSchema.Builder schema = FileSchema.builder("close_scaling");
         for (String name : columnNames()) {
@@ -222,7 +220,7 @@ class ReaderCloseMidReadTest {
     }
 
     /// A struct of `COLUMNS` required `INT64` fields, which a row read decodes through
-    /// [dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn]s.
+    /// [dev.hardwood.internal.reader.pipeline.NestedColumn]s.
     private static byte[] writeSyntheticStructFile() throws Exception {
         FileSchema schema = FileSchema.builder("close_scaling_struct")
                 .struct(STRUCT, RepetitionType.REQUIRED, struct -> {

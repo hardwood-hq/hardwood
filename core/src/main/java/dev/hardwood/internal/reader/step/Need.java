@@ -7,12 +7,12 @@
  */
 package dev.hardwood.internal.reader.step;
 
-/// What a column's fetch step needs and is not ready, which
-/// [dev.hardwood.internal.reader.plan.PageSource#pending] returns: bytes not yet read
-/// ([dev.hardwood.internal.reader.fetch.ByteNeed]), the plans of a work item still being planned,
-/// or a task of the read ending before a dictionary page is parsed beside its other tasks
-/// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]). The step does not wait for it: it
-/// registers its resume ([#whenMet]) and returns, and the resume queues the next step.
+/// What a walk or a planning stage needs and is not ready, which
+/// [dev.hardwood.internal.reader.fetch.PageWalk#pending] returns: bytes not yet read
+/// ([dev.hardwood.internal.reader.fetch.Section]), or a task of the read ending before a
+/// dictionary page is parsed beside its other tasks
+/// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]). The read does not wait for it: it
+/// registers its resume ([#whenMet]) and returns, and the resume runs the next step.
 public interface Need {
 
     /// Runs `resume` once the need is met, on the thread that meets it, or at once on the caller's

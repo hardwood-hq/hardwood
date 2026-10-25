@@ -23,7 +23,7 @@ import dev.hardwood.internal.reader.step.Parsed;
 
 /// The bytes the planning of a read holds of one file outside its data: a window's page index or
 /// Bloom filters, a work item's dictionary pages, Bloom filters without a length and page-format
-/// probes. Each range is a section request of the read's [FetchSequence], held by the work items it
+/// probes. Each range is a section of the read ([Sections]), held by the work items it
 /// serves and released once each has released it. A range inside the file's tail while the tail is
 /// held, or of a file in memory, is a section request sliced in place, which needs no read; one
 /// inside the tail is sliced as it is inserted and kept, since the tail is the reader's and another
@@ -36,8 +36,8 @@ import dev.hardwood.internal.reader.step.Parsed;
 /// request is read under the label of the work items it serves and its purpose ([#PRUNING],
 /// [#INDEXES]), the fetch reason S3 logs and the I/O budget name it by.
 ///
-/// The planning chain alone inserts and reads; a release may come from any column, once the
-/// chain is done with the work items it releases.
+/// The read's planning alone inserts and reads; a release may come from any column, once the
+/// planning is done with the work items it releases.
 final class PlanningReads implements ByteSource {
 
     /// The purpose of Bloom filters and dictionary pages, read to prune row groups.

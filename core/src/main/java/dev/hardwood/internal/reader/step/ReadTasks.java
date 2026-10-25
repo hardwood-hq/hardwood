@@ -16,8 +16,7 @@ import java.util.function.BooleanSupplier;
 
 /// The work of one read that its close waits for, and the wait of every thread using the read.
 ///
-/// It counts the read's fetch steps and page tasks that are submitted and not finished, a fetch
-/// step that yielded on a need included ([#started()], [#ended()]). The read's close waits until
+/// It counts the read's jobs that are submitted and not finished ([#started()], [#ended()]). The read's close waits until
 /// none is left, and a poll on a context of zero threads that finds none fails instead of waiting
 /// ([dev.hardwood.internal.reader.batch.BatchExchange#poll()]): nothing could publish a batch any
 /// more. A task's end that ends its column, such as a step the closed context refuses, therefore
@@ -35,24 +34,24 @@ public final class ReadTasks {
     private final AtomicLong signals = new AtomicLong();
     private final Set<Thread> parked = ConcurrentHashMap.newKeySet();
 
-    /// Counts a fetch step or page task submitted for the read.
+    /// Counts a walk advance or page task submitted for the read.
     public void started() {
         count.incrementAndGet();
     }
 
-    /// Ends the count of a fetch step or page task, and signals once none is left.
+    /// Ends the count of a walk advance or page task, and signals once none is left.
     public void ended() {
         if (count.decrementAndGet() == 0) {
             signal();
         }
     }
 
-    /// The fetch steps and page tasks submitted and not finished.
+    /// The walk advances and page tasks submitted and not finished.
     public int count() {
         return count.get();
     }
 
-    /// Whether no fetch step or page task of the read is submitted and not finished.
+    /// Whether no walk advance or page task of the read is submitted and not finished.
     public boolean idle() {
         return count.get() == 0;
     }

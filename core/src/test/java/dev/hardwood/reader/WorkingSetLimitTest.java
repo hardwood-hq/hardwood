@@ -18,7 +18,6 @@ import org.junit.jupiter.params.provider.CsvSource;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -77,13 +76,10 @@ class WorkingSetLimitTest {
         assertThat(countValues(file, 3 * PAGE_VALUES)).isEqualTo(3 * PAGE_VALUES);
 
         // The same total crosses the limit whichever order the charges come in; which charge
-        // crosses it depends on that order. The pipeline's fetch step parses the three
-        // dictionaries before the first page's task runs; the read engine plans the third row
-        // group behind that task, so the third dictionary crosses.
+        // crosses it depends on that order. The read plans the third row group behind the first
+        // page's task, so the third dictionary crosses.
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
-        String crossing = ReadEngine.supports()
-                ? "[<memory>: row group 2, column 'c0', dictionary page] Dictionary page needs 2097152 bytes"
-                : "[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes";
+        String crossing = "[<memory>: row group 2, column 'c0', dictionary page] Dictionary page needs 2097152 bytes";
         assertThatThrownBy(() -> countValues(file, 3 * PAGE_VALUES))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage(crossing + " to decode, which takes the read's working set to 4202496 bytes, more than "
@@ -95,11 +91,9 @@ class WorkingSetLimitTest {
         // Pruning reads each row group's dictionary to look for the literal, which it holds, so
         // every row group stays and its column takes the dictionary instead of parsing it again.
         // Each parse fits the limit alone; the batch holding all three row groups' rows does not.
-        // The pipeline decodes the first page before the column takes the third row group's
-        // dictionary; the read engine's walk takes the dictionary first, so that charge crosses.
-        String crossing = ReadEngine.supports()
-                ? "[<memory>: row group 2, column 'c0'] Dictionary page needs 1048576 bytes"
-                : "[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes";
+        // The column's walk takes the third row group's dictionary before the first page is
+        // decoded, so that charge crosses.
+        String crossing = "[<memory>: row group 2, column 'c0'] Dictionary page needs 1048576 bytes";
         long workingSet = 3L * DICTIONARY_BYTES + 8_192 + 4_100;
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
         byte[] file = RleExpansionFile.buildWide(1, 3, DICTIONARY_BYTES, PAGE_VALUES);
@@ -156,25 +150,21 @@ class WorkingSetLimitTest {
     /// Every way a read reaches a page charges it before decompressing it, so a limit of one byte
     /// fails each read: nested and binary columns, `DATA_PAGE_V2`, optional columns, the page
     /// index's plan and the column reader. Without a pool the read's order is the same each run,
-    /// so the same charges are made and the same page fails. The read engine makes its charges in an
-    /// order of its own, so where the working set it reaches differs, `engineMessage` gives it.
+    /// so the same charges are made and the same page fails.
     @ParameterizedTest
-    @CsvSource(delimiter = '|', nullValues = "-", textBlock = """
-            compat_maxrep_list.parquet         | [compat_maxrep_list.parquet: row group 0, column 'g.list.element', page 0] Data page needs 96 bytes to decode, which takes the read's working set to 96 bytes, %1$s | -
-            misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 5122 bytes, %1$s | -
-            dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1682 bytes, %1$s | -
-            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 17568 bytes, %1$s | -
-            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 2000 bytes to decode, which takes the read's working set to 9389 bytes, %1$s | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 2000 bytes to decode, which takes the read's working set to 7206 bytes, %1$s
+    @CsvSource(delimiter = '|', textBlock = """
+            compat_maxrep_list.parquet         | [compat_maxrep_list.parquet: row group 0, column 'g.list.element', page 0] Data page needs 96 bytes to decode, which takes the read's working set to 96 bytes, %1$s
+            misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 5122 bytes, %1$s
+            dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1682 bytes, %1$s
+            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 17568 bytes, %1$s
+            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 2000 bytes to decode, which takes the read's working set to 7206 bytes, %1$s
             """)
-    void everyPathChargesBeforeDecompressing(String file, String message, String engineMessage) {
+    void everyPathChargesBeforeDecompressing(String file, String message) {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, "1");
-        String expected = engineMessage != null && ReadEngine.supports()
-                ? engineMessage
-                : message;
 
         assertThatThrownBy(() -> readAll(Path.of("src/test/resources", file)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage(expected.formatted(LIMIT_OF_ONE));
+                .hasMessage(message.formatted(LIMIT_OF_ONE));
     }
 
     @Test

@@ -15,14 +15,14 @@ import java.util.NoSuchElementException;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.step.Need;
 
-/// Drives a [PageWalk] on a thread off the pool, for tests that walk a plan outside a read: each
-/// section request the walk stops on is demanded from its [FetchSequence] and waited for.
+/// Drives a [PageWalk] for tests that walk a plan outside a read: each section the walk stops on is
+/// demanded, which reads it on the calling thread ([InPlaceSections]).
 public final class PageWalks {
 
     private PageWalks() {
     }
 
-    /// The pages of `plan`'s walk, waiting for the section requests they need.
+    /// The pages of `plan`'s walk.
     public static Pages of(FetchPlan plan) {
         return new Pages(plan.walk());
     }
@@ -37,7 +37,7 @@ public final class PageWalks {
         return all;
     }
 
-    /// The pages of one walk, waiting for what each needs.
+    /// The pages of one walk.
     public static final class Pages {
 
         private final PageWalk walk;
@@ -48,9 +48,10 @@ public final class PageWalks {
             this.walk = walk;
         }
 
-        /// Whether another page is available, waiting for whatever is needed to know.
+        /// Whether another page is available.
         ///
         /// @throws IOException if reading the file failed
+        /// @throws IllegalStateException if the walk stopped on something other than bytes
         public boolean hasNext() throws IOException {
             while (next == null && !ended) {
                 next = walk.advance();
@@ -59,8 +60,8 @@ public final class PageWalks {
                     if (pending == null) {
                         ended = true;
                     }
-                    else if (pending instanceof ByteNeed bytes) {
-                        bytes.issue().await();
+                    else if (pending instanceof Section section) {
+                        section.demand();
                     }
                     else {
                         throw new IllegalStateException("A walk outside a read waits for bytes only, not " + pending);

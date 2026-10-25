@@ -22,7 +22,7 @@ import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Reads just enough of a column chunk to identify its first data page's format (v1 vs v2). Used by
-/// the per-page mask gate in [dev.hardwood.internal.reader.plan.RowGroupIterator] to distinguish
+/// the per-page mask gate in [dev.hardwood.internal.reader.engine.RowGroupIterator] to distinguish
 /// nested-v1 columns — whose repetition levels live inside the compressed area and would require
 /// decompression to count records — from nested-v2 columns, whose repetition levels live in an
 /// uncompressed prefix and can be walked without invoking the codec.

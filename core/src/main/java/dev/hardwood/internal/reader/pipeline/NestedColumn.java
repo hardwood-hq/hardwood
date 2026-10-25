@@ -21,15 +21,18 @@ import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
+import dev.hardwood.internal.reader.decode.PageTrimmer;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.plan.BatchPlan;
+import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.schema.ColumnSchema;
 
-/// One column decoded through levels of a read the read engine drives: a leaf with repetition, or
-/// with a `STRUCT` or `REPEATED` layer above it, read into [NestedBatch]es.
+/// One column decoded through levels of a read
+/// ([dev.hardwood.internal.reader.engine.RowGroupIterator]): a leaf with repetition, or with a
+/// `STRUCT` or `REPEATED` layer above it, read into [NestedBatch]es.
 ///
 /// Where such a page's records start only its levels say, so a page is placed once a job has
-/// decoded and measured it ([ScheduledNestedColumn#measure]):
+/// decoded and measured it ([#measure]):
 ///
 /// - The column takes the pages its walk hands out behind the pages not yet placed. A page whose
 ///   metadata gives no record count is ordered at the column's last known row, a lower bound of
@@ -42,9 +45,15 @@ import dev.hardwood.schema.ColumnSchema;
 /// - A page borrows its scratch from the column's pool and returns it once every cell it is placed
 ///   into is filled.
 ///
-/// Placement, sealing and publishing run under the engine's lock; decoding, measuring and filling
+/// Placement, sealing and publishing run under the read's lock; decoding, measuring and filling
 /// run on jobs, each touching only the page or the cells it was given.
-public final class EngineNestedColumn implements EngineColumn {
+public final class NestedColumn implements DecodedColumn {
+
+    /// Scratch a column keeps for its next pages once their pages' cells are all filled. Fixed,
+    /// and not tied to the pages a column holds: a scratch is sized by the largest page it held, so
+    /// a larger pool keeps many times a large-page file's live scratch alive and saves little
+    /// allocation.
+    private static final int SCRATCH_POOL = 4;
 
     /// The end of the column's pages, behind the pages taken before it: the read's end or a
     /// failure, or the failure of its walk (`walk`), which abandons the open cell.
@@ -53,7 +62,7 @@ public final class EngineNestedColumn implements EngineColumn {
 
     private final ColumnSchema column;
     private final BatchExchange<NestedBatch> exchange;
-    private final EnginePublisher<NestedBatch> publisher;
+    private final CellPublisher<NestedBatch> publisher;
     private final DecompressorFactory decompressorFactory;
     private final WorkingSet.Column workingSet;
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers, which a failure hints at.
@@ -67,7 +76,7 @@ public final class EngineNestedColumn implements EngineColumn {
     /// as its cells fill from then on.
     private final BinaryBatchValues.ViewDemand viewDemand = new BinaryBatchValues.ViewDemand();
     /// Scratch of pages whose cells are all filled, for the column's next pages; jobs return to it.
-    private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool = ScheduledNestedColumn.newScratchPool();
+    private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool = new ArrayBlockingQueue<>(SCRATCH_POOL);
     private final Placer<NestedCell> placer;
     /// Pages in page order not yet placed, then the [End] of the column's pages.
     private final ArrayDeque<Object> unplaced = new ArrayDeque<>();
@@ -88,13 +97,13 @@ public final class EngineNestedColumn implements EngineColumn {
 
     /// @param layers the column's layers ([NestedLevelComputer#computeLayers])
     /// @param indexMode what the column's batches carry for their reader
-    public EngineNestedColumn(ColumnSchema column, BatchExchange<NestedBatch> exchange, int batchCapacity,
+    public NestedColumn(ColumnSchema column, BatchExchange<NestedBatch> exchange, int batchCapacity,
                               DecompressorFactory decompressorFactory, WorkingSet.Column workingSet,
                               boolean footersSupplied, NestedLevelComputer.Layers layers,
                               NestedIndexMode indexMode, boolean fixedListFastPathEnabled) {
         this.column = column;
         this.exchange = exchange;
-        this.publisher = new EnginePublisher<>(exchange);
+        this.publisher = new CellPublisher<>(exchange);
         this.decompressorFactory = decompressorFactory;
         this.workingSet = workingSet;
         this.footersSupplied = footersSupplied;
@@ -182,7 +191,7 @@ public final class EngineNestedColumn implements EngineColumn {
     /// The first cell's row, or else the first unplaced page's, or else the next row.
     @Override
     public long firstUnpublishedRow() {
-        ScheduledCell<NestedBatch> head = publisher.head();
+        BatchCell<NestedBatch> head = publisher.head();
         if (head != null) {
             return head.firstRow();
         }
@@ -194,7 +203,7 @@ public final class EngineNestedColumn implements EngineColumn {
     public Object decode(Page page, DecodeBuffers buffers) throws Exception {
         NestedPageTask task = (NestedPageTask) page.task;
         try {
-            ScheduledNestedColumn.measure(task, buffers);
+            measure(task, buffers);
         }
         catch (RuntimeException e) {
             throw placed(e, task.fileName, task.rowGroup, task.pageIndex);
@@ -252,9 +261,9 @@ public final class EngineNestedColumn implements EngineColumn {
             throw rethrowable(placed(e, page.fileName, page.rowGroup, page.pageIndex));
         }
         // Every cell the page reaches holds its segment, and none of them is filled before the
-        // engine's lock is released
+        // read's lock is released
         if (page.scratch != null && page.unfilledSegments.get() == 0) {
-            ScheduledNestedColumn.releaseScratch(page, scratchPool);
+            releaseScratch(page, scratchPool);
         }
         placementEnded |= !goesOn;
         lastPlaced = page;
@@ -305,7 +314,7 @@ public final class EngineNestedColumn implements EngineColumn {
         for (Object c : cells) {
             NestedCell cell = (NestedCell) c;
             try {
-                ScheduledNestedColumn.fill(cell, exchange, column, layers, indexMode, viewDemand, buffers,
+                fill(cell, exchange, column, layers, indexMode, viewDemand, buffers,
                         scratchPool);
             }
             catch (SegmentFillException e) {
@@ -329,7 +338,7 @@ public final class EngineNestedColumn implements EngineColumn {
 
     @Override
     public Exception placed(Exception e, String fileName, int rowGroup, int page) {
-        return ScheduledColumn.placeFailure(e, column, footersSupplied, fileName, rowGroup, page);
+        return DecodedColumn.placeFailure(e, column, footersSupplied, fileName, rowGroup, page);
     }
 
     @Override
@@ -371,7 +380,7 @@ public final class EngineNestedColumn implements EngineColumn {
                 + " placementEnded=" + placementEnded + " ended=" + publisher.ended();
     }
 
-    /// What the placer's decisions do to the column; under the engine's lock.
+    /// What the placer's decisions do to the column; under the read's lock.
     private final class Sink implements Placer.Sink<NestedCell> {
 
         @Override
@@ -399,5 +408,45 @@ public final class EngineNestedColumn implements EngineColumn {
         public void endRead() {
             publisher.endRead();
         }
+    }
+
+    /// Decodes a page's levels into its scratch, its values left in place, trims it to its mask
+    /// and measures it; the page is then ready to be placed.
+    private static void measure(NestedPageTask page, DecodeBuffers buffers) {
+        PageInfo info = page.info;
+        PageRowMask mask = info.mask();
+        PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
+                ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch, true)
+                : page.decoder.decodeNestedInPlace(info.dataPage(), info.dictionary(), page.scratch, buffers);
+        if (!mask.isAll()) {
+            inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
+        }
+        page.inPlace = inPlace;
+        page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
+    }
+
+    /// Returns a page's scratch to `pool`, where it has room; the page reads it no more.
+    private static void releaseScratch(NestedPageTask page, ArrayBlockingQueue<PageDecoder.LevelScratch> pool) {
+        page.inPlace = null;
+        page.measure = null;
+        page.scratch.trim();
+        pool.offer(page.scratch);
+    }
+
+    /// Fills a sealed `cell` ([NestedFill]) and drops its segments, returning the scratch of each
+    /// page whose cells are then all filled to `pool`.
+    private static void fill(NestedCell cell, BatchExchange<NestedBatch> exchange, ColumnSchema column,
+                             NestedLevelComputer.Layers layers, NestedIndexMode indexMode,
+                             BinaryBatchValues.ViewDemand viewDemand, DecodeBuffers buffers,
+                             ArrayBlockingQueue<PageDecoder.LevelScratch> pool) {
+        cell.filled(NestedFill.fill(cell, exchange, column, layers, indexMode, viewDemand, buffers));
+        for (NestedSegment segment : cell.segments()) {
+            if (segment.page.unfilledSegments.decrementAndGet() == 0) {
+                releaseScratch(segment.page, pool);
+            }
+        }
+        // The cell holds what it was filled from no longer: a cell waiting for room in the
+        // exchange would otherwise keep its pages' arrays alive
+        cell.dropSegments();
     }
 }

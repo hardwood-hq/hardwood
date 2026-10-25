@@ -30,7 +30,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// [FetchPlan] for columns with an OffsetIndex.
 ///
 /// Pages are pre-computed at plan time from the OffsetIndex (with filter and maxRows already
-/// applied). The bytes come from the row group's [FetchSequence] section requests that overlap the
+/// applied). The bytes come from the row group's [Section]s that overlap the
 /// chunk, located by offset; dictionary parsing is deferred until the walk is first advanced. No
 /// I/O happens at plan time.
 public final class IndexedFetchPlan implements FetchPlan {

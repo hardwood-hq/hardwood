@@ -95,7 +95,7 @@ class MetadataParseThreadTest {
     }
 
     /// Every computation ran on a thread of the pool: handed over by a thread off the pool, or
-    /// in place on the thread of the pool that needed it, such as a column's fetch step, which
+    /// in place on the thread of the pool that needed it, such as a read's planning job, which
     /// never waits for another thread of the pool.
     private void assertRanOnThePool() {
         assertThat(computed).allSatisfy(c -> {

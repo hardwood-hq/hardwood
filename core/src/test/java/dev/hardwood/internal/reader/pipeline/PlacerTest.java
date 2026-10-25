@@ -7,11 +7,9 @@
  */
 package dev.hardwood.internal.reader.pipeline;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.decode.PageDecoder;
@@ -351,64 +349,6 @@ class PlacerTest {
         assertThatThrownBy(() -> placer.place(nestedPage(past), measure(0), true))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Batch plan mismatch: the column reached a row group past the row cap that ended the read");
-    }
-
-    @Test
-    void aFailureBetweenWorkItemsSealsThePartialBatch() {
-        BatchPlan plan = new BatchPlan(4, false, false, 0);
-        BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
-        RecordingSink sink = new RecordingSink();
-        Placer<TestCell> placer = new Placer<>(sink, 4);
-        placer.place(flatPage(rowGroup, 3));
-
-        IOException failure = new IOException("The next work item cannot be read");
-        assertThat(placer.sealOpenCell(failure, "c")).as("nothing abandoned").isNull();
-
-        assertThat(failure.getSuppressed()).isEmpty();
-        assertThat(sink.sealed).containsExactly("cell 0: 3 records, 3 values");
-        assertThat(sink.endRead).isFalse();
-    }
-
-    /// A failure between work items can be one exception every column shares, so each short
-    /// column's shortfall names its column.
-    @Test
-    void aFailureBetweenWorkItemsSharedByTwoShortColumnsNamesEachColumn() {
-        BatchPlan plan = new BatchPlan(4, true, false, 0);
-        BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 6);
-        Placer<TestCell> first = new Placer<>(new RecordingSink(), 4);
-        Placer<TestCell> second = new Placer<>(new RecordingSink(), 4);
-        first.place(flatPage(rowGroup, 5));
-        second.place(flatPage(rowGroup, 3));
-
-        // A planning failure is sticky: every column of the read is handed the same exception
-        IOException failure = new IOException("The next work item cannot be read");
-        first.sealOpenCell(failure, "a");
-        second.sealOpenCell(failure, "b");
-
-        assertThat(failure.getSuppressed()).extracting(Throwable::getMessage).containsExactly(
-                "[a.parquet: row group 0, column 'a'] Batch plan mismatch: the column holds 5 of the 6 rows the plan takes from the row group",
-                "[a.parquet: row group 0, column 'b'] Batch plan mismatch: the column holds 3 of the 6 rows the plan takes from the row group");
-    }
-
-    /// A column short of the rows the plan takes from its row group holds a batch no other column
-    /// ends at that row, so the failure between work items abandons it and carries the shortfall.
-    @Test
-    void aFailureBetweenWorkItemsAbandonsTheBatchOfAColumnShortOfThePlan() {
-        BatchPlan plan = new BatchPlan(4, true, false, 0);
-        BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 6);
-        RecordingSink sink = new RecordingSink();
-        Placer<TestCell> placer = new Placer<>(sink, 4);
-        placer.place(flatPage(rowGroup, 5));
-
-        IOException failure = new IOException("The next work item cannot be read");
-        TestCell abandoned = placer.sealOpenCell(failure, "c");
-
-        assertThat(abandoned.name).isEqualTo("cell 1");
-        assertThat(failure.getSuppressed()).singleElement(InstanceOfAssertFactories.THROWABLE)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("[a.parquet: row group 0, column 'c'] Batch plan mismatch: the column holds 5 of the 6 rows the plan takes from the row group");
-        assertThat(sink.sealed).containsExactly("cell 0: 4 records, 4 values");
-        assertThat(placer.place(flatPage(rowGroup, 1))).as("nothing is placed after it").isFalse();
     }
 
     @Test

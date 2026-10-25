@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.decode.PageDecoder;
-import dev.hardwood.internal.reader.pipeline.ScheduledFlatColumn;
+import dev.hardwood.internal.reader.pipeline.FlatColumn;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -78,7 +78,7 @@ class RetainedBuffersTest {
             // The pool's one set, which the read's page task decoded with
             DecodeBuffers buffers = ((HardwoodContextImpl) context).decode(set -> set);
             assertThat(PageDecoder.transientBytes(buffers, 1).length).isLessThanOrEqualTo(DecodeBuffers.RETAINED_BYTES);
-            assertThat((long) ScheduledFlatColumn.scratch(buffers).ids(1).length * Integer.BYTES)
+            assertThat((long) FlatColumn.scratch(buffers).ids(1).length * Integer.BYTES)
                     .isLessThanOrEqualTo(DecodeBuffers.RETAINED_BYTES);
         }
     }

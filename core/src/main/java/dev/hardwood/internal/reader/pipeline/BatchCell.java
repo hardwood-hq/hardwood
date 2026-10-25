@@ -7,11 +7,11 @@
  */
 package dev.hardwood.internal.reader.pipeline;
 
-/// The work of one [ScheduledColumn] for one planned batch, as its publish order sees it: a
+/// The work of one [DecodedColumn] for one planned batch, as its publish order sees it: a
 /// [Cell] of a flat column, a [NestedCell] of a column decoded through levels.
 ///
 /// @param <B> the batch type
-interface ScheduledCell<B> {
+interface BatchCell<B> {
 
     /// The read's row of the batch's first record.
     long firstRow();

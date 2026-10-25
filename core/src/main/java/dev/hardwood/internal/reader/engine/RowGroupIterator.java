@@ -39,7 +39,6 @@ import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.PageWalk;
 import dev.hardwood.internal.reader.fetch.Section;
 import dev.hardwood.internal.reader.fetch.Sections;
@@ -48,13 +47,13 @@ import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.reader.memory.WorkingSet;
-import dev.hardwood.internal.reader.pipeline.EngineColumn;
-import dev.hardwood.internal.reader.pipeline.EngineFlatColumn;
-import dev.hardwood.internal.reader.pipeline.EngineNestedColumn;
+import dev.hardwood.internal.reader.pipeline.DecodedColumn;
+import dev.hardwood.internal.reader.pipeline.FlatColumn;
+import dev.hardwood.internal.reader.pipeline.NestedColumn;
 import dev.hardwood.internal.reader.plan.BatchPlan;
-import dev.hardwood.internal.reader.plan.EnginePlanning;
 import dev.hardwood.internal.reader.plan.FileMetadataCache;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
+import dev.hardwood.internal.reader.plan.ReadPlanning;
+import dev.hardwood.internal.reader.plan.WorkItem;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.reader.step.ReadExecutor;
 import dev.hardwood.internal.reader.step.ReadQueue;
@@ -93,17 +92,15 @@ import dev.hardwood.schema.FileSchema;
 /// next, and reads ahead only the next file's footer. A column whose placement reaches the limit
 /// takes no further page, and once every column's has, the read plans nothing more.
 ///
-/// Interim name: the engine takes over [dev.hardwood.internal.reader.plan.RowGroupIterator]'s name
-/// once the pipeline it replaces is gone. It reads column reads and row reads ([#supports]).
-public final class ReadEngine implements Closeable, Sections {
+/// Every read of a [dev.hardwood.reader.ParquetFileReader] runs here: its column reads and its row
+/// reads.
+public final class RowGroupIterator implements Closeable, Sections {
 
-    /// Selects the engine for the reads it supports: `auto`, the default; or never: `off`, which
-    /// reads through the pipeline the engine replaces.
-    public static final String PROPERTY = "hardwood.internal.readEngine";
+    public static final String FETCH_AHEAD_BYTES_PROPERTY = "hardwood.internal.fetchAheadBytes";
 
     private final FileMetadataCache files;
     private final HardwoodContextImpl context;
-    private final Consumer<ReadEngine> closeListener;
+    private final Consumer<RowGroupIterator> closeListener;
     private final ReadExecutor executor;
     private final ReadTasks tasks;
     private final ReadAheadBuffer readAhead;
@@ -134,7 +131,7 @@ public final class ReadEngine implements Closeable, Sections {
     });
 
     private FileSchema referenceSchema;
-    private EnginePlanning planning;
+    private ReadPlanning planning;
     /// Whether the read has a filter, under which its Bloom filters and dictionaries may drop work
     /// items and its batches close where the always-match flag changes.
     private boolean filtered;
@@ -249,7 +246,7 @@ public final class ReadEngine implements Closeable, Sections {
         }
     }
 
-    private record Ready(int column, EngineColumn.Page page) {
+    private record Ready(int column, DecodedColumn.Page page) {
     }
 
     /// A question a reader asks before the read's columns start, which the read's jobs answer
@@ -313,7 +310,7 @@ public final class ReadEngine implements Closeable, Sections {
 
     /// One decoded column: its column side and its walk over the current unit.
     private static final class Column {
-        final EngineColumn side;
+        final DecodedColumn side;
         final int index;
         /// The column's first unpublished row as [#unpublished] holds it, `-1` while it holds none.
         long rowKey = -1;
@@ -336,13 +333,14 @@ public final class ReadEngine implements Closeable, Sections {
         /// Whether the column has placed a page of the unit it is in.
         boolean unitTaken;
 
-        Column(EngineColumn side, int index) {
+        Column(DecodedColumn side, int index) {
             this.side = side;
             this.index = index;
         }
     }
 
-    public ReadEngine(FileMetadataCache files, HardwoodContextImpl context, Consumer<ReadEngine> closeListener) {
+    public RowGroupIterator(FileMetadataCache files, HardwoodContextImpl context,
+                            Consumer<RowGroupIterator> closeListener) {
         context.requireOffPool();
         this.files = files;
         this.context = context;
@@ -353,16 +351,12 @@ public final class ReadEngine implements Closeable, Sections {
         this.waitForLock = executor.decodeThreads() <= 1;
     }
 
-    /// Whether the engine takes the reads it supports: the property is not `off`.
-    ///
-    /// @throws IllegalArgumentException if the property is neither `auto` nor `off`
-    public static boolean supports() {
-        String value = System.getProperty(PROPERTY, "auto");
-        return switch (value) {
-            case "auto" -> true;
-            case "off" -> false;
-            default -> throw new IllegalArgumentException(PROPERTY + " must be auto or off, but was: " + value);
-        };
+    /// F for a read whose largest request is `maxSpanBytes`: twice that unless overridden through
+    /// [#FETCH_AHEAD_BYTES_PROPERTY]. A value that is not a non-negative byte count is rejected
+    /// rather than replaced by the default.
+    private static long defaultFetchAheadBytes(int maxSpanBytes) {
+        return InternalProperty.longValue(FETCH_AHEAD_BYTES_PROPERTY, 2L * maxSpanBytes, 0,
+                "a non-negative byte count");
     }
 
     /// Sets up the read's planning and lists its first file's work items.
@@ -376,16 +370,16 @@ public final class ReadEngine implements Closeable, Sections {
             throws IOException {
         this.referenceSchema = schema;
         this.filtered = filter != null;
-        this.fetchAheadBytes = maxRows > 0 ? 0 : FetchSequence.fetchAheadBytes(maxSpan);
+        this.fetchAheadBytes = maxRows > 0 ? 0 : defaultFetchAheadBytes(maxSpan);
         this.columnCount = projection.decoded().getProjectedColumnCount();
         WorkingSet workingSet = new WorkingSet(columnCount, readAhead);
-        this.planning = new EnginePlanning(files, this, context, schema, rowGroups, projection, filter,
+        this.planning = new ReadPlanning(files, this, context, schema, rowGroups, projection, filter,
                 metadataFiltering, maxRows, physicalSkip, maxSpan, indexWindowBytes, workingSet);
         List<InputFile> inputFiles = files.inputFiles();
         fileCount = inputFiles.size();
         boolean allInMemory = inputFiles.stream().allMatch(HeldBytes::inMemory);
-        filesAhead = EnginePlanning.filesAhead(!allInMemory && maxRows <= 0, fileCount);
-        EnginePlanning.FileListing first = planning.listFile(0, 0);
+        filesAhead = ReadPlanning.filesAhead(!allInMemory && maxRows <= 0, fileCount);
+        ReadPlanning.FileListing first = planning.listFile(0, 0);
         lock.lock();
         try {
             footers = new FileState[fileCount];
@@ -552,7 +546,7 @@ public final class ReadEngine implements Closeable, Sections {
     /// @param layers the layers of each decoded column decoded through levels, `null` for a flat
     ///        one, in decoded order
     /// @param indexMode what the batches of a column decoded through levels carry for their reader
-    public List<EngineColumn> start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
+    public List<DecodedColumn> start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
                                     NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize,
                                     long budgetRows) {
         return start(decoded, layers, indexMode, fixedListFastPathEnabled, batchSize, budgetRows, 0, null, null);
@@ -570,13 +564,13 @@ public final class ReadEngine implements Closeable, Sections {
     ///        `null` for detaching exchanges
     /// @param filters the filter fragment of each flat decoded column, `null` for a column without
     ///        one; `null` for none
-    public List<EngineColumn> start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
+    public List<DecodedColumn> start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
                                     NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize,
                                     long budgetRows, long maxRows, List<BatchExchange<?>> exchanges,
                                     ColumnBatchMatcher[] filters) {
         planning.setBatchPlan(new BatchPlan(batchSize,
                 BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()), filtered, maxRows));
-        List<EngineColumn> sides = new ArrayList<>();
+        List<DecodedColumn> sides = new ArrayList<>();
         lock.lock();
         try {
             this.batchCapacity = batchSize;
@@ -588,13 +582,13 @@ public final class ReadEngine implements Closeable, Sections {
                 ColumnSchema column = referenceSchema.getColumn(decoded.toOriginalIndex(i));
                 NestedLevelComputer.Layers columnLayers = layers.get(i);
                 BatchExchange<?> exchange;
-                EngineColumn side;
+                DecodedColumn side;
                 if (columnLayers == null) {
                     BatchExchange<BatchExchange.Batch> flat = exchanges == null
                             ? BatchExchange.detachingFlat(column.name(), batchSize)
                             : cast(exchanges.get(i));
                     ColumnBatchMatcher filter = filters != null && i < filters.length ? filters[i] : null;
-                    side = new EngineFlatColumn(column, flat, batchSize, context.decompressorFactory(),
+                    side = new FlatColumn(column, flat, batchSize, context.decompressorFactory(),
                             workingSet.column(i, column), planning.footersSupplied(), filter);
                     exchange = flat;
                 }
@@ -603,7 +597,7 @@ public final class ReadEngine implements Closeable, Sections {
                     BatchExchange<NestedBatch> nested = exchanges == null
                             ? BatchExchange.detachingNested(column.name(), batchSize)
                             : cast(exchanges.get(i));
-                    side = new EngineNestedColumn(column, nested, batchSize, context.decompressorFactory(),
+                    side = new NestedColumn(column, nested, batchSize, context.decompressorFactory(),
                             workingSet.column(i, column), planning.footersSupplied(), columnLayers, indexMode,
                             fixedListFastPathEnabled);
                     exchange = nested;
@@ -641,7 +635,7 @@ public final class ReadEngine implements Closeable, Sections {
 
     /// A result to apply under the lock.
     private interface Update {
-        void apply(ReadEngine engine) throws Exception;
+        void apply(RowGroupIterator read) throws Exception;
     }
 
     /// A job's work outside the lock, returning its result.
@@ -696,8 +690,8 @@ public final class ReadEngine implements Closeable, Sections {
     /// A job's result queued, whose application ends the job's count.
     private record Ending(Update u) implements Update {
         @Override
-        public void apply(ReadEngine engine) throws Exception {
-            u.apply(engine);
+        public void apply(RowGroupIterator read) throws Exception {
+            u.apply(read);
         }
     }
 
@@ -807,9 +801,9 @@ public final class ReadEngine implements Closeable, Sections {
             }
             catch (RejectedExecutionException e) {
                 // a closed context refuses the job: it ends here, and fails the read
-                ended(engine -> {
-                    engine.inFlight--;
-                    engine.fail(HardwoodContextImpl.contextClosed(e));
+                ended(read -> {
+                    read.inFlight--;
+                    read.fail(HardwoodContextImpl.contextClosed(e));
                 });
             }
         });
@@ -850,7 +844,7 @@ public final class ReadEngine implements Closeable, Sections {
 
     /// Fails the read where nothing is in flight, nothing was emitted, nothing outside the read is
     /// waited for, and a column has not ended: nothing could make progress any more, which only a
-    /// rule of the engine that misses a case brings about.
+    /// rule of the read that misses a case brings about.
     private void checkStall(List<Runnable> emitted) {
         if (closed || failure != null || inFlight > 0 || !emitted.isEmpty() || waitingForRoom
                 || waitingForTask || pendingFooters > 0 || planNeed != null && !(planNeed instanceof Request)) {
@@ -858,7 +852,7 @@ public final class ReadEngine implements Closeable, Sections {
         }
         if (columns == null) {
             if (probe >= 0 && probeAnswer == null && probe < failedFrom) {
-                fail(new IllegalStateException("Read engine stalled: " + describe()));
+                fail(new IllegalStateException("Read stalled: " + describe()));
             }
             return;
         }
@@ -870,7 +864,7 @@ public final class ReadEngine implements Closeable, Sections {
             open |= !c.side.ended();
         }
         if (open) {
-            fail(new IllegalStateException("Read engine stalled: " + describe()));
+            fail(new IllegalStateException("Read stalled: " + describe()));
         }
     }
 
@@ -1095,7 +1089,7 @@ public final class ReadEngine implements Closeable, Sections {
         int file = nextList;
         int before = unitCount;
         emit(Kind.PLANNING, buffers -> {
-            EnginePlanning.FileListing listing;
+            ReadPlanning.FileListing listing;
             try {
                 listing = planning.listFile(file, before);
             }
@@ -1106,7 +1100,7 @@ public final class ReadEngine implements Closeable, Sections {
         });
     }
 
-    private void fileListed(int file, EnginePlanning.FileListing listing) {
+    private void fileListed(int file, ReadPlanning.FileListing listing) {
         planRunning = false;
         int before = unitCount;
         appendUnits(file, planning.append(listing));
@@ -1247,12 +1241,12 @@ public final class ReadEngine implements Closeable, Sections {
                 planning.readFooter(f.file);
             }
             catch (IOException | RuntimeException e) {
-                return engine -> engine.footerReadFailed(f, e);
+                return read -> read.footerReadFailed(f, e);
             }
             catch (Error e) {
-                return engine -> engine.footerReadErred(f, e);
+                return read -> read.footerReadErred(f, e);
             }
-            return engine -> engine.parseFooter(f);
+            return read -> read.parseFooter(f);
         });
     }
 
@@ -1261,7 +1255,7 @@ public final class ReadEngine implements Closeable, Sections {
     private void parseFooter(FileState f) {
         emit(Kind.PLANNING, buffers -> {
             planning.parseFooter(f.file);
-            return engine -> f.loaded = true;
+            return read -> f.loaded = true;
         });
     }
 
@@ -1392,7 +1386,7 @@ public final class ReadEngine implements Closeable, Sections {
                     // the pages taken before the failure are placed ahead of it
                     Exception placed = c.side.placed(e, workItem.inputFile().name(), workItem.rowGroupIndex(),
                             walk.currentPage());
-                    return engine -> engine.walked(column, unit, workItem, batches, pages, ordinals, placed);
+                    return read -> read.walked(column, unit, workItem, batches, pages, ordinals, placed);
                 }
                 Need pending = pages.size() < room ? walk.pending() : null;
                 boolean ended = pages.size() < room && pending == null;
@@ -1481,7 +1475,7 @@ public final class ReadEngine implements Closeable, Sections {
                         ordinals.get(p)));
             }
         }
-        catch (EngineColumn.PlaceFailure e) {
+        catch (DecodedColumn.PlaceFailure e) {
             ready(c, e.page());
             sealed(c);
             refresh(c);
@@ -1493,7 +1487,7 @@ public final class ReadEngine implements Closeable, Sections {
         return true;
     }
 
-    private void ready(Column c, EngineColumn.Page page) {
+    private void ready(Column c, DecodedColumn.Page page) {
         if (page != null) {
             ready.put(new Key(page.firstRow(), c.index, readySeq++), new Ready(c.index, page));
         }
@@ -1588,8 +1582,9 @@ public final class ReadEngine implements Closeable, Sections {
 
     /// Decodes ready pages in row order within the read-ahead cap, at most `maxDecodes` at once: a
     /// page past the cap still decodes when it starts at most one batch past its column's first
-    /// unpublished row, which the page a nested column's open cell waits for to be sealed does. A page whose task the working set does not admit ([WorkingSet#admit])
-    /// holds the pages after it until a task of the read ends or R releases room.
+    /// unpublished row, which the page a nested column's open cell waits for to be sealed does. A
+    /// page whose task the working set does not admit ([WorkingSet#admit]) holds the pages after it
+    /// until a task of the read ends or R releases room.
     private void decode() {
         long cap = firstUnpublishedRow() + capRows;
         Iterator<Map.Entry<Key, Ready>> it = ready.entrySet().iterator();
@@ -1632,8 +1627,8 @@ public final class ReadEngine implements Closeable, Sections {
         }
     }
 
-    /// Ends `c` at once with the failure of a decode or a fill, placed at its page: as in the
-    /// pipeline, only the column whose page failed ends, so a reader that takes its columns in
+    /// Ends `c` at once with the failure of a decode or a fill, placed at its page: only the
+    /// column whose page failed ends, so a reader that takes its columns in
     /// order raises the failure of the first column it takes, whichever failed first.
     private void columnFailed(Column c, Exception failure) {
         c.ended = true;
@@ -1645,7 +1640,7 @@ public final class ReadEngine implements Closeable, Sections {
 
     /// The admission of a page's task, [#REFUSED] while it waits for a task of the read to end or
     /// for room in R, which then re-runs the poll.
-    private long admit(EngineColumn.Page page) {
+    private long admit(DecodedColumn.Page page) {
         long bytes = page.taskBytes();
         if (bytes == 0) {
             return 0;
@@ -1739,10 +1734,11 @@ public final class ReadEngine implements Closeable, Sections {
             try (FetchReason.Scope ignored = FetchReason.set(r.span.reason())) {
                 bytes = ReadRanges.read(r.inputFile, r.span.start(), r.span.length());
             }
-            catch (IOException | RuntimeException e) {
-                return engine -> engine.requestFailed(r, e);
+            catch (Exception e) {
+                // a checked exception the file threw undeclared fails the request as one it declared
+                return read -> read.requestFailed(r, e);
             }
-            return engine -> engine.arrived(r, bytes);
+            return read -> read.arrived(r, bytes);
         });
     }
 
@@ -1988,7 +1984,7 @@ public final class ReadEngine implements Closeable, Sections {
 
         @Override
         public void whenMet(Runnable resume) {
-            throw new UnsupportedOperationException("The read engine tracks its requests itself");
+            throw new UnsupportedOperationException("The read tracks its requests itself");
         }
     }
 

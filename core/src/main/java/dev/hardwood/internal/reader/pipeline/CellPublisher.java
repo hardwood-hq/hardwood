@@ -11,12 +11,12 @@ import java.util.ArrayDeque;
 
 import dev.hardwood.internal.reader.batch.BatchExchange;
 
-/// The publish order of a column the read engine drives: its cells in plan order, then the read's
-/// end, published into the column's [BatchExchange] as each cell at the head completes. Every
-/// method runs under the engine's lock.
+/// The publish order of a column of a read: its cells in plan order, then the read's end, published
+/// into the column's [BatchExchange] as each cell at the head completes. Every method runs under
+/// the read's lock ([dev.hardwood.internal.reader.engine.RowGroupIterator]).
 ///
 /// @param <B> the batch type
-final class EnginePublisher<B> {
+final class CellPublisher<B> {
 
     private static final Object END = new Object();
 
@@ -29,7 +29,7 @@ final class EnginePublisher<B> {
     /// Whether a completed cell waits for room in the exchange.
     private boolean waitingForRoom;
 
-    EnginePublisher(BatchExchange<B> exchange) {
+    CellPublisher(BatchExchange<B> exchange) {
         this.exchange = exchange;
     }
 
@@ -38,7 +38,7 @@ final class EnginePublisher<B> {
     }
 
     /// Appends a cell opened at its batch's first record.
-    void add(ScheduledCell<B> cell) {
+    void add(BatchCell<B> cell) {
         order.addLast(cell);
     }
 
@@ -49,7 +49,7 @@ final class EnginePublisher<B> {
     }
 
     /// Takes out a cell that will not complete, abandoned at a failure.
-    void remove(ScheduledCell<B> cell) {
+    void remove(BatchCell<B> cell) {
         order.remove(cell);
     }
 
@@ -59,13 +59,13 @@ final class EnginePublisher<B> {
     }
 
     /// The first cell not published, `null` when there is none.
-    ScheduledCell<B> head() {
-        return order.peekFirst() instanceof ScheduledCell<?> cell ? cast(cell) : null;
+    BatchCell<B> head() {
+        return order.peekFirst() instanceof BatchCell<?> cell ? cast(cell) : null;
     }
 
     @SuppressWarnings("unchecked")
-    private ScheduledCell<B> cast(ScheduledCell<?> cell) {
-        return (ScheduledCell<B>) cell;
+    private BatchCell<B> cast(BatchCell<?> cell) {
+        return (BatchCell<B>) cell;
     }
 
     /// The cells not published, and the end where it is queued.
@@ -89,7 +89,7 @@ final class EnginePublisher<B> {
                 }
                 return;
             }
-            ScheduledCell<B> cell = cast((ScheduledCell<?>) head);
+            BatchCell<B> cell = cast((BatchCell<?>) head);
             if (!cell.isCompleted()) {
                 return;
             }

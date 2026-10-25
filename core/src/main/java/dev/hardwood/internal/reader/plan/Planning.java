@@ -12,9 +12,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
 import dev.hardwood.internal.reader.fetch.Sections;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.RowGroupPlans;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.SharedRowGroupMetadata;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
 
 /// One work item's state: what its stages have decided so far and the bytes they read, written
 /// by the chain, and the columns that hold it and whether the read has entered it and reported

@@ -13,7 +13,7 @@ import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 
-/// A page of a [ScheduledNestedColumn]: its task decompresses it into scratch of its own (or leaves
+/// A page of a [NestedColumn]: its job decompresses it into scratch of its own (or leaves
 /// values stored uncompressed in the fetched page), decodes its levels and measures it, and the
 /// page keeps the scratch until every cell it is placed into is filled.
 final class NestedPageTask extends PageTask {

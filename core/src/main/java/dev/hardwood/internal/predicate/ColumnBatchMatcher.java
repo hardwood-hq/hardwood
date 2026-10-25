@@ -10,7 +10,7 @@ package dev.hardwood.internal.predicate;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// Per-column predicate fragment evaluated against a just-filled [BatchExchange.Batch], by the
-/// decode task that completes a [dev.hardwood.internal.reader.pipeline.ScheduledColumn]'s batch.
+/// job that completes a [dev.hardwood.internal.reader.pipeline.FlatColumn]'s batch.
 ///
 /// Implementations write a per-batch matches mask into the caller-provided
 /// `outWords` `long[]`. A bit at index `i` is set iff row `i` definitely matches.

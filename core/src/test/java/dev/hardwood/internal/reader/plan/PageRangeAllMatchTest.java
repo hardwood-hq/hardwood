@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// shows every page overlaps the predicate), the reader must still return all rows.
 ///
 /// Previously, [PageRange#forColumn] returned an empty list to signal "no pages
-/// skipped, use full chunk path", but [PageSource#scanWithPageRanges] interpreted
+/// skipped, use full chunk path", but the column's page source interpreted
 /// that as "no data" and returned zero rows.
 class PageRangeAllMatchTest {
 

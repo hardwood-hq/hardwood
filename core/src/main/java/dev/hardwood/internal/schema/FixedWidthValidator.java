@@ -22,7 +22,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// something that is not the column's data.
 ///
 /// The check runs over the columns a read touches, before it starts: see
-/// [dev.hardwood.internal.reader.plan.RowGroupIterator#initialize]. Columns that are neither
+/// [dev.hardwood.internal.reader.engine.RowGroupIterator#initialize]. Columns that are neither
 /// projected nor filtered on are never checked, so a file remains readable through the
 /// columns that are well-formed, and the metadata tools keep reporting the schema as the
 /// footer states it.

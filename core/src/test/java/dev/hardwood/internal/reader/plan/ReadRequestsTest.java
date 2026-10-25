@@ -11,11 +11,9 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.function.UnaryOperator;
 
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InMemoryFiles;
@@ -28,8 +26,6 @@ import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.PageWalks;
 import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -42,7 +38,6 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
@@ -53,10 +48,9 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// The sequence's rules as a read applies them (FETCH_PLANNING.md, Section requests and Planning
-/// ahead): what a read starts ahead, how far it plans, what a walk inserts, what planning rejects
-/// and how section requests are named.
-class FetchSequenceReadTest {
+/// The requests a read makes (FETCH_PLANNING.md, Section requests): what a walk inserts, what
+/// planning rejects and how requests are named.
+class ReadRequestsTest {
 
     private static final int ROW_GROUPS = 4;
     private static final int ROWS_PER_ROW_GROUP = 1_000;
@@ -64,100 +58,6 @@ class FetchSequenceReadTest {
     @AfterEach
     void clearProperties() {
         System.clearProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
-    }
-
-    /// A read with a row limit starts no data past its next unit, however much room F and
-    /// R leave.
-    @Test
-    void aReadWithARowLimitStartsNoDataPastItsNextUnit() throws Exception {
-        assertThat(rowGroupsReadAfterEnteringTheFirst(ROW_GROUPS * ROWS_PER_ROW_GROUP)).containsExactly(0, 1);
-    }
-
-    /// A read without a row limit plans past its next unit while F has room, each row group
-    /// one past the last with a started section request.
-    @Test
-    void aReadWithoutARowLimitPlansAheadWithinF() throws Exception {
-        assertThat(rowGroupsReadAfterEnteringTheFirst(0)).containsExactly(0, 1, 2, 3);
-    }
-
-    /// The row groups of a four-row-group file not in memory with data read once the first column
-    /// has entered the first row group and nothing walks a plan, under a row limit of `maxRows`.
-    private static List<Integer> rowGroupsReadAfterEnteringTheFirst(long maxRows) throws Exception {
-        byte[] bytes = write(ROW_GROUPS * ROWS_PER_ROW_GROUP, ROWS_PER_ROW_GROUP, "a");
-        CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(bytes));
-        file.open();
-        QuiescentExecutor speculative = new QuiescentExecutor();
-        try (HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(2, speculative)) {
-            RowGroupIterator iterator = iterator(file, context, maxRows);
-            try {
-                iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                // The next unit, and without a row limit every row group F has room for, is planned
-                // on the read's executor, which starts each one's first section request then
-                assertThat(speculative.awaitQuiescence(10, TimeUnit.SECONDS, iterator::isPlanningAtRest))
-                        .as("planning and its reads at rest").isTrue();
-            }
-            finally {
-                iterator.close();
-            }
-        }
-        return file.reads().stream()
-                .filter(read -> read.reason().contains(" col="))
-                .map(read -> Integer.parseInt(read.reason().substring(3, read.reason().indexOf(' '))))
-                .distinct().sorted().toList();
-    }
-
-    /// A read whose files are all in memory plans one row group ahead on a pool.
-    @Tag("pool")
-    @Test
-    void aReadOfFilesInMemoryPlansOneRowGroupAheadOnAPool() throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
-            RowGroupIterator iterator = inMemoryIterator(context);
-            try {
-                iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-                while (!iterator.isPlanningAtRest()) {
-                    assertThat(System.nanoTime() - deadline).as("planning at rest").isNegative();
-                    Thread.sleep(1);
-                }
-                assertThat(iterator.isPlannedAhead(1)).as("the next row group planned").isTrue();
-                assertThat(iterator.isPlannedAhead(2)).as("the row group after it planned").isFalse();
-            }
-            finally {
-                iterator.close();
-            }
-        }
-    }
-
-    /// A read whose files are all in memory plans nothing ahead on a context of zero
-    /// threads.
-    @Test
-    void aReadOfFilesInMemoryPlansNothingAheadOnZeroThreads() throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
-            RowGroupIterator iterator = inMemoryIterator(context);
-            try {
-                iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                assertThat(iterator.isPlannedAhead(1)).as("the next row group planned").isFalse();
-            }
-            finally {
-                iterator.close();
-            }
-        }
-    }
-
-    private static RowGroupIterator inMemoryIterator(HardwoodContextImpl context) throws Exception {
-        InputFile file = InputFile.of(ByteBuffer.wrap(write(ROW_GROUPS * ROWS_PER_ROW_GROUP, ROWS_PER_ROW_GROUP, "a")));
-        file.open();
-        return iterator(file, context, 0);
-    }
-
-    private static RowGroupIterator iterator(InputFile file, HardwoodContextImpl context, long maxRows)
-            throws Exception {
-        FileMetaData metaData = ParquetMetadataReader.readMetadata(file);
-        FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
-        RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context, maxRows);
-        iterator.setFirstFile(schema, metaData.rowGroups());
-        iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
-        return iterator;
     }
 
     /// A column without an offset index under a row limit holds its chunk's first part; the

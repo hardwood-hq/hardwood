@@ -15,13 +15,12 @@ import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.DecodeExecutor;
 import dev.hardwood.internal.HardwoodContextImpl;
 
-/// The fetch steps, page tasks and planning of one read on a context without a pool
+/// The walk advances, page tasks and planning of one read on a context without a pool
 /// ([HardwoodContextImpl#hasPool()]), which the threads using the read run: its consumer, when a
 /// poll finds no batch ([dev.hardwood.internal.reader.batch.BatchExchange#poll()]), and the thread
-/// closing it ([dev.hardwood.internal.reader.pipeline.ScheduledColumn#close()],
-/// [dev.hardwood.internal.reader.fetch.PrefetchTasks#awaitAll()]).
+/// closing it ([ReadTasks#await]).
 ///
-/// The queue keeps the order of the pool's queue ([DecodeExecutor]): a fetch step goes to the head,
+/// The queue keeps the order of the pool's queue ([DecodeExecutor]): a walk advance goes to the head,
 /// a page task and planning to the tail. Its items are the ones the pool runs, which are safe to run
 /// on several threads at once, so a close on one thread and a poll on another may both run them.
 ///
@@ -43,7 +42,7 @@ public final class ReadQueue implements ReadExecutor {
         return tasks;
     }
 
-    /// Queues a fetch step, at the head.
+    /// Queues a walk advance, at the head.
     ///
     /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
     @Override

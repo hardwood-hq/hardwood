@@ -19,10 +19,10 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
 import dev.hardwood.internal.reader.fetch.Sections;
+import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.WorkingSet;
-import dev.hardwood.internal.reader.plan.FileMetadataCache.EngineLoad;
+import dev.hardwood.internal.reader.plan.FileMetadataCache.ClaimedLoad;
 import dev.hardwood.internal.reader.plan.FileMetadataCache.PreparedFile;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.jfr.PageFilterEvent;
@@ -41,7 +41,16 @@ import jdk.jfr.Event;
 /// driver runs the load itself, its read ([#readFooter]) and then its parse ([#parseFooter]),
 /// which completes the cache's entry. A footer's failure is kept and raised by the listing of its
 /// file ([#listFile]).
-public final class EnginePlanning {
+public final class ReadPlanning {
+
+    static final String MAX_FILES_AHEAD_PROPERTY = "hardwood.internal.maxFilesAhead";
+
+    /// The files after the one a read has reached, the next one included, whose footers it reads
+    /// ahead without the override: a bound on the footer reads a read has in flight for files it
+    /// has not reached. A read of many small files, whose data never fills F, is bound by round
+    /// trips, and overlaps as many files as this lets it; a read of larger files fills F first,
+    /// and its footers wait behind its data.
+    static final int DEFAULT_MAX_FILES_AHEAD = 64;
 
     private final FileMetadataCache files;
     private final Planner planner;
@@ -49,7 +58,7 @@ public final class EnginePlanning {
     /// The work items listed and not released, by index.
     private final Map<Integer, Planning> plannings = new ConcurrentHashMap<>();
     /// The loads the driver claimed and has not completed, by file.
-    private final Map<Integer, EngineLoad> loads = new ConcurrentHashMap<>();
+    private final Map<Integer, ClaimedLoad> loads = new ConcurrentHashMap<>();
     /// The footers loaded and not yet listed, by file.
     private final Map<Integer, PreparedFile> prepared = new ConcurrentHashMap<>();
     /// The failures of the footers that could not be loaded, by file.
@@ -69,7 +78,7 @@ public final class EnginePlanning {
     ///        the plans of an unfiltered read truncate the pages past it
     /// @param physicalSkip the leading rows of the read whose row groups the listing drops; the
     ///        residue within the first work item kept is [#firstRowGroupSkip]
-    public EnginePlanning(FileMetadataCache files, Sections sections, HardwoodContextImpl context,
+    public ReadPlanning(FileMetadataCache files, Sections sections, HardwoodContextImpl context,
                           FileSchema referenceSchema, List<RowGroup> firstFileRowGroups, ReadProjection projection,
                           ResolvedPredicate filter, boolean metadataFiltering, long maxRows, long physicalSkip,
                           int maxSpan, long indexWindowBytes, WorkingSet workingSet) throws IOException {
@@ -85,11 +94,20 @@ public final class EnginePlanning {
     }
 
     /// The files after the one it has reached whose footers a read of `fileCount` files reads
-    /// ahead: up to `hardwood.internal.maxFilesAhead` when it plans deep (its files are not all in
-    /// memory and it has no row limit), and otherwise only the next file's
-    /// ([FooterReadAhead#filesAhead]).
+    /// ahead: up to [#maxFilesAhead] for a multi-file read that plans deep (its files are not all
+    /// in memory and it has no row limit), and otherwise only the next file: a read of files all in
+    /// memory, whose reads wait for nothing to overlap, or with a row limit, which may need no
+    /// further file and under a filter learns only downstream that it is satisfied.
     public static int filesAhead(boolean plansDeep, int fileCount) {
-        return FooterReadAhead.filesAhead(plansDeep, fileCount);
+        return fileCount < 2 || !plansDeep ? 1 : maxFilesAhead();
+    }
+
+    /// The files after the one it has reached a read reads footers of ahead:
+    /// [#DEFAULT_MAX_FILES_AHEAD] unless overridden through [#MAX_FILES_AHEAD_PROPERTY], read for
+    /// each read. A value that is not a positive count is rejected rather than replaced by the
+    /// default; `1` reads only the next file's footer ahead.
+    private static int maxFilesAhead() {
+        return InternalProperty.intValue(MAX_FILES_AHEAD_PROPERTY, DEFAULT_MAX_FILES_AHEAD, 1, "a positive count");
     }
 
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers rather than each being read
@@ -155,7 +173,7 @@ public final class EnginePlanning {
     /// Parses the claimed footer of `fileIndex`, on a CPU thread, completing its load. A failure is
     /// kept for the listing of the file.
     public void parseFooter(int fileIndex) {
-        EngineLoad load = loads.get(fileIndex);
+        ClaimedLoad load = loads.get(fileIndex);
         try {
             prepared.put(fileIndex, load.parse());
         }
@@ -168,14 +186,14 @@ public final class EnginePlanning {
     /// Completes the claimed load of `fileIndex` with `failure`, its read's last, which the listing
     /// of the file raises.
     public void failFooter(int fileIndex, Throwable failure) {
-        EngineLoad load = loads.remove(fileIndex);
+        ClaimedLoad load = loads.remove(fileIndex);
         load.fail(failure);
         failed.put(fileIndex, failure);
     }
 
     /// Gives up the loads claimed and not completed, as the read closes.
     public void abandonFooters() {
-        for (Iterator<EngineLoad> it = loads.values().iterator(); it.hasNext(); ) {
+        for (Iterator<ClaimedLoad> it = loads.values().iterator(); it.hasNext(); ) {
             it.next().abandon();
             it.remove();
         }

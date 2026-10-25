@@ -19,11 +19,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.decode.ReferencePageDecoder;
-import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
-import dev.hardwood.internal.reader.plan.RowGroupIterator;
+import dev.hardwood.internal.reader.plan.FileMetadataCache;
+import dev.hardwood.internal.reader.plan.ReadPlanning;
 import dev.hardwood.internal.reader.plan.RowGroupIterators;
-import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -56,8 +54,8 @@ public class FetchPlanEquivalenceTest {
             inputFile.open();
 
             RowGroup rowGroup = fileMetaData.rowGroups().get(0);
-            RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-            ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+            FileMetadataCache metadata = new FileMetadataCache(List.of(inputFile), context);
+            ReadPlanning planning = RowGroupIterators.planning(metadata, context, ColumnProjection.all());
 
             for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                 ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
@@ -67,10 +65,8 @@ public class FetchPlanEquivalenceTest {
                         .as("Column '%s' should have offset index", columnSchema.name())
                         .isNotNull();
 
-                // Build indexed plan via RowGroupIterator
-                RowGroupIterator indexedIterator = createIterator(inputFile, schema, fileMetaData, context);
-                FetchPlan indexedPlan = indexedIterator.getColumnPlan(
-                        indexedIterator.getWorkItems().get(0), colIdx);
+                // Build the indexed plan as a read plans it
+                FetchPlan indexedPlan = RowGroupIterators.plans(planning, 0)[colIdx];
 
                 // Build sequential plan (bypasses OffsetIndex)
                 SequentialFetchPlan sequentialPlan = SequentialFetchPlan.build(
@@ -111,8 +107,6 @@ public class FetchPlanEquivalenceTest {
                             .as("Page %d values for column '%s'", p, columnSchema.name())
                             .isEqualTo(seqPage.values());
                 }
-
-                indexedIterator.close();
             }
         }
     }
@@ -180,16 +174,6 @@ public class FetchPlanEquivalenceTest {
             assertThat(limitedPages).hasSize(1);
             assertThat(limitedPages.size()).isLessThanOrEqualTo(fullPages.size());
         }
-    }
-
-    private static RowGroupIterator createIterator(InputFile inputFile, FileSchema schema,
-                                                    FileMetaData metaData,
-                                                    HardwoodContextImpl context) throws IOException {
-        RowGroupIterator iterator = RowGroupIterators.standalone(
-                List.of(inputFile), context);
-        iterator.setFirstFile(schema, metaData.rowGroups());
-        iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.all())), null, true);
-        return iterator;
     }
 
     private static List<PageInfo> collectPages(PageWalks.Pages iter) throws IOException {

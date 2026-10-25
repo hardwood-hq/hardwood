@@ -10,24 +10,16 @@ package dev.hardwood.reader;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedBatch;
-import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.pipeline.EngineColumn;
-import dev.hardwood.internal.reader.pipeline.EngineFlatColumn;
-import dev.hardwood.internal.reader.pipeline.EngineNestedColumn;
-import dev.hardwood.internal.reader.pipeline.ReadScheduler;
-import dev.hardwood.internal.reader.pipeline.ScheduledColumn;
-import dev.hardwood.internal.reader.pipeline.ScheduledFlatColumn;
-import dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn;
-import dev.hardwood.internal.reader.plan.PageSource;
-import dev.hardwood.internal.reader.plan.RowGroupIterator;
+import dev.hardwood.internal.reader.pipeline.DecodedColumn;
+import dev.hardwood.internal.reader.pipeline.FlatColumn;
+import dev.hardwood.internal.reader.pipeline.NestedColumn;
 import dev.hardwood.schema.ColumnSchema;
 
-/// The decode pipeline of one column in a [ColumnScan]: the column's scheduled column, the
-/// [BatchExchange] it publishes into, and the batch most recently taken from it.
+/// One column in a [ColumnScan]: the [BatchExchange] its column of the read publishes into, and the
+/// batch most recently taken from it. The read's close stops the column.
 ///
 /// A cursor carries no accessor or cache state; the [ColumnReader] views read its
 /// current batch. Exactly one of [#flatBatch()] and [#nestedBatch()] is in use,
@@ -38,72 +30,32 @@ final class ColumnCursor {
     private final boolean nested;
     private final BatchExchange<BatchExchange.Batch> flatExchange;
     private final BatchExchange<NestedBatch> nestedExchange;
-    /// Stops the column's pipeline; nothing for a column the read engine drives, which the read's
-    /// close stops.
-    private final Runnable stop;
 
     private BatchExchange.Batch flatBatch;
     private NestedBatch nestedBatch;
     private boolean exhausted;
-    private boolean closed;
 
     private ColumnCursor(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatExchange,
-                         BatchExchange<NestedBatch> nestedExchange, Runnable stop) {
+                         BatchExchange<NestedBatch> nestedExchange) {
         this.column = column;
         this.nested = nestedExchange != null;
         this.flatExchange = flatExchange;
         this.nestedExchange = nestedExchange;
-        this.stop = stop;
     }
 
     /// Whether a column with `layers` decodes through the nested pipeline: any
     /// column whose schema chain contributes a `STRUCT` or `REPEATED` layer, or
     /// that repeats, needs its definition levels to derive per-layer validity.
-    /// Only the no-layers case is read as a flat column ([ScheduledFlatColumn]).
+    /// Only the no-layers case is read as a flat column ([FlatColumn]).
     static boolean isNested(NestedLevelComputer.Layers layers, ColumnSchema column) {
         return layers.count() > 0 || column.maxRepetitionLevel() > 0;
     }
 
-    /// Builds the pipeline for `column`, which sits at `projectedColumnIndex` in the projection
-    /// `rowGroupIterator` was initialised with. Batches are published detached, so every batch the
-    /// cursor hands out is fresh and never reused. The batches close where the batch plan of
-    /// `rowGroupIterator` closes them. The column is a
-    /// [dev.hardwood.internal.reader.pipeline.ScheduledColumn] added to `scheduler`, which starts
-    /// it; `scheduler` must not be `null`.
-    static ColumnCursor create(ColumnSchema column, NestedLevelComputer.Layers layers,
-                               RowGroupIterator rowGroupIterator,
-                               HardwoodContextImpl context,
-                               boolean fixedListFastPathEnabled,
-                               int projectedColumnIndex,
-                               int batchSize,
-                               NestedIndexMode indexMode,
-                               ReadScheduler scheduler) {
-        PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
-
-        if (isNested(layers, column)) {
-            // A nested batch's arrays are allocated for it when it is filled, so a batch is
-            // handed out without any.
-            BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
-            ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, pageSource, exchange, column,
-                    batchSize, context.decompressorFactory(), layers, indexMode, fixedListFastPathEnabled);
-            return new ColumnCursor(column, null, exchange, scheduled::close);
-        }
-        // A flat cell gives its batch values on the first page task that reaches it, sized
-        // to the rows the batch plan puts in it.
-        BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
-        ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, pageSource, exchange, column, batchSize,
-                context.decompressorFactory(), null);
-        return new ColumnCursor(column, exchange, null, scheduled::close);
-    }
-
-    /// The cursor of a column the read engine drives, over its exchange. The read's close stops
-    /// the column.
-    static ColumnCursor engine(ColumnSchema column, EngineColumn side) {
-        Runnable stop = () -> {
-        };
+    /// The cursor of a column the read drives, over its exchange.
+    static ColumnCursor of(ColumnSchema column, DecodedColumn side) {
         return switch (side) {
-            case EngineFlatColumn flat -> new ColumnCursor(column, flat.exchange(), null, stop);
-            case EngineNestedColumn nested -> new ColumnCursor(column, null, nested.exchange(), stop);
+            case FlatColumn flat -> new ColumnCursor(column, flat.exchange(), null);
+            case NestedColumn nested -> new ColumnCursor(column, null, nested.exchange());
         };
     }
 
@@ -187,14 +139,5 @@ final class ColumnCursor {
 
     String fileName() {
         return nested ? nestedBatch.fileName : flatBatch.fileName;
-    }
-
-    /// Stops the column's pipeline. Idempotent.
-    void close() {
-        if (closed) {
-            return;
-        }
-        closed = true;
-        stop.run();
     }
 }

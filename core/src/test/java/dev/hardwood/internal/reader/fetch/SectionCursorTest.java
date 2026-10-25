@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader.fetch;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,7 +15,6 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
@@ -34,15 +34,14 @@ class SectionCursorTest {
         }
         CountingInputFile file = new CountingInputFile(bytes);
         file.open();
-        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), new ReadAheadBuffer(0), 0,
-                () -> {});
-        List<SectionRequest> held = sequence.insert(0, 0, file, List.of(
+        InPlaceSections sections = new InPlaceSections();
+        List<Section> held = new ArrayList<>(sections.insert(0, 0, file, List.of(
                 new Span(0, 100, "rg=0 col=a", 1),
-                new Span(150, 50, "rg=0 col=a col=b", 2)));
+                new Span(150, 50, "rg=0 col=a col=b", 2))));
         List<long[]> inserted = new ArrayList<>();
         SectionCursor cursor = new SectionCursor(held, (start, limit) -> {
             inserted.add(new long[] { start, limit });
-            return sequence.insertDemanded(0, file, start, Math.toIntExact(limit - start), "rg=0 col=a");
+            return sections.insertDemanded(0, file, start, Math.toIntExact(limit - start), "rg=0 col=a");
         });
 
         ByteBuffer read = read(cursor, 90, 80);
@@ -61,33 +60,80 @@ class SectionCursorTest {
 
     /// A walk passes the section requests that end before where it reads next, once each.
     @Test
-    void aWalkPassesTheSectionRequestsBehindIt() throws Exception {
-        CountingInputFile file = new CountingInputFile(ByteBuffer.allocate(300));
-        file.open();
-        ReadAheadBuffer buffer = new ReadAheadBuffer(1 << 20);
-        FetchSequence sequence = new FetchSequence(new PrefetchTasks(Runnable::run), buffer, 1 << 20, () -> {});
-        List<SectionRequest> held = sequence.insert(0, 0, file, List.of(
-                new Span(0, 100, "rg=0 col=a", 1),
-                new Span(100, 100, "rg=0 col=a", 1)));
-        SectionCursor cursor = new SectionCursor(held, null);
-        assertThat(buffer.held()).isEqualTo(200);
+    void aWalkPassesTheSectionRequestsBehindIt() {
+        ReleaseCounting first = new ReleaseCounting(0, 100);
+        ReleaseCounting second = new ReleaseCounting(100, 200);
+        SectionCursor cursor = new SectionCursor(new ArrayList<>(List.of(first, second)), null);
 
         cursor.releaseBefore(150);
-        assertThat(buffer.held()).as("the first section passed").isEqualTo(100);
+        assertThat(first.releases).as("the first section passed").isEqualTo(1);
+        assertThat(second.releases).isZero();
         cursor.releaseBefore(150);
-        assertThat(buffer.held()).as("passed once").isEqualTo(100);
+        assertThat(first.releases).as("passed once").isEqualTo(1);
         cursor.releaseAll();
-        assertThat(buffer.held()).isZero();
+        assertThat(first.releases).isEqualTo(1);
+        assertThat(second.releases).isEqualTo(1);
     }
 
-    /// The bytes `cursor` reads at `start`, demanding the section requests it stops on.
+    /// The bytes `cursor` reads at `start`, demanding the sections it stops on.
     private static ByteBuffer read(SectionCursor cursor, long start, int length) throws Exception {
         while (true) {
             ByteBuffer bytes = cursor.read(start, length);
             if (bytes != null) {
                 return bytes;
             }
-            ((SectionRequest) cursor.pending()).issue().await();
+            cursor.pending().demand();
+        }
+    }
+
+    /// A section of `[offset, end)` holding no bytes, counting its releases.
+    private static final class ReleaseCounting implements Section {
+
+        private final long offset;
+        private final long end;
+        private int releases;
+
+        ReleaseCounting(long offset, long end) {
+            this.offset = offset;
+            this.end = end;
+        }
+
+        @Override
+        public long offset() {
+            return offset;
+        }
+
+        @Override
+        public long end() {
+            return end;
+        }
+
+        @Override
+        public ByteBuffer poll() throws IOException {
+            return null;
+        }
+
+        @Override
+        public ByteBuffer slice(ByteBuffer polled, long fileOffset, int length) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void release() {
+            releases++;
+        }
+
+        @Override
+        public void demand() {
+        }
+
+        @Override
+        public void discard() {
+        }
+
+        @Override
+        public void whenMet(Runnable resume) {
+            throw new UnsupportedOperationException();
         }
     }
 }

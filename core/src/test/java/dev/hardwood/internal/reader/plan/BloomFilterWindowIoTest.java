@@ -17,15 +17,12 @@ import org.junit.jupiter.params.provider.EnumSource;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.predicate.FilterPredicateResolver;
-import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -116,33 +113,20 @@ class BloomFilterWindowIoTest {
                 .containsExactly("rg=0-4 pruning");
     }
 
+    /// Listing a file reads no Bloom filter; the read's first question about its work items reads
+    /// the window's filters in one request.
     @Test
     void planningAFileReadsNoBloomFilter() throws Exception {
-        FileMetaData metaData;
-        FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
-            metaData = reader.getFileMetaData();
-            schema = reader.getFileSchema();
-        }
         CountingInputFile file = countingFile();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);
-            try {
-                iterator.setFirstFile(schema, metaData.rowGroups());
-                iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.columns("code"))),
-                        FilterPredicateResolver.resolve(FilterPredicate.eq("code", 5), schema), true);
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context,
+                     ColumnProjection.columns("code"), FilterPredicate.eq("code", 5), 0)) {
+            assertThat(pruningReads(file)).isEmpty();
 
-                assertThat(iterator.getWorkItems()).hasSize(ROW_GROUPS);
-                assertThat(pruningReads(file)).isEmpty();
+            assertThat(iterator.hasLiveWorkItem()).isFalse();
 
-                iterator.getSharedMetadata(iterator.workItemAt(0));
-
-                assertThat(pruningReads(file)).extracting(CountingInputFile.Read::reason)
-                        .containsExactly("rg=0-4 pruning");
-            }
-            finally {
-                iterator.close();
-            }
+            assertThat(pruningReads(file)).extracting(CountingInputFile.Read::reason)
+                    .containsExactly("rg=0-4 pruning");
         }
     }
 

@@ -31,8 +31,8 @@ class ReadFailureTypingTest {
         IOException io = new IOException("connection reset");
         UncheckedIOException unchecked = new UncheckedIOException(io);
 
-        assertThat(ScheduledColumn.asReadFailure(io)).isSameAs(io);
-        assertThat(ScheduledColumn.asReadFailure(unchecked)).isSameAs(unchecked);
+        assertThat(DecodedColumn.asReadFailure(io)).isSameAs(io);
+        assertThat(DecodedColumn.asReadFailure(unchecked)).isSameAs(unchecked);
     }
 
     /// A truncation is a read failure like any other, but its type is internal; it leaves
@@ -41,7 +41,7 @@ class ReadFailureTypingTest {
     void anInternalReadFailureLeavesAsAParquetReadException() {
         ThriftTruncatedException truncated = new ThriftTruncatedException("Unexpected EOF while reading varint");
 
-        Exception typed = ScheduledColumn.asReadFailure(truncated);
+        Exception typed = DecodedColumn.asReadFailure(truncated);
 
         assertThat(typed).isExactlyInstanceOf(ParquetReadException.class)
                 .hasMessage("Unexpected EOF while reading varint")

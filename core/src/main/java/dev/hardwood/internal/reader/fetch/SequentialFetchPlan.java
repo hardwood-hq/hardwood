@@ -43,8 +43,8 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// [FetchPlan] for columns without an OffsetIndex.
 ///
-/// Pages are discovered lazily by scanning headers in the bytes of the row group's [FetchSequence]
-/// section requests that hold the column chunk: the whole chunk, cut into requests of at most S,
+/// Pages are discovered lazily by scanning headers in the bytes of the row group's [Section]s
+/// that hold the column chunk: the whole chunk, cut into requests of at most S,
 /// or, under a row limit, a first part sized by [#computeChunkSize]. A page or a header peek that
 /// straddles the cut between two section requests is copied from both into one buffer. Under a row
 /// limit, a walk that reads past the first part inserts the rest of the chunk as a demanded section
@@ -159,9 +159,8 @@ public final class SequentialFetchPlan implements FetchPlan {
     }
 
     /// Builds a plan for one column chunk outside a read, with no predicate-driven page skipping
-    /// and no per-page row mask; its section requests start on demand only
-    /// ([FetchSequence#demandOnly]). On a file whose bytes are in memory, its walk never stops for
-    /// bytes.
+    /// and no per-page row mask. Its sections read their bytes on the thread that walks them
+    /// ([InPlaceSections]), so its walk never stops for bytes.
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows) {
@@ -186,18 +185,18 @@ public final class SequentialFetchPlan implements FetchPlan {
         int length = chunkLength(columnChunk, rowGroupIndex, fileName, columnSchema);
         int firstPart = Math.min(length, computeChunkSize(length, columnChunk.metaData(), maxRows, maxSpan));
         String reason = "rg=" + rowGroupIndex + " col=" + columnSchema.name();
-        FetchSequence sequence = FetchSequence.demandOnly(context);
+        InPlaceSections sections = new InPlaceSections();
         List<Span> spans = new ArrayList<>();
         for (long piece = start; piece < start + firstPart; piece += maxSpan) {
             spans.add(new Span(piece, Math.toIntExact(Math.min(maxSpan, start + firstPart - piece)),
                     reason, 1));
         }
-        List<SectionRequest> sections = sequence.insert(0, 0, inputFile, spans);
+        List<? extends Section> held = sections.insert(0, 0, inputFile, spans);
         SectionCursor.Rest rest = firstPart == length ? null
-                : SectionCursor.rest(sequence, 0, inputFile, start + length, reason, maxSpan);
+                : SectionCursor.rest(sections, 0, inputFile, start + length, reason, maxSpan);
         return new SequentialFetchPlan(start, length, columnSchema, columnChunk, context, maxRows,
                 rowGroupIndex, fileName, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount,
-                null, WorkingSet.standalone(columnSchema), sections, rest);
+                null, WorkingSet.standalone(columnSchema), held, rest);
     }
 
     /// The length of `columnChunk`.

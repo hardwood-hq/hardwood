@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
@@ -21,10 +20,8 @@ import dev.hardwood.internal.reader.batch.LeafCompaction;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.engine.ReadEngine;
-import dev.hardwood.internal.reader.pipeline.EngineColumn;
-import dev.hardwood.internal.reader.pipeline.ReadScheduler;
-import dev.hardwood.internal.reader.plan.RowGroupIterator;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
+import dev.hardwood.internal.reader.pipeline.DecodedColumn;
 import dev.hardwood.internal.reader.row.RecordFilterTally;
 import dev.hardwood.internal.reader.step.CloseClaim;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -49,7 +46,7 @@ final class ColumnScan implements Closeable {
     private final int payloadCount;
     /// `null` for an unfiltered read.
     private final SelectionEngine engine;
-    /// The read the cursors' columns run on, closed after them.
+    /// The read the cursors' columns run on, whose close stops them.
     private final Closeable read;
     /// Per-file record-filter counts for JFR. Every batch a filtered read produces
     /// has passed through the selection, so the counts are complete for the read.
@@ -69,58 +66,25 @@ final class ColumnScan implements Closeable {
         this.read = read;
     }
 
-    /// A scan over every decoded column of `projection`. With a `filter`, the
-    /// filter-only columns past the payload carry the predicate and are decoded to
-    /// evaluate it; the payload columns are compacted to the matching records.
-    /// `layers` holds the layers of every column of `schema`, indexed by column index.
-    static ColumnScan open(HardwoodContextImpl context,
-                           boolean fixedListFastPathEnabled,
-                           RowGroupIterator rowGroupIterator,
-                           FileSchema schema,
-                           NestedLevelComputer.Layers[] layers,
-                           ReadProjection projection,
-                           ResolvedPredicate filter,
-                           int batchSize,
-                           long budgetRows) {
-        NestedIndexMode indexMode = filter == null
-                ? NestedIndexMode.REAL_VIEW
-                : NestedIndexMode.REAL_VIEW_KEEP_LEVELS;
-        ProjectedSchema decoded = projection.decoded();
-        int columnCount = decoded.getProjectedColumnCount();
-        // Every cursor's column closes its batches where the read's batch plan does.
-        rowGroupIterator.planBatches(batchSize, 0);
-        ReadScheduler scheduler = new ReadScheduler(rowGroupIterator.readExecutor(), batchSize, budgetRows);
-        ColumnCursor[] cursors = new ColumnCursor[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            ColumnSchema column = schema.getColumn(decoded.toOriginalIndex(i));
-            cursors[i] = ColumnCursor.create(column, layers[column.columnIndex()], rowGroupIterator, context,
-                    fixedListFastPathEnabled, i, batchSize, indexMode, scheduler);
-        }
-        if (scheduler.hasColumns()) {
-            scheduler.start();
-        }
-        SelectionEngine engine = filter == null
-                ? null
-                : createSelectionEngine(schema, decoded, filter, cursors, batchSize,
-                        rowGroupIterator.referenceFileName());
-        return new ColumnScan(cursors, projection.payloadColumnCount(), engine, rowGroupIterator);
-    }
-
     /// The engine's predicate view rejects what the reader cannot assemble (a shredded
-    /// Variant `typed_value` of a type the shredding spec does not allow). The cursors'
-    /// columns have started by then and no scan will own them, so a failure closes them
+    /// Variant `typed_value` of a type the shredding spec does not allow). The read's
+    /// columns have started by then and no scan will own them, so a failure closes the read
     /// before it propagates, naming the file whose schema it was found in.
     private static SelectionEngine createSelectionEngine(FileSchema schema, ProjectedSchema decoded,
                                                          ResolvedPredicate filter, ColumnCursor[] cursors,
-                                                         int batchSize, String referenceFileName) {
+                                                         int batchSize, RowGroupIterator read) {
         try {
             return SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
         }
         catch (RuntimeException e) {
-            for (ColumnCursor cursor : cursors) {
-                cursor.close();
+            RuntimeException placed = ExceptionContext.addFileContext(read.referenceFileName(), e);
+            try {
+                read.close();
             }
-            throw ExceptionContext.addFileContext(referenceFileName, e);
+            catch (RuntimeException | Error closeFailure) {
+                placed.addSuppressed(closeFailure);
+            }
+            throw placed;
         }
     }
 
@@ -130,10 +94,11 @@ final class ColumnScan implements Closeable {
         return new ColumnScan(new ColumnCursor[0], 0, null, read);
     }
 
-    /// A scan over every decoded column of `projection`, driven by `engine`, as [#open] builds one
-    /// over a [RowGroupIterator]. `layers` holds the layers of every column of `schema`, indexed by
-    /// column index.
-    static ColumnScan openEngine(ReadEngine engine, boolean fixedListFastPathEnabled, FileSchema schema,
+    /// A scan over every decoded column of `projection`, driven by `iterator`. With a `filter`, the
+    /// filter-only columns past the payload carry the predicate and are decoded to evaluate it; the
+    /// payload columns are compacted to the matching records. `layers` holds the layers of every
+    /// column of `schema`, indexed by column index.
+    static ColumnScan open(RowGroupIterator iterator, boolean fixedListFastPathEnabled, FileSchema schema,
                                  NestedLevelComputer.Layers[] layers, ReadProjection projection,
                                  ResolvedPredicate filter, int batchSize, long budgetRows) {
         NestedIndexMode indexMode = filter == null
@@ -146,16 +111,16 @@ final class ColumnScan implements Closeable {
             NestedLevelComputer.Layers columnLayers = layers[column.columnIndex()];
             nestedLayers.add(ColumnCursor.isNested(columnLayers, column) ? columnLayers : null);
         }
-        List<EngineColumn> sides = engine.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled,
+        List<DecodedColumn> sides = iterator.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled,
                 batchSize, budgetRows);
         ColumnCursor[] cursors = new ColumnCursor[sides.size()];
         for (int i = 0; i < cursors.length; i++) {
-            cursors[i] = ColumnCursor.engine(schema.getColumn(decoded.toOriginalIndex(i)), sides.get(i));
+            cursors[i] = ColumnCursor.of(schema.getColumn(decoded.toOriginalIndex(i)), sides.get(i));
         }
         SelectionEngine selection = filter == null
                 ? null
-                : createSelectionEngine(schema, decoded, filter, cursors, batchSize, engine.referenceFileName());
-        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, engine);
+                : createSelectionEngine(schema, decoded, filter, cursors, batchSize, iterator);
+        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, iterator);
     }
 
     /// The cursor of payload column `index`.
@@ -211,7 +176,7 @@ final class ColumnScan implements Closeable {
         return true;
     }
 
-    /// Drains the remaining cursors so the shared iterator finalizes cleanly, checking
+    /// Drains the remaining cursors so the shared read finalizes cleanly, checking
     /// that none of them still produces a batch.
     private void drainAfterEnd() throws IOException {
         for (int i = 1; i < cursors.length; i++) {
@@ -390,22 +355,19 @@ final class ColumnScan implements Closeable {
         return out;
     }
 
-    /// Stops every cursor's column, then releases the iterator, even when a
-    /// cursor's teardown fails. Idempotent: a close on another thread while one runs, such as
-    /// the parent's, waits until that close has completed.
+    /// Closes the read, which stops every cursor's column, even when closing the tally fails.
+    /// Idempotent: a close on another thread while one runs, such as the parent's, waits until
+    /// that close has completed.
     @Override
     public void close() throws IOException {
         if (!closeClaim.claim()) {
             return;
         }
-        // Released even when a cursor's teardown fails: this scan will not run its
-        // close body again, so skipping the release would leave the work list
-        // reachable for the parent reader's whole lifetime.
+        // Released even when the tally's close fails: this scan will not run its close body
+        // again, so skipping the release would leave the work list reachable for the parent
+        // reader's whole lifetime.
         try (read) {
             tally.close();
-            for (ColumnCursor cursor : cursors) {
-                cursor.close();
-            }
         }
         finally {
             closeClaim.completed();

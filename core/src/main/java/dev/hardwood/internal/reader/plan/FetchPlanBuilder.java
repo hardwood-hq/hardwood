@@ -30,7 +30,6 @@ import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Extent;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy.Range;
 import dev.hardwood.internal.reader.fetch.FetchPlan;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
 import dev.hardwood.internal.reader.fetch.IndexedFetchPlan;
 import dev.hardwood.internal.reader.fetch.Section;
 import dev.hardwood.internal.reader.fetch.SectionCursor;
@@ -40,8 +39,6 @@ import dev.hardwood.internal.reader.fetch.SkippedColumnFetchPlan;
 import dev.hardwood.internal.reader.fetch.Span;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.memory.WorkingSet;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.SharedRowGroupMetadata;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.internal.reader.select.RowRanges;
 import dev.hardwood.internal.reader.step.ByteSource;
@@ -63,8 +60,8 @@ import dev.hardwood.schema.FileSchema;
 /// Builds the fetch plans of a row group's decoded columns ([#columnPlans]): selects each column's
 /// pages by the row group's matching rows and row limit, and coalesces the needed ranges of every
 /// column at once, under the gap G and the span S ([CoalescingPolicy]), into the row group's
-/// section requests of the read's [FetchSequence]. Each plan then takes its pages' bytes from the
-/// section requests that overlap its column chunk, located by offset.
+/// sections of the read ([Sections]). Each plan then takes its pages' bytes from the
+/// sections that overlap its column chunk, located by offset.
 ///
 /// A row group whose rows are all read and that no Bloom filter or dictionary can drop has its
 /// section requests built from its chunks' extents in the footer ([#chunkSpans]), before its page

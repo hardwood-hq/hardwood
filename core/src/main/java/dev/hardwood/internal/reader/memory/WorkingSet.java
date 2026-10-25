@@ -38,7 +38,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// its batches holds, from where the read's batch plan places the chunks' rows. The task
 /// buffers count once: a read needs one task at a time, and decoding pages on several threads at
 /// once is the reader's choice, as reading ahead is, not the file's. The sum does not depend on
-/// how far apart the columns' fetch steps run, nor on how far a column decodes ahead of its
+/// how far apart the columns' walk advances run, nor on how far a column decodes ahead of its
 /// consumer, so whether a read of every page fails depends on
 /// the file and the limit alone, not on timing, the context's threads or other reads. A read that
 /// stops early, at a row limit or a closed reader, has also charged whatever pages its columns
@@ -380,7 +380,7 @@ public final class WorkingSet {
 
     /// The dictionaries a column's current batch may hold: those of the chunks whose rows end after
     /// the batch holding the current chunk's first row starts. Row groups are entered and charged
-    /// in the read's row order, on the column's fetch steps.
+    /// in the read's row order, on the column's walk advances.
     private static final class DictionaryWindow {
 
         /// A dictionary charged, held while a batch holds rows before `endRow`.

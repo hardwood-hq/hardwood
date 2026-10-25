@@ -15,19 +15,14 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.predicate.FilterPredicateResolver;
-import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
-import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.reader.FilterPredicate;
-import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Whether a read has a row group left once its bloom filters have been consulted, which a column
-/// read asks before it builds its pipeline.
+/// read asks before it starts its columns.
 ///
 /// Uses bloom_filter_multi_rg_test.parquet: five row groups of 200 rows, `id` counting 0..999,
 /// `code` cycling 0, 3, 6, 9 within every row group, bloom filters on `id`, `name` and `code`.
@@ -70,23 +65,10 @@ class LiveWorkItemTest {
     }
 
     private static boolean hasLiveWorkItem(CountingInputFile file, FilterPredicate filter) throws Exception {
-        FileMetaData metaData;
-        FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
-            metaData = reader.getFileMetaData();
-            schema = reader.getFileSchema();
-        }
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);
-            try {
-                iterator.setFirstFile(schema, metaData.rowGroups());
-                iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.columns("code"))),
-                        filter == null ? null : FilterPredicateResolver.resolve(filter, schema), true);
-                return iterator.hasLiveWorkItem();
-            }
-            finally {
-                iterator.close();
-            }
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context,
+                     ColumnProjection.columns("code"), filter, 0)) {
+            return iterator.hasLiveWorkItem();
         }
     }
 

@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Adjacent column chunks within a row group are typically stored
 /// back-to-back on disk, so a single ranged GET can cover many columns
 /// at once. Planning coalesces every column's needed ranges of a row group into its
-/// [FetchSequence] section requests ([CoalescingPolicy#coalesce]). These tests assert the
+/// sections ([CoalescingPolicy#coalesce]). These tests assert the
 /// observable effect: the underlying `readRange` count drops compared to
 /// what a per-column-per-chunk fetch path would produce.
 class CrossColumnCoalesceTest {
