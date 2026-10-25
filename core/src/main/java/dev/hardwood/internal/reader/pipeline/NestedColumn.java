@@ -310,6 +310,7 @@ public final class NestedColumn implements DecodedColumn {
             // the column is short of the plan at the read's end
             abandonAt(lastPlaced == null ? e : placed(e, lastPlaced.fileName, lastPlaced.rowGroup,
                     lastPlaced.pageIndex));
+            publisher.publish();
         }
     }
 

@@ -105,6 +105,8 @@ Tests: `NestingDepthBoundTest`, `MalformedMetadataValidationTest`.
 
 `ColumnChunk.meta_data` is optional in `parquet.thrift`, as an encrypted column carries `encrypted_column_metadata` in its place, and the format requires every writer to set it otherwise. Every reader of a chunk reads its metadata, so `ColumnChunkReader` refuses a chunk without it: a chunk carrying `crypto_metadata` raises the internal exception an encrypted footer raises, which the footer's reader restates as `UnsupportedOperationException`, and any other chunk fails with `ParquetReadException`. A `meta_data` field of the wrong wire type is skipped as an optional field and leaves the chunk without it.
 
+Every record holds a value, or a null, in each leaf column, so a chunk's `num_values` is at least its row group's `num_rows`. The read checks a column against its row group's rows through the pages it meets: the page against the chunk in the fetch plans, the records placed against the plan in `Placer`. A chunk declaring no values yields no page for either check to meet, so `RowGroupReader` refuses it in a row group with rows.
+
 Tests: `MalformedMetadataValidationTest`.
 
 ### Enum values the reader does not know

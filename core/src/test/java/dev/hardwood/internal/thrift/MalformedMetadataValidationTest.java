@@ -28,6 +28,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
@@ -220,6 +221,28 @@ class MalformedMetadataValidationTest {
         assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("ColumnChunk omits meta_data, which only an encrypted column may");
+    }
+
+    @Test
+    void columnChunkOfNoValuesInARowGroupWithRowsRejected() {
+        assertThatThrownBy(() -> RowGroupReader.read(reader(rowGroupOfAnEmptyChunk(1))))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ColumnMetaData of column 'a' declares no values in num_values, but its RowGroup "
+                        + "holds 1 rows");
+    }
+
+    @Test
+    void columnChunkOfNoValuesInARowGroupOfNoRowsParses() {
+        assertThat(RowGroupReader.read(reader(rowGroupOfAnEmptyChunk(0))).numRows()).isZero();
+    }
+
+    /// A `RowGroup` of `numRows` rows whose one column chunk declares no values.
+    private static byte[] rowGroupOfAnEmptyChunk(long numRows) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        RowGroupWriter.write(writer, new RowGroup(List.of(new ColumnChunk(new ColumnMetaData(PhysicalType.INT32,
+                List.of(Encoding.PLAIN), FieldPath.of("a"), CompressionCodec.UNCOMPRESSED, 0, 0, 0, null, 4, null,
+                null, null, null, null, List.of(), null), null, null, null, null, null)), 0, numRows));
+        return writer.toByteArray();
     }
 
     @Test

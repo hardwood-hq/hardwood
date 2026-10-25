@@ -12,7 +12,9 @@ import java.util.List;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Reader for RowGroup from Thrift Compact Protocol.
 public class RowGroupReader {
@@ -71,7 +73,27 @@ public class RowGroupReader {
         }
 
         ThriftCompactReader.requireFields(ThriftStruct.ROW_GROUP, seen, REQUIRED_FIELDS);
+        checkValuesPerRow(columns, numRows);
 
         return new RowGroup(columns, totalByteSize, numRows);
+    }
+
+    /// Checks that no column chunk of a row group with rows declares no values: every record holds
+    /// a value, or a null, in each leaf column. Such a chunk yields no page, so no check of a read
+    /// against its pages would meet it, and a read would take the column as holding none of the
+    /// row group's rows.
+    private static void checkValuesPerRow(List<ColumnChunk> columns, long numRows) {
+        if (numRows == 0) {
+            return;
+        }
+        for (ColumnChunk column : columns) {
+            ColumnMetaData metaData = column.metaData();
+            if (metaData != null && metaData.numValues() == 0) {
+                throw new ParquetReadException(ThriftStruct.COLUMN_META_DATA.structName() + " of column '"
+                        + metaData.pathInSchema() + "' declares no values in "
+                        + ThriftStruct.COLUMN_META_DATA.fieldName(5) + ", but its "
+                        + ThriftStruct.ROW_GROUP.structName() + " holds " + numRows + " rows");
+            }
+        }
     }
 }
