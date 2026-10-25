@@ -65,10 +65,14 @@ public final class EnginePlanning {
     /// @param metadataFiltering whether the filter takes metadata-derived shortcuts: row-group
     ///        pruning by statistics, Bloom filters and dictionaries, page skipping and the always-match
     ///        decision
+    /// @param maxRows the read's row budget, `0` for none: the listing stops once it is covered, and
+    ///        the plans of an unfiltered read truncate the pages past it
+    /// @param physicalSkip the leading rows of the read whose row groups the listing drops; the
+    ///        residue within the first work item kept is [#firstRowGroupSkip]
     public EnginePlanning(FileMetadataCache files, Sections sections, HardwoodContextImpl context,
                           FileSchema referenceSchema, List<RowGroup> firstFileRowGroups, ReadProjection projection,
-                          ResolvedPredicate filter, boolean metadataFiltering, int maxSpan, long indexWindowBytes,
-                          WorkingSet workingSet) throws IOException {
+                          ResolvedPredicate filter, boolean metadataFiltering, long maxRows, long physicalSkip,
+                          int maxSpan, long indexWindowBytes, WorkingSet workingSet) throws IOException {
         this.files = files;
         this.workingSet = workingSet;
         SchemaCompatibility compatibility = new SchemaCompatibility(referenceSchema, projection.decoded(), filter);
@@ -76,15 +80,16 @@ public final class EnginePlanning {
         this.planner = new Planner(sections, referenceSchema, firstFileRowGroups, projection, filter, compatibility,
                 new RowGroupPruning(context, filter, metadataFiltering),
                 new FetchPlanBuilder(projection, filter, metadataFiltering, context, workingSet, maxSpan),
-                0, 0, 0, indexWindowBytes);
+                maxRows, physicalSkip, 0, indexWindowBytes);
         prepared.put(0, files.getFile(0));
     }
 
     /// The files after the one it has reached whose footers a read of `fileCount` files reads
-    /// ahead: up to `hardwood.internal.maxFilesAhead` when its files are not all in memory, and
-    /// otherwise only the next file's ([FooterReadAhead#filesAhead]).
-    public static int filesAhead(boolean allInMemory, int fileCount) {
-        return FooterReadAhead.filesAhead(!allInMemory, fileCount);
+    /// ahead: up to `hardwood.internal.maxFilesAhead` when it plans deep (its files are not all in
+    /// memory and it has no row limit), and otherwise only the next file's
+    /// ([FooterReadAhead#filesAhead]).
+    public static int filesAhead(boolean plansDeep, int fileCount) {
+        return FooterReadAhead.filesAhead(plansDeep, fileCount);
     }
 
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers rather than each being read
@@ -162,7 +167,7 @@ public final class EnginePlanning {
 
     /// Completes the claimed load of `fileIndex` with `failure`, its read's last, which the listing
     /// of the file raises.
-    public void failFooter(int fileIndex, Exception failure) {
+    public void failFooter(int fileIndex, Throwable failure) {
         EngineLoad load = loads.remove(fileIndex);
         load.fail(failure);
         failed.put(fileIndex, failure);
@@ -240,6 +245,21 @@ public final class EnginePlanning {
         planner.setBatchPlan(batchPlan);
     }
 
+    /// Sets the leading rows of the first work item its plans mask out, the tail read's skip.
+    ///
+    /// @throws IllegalStateException if a work item's batches are planned already
+    public void setTailSkip(long tailSkip) {
+        if (planner.batchesPlanned()) {
+            throw new IllegalStateException("setTailSkip must be called before any column requests its fetch plan");
+        }
+        planner.setTailSkip(tailSkip);
+    }
+
+    /// The residue of the physical skip within the first work item, once it is listed.
+    public long firstRowGroupSkip() {
+        return planner.firstRowGroupSkip();
+    }
+
     /// Takes work item `index` through its stages as far as the bytes the read holds allow:
     /// `null` once its plans are made, else what the next stage lacks. Run again once it has
     /// arrived; never on two threads at once, nor with [#listFile].
@@ -252,6 +272,21 @@ public final class EnginePlanning {
     /// arrived; never on two threads at once, nor with [#listFile] or [#plan].
     public Need arrival(int index) throws IOException {
         return planner.arrival(plannings.get(index));
+    }
+
+    /// Takes work item `index` through its page index and, unless its Bloom filters or dictionaries
+    /// dropped it, its mask probe, as far as the bytes the read holds allow: `null` once decided
+    /// ([#maskClosed]), else what it lacks. Run again once it has arrived; never on two threads at
+    /// once, nor with [#listFile] or [#plan].
+    public Need masked(int index) throws IOException {
+        return planner.masked(plannings.get(index));
+    }
+
+    /// Whether work item `index` is kept and a decoded column of it cannot take a page mask, once
+    /// [#masked] decided.
+    public boolean maskClosed(int index) {
+        Planning planning = plannings.get(index);
+        return !planning.shared.dropped() && planning.mask == MaskCapability.NO;
     }
 
     /// Whether work item `index`'s Bloom filters or dictionaries dropped it, once [#arrival] decided.

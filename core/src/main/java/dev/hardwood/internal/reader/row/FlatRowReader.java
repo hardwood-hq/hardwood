@@ -7,13 +7,17 @@
  */
 package dev.hardwood.internal.reader.row;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
@@ -27,6 +31,9 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.NestedIndexMode;
+import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.pipeline.ReadScheduler;
 import dev.hardwood.internal.reader.pipeline.ScheduledColumn;
 import dev.hardwood.internal.reader.pipeline.ScheduledFlatColumn;
@@ -171,17 +178,17 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// filter and nothing evaluates records.
     private final RecordFilterTally tally;
 
-    /// The iterator this reader consumes. No column reader owns it — they all
-    /// draw from the one iterator — so this reader releases it, which is also
-    /// what stops the owning [dev.hardwood.reader.ParquetFileReader] tracking it.
-    private final RowGroupIterator rowGroupIterator;
+    /// The read this reader consumes, a [RowGroupIterator] or a [ReadEngine]. No column reader owns
+    /// it — they all draw from the one read — so this reader releases it, which is also what stops
+    /// the owning [dev.hardwood.reader.ParquetFileReader] tracking it.
+    private final Closeable read;
 
     private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, ScheduledColumn<?>[] columnPipelines,
                          FileSchema fileSchema, ProjectedSchema payload,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
                          RowMatcher recordMatcher, PredicateView predicateView, RecordFilterTally tally,
-                         RowGroupIterator rowGroupIterator) {
-        this.rowGroupIterator = rowGroupIterator;
+                         Closeable read) {
+        this.read = read;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
         this.predicateView = predicateView;
@@ -253,6 +260,36 @@ public final class FlatRowReader implements FileAwareRowReader {
                                    long maxRows,
                                    int batchSize,
                                    long budgetRows) throws IOException {
+        return create(rowGroupIterator, null, schema, projection, context, filter, maxRows, batchSize, budgetRows);
+    }
+
+    /// Creates a [RowReader] over a read the [ReadEngine] drives, initialized as for
+    /// [#create(RowGroupIterator, FileSchema, ReadProjection, HardwoodContextImpl, ResolvedPredicate, long, int, long)]:
+    /// the engine's flat columns publish into the reader's recycling exchanges and run its filter
+    /// fragments.
+    public static RowReader create(ReadEngine engine,
+                                   FileSchema schema,
+                                   ReadProjection projection,
+                                   HardwoodContextImpl context,
+                                   ResolvedPredicate filter,
+                                   long maxRows,
+                                   int batchSize,
+                                   long budgetRows) throws IOException {
+        return create(null, engine, schema, projection, context, filter, maxRows, batchSize, budgetRows);
+    }
+
+    /// The reader over `rowGroupIterator`'s pipeline, or over `engine`'s read where the iterator is
+    /// `null`.
+    private static RowReader create(RowGroupIterator rowGroupIterator,
+                                    ReadEngine engine,
+                                    FileSchema schema,
+                                    ReadProjection projection,
+                                    HardwoodContextImpl context,
+                                    ResolvedPredicate filter,
+                                    long maxRows,
+                                    int batchSize,
+                                    long budgetRows) throws IOException {
+        Closeable read = engine != null ? engine : rowGroupIterator;
         ProjectedSchema decoded = projection.decoded();
         int projectedColumnCount = decoded.getProjectedColumnCount();
 
@@ -293,11 +330,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         // boundaries as it loads batches.
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
 
-        if (!rowGroupIterator.hasLiveWorkItem()) {
+        if (!(engine != null ? engine.hasLiveWorkItem() : rowGroupIterator.hasLiveWorkItem())) {
             @SuppressWarnings("unchecked")
             BatchExchange<BatchExchange.Batch>[] none = new BatchExchange[0];
             FlatRowReader reader = new FlatRowReader(none, new ScheduledColumn<?>[0], schema, projection.payload(),
-                    null, readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
+                    null, readerMatchLimit, recordMatcher, predicateView, tally, read);
             reader.exhausted = true;
             return reader;
         }
@@ -305,17 +342,13 @@ public final class FlatRowReader implements FileAwareRowReader {
         // Every column closes its batches where the read's batch plan does, so the columns
         // stay row-aligned. Under a filter the cap counts matching rows: the plan holds it
         // only while statistics prove every row of the row groups it reaches matches.
-        rowGroupIterator.planBatches(batchSize, maxRows);
-        ScheduledColumn<?>[] pipelines = new ScheduledColumn<?>[projectedColumnCount];
-        ReadScheduler scheduler = new ReadScheduler(rowGroupIterator.readExecutor(), batchSize, budgetRows);
         @SuppressWarnings("unchecked")
         BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
+        ColumnBatchMatcher[] columnFilters = new ColumnBatchMatcher[projectedColumnCount];
 
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = decoded.toOriginalIndex(i);
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
-
-            PageSource pageSource = new PageSource(rowGroupIterator, i);
 
             // Allocate matches[] only when this column actually has a filter installed.
             // Other columns leave Batch.matches null; the merger reads only the columns its plan references.
@@ -334,14 +367,13 @@ public final class FlatRowReader implements FileAwareRowReader {
                         }
                         return b;
                     });
-            ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
+            columnFilters[i] = allocateMatches ? columnBatchMatchers[i] : null;
             buffers[i] = buffer;
-            pipelines[i] = new ScheduledFlatColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), columnFilter);
         }
-        if (scheduler.hasColumns()) {
-            scheduler.start();
-        }
+        ScheduledColumn<?>[] pipelines = engine != null
+                ? startEngine(engine, decoded, buffers, columnFilters, maxRows, batchSize, budgetRows)
+                : startPipeline(rowGroupIterator, schema, decoded, context, buffers, columnFilters, maxRows,
+                        batchSize, budgetRows);
 
         // The merger *is* the batch-matcher path in the reader: present exactly when the
         // predicate compiled to one, absent when the record matcher takes over.
@@ -350,9 +382,42 @@ public final class FlatRowReader implements FileAwareRowReader {
                 : null;
 
         FlatRowReader reader = new FlatRowReader(buffers, pipelines, schema, projection.payload(),
-                matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
+                matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, read);
         reader.initialize();
         return reader;
+    }
+
+    /// Starts a [ScheduledFlatColumn] for each decoded column, publishing into `buffers`; returns
+    /// them.
+    private static ScheduledColumn<?>[] startPipeline(RowGroupIterator rowGroupIterator, FileSchema schema,
+                                                      ProjectedSchema decoded, HardwoodContextImpl context,
+                                                      BatchExchange<BatchExchange.Batch>[] buffers,
+                                                      ColumnBatchMatcher[] columnFilters, long maxRows,
+                                                      int batchSize, long budgetRows) {
+        rowGroupIterator.planBatches(batchSize, maxRows);
+        ScheduledColumn<?>[] pipelines = new ScheduledColumn<?>[buffers.length];
+        ReadScheduler scheduler = new ReadScheduler(rowGroupIterator.readExecutor(), batchSize, budgetRows);
+        for (int i = 0; i < buffers.length; i++) {
+            pipelines[i] = new ScheduledFlatColumn(scheduler, new PageSource(rowGroupIterator, i), buffers[i],
+                    schema.getColumn(decoded.toOriginalIndex(i)), batchSize, context.decompressorFactory(),
+                    columnFilters[i]);
+        }
+        if (scheduler.hasColumns()) {
+            scheduler.start();
+        }
+        return pipelines;
+    }
+
+    /// Starts the engine's flat columns, publishing into `buffers`; the engine's close stops them,
+    /// so the reader holds no pipeline of its own.
+    private static ScheduledColumn<?>[] startEngine(ReadEngine engine, ProjectedSchema decoded,
+                                                    BatchExchange<BatchExchange.Batch>[] buffers,
+                                                    ColumnBatchMatcher[] columnFilters, long maxRows,
+                                                    int batchSize, long budgetRows) {
+        List<NestedLevelComputer.Layers> flat = Collections.nCopies(buffers.length, null);
+        engine.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, batchSize, budgetRows, maxRows,
+                new ArrayList<>(Arrays.asList(buffers)), columnFilters);
+        return new ScheduledColumn<?>[0];
     }
 
     // ==================== Iteration ====================
@@ -1067,7 +1132,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // reader will not run its close body again, so skipping the release would
         // leave the work list reachable for the parent reader's whole lifetime. A
         // failure to release is suppressed beneath the original.
-        try (rowGroupIterator) {
+        try (read) {
             if (tally != null) {
                 tally.close();
             }
@@ -1075,6 +1140,10 @@ public final class FlatRowReader implements FileAwareRowReader {
                 for (ScheduledColumn<?> pipeline : columnPipelines) {
                     pipeline.close();
                 }
+            }
+            if (read instanceof ReadEngine engine) {
+                // Stops the engine's columns and waits for its jobs before their holders are recycled
+                engine.close();
             }
             for (int i = 0; i < columnCount; i++) {
                 if (previousBatches[i] != null) {

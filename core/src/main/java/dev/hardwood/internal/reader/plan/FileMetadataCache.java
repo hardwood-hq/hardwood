@@ -560,7 +560,7 @@ public final class FileMetadataCache {
         }
 
         /// Completes the file's entry with `failure`, the read's last.
-        void fail(Exception failure) {
+        void fail(Throwable failure) {
             footer.outcome.completeExceptionally(failure instanceof IOException io ? new UncheckedIOException(io) : failure);
         }
 

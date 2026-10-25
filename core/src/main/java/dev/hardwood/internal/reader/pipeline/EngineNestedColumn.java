@@ -46,8 +46,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// run on jobs, each touching only the page or the cells it was given.
 public final class EngineNestedColumn implements EngineColumn {
 
-    /// The end of the column's pages, behind the pages taken before it.
-    private record End(Throwable failure) {
+    /// The end of the column's pages, behind the pages taken before it: the read's end or a
+    /// failure, or the failure of its walk (`walk`), which abandons the open cell.
+    private record End(Throwable failure, boolean walk) {
     }
 
     private final ColumnSchema column;
@@ -149,11 +150,22 @@ public final class EngineNestedColumn implements EngineColumn {
         return unplacedPages;
     }
 
+    @Override
+    public boolean placementEnded() {
+        return placementEnded;
+    }
+
     /// Queues the end of the column's pages behind the pages not yet placed: once they are, every
     /// cell is sealed and the read's end, or `failure`, queued behind them.
     @Override
     public void end(Throwable failure) {
-        unplaced.addLast(new End(failure));
+        unplaced.addLast(new End(failure, false));
+        placeMeasured();
+    }
+
+    @Override
+    public void walkFailed(Throwable failure) {
+        unplaced.addLast(new End(failure, true));
         placeMeasured();
     }
 
@@ -215,7 +227,13 @@ public final class EngineNestedColumn implements EngineColumn {
             else {
                 unplaced.pollFirst();
                 placementEnded = true;
-                endPlacement(((End) head).failure());
+                End end = (End) head;
+                if (end.walk()) {
+                    abandonAt(end.failure());
+                }
+                else {
+                    endPlacement(end.failure());
+                }
             }
         }
         if (placementEnded) {
@@ -240,6 +258,17 @@ public final class EngineNestedColumn implements EngineColumn {
         }
         placementEnded |= !goesOn;
         lastPlaced = page;
+    }
+
+    /// Ends the column with its walk's `failure` behind the cells before the open one, which is
+    /// abandoned.
+    private void abandonAt(Throwable failure) {
+        NestedCell abandoned = placer.abandonOpenCell();
+        if (abandoned != null) {
+            publisher.remove(abandoned);
+        }
+        publisher.endWith(failure);
+        publisher.endRead();
     }
 
     private void endPlacement(Throwable failure) {

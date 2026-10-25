@@ -13,8 +13,10 @@ import java.util.List;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.BitmapWords;
 import dev.hardwood.internal.reader.decode.BinaryPageValues;
 import dev.hardwood.internal.reader.decode.FlatPageValues;
 import dev.hardwood.internal.reader.decode.PageDecoder;
@@ -27,7 +29,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// out into the cells of the batch plan ([Placer]) as it takes them, decodes and fills them on
 /// jobs, and publishes its completed cells in plan order to its [BatchExchange]. A binary column's
 /// pages copy their segments' plain bytes into chunks of their own, or write dictionary ids
-/// ([BinaryFill]).
+/// ([BinaryFill]). A column with a filter fragment writes each batch's matches as the batch
+/// completes.
 ///
 /// Placement, marking cells completed and publishing run under the engine's lock, which also
 /// guards the cells' bookkeeping; decoding, filling and completing a cell's batch run on jobs,
@@ -47,9 +50,13 @@ public final class EngineFlatColumn implements EngineColumn {
     /// Raised once a reader needed the views of deferred dictionary values; the column builds them
     /// as its cells complete from then on.
     private final BinaryBatchValues.ViewDemand viewDemand = new BinaryBatchValues.ViewDemand();
+    /// The column's filter fragment, run on each batch as it completes; `null` for none.
+    private final ColumnBatchMatcher columnFilter;
     private final Placer<Cell> placer;
     /// Cells whose seal came after their last fill, which a job completes.
     private final List<Cell> sealedComplete = new ArrayList<>();
+    /// Set once the placer ended the read at its row cap.
+    private boolean placementEnded;
 
     private BatchPlan.RowGroupBatches rowGroup;
     /// Kept records of the current row group placed so far.
@@ -58,10 +65,13 @@ public final class EngineFlatColumn implements EngineColumn {
     /// Pages placed and not decoded.
     private int undecoded;
 
+    /// @param columnFilter the column's filter fragment, which writes each batch's `matches` as the
+    ///        batch completes; `null` for none
     public EngineFlatColumn(ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange, int batchCapacity,
-                        DecompressorFactory decompressorFactory, WorkingSet.Column workingSet,
-                        boolean footersSupplied) {
+                            DecompressorFactory decompressorFactory, WorkingSet.Column workingSet,
+                            boolean footersSupplied, ColumnBatchMatcher columnFilter) {
         this.column = column;
+        this.columnFilter = columnFilter;
         this.footersSupplied = footersSupplied;
         this.exchange = exchange;
         this.publisher = new EnginePublisher<>(exchange);
@@ -80,10 +90,13 @@ public final class EngineFlatColumn implements EngineColumn {
     }
 
     /// Places a page of work item `batches`; returns the page to decode, `null` when it has no
-    /// record to decode.
+    /// record to decode or the placement has ended.
     @Override
     public Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex,
-                      int pageIndex) {
+                      int pageIndex) throws PlaceFailure {
+        if (placementEnded) {
+            return null;
+        }
         if (batches != rowGroup) {
             rowGroup = batches;
             rowInRowGroup = 0;
@@ -93,7 +106,18 @@ public final class EngineFlatColumn implements EngineColumn {
         }
         PageTask task = new PageTask(info, fileName, rowGroupIndex, pageIndex, batches, decoder,
                 batches.readRowsBefore() + rowInRowGroup);
-        placer.place(task);
+        try {
+            placementEnded = !placer.place(task);
+        }
+        catch (RuntimeException e) {
+            // The segments placed before the failure are filled, so that their cells complete
+            Page placed = null;
+            if (!task.segments.isEmpty()) {
+                undecoded++;
+                placed = new Page(task);
+            }
+            throw new PlaceFailure(placed(e, fileName, rowGroupIndex, pageIndex), placed);
+        }
         rowInRowGroup = info.isBoundaryMarker() ? batches.plannedRows() : rowInRowGroup + info.records();
         if (task.segments.isEmpty()) {
             return null;
@@ -107,12 +131,27 @@ public final class EngineFlatColumn implements EngineColumn {
         return undecoded;
     }
 
+    @Override
+    public boolean placementEnded() {
+        return placementEnded;
+    }
+
     /// Ends the column's pages: every cell is sealed and the read's end, or `failure` where it is
     /// not `null`, queued behind them.
     @Override
     public void end(Throwable failure) {
         publisher.endWith(failure);
         placer.end();
+    }
+
+    @Override
+    public void walkFailed(Throwable failure) {
+        Cell abandoned = placer.abandonOpenCell();
+        if (abandoned != null) {
+            publisher.remove(abandoned);
+        }
+        publisher.endWith(failure);
+        publisher.endRead();
     }
 
     /// The read's row of the next record the column places.
@@ -225,12 +264,29 @@ public final class EngineFlatColumn implements EngineColumn {
         batch.filterAlwaysMatches = cell.alwaysMatches;
         if (batch.values instanceof BinaryBatchValues values) {
             BinaryFill.finish(cell, values, viewDemand);
-            // Views are built here once a reader needed them.
-            if (viewDemand.requested) {
+            // Views are built here once a reader needed them, or when the filter reads every one.
+            if (viewDemand.requested || (columnFilter != null && columnFilter.readsEveryValueView())) {
                 values.ensureViews();
             }
         }
+        if (columnFilter != null) {
+            testFilter(batch, records);
+        }
         return cell;
+    }
+
+    /// Writes the batch's matches for the column's filter fragment: all ones when statistics
+    /// proved every record matches, else the matcher's verdict, while the values are in this job's
+    /// cache. A matcher keeps scratch between calls, and cells complete on several jobs at once, so
+    /// its calls are serialized.
+    private void testFilter(BatchExchange.Batch batch, int records) {
+        if (batch.filterAlwaysMatches) {
+            BitmapWords.fillAllOnes(batch.matches, records);
+            return;
+        }
+        synchronized (columnFilter) {
+            columnFilter.test(batch, batch.matches);
+        }
     }
 
     /// Marks the cells of a decoded page completed, and publishes what that lets the column
@@ -269,7 +325,7 @@ public final class EngineFlatColumn implements EngineColumn {
                 + " sealed=" + sealedComplete.size()
                 + (head != null ? " head[firstRow=" + head.firstRow + " records=" + head.records()
                         + " pending=" + head.pending.get() + " completed=" + head.isCompleted() + "]" : "")
-                + " ended=" + publisher.ended();
+                + " placementEnded=" + placementEnded + " ended=" + publisher.ended();
     }
 
     @Override

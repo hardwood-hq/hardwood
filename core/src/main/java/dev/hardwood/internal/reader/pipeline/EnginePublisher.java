@@ -48,6 +48,11 @@ final class EnginePublisher<B> {
         endFailure = failure;
     }
 
+    /// Takes out a cell that will not complete, abandoned at a failure.
+    void remove(ScheduledCell<B> cell) {
+        order.remove(cell);
+    }
+
     /// Appends the read's end behind every cell.
     void endRead() {
         order.addLast(END);

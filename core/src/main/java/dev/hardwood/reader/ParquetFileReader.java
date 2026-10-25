@@ -513,6 +513,16 @@ public class ParquetFileReader implements Closeable {
         // where canFastSkipTail and computeFetchPlans both ran the same
         // page-format check per row group.
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
+        if (ReadEngine.supports()) {
+            ReadEngine engine = trackedEngine();
+            engine.initialize(schema, subset, ReadProjection.of(projectedSchema), null, true, 0, 0);
+            boolean fastSkip = (skip == 0) || engine.canFastSkipAllRowGroups();
+            if (fastSkip && skip > 0) {
+                engine.setTailSkip(skip);
+            }
+            RowReader reader = createRowReader(engine, schema, ReadProjection.of(projectedSchema), null, 0, subset);
+            return fastSkip ? reader : discardLeadingRows(reader, skip);
+        }
         RowGroupIterator iterator = trackedIterator(0L, 0L, 0L);
         iterator.setFirstFile(schema, subset);
         iterator.initialize(ReadProjection.of(projectedSchema), null, true);
@@ -579,6 +589,18 @@ public class ParquetFileReader implements Closeable {
                 : ReadProjection.withPredicateColumns(schema, ColumnRequests.of(projection),
                         SelectionEngine.predicateColumns(resolved), true);
 
+        if (ReadEngine.supports() && tailSkip == 0) {
+            ReadEngine engine = trackedEngine();
+            engine.initialize(schema, firstFileRowGroups, readProjection, resolved, metadataFilteringEnabled, maxRows,
+                    physicalSkip);
+            // As below: the residue of the physical skip within the first work item kept
+            long firstRowGroupSkip = engine.firstRowGroupSkip();
+            long readerMaxRows = maxRows == 0 ? 0 : Math.addExact(maxRows, firstRowGroupSkip);
+            RowReader reader = createRowReader(engine, schema, readProjection, resolved, readerMaxRows,
+                    firstFileRowGroups);
+            return discardLeadingRows(reader, firstRowGroupSkip);
+        }
+
         RowGroupIterator iterator = trackedIterator(maxRows, tailSkip, physicalSkip);
         iterator.setFirstFile(schema, firstFileRowGroups);
         iterator.initialize(readProjection, resolved, metadataFilteringEnabled);
@@ -626,6 +648,21 @@ public class ParquetFileReader implements Closeable {
                 : NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
                         filter, maxRows, batchSize, readAheadBudgetRows(projection.decoded(), rowGroups));
         return trackedChild(rowGroupIterator, reader);
+    }
+
+    /// Creates a [RowReader] over a read the [ReadEngine] drives, as
+    /// [#createRowReader(RowGroupIterator, FileSchema, ReadProjection, HardwoodContextImpl, ResolvedPredicate, long, List)]
+    /// does over the pipeline.
+    private RowReader createRowReader(ReadEngine engine, FileSchema schema, ReadProjection projection,
+                                      ResolvedPredicate filter, long maxRows, List<RowGroup> rowGroups)
+            throws IOException {
+        int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
+        long budgetRows = readAheadBudgetRows(projection.decoded(), rowGroups);
+        RowReader reader = isFlatProjection(schema, projection.decoded())
+                ? FlatRowReader.create(engine, schema, projection, context, filter, maxRows, batchSize, budgetRows)
+                : NestedRowReader.create(engine, schema, projection, context, fixedListFastPathEnabled, filter,
+                        maxRows, batchSize, budgetRows);
+        return trackedChild(engine, reader);
     }
 
     /// Whether [FlatRowReader] can read `decoded`.
@@ -785,9 +822,8 @@ public class ParquetFileReader implements Closeable {
     private ColumnRead openEngineRead(ReadProjection projection, ResolvedPredicate resolved,
                                       List<RowGroup> rowGroups, NestedLevelComputer.Layers[] layers, int batchSize)
             throws IOException {
-        ReadEngine engine = new ReadEngine(fileMetadataCache, context, openChildren::remove);
-        openChildren.put(engine, engine);
-        engine.initialize(schema, rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled);
+        ReadEngine engine = trackedEngine();
+        engine.initialize(schema, rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled, 0, 0);
         if (!engine.hasLiveWorkItem()) {
             return new ColumnRead(trackedChild(engine, ColumnScan.empty(engine)), projection.payload(), layers);
         }
@@ -806,6 +842,14 @@ public class ParquetFileReader implements Closeable {
     /// Replaces each tracked child with what `wrapper` makes of it. Visible for testing.
     void wrapTrackedChildren(UnaryOperator<Closeable> wrapper) {
         openChildren.replaceAll((iterator, child) -> wrapper.apply(child));
+    }
+
+    /// Creates a [ReadEngine] read over this reader's files and tracks it until it is closed. See
+    /// [#openChildren].
+    private ReadEngine trackedEngine() {
+        ReadEngine engine = new ReadEngine(fileMetadataCache, context, openChildren::remove);
+        openChildren.put(engine, engine);
+        return engine;
     }
 
     /// Creates an iterator over this reader's files and tracks it until it is

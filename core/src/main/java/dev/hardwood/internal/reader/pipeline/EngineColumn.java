@@ -45,8 +45,35 @@ public sealed interface EngineColumn permits EngineFlatColumn, EngineNestedColum
         }
     }
 
+    /// A placement's failure, placed at its page, and the page to decode that holds the segments
+    /// placed before it, `null` for none: its cells before the failure still complete.
+    final class PlaceFailure extends Exception {
+
+        private final transient Page page;
+
+        PlaceFailure(Exception failure, Page page) {
+            super(failure);
+            this.page = page;
+        }
+
+        public Exception failure() {
+            return (Exception) getCause();
+        }
+
+        public Page page() {
+            return page;
+        }
+    }
+
     /// Takes a page of work item `batches`; returns the page to decode, `null` when it has none.
-    Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex, int pageIndex);
+    ///
+    /// @throws PlaceFailure if placing a flat page fails
+    Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex, int pageIndex)
+            throws PlaceFailure;
+
+    /// Whether the column's placement has ended at the read's row cap: it takes no further page,
+    /// and its batches end with the cells placed.
+    boolean placementEnded();
 
     /// The pages taken and not yet released: not decoded for a flat column, not placed for a
     /// column decoded through levels. The engine bounds them per column.
@@ -55,6 +82,10 @@ public sealed interface EngineColumn permits EngineFlatColumn, EngineNestedColum
     /// Ends the column's pages: every cell is sealed once the pages taken before are placed, and
     /// the read's end, or `failure` where it is not `null`, is queued behind them.
     void end(Throwable failure);
+
+    /// Ends the column with the `failure` its walk met inside a work item, once every page it took
+    /// before is decoded: behind the cells before its open one, which is abandoned.
+    void walkFailed(Throwable failure);
 
     /// The read's row of the next record the column takes, a lower bound where no metadata gives
     /// it.
