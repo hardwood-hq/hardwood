@@ -130,7 +130,7 @@ public final class SectionCursor implements ByteSource {
         }
     }
 
-    /// Passes every section request the walk holds, once it has ended.
+    /// Passes every section request the walk holds, once it has ended or stopped.
     void releaseAll() {
         while (held < sections.size()) {
             sections.get(held++).release();

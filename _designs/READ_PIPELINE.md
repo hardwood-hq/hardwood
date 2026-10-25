@@ -243,7 +243,7 @@ The always-match decision travels from the work item to the column in the row gr
 | Batch plan | `BatchPlan` | Ends the last batch at the cap; every column publishes it and finishes | Holds the cap while every row group with kept rows is an always-match one; drops it for the rest of the read at the first undecided one |
 | Reader | Match counting | — | Counts matches against the cap |
 
-A column whose placement reaches the cap takes no further page and passes every work item listed; once every column's placement has, the read lists, plans and reaches nothing more. A read with a row limit starts no speculative request and reads only the next file's footer ahead ([FETCH_PLANNING.md](FETCH_PLANNING.md#opening-files-ahead)). A page is the smallest decode unit: a page that straddles the cap is decoded and filled up to the cap. The column readers carry no row cap (#433).
+A column whose placement reaches the cap takes no further page, stops its walk, which passes the sections it holds, and passes every work item listed ([FETCH_PLANNING.md](FETCH_PLANNING.md#release-failure-and-close)); once every column's placement has, the read lists, plans and reaches nothing more. A read with a row limit starts no speculative request and reads only the next file's footer ahead ([FETCH_PLANNING.md](FETCH_PLANNING.md#opening-files-ahead)). A page is the smallest decode unit: a page that straddles the cap is decoded and filled up to the cap. The column readers carry no row cap (#433).
 
 Tests: `BatchPlanTest`, `PlacerTest`, `AlwaysMatchingRowGroupTest`, `MultiFilePlanningTest`, `S3SelectiveReadJfrIT` (s3).
 

@@ -185,8 +185,8 @@ public final class RowGroupIterator implements Closeable, Sections {
     private int failedFrom = Integer.MAX_VALUE;
     private WorkItem failedWorkItem;
 
-    /// Every request, and the requests by work item.
-    private final List<Request> requests = new ArrayList<>();
+    /// The data requests of each work item not every column has passed: a work item's are forgotten
+    /// once every column has passed it ([#forget]).
     private final Map<Integer, List<Request>> byUnit = new HashMap<>();
     /// The requests and footers that start ahead of need, in position order: by file, then by work
     /// item, then by offset, a file's footer before its data.
@@ -926,7 +926,7 @@ public final class RowGroupIterator implements Closeable, Sections {
                 .append(ready.isEmpty() ? "" : " readyHead=" + ready.firstKey())
                 .append(" decodesInFlight=").append(decodesInFlight).append(" waitingForTask=").append(waitingForTask)
                 .append(" cap=")
-                .append(firstUnpublishedRow() + capRows).append(" requests=").append(requests.size())
+                .append(firstUnpublishedRow() + capRows).append(" requests=").append(requestsHeld())
                 .append(" queued=").append(queued.size()).append(" queuedHead=").append(queued.peek())
                 .append(" nextList=").append(nextList).append('/').append(fileCount).append(" listed=").append(listed)
                 .append(" reachedFile=").append(reachedFile).append(" failedFrom=").append(failedFrom)
@@ -1384,6 +1384,10 @@ public final class RowGroupIterator implements Closeable, Sections {
         if (need == null) {
             planned.set(index, true);
             nextPlan++;
+            if (unitHolders.get(index) == 0) {
+                // every column's placement ended at the row cap while it was planned
+                passed(index);
+            }
             for (Column c : columns) {
                 if (c.unit == index) {
                     markRunnable(c);
@@ -1503,6 +1507,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         Column c = columns[column];
         c.walking = false;
         if (c.placed || c.ended) {
+            stopPlacedWalk(c);
             return;
         }
         c.sealAtFailure = pages.isEmpty() && !c.unitTaken && batches.closesOpenBatch();
@@ -1576,6 +1581,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         c.walking = false;
         if (c.placed || c.ended) {
             // the placement ended at the row cap, or the column failed, while the walk ran
+            stopPlacedWalk(c);
             return;
         }
         if (!place(c, workItem, batches, pages, ordinals)) {
@@ -1593,6 +1599,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             unitHolders.set(unit, left);
             if (left == 0) {
                 planning.release(unit);
+                forget(unit);
             }
         }
         else if (pending != null) {
@@ -1620,18 +1627,90 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
     }
 
-    /// Takes up the end of `c`'s placement at the row cap: its walk stops, and it passes the unit it
-    /// is in and every unit listed after it. The read plans nothing more once no column places.
+    /// Takes up the end of `c`'s placement at the row cap: its walk stops, passing the sections it
+    /// holds, once no advance of it runs, and the column passes the unit it is in and every unit
+    /// listed after it. The read plans nothing more once no column places.
     private void placementEnded(Column c) {
         c.placed = true;
-        c.walk = null;
+        if (!c.walking) {
+            stopWalk(c);
+        }
         placingColumns--;
         for (int unit = c.unit; unit < unitCount; unit++) {
             int left = unitHolders.get(unit) - 1;
             unitHolders.set(unit, left);
-            if (left == 0 && planned.get(unit)) {
-                planning.release(unit);
+            if (left == 0) {
+                passed(unit);
             }
+        }
+    }
+
+    /// Stops the walk of a column whose placement ended at the row cap while the walk advanced.
+    private void stopPlacedWalk(Column c) {
+        if (c.placed) {
+            stopWalk(c);
+        }
+    }
+
+    private void stopWalk(Column c) {
+        if (c.walk != null) {
+            c.walk.stop();
+            c.walk = null;
+        }
+    }
+
+    /// Takes up that every column has passed `unit` at the row cap: a planned unit's planning reads
+    /// and index windows are released and its requests forgotten; a unit planned later is at the
+    /// end of its planning ([#planStepped]).
+    private void passed(int unit) {
+        if (planned.get(unit)) {
+            planning.release(unit);
+            forget(unit);
+        }
+    }
+
+    /// Forgets the requests of `unit`, which every column has passed: each is released whatever
+    /// holders it has left, its bytes dropped and its charges returned.
+    private void forget(int unit) {
+        List<Request> unitRequests = byUnit.remove(unit);
+        if (unitRequests != null) {
+            for (Request r : unitRequests) {
+                r.drop();
+            }
+        }
+    }
+
+    /// The requests the read holds, for tests: those of the units not every column has passed.
+    int requestsHeld() {
+        lock.lock();
+        try {
+            int held = 0;
+            for (List<Request> unit : byUnit.values()) {
+                held += unit.size();
+            }
+            return held;
+        }
+        finally {
+            unlock();
+        }
+    }
+
+    /// The bytes of the requests the read holds that have arrived, for tests.
+    long dataBytesHeld() {
+        lock.lock();
+        try {
+            long held = 0;
+            for (List<Request> unit : byUnit.values()) {
+                for (Request r : unit) {
+                    if (r.bytes != null && !HeldBytes.inMemory(r.inputFile)) {
+                        held += r.span.length();
+                    }
+                }
+            }
+            return held;
+        }
+        finally {
+            unlock();
         }
     }
 
@@ -1820,7 +1899,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     }
 
     private void arrived(Request r, ByteBuffer bytes) {
-        r.bytes = bytes;
+        if (!r.released) {
+            r.bytes = bytes;
+        }
         wakeWaiting(r);
     }
 
@@ -1835,6 +1916,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// final, and fails what reads it.
     private void requestFailed(Request r, Exception e) {
         uncharge(r);
+        if (r.released) {
+            return;
+        }
         if (!r.retried) {
             r.retried = true;
             r.started = false;
@@ -1881,7 +1965,6 @@ public final class RowGroupIterator implements Closeable, Sections {
                 Request r = new Request(inputFile, span, fileIndex, workItemIndex);
                 inserted.add(r);
                 if (!r.started) {
-                    requests.add(r);
                     queued.add(r);
                     r.counted = true;
                     queuedBytes += span.length();
@@ -1901,11 +1984,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     public Section insertDemanded(int workItemIndex, InputFile inputFile, long start, int length, String reason) {
         lock.lock();
         try {
-            Request r = new Request(inputFile, new Span(start, length, reason, 1), -1, workItemIndex);
-            if (!r.started) {
-                requests.add(r);
-            }
-            return r;
+            return new Request(inputFile, new Span(start, length, reason, 1), -1, workItemIndex);
         }
         finally {
             unlock();
@@ -1919,9 +1998,6 @@ public final class RowGroupIterator implements Closeable, Sections {
             Request r = new Request(inputFile, new Span(start, length, reason, holders), -1, -1);
             // planning reads start when planning demands them, charged to nothing
             r.planning = true;
-            if (!r.started) {
-                requests.add(r);
-            }
             return r;
         }
         finally {
@@ -2034,13 +2110,18 @@ public final class RowGroupIterator implements Closeable, Sections {
         public void discard() {
             lock.lock();
             try {
-                holders = 0;
-                bytes = null;
-                released();
+                drop();
             }
             finally {
                 unlock();
             }
+        }
+
+        /// Releases the request whatever its holders, under the lock.
+        void drop() {
+            holders = 0;
+            bytes = null;
+            released();
         }
 
         /// Returns the request's charge, and takes it out of the bytes not started.
@@ -2095,8 +2176,10 @@ public final class RowGroupIterator implements Closeable, Sections {
         try {
             untaken = untakenError;
             untakenError = null;
-            for (Request r : requests) {
-                uncharge(r);
+            for (List<Request> unit : byUnit.values()) {
+                for (Request r : unit) {
+                    uncharge(r);
+                }
             }
             if (workingSet != null) {
                 workingSet.cancelWait(taskEndedWake);

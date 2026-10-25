@@ -40,6 +40,11 @@ public interface PageWalk {
     /// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]).
     Need pending();
 
+    /// Stops the walk where it is: passes every section it holds, as its end does. The read stops a
+    /// column's walk once its placement has reached the row cap.
+    default void stop() {
+    }
+
     /// Which page of the column chunk this walk is on: an ordinal,
     /// [ExceptionContext#DICTIONARY_PAGE], or [ExceptionContext#UNKNOWN_PAGE].
     ///

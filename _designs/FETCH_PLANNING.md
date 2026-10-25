@@ -151,13 +151,13 @@ Tests: `ReadYieldTest`, `ReadRequestsTest`, `ReadAheadTest`, `SequentialNextRowG
 
 ### Release, failure and close
 
-A data request is released once every column whose chunk extent overlaps it has passed it; a column with no pages in the row group, or one skipped, does not hold it. Its charges then go back to F and R and its bytes are dropped, except as a page slice holds them; that remainder is uncharged and at most S per column. A column whose placement ends at the row cap stops its walk where it is, and the requests it holds stay held until the read closes; a read with a row limit charges none of them. A planning request is released once each work item holding it has been released.
+A data request is released once every column whose chunk extent overlaps it has passed it; a column with no pages in the row group, or one skipped, does not hold it. Its charges then go back to F and R and its bytes are dropped, except as a page slice holds them; that remainder is uncharged and at most S per column. A column whose placement ends at the row cap stops its walk where it is, which passes every section the walk holds, and passes every work item after it. Once every column has passed a work item, the read forgets its requests: each is released, whatever holders it has left, and a read of it still in flight drops its bytes as it arrives. The read therefore holds the requests of the work items its columns have not passed, and no others. A planning request is released once each work item holding it has been released.
 
 A request whose read fails with an exception is read once more, started at once and uncharged, whether or not a walk or a stage waits for it; planning requests and the rest of a chunk alike. A second failure is final: the request fails with an `IOException` naming the file, offset and length ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#crossing-a-thread-boundary)), which a walk that reaches it raises as its failure and a planning stage as a planning failure ([Planning ahead](#planning-ahead)). A read that fails with an `Error` fails the whole read at once.
 
 The read's close returns the charges of every request, discards its planning requests, and waits for the reads in flight without interrupting them ([READ_PIPELINE.md](READ_PIPELINE.md#cancellation-and-close)).
 
-Tests: `ReadYieldTest` (a failed read read again, a read that fails twice, a walk holding no thread while its read is held, its close and a closed context), `SectionCursorTest`, `IndexWindowLifecycleTest`.
+Tests: `ReadYieldTest` (a failed read read again, a read that fails twice, a walk holding no thread while its read is held, its close and a closed context), `RequestRetentionTest`, `SectionCursorTest`, `IndexWindowLifecycleTest`.
 
 ### Planning ahead
 

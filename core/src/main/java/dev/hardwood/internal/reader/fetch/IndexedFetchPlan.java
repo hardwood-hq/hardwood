@@ -118,6 +118,11 @@ public final class IndexedFetchPlan implements FetchPlan {
         }
 
         @Override
+        public void stop() {
+            cursor.releaseAll();
+        }
+
+        @Override
         public PageInfo advance() throws IOException {
             pending = null;
             if (index >= neededPages.size()) {
