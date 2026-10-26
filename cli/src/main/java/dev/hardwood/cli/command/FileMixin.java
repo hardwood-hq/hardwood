@@ -7,9 +7,6 @@
  */
 package dev.hardwood.cli.command;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.aesh.command.option.Option;
@@ -21,6 +18,9 @@ import dev.hardwood.s3.RangeBacking;
 import dev.hardwood.s3.S3CredentialsProvider;
 import dev.hardwood.s3.S3Source;
 import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.profiles.ProfileFile;
+import software.amazon.awssdk.profiles.ProfileFileSystemSetting;
+import software.amazon.awssdk.profiles.ProfileProperty;
 
 public class FileMixin {
 
@@ -105,7 +105,7 @@ public class FileMixin {
             builder.pathStyle(true);
         }
 
-        // Resolve region from env vars and ~/.aws/config only (no IMDS — instant)
+        // Resolve region from local settings and profile files only (no IMDS)
         String region = resolveRegion();
         if (region != null) {
             builder.region(region);
@@ -152,8 +152,8 @@ public class FileMixin {
         return "true".equalsIgnoreCase(System.getenv("AWS_PATH_STYLE"));
     }
 
-    /// Resolves the AWS region from system property, env vars, and `~/.aws/config` (no network I/O).
-    private static String resolveRegion() {
+    /// Resolves the AWS region from system property, env vars, and SDK profile files (no network I/O).
+    static String resolveRegion() {
         // 1. System property
         String region = System.getProperty("aws.region");
         if (region != null) {
@@ -170,44 +170,10 @@ public class FileMixin {
             return region;
         }
 
-        // 2. ~/.aws/config [default] profile
-        String profile = System.getenv("AWS_PROFILE");
-        if (profile == null) {
-            profile = "default";
-        }
-        return resolveRegionFromConfig(profile);
-    }
-
-    private static String resolveRegionFromConfig(String profile) {
-        Path configFile = Path.of(System.getProperty("user.home"), ".aws", "config");
-        if (!Files.exists(configFile)) {
-            return null;
-        }
-        // Profile header is [default] or [profile name]
-        String header = "default".equals(profile)
-                ? "[default]"
-                : "[profile " + profile + "]";
-        try (BufferedReader reader = Files.newBufferedReader(configFile)) {
-            boolean inProfile = false;
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.strip();
-                if (line.startsWith("[")) {
-                    inProfile = line.equals(header);
-                    continue;
-                }
-                if (inProfile && line.startsWith("region")) {
-                    int eq = line.indexOf('=');
-                    if (eq >= 0) {
-                        return line.substring(eq + 1).strip();
-                    }
-                }
-            }
-        }
-        catch (IOException e) {
-            // Can't read config — not fatal
-        }
-        return null;
+        String profile = ProfileFileSystemSetting.AWS_PROFILE.getStringValueOrThrow();
+        return ProfileFile.defaultProfileFile().profile(profile)
+                .flatMap(p -> p.property(ProfileProperty.REGION))
+                .orElse(null);
     }
 
     Path toPath() {
