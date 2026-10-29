@@ -31,7 +31,7 @@
   </scm>
 
   <properties>
-    <aws-sdk.version>2.56.0</aws-sdk.version>
+    <aws-sdk.version>2.57.3</aws-sdk.version>
   </properties>
 
   <dependencyManagement>
