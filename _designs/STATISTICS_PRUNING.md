@@ -283,7 +283,9 @@ Membership uses the matchers' comparison, so pruning agrees with the rows a read
 - `FLOAT`, `DOUBLE`: `Float.compare` / `Double.compare`. A dictionary holding only `-0.0` proves `+0.0` absent, and a dictionary holding any `NaN` reports a `NaN` probe present. The `±0` ambiguity of statistics concerns bounds, not stored values, so dictionary pruning does not consult `ColumnOrder`.
 - `FLOAT16`: each 2-byte entry is widened to `float` and compared with `Float.compare`; the literal is never narrowed, so a literal binary16 cannot represent matches nothing, as a full scan would find.
 
-Tests: `RowGroupDictionaryFilterSourceTest`, `DictionaryPushDownTest`.
+A membership list is decided under the same equalities: a short list by one pass over the dictionary per literal, a long one by a single pass that probes each entry against an index built over the literals (`DictionaryFilterSupport`). `FLOAT` and `DOUBLE` literals are indexed by their `floatToIntBits` / `doubleToLongBits`, which are equal exactly when `Float.compare` / `Double.compare` is zero.
+
+Tests: `RowGroupDictionaryFilterSourceTest`, `DictionaryPushDownTest`, `DictionaryFilterSupportTest`.
 
 ## Pages
 

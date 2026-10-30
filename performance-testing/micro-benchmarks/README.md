@@ -37,6 +37,7 @@ allocation profiling, `-rf json -rff out.json` for machine-readable results,
 | `AlwaysMatchReadBenchmark` | Filtered end-to-end reads when statistics prove row groups match in full (#795) | `generate_filter_pushdown_data.py` |
 | `DictionaryStringReadBenchmark` | Allocation per full-column scan of a dictionary-encoded string column (run with `-prof gc`) | `generate_dict_string_data.py` |
 | `DictionarySpacePredicateBenchmark` | Dictionary-space against per-value binary predicate evaluation across cold/hot, sparse/full, short/long, and EQ/LT/IN shapes (#859) | self-generating |
+| `DictionaryInListBenchmark` | Kernels deciding an `IN` leaf against a row group's dictionary when every literal is absent: the shipped method against the former sorted search and the prototypes it was chosen from (pass per literal, inner loop, branch-free search, hash set, range bitmask), over `INT64`, `INT32`, `DOUBLE` and `FIXED_LEN_BYTE_ARRAY(16)` (#1594) | none (in-memory) |
 | `DictionaryPageParseBenchmark` | One dictionary page set up through each of the parser's two entry points, against the decode floor (#1096) | self-generating |
 | `DictionaryPageSetupBenchmark` | Per-column-chunk dictionary setup — page-header parse and checksum — over many row groups (#1096) | self-generating |
 | `PageScanBenchmark` | Sequential header-based page scan vs. offset-index lookup | `generate_benchmark_data.py` |

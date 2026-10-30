@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.predicate.dictionary;
 
-import java.util.Arrays;
-
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.BinaryComparator;
@@ -18,10 +16,24 @@ import dev.hardwood.internal.reader.batch.Dictionary;
 /// dictionaries.
 ///
 /// A single-value check scans the dictionary, which is unsorted, so it costs one pass. A
-/// membership check indexes the predicate's values instead of pairing them off against every
-/// entry: the value list is the smaller side, and sorting it once turns the pass over the
-/// dictionary into a binary search per entry rather than a comparison per (entry, value) pair.
+/// membership check over a short list repeats that pass per literal; every branch of such a pass
+/// goes the same way until a match, so the passes stay cheap. A longer list is indexed once, and
+/// the single pass over the dictionary probes the index per entry: a [RangeBitmask] where integer
+/// literals lie close together, else a [LongSet] over the values' bits or a [BinarySet] over byte
+/// strings. Integer literals too spread out for a bitmask stay on passes a while longer, since a
+/// pass over primitives is cheap next to a hash probe.
+///
+/// Each scan is a method of its own holding one loop, so the JIT compiles every kernel's loop on
+/// its own terms rather than as one branch of a method holding three.
 public final class DictionaryFilterSupport {
+
+    /// Literal count up to which a membership check runs one pass per literal. Tuning: #1594.
+    static final int PASS_LIMIT = 8;
+
+    /// Literal count up to which an integer membership check whose literals lie too far apart for
+    /// a [RangeBitmask] still runs one pass per literal. A pass over primitive integers costs far
+    /// less per entry than a hash probe, so the hash set only wins from this count. Tuning: #1594.
+    static final int SPARSE_PASS_LIMIT = 16;
 
     private DictionaryFilterSupport() {
     }
@@ -30,26 +42,14 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.IntDictionary dict)) {
             return false;
         }
-
-        for (int entry : dict.values()) {
-            if (entry == value) {
-                return false;
-            }
-        }
-
-        return true;
+        return absent(dict.values(), value);
     }
 
     public static boolean valueAbsent(Dictionary dictionary, long value) {
         if (!(dictionary instanceof Dictionary.LongDictionary dict)) {
             return false;
         }
-        for (long entry : dict.values()) {
-            if (entry == value) {
-                return false;
-            }
-        }
-        return true;
+        return absent(dict.values(), value);
     }
 
     /// Single-value dictionary check for `FLOAT` values.
@@ -143,6 +143,181 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
+        return absent(dict, value);
+    }
+
+    public static boolean absentAll(Dictionary dictionary, int[] values) {
+        if (!(dictionary instanceof Dictionary.IntDictionary dict)) {
+            return false;
+        }
+        int[] entries = dict.values();
+        if (values.length <= PASS_LIMIT) {
+            return absentByPasses(entries, values);
+        }
+        long[] keys = new long[values.length];
+        for (int i = 0; i < values.length; i++) {
+            keys[i] = values[i];
+        }
+        RangeBitmask bitmask = RangeBitmask.of(keys);
+        if (bitmask != null) {
+            return absent(entries, bitmask);
+        }
+        if (values.length <= SPARSE_PASS_LIMIT) {
+            return absentByPasses(entries, values);
+        }
+        return absent(entries, new LongSet(keys));
+    }
+
+    public static boolean absentAll(Dictionary dictionary, long[] values) {
+        if (!(dictionary instanceof Dictionary.LongDictionary dict)) {
+            return false;
+        }
+        long[] entries = dict.values();
+        if (values.length <= PASS_LIMIT) {
+            return absentByPasses(entries, values);
+        }
+        RangeBitmask bitmask = RangeBitmask.of(values);
+        if (bitmask != null) {
+            return absent(entries, bitmask);
+        }
+        if (values.length <= SPARSE_PASS_LIMIT) {
+            return absentByPasses(entries, values);
+        }
+        return absent(entries, new LongSet(values));
+    }
+
+    public static boolean absentAll(Dictionary dictionary, byte[][] values) {
+        if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
+            return false;
+        }
+        if (values.length <= PASS_LIMIT) {
+            return absentByPasses(dict, values);
+        }
+        return absent(dict, new BinarySet(values));
+    }
+
+    /// `IN`-list dictionary check for `FLOAT` values.
+    ///
+    /// Entries and literals meet as [Float#floatToIntBits], which are equal exactly when
+    /// [Float#compare] is zero — every `NaN` one value, `-0.0` apart from `+0.0` — so the check
+    /// agrees with the equality the single-value check applies.
+    public static boolean absentAll(Dictionary dictionary, float[] values) {
+        if (!(dictionary instanceof Dictionary.FloatDictionary dict)) {
+            return false;
+        }
+        float[] entries = dict.values();
+        if (values.length <= PASS_LIMIT) {
+            return absentByPasses(entries, values);
+        }
+        long[] keys = new long[values.length];
+        for (int i = 0; i < values.length; i++) {
+            keys[i] = Float.floatToIntBits(values[i]);
+        }
+        return absentBits(entries, new LongSet(keys));
+    }
+
+    /// `IN`-list dictionary check for `DOUBLE` values. See the `float[]` overload.
+    public static boolean absentAll(Dictionary dictionary, double[] values) {
+        if (!(dictionary instanceof Dictionary.DoubleDictionary dict)) {
+            return false;
+        }
+        double[] entries = dict.values();
+        if (values.length <= PASS_LIMIT) {
+            return absentByPasses(entries, values);
+        }
+        long[] keys = new long[values.length];
+        for (int i = 0; i < values.length; i++) {
+            keys[i] = Double.doubleToLongBits(values[i]);
+        }
+        return absentBits(entries, new LongSet(keys));
+    }
+
+    // One pass per literal.
+
+    private static boolean absentByPasses(int[] entries, int[] values) {
+        for (int value : values) {
+            if (!absent(entries, value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentByPasses(long[] entries, long[] values) {
+        for (long value : values) {
+            if (!absent(entries, value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentByPasses(float[] entries, float[] values) {
+        for (float value : values) {
+            if (!absentBits(entries, Float.floatToIntBits(value))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentByPasses(double[] entries, double[] values) {
+        for (double value : values) {
+            if (!absentBits(entries, Double.doubleToLongBits(value))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentByPasses(Dictionary.ByteArrayDictionary dict, byte[][] values) {
+        for (byte[] value : values) {
+            if (!absent(dict, value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // One pass, one value.
+
+    private static boolean absent(int[] entries, int value) {
+        for (int entry : entries) {
+            if (entry == value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absent(long[] entries, long value) {
+        for (long entry : entries) {
+            if (entry == value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentBits(float[] entries, int bits) {
+        for (float entry : entries) {
+            if (Float.floatToIntBits(entry) == bits) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentBits(double[] entries, long bits) {
+        for (double entry : entries) {
+            if (Double.doubleToLongBits(entry) == bits) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absent(Dictionary.ByteArrayDictionary dict, byte[] value) {
         byte[] bytes = dict.entryBytes();
         int[] offsets = dict.entryOffsets();
         for (int i = 0; i < dict.size(); i++) {
@@ -153,105 +328,67 @@ public final class DictionaryFilterSupport {
         return true;
     }
 
-    public static boolean absentAll(Dictionary dictionary, int[] values) {
-        if (!(dictionary instanceof Dictionary.IntDictionary dict)) {
-            return false;
-        }
-        // Sorted copy, not the predicate's own array: the resolved predicate is shared across
-        // every row group and file of the read.
-        int[] probes = values.clone();
-        Arrays.sort(probes);
-        for (int entry : dict.values()) {
-            if (Arrays.binarySearch(probes, entry) >= 0) {
+    // One pass, one probe per entry into an index over the literals.
+
+    private static boolean absent(int[] entries, RangeBitmask bitmask) {
+        for (int entry : entries) {
+            if (bitmask.contains(entry)) {
                 return false;
             }
         }
         return true;
     }
 
-    public static boolean absentAll(Dictionary dictionary, long[] values) {
-        if (!(dictionary instanceof Dictionary.LongDictionary dict)) {
-            return false;
-        }
-        long[] probes = values.clone();
-        Arrays.sort(probes);
-        for (long entry : dict.values()) {
-            if (Arrays.binarySearch(probes, entry) >= 0) {
+    private static boolean absent(long[] entries, RangeBitmask bitmask) {
+        for (long entry : entries) {
+            if (bitmask.contains(entry)) {
                 return false;
             }
         }
         return true;
     }
 
-    public static boolean absentAll(Dictionary dictionary, byte[][] values) {
-        if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
-            return false;
+    private static boolean absent(int[] entries, LongSet set) {
+        for (int entry : entries) {
+            if (set.contains(entry)) {
+                return false;
+            }
         }
-        // Unsigned lexicographic order compares equal exactly when the arrays are equal, so the
-        // ordering that makes the search possible agrees with the equality the single-value check
-        // applies.
-        byte[][] probes = values.clone();
-        Arrays.sort(probes, BinaryComparator::compareUnsigned);
+        return true;
+    }
+
+    private static boolean absent(long[] entries, LongSet set) {
+        for (long entry : entries) {
+            if (set.contains(entry)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentBits(float[] entries, LongSet set) {
+        for (float entry : entries) {
+            if (set.contains(Float.floatToIntBits(entry))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentBits(double[] entries, LongSet set) {
+        for (double entry : entries) {
+            if (set.contains(Double.doubleToLongBits(entry))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absent(Dictionary.ByteArrayDictionary dict, BinarySet set) {
         byte[] bytes = dict.entryBytes();
         int[] offsets = dict.entryOffsets();
         for (int i = 0; i < dict.size(); i++) {
-            if (containsSorted(probes, bytes, offsets[i], offsets[i + 1])) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /// Whether `sortedProbes`, in unsigned lexicographic order, holds the bytes `[from, to)`.
-    private static boolean containsSorted(byte[][] sortedProbes, byte[] bytes, int from, int to) {
-        int low = 0;
-        int high = sortedProbes.length - 1;
-        while (low <= high) {
-            int mid = (low + high) >>> 1;
-            int cmp = BinaryComparator.compareUnsigned(bytes, from, to, sortedProbes[mid]);
-            if (cmp == 0) {
-                return true;
-            }
-            if (cmp > 0) {
-                low = mid + 1;
-            }
-            else {
-                high = mid - 1;
-            }
-        }
-        return false;
-    }
-
-    /// `IN`-list dictionary check for `FLOAT` values.
-    ///
-    /// [Arrays#sort(float[])] and [Arrays#binarySearch(float[], float)] impose the total order
-    /// [Float#compare] does — every `NaN` equal to every other, `-0.0` below `+0.0` — so indexing
-    /// the probes agrees with the equality the single-value check applies.
-    public static boolean absentAll(Dictionary dictionary, float[] values) {
-        if (!(dictionary instanceof Dictionary.FloatDictionary dict)) {
-            return false;
-        }
-        // Sorted copy, not the predicate's own array: the resolved predicate is shared across
-        // every row group and file of the read.
-        float[] probes = values.clone();
-        Arrays.sort(probes);
-        for (float entry : dict.values()) {
-            if (Arrays.binarySearch(probes, entry) >= 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /// `IN`-list dictionary check for `DOUBLE` values. See the `float[]` overload.
-    public static boolean absentAll(Dictionary dictionary, double[] values) {
-        if (!(dictionary instanceof Dictionary.DoubleDictionary dict)) {
-            return false;
-        }
-        double[] probes = values.clone();
-        Arrays.sort(probes);
-        for (double entry : dict.values()) {
-            if (Arrays.binarySearch(probes, entry) >= 0) {
+            if (set.contains(bytes, offsets[i], offsets[i + 1])) {
                 return false;
             }
         }
