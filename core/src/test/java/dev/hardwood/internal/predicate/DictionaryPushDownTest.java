@@ -260,6 +260,11 @@ class DictionaryPushDownTest {
         @Test
         void inListDropsOnlyWhenAllValuesAreAbsent() throws IOException {
             assertThat(dictionaryDrop(FilterPredicate.in("category", "nope_a", "nope_b"))).isTrue();
+            // Nine literals exceed the pass limit and are indexed as a hash set.
+            assertThat(dictionaryDrop(FilterPredicate.in("category",
+                    "nope_0", "nope_1", "nope_2", "nope_3", "nope_4", "nope_5", "nope_6", "nope_7", "nope_8"))).isTrue();
+            assertThat(dictionaryDrop(FilterPredicate.in("category",
+                    "nope_0", "nope_1", "nope_2", "nope_3", "nope_4", "nope_5", "nope_6", "nope_7", "cat_3"))).isFalse();
             // One present value is enough to keep it.
             assertThat(dictionaryDrop(FilterPredicate.in("category", "nope_a", "cat_3"))).isFalse();
         }
@@ -305,11 +310,9 @@ class DictionaryPushDownTest {
             assertThat(DictionaryFilterSupport.valueAbsent(null, cat5)).isFalse();
             assertThat(DictionaryFilterSupport.valueAbsent(dict(999), cat5)).isFalse();
 
-            // absentAll: probes given out of order still match, since the probe list is sorted first
+            // absentAll: a present probe anywhere in the list keeps the row group
             assertThat(DictionaryFilterSupport.absentAll(dict(CATEGORY_COLUMN),
                     new byte[][]{ nope, cat5 })).isFalse();
-
-            // absentAll: a match at the sorted probe list's first index counts as present
             assertThat(DictionaryFilterSupport.absentAll(dict(CATEGORY_COLUMN),
                     new byte[][]{ cat0, nope })).isFalse();
 
@@ -399,6 +402,36 @@ class DictionaryPushDownTest {
         }
 
         @Test
+        void longInListsAreDecidedThroughTheIndexedKernels() throws IOException {
+            // Nine literals exceed the pass limit. Close together they are indexed as a bitmask
+            // ({1500..1508}, then {1992..2000} holding the stored 2000); seventeen literals a
+            // stride of 2^20 apart exceed the sparse pass limit as well and force the hash set
+            // ({1500, 1500 + 2^20, ...}, then the same list holding 3000).
+            assertThat(dictionaryDrop(FilterPredicate.in("i64", longs(9, 1500L, 1L)))).isTrue();
+            assertThat(dictionaryDrop(FilterPredicate.in("i64", longs(9, 1992L, 1L)))).isFalse();
+            assertThat(dictionaryDrop(FilterPredicate.in("i64", longs(17, 1500L, 1L << 20)))).isTrue();
+            long[] withPresent = longs(17, 1500L, 1L << 20);
+            withPresent[4] = 3000L;
+            assertThat(dictionaryDrop(FilterPredicate.in("i64", withPresent))).isFalse();
+
+            // Literals inside the statistics range keep statistics undecided; 10..12 lie above
+            // the stored maximum and are rejected by the bitmask's range check.
+            assertThat(dictionaryDrop(FilterPredicate.in("i32", 1, 2, 4, 5, 7, 8, 10, 11, 12))).isTrue();
+            assertThat(dictionaryDrop(FilterPredicate.in("i32", 1, 2, 4, 5, 7, 8, 10, 11, 9))).isFalse();
+            assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8))).isTrue();
+            assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 2.5))).isFalse();
+        }
+
+        /// `count` `long`s from `first` upwards, `step` apart.
+        private static long[] longs(int count, long first, long step) {
+            long[] values = new long[count];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = first + i * step;
+            }
+            return values;
+        }
+
+        @Test
         void floatInListDropsOnlyWhenEveryValueIsAbsent() throws IOException {
             assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0f, 3.5f))).isTrue();
             assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0f, 2.5f))).isFalse();
@@ -417,7 +450,7 @@ class DictionaryPushDownTest {
         }
 
         @Test
-        void int32UnsortedProbesAndFirstIndexMatch() throws IOException {
+        void int32PresentProbeAnywhereInTheListKeepsTheRowGroup() throws IOException {
             assertThat(DictionaryFilterSupport.absentAll(dict(0), new int[]{ 9, 1, 5 })).isFalse();
             assertThat(DictionaryFilterSupport.absentAll(dict(0), new int[]{ 0, 5, 7 })).isFalse();
             assertThat(DictionaryFilterSupport.absentAll(null, new int[]{ 0 })).isFalse();
@@ -427,7 +460,7 @@ class DictionaryPushDownTest {
         }
 
         @Test
-        void int64UnsortedProbesAndFirstIndexMatch() throws IOException {
+        void int64PresentProbeAnywhereInTheListKeepsTheRowGroup() throws IOException {
             assertThat(DictionaryFilterSupport.absentAll(dict(1), new long[]{ 3000L, 100L, 500L })).isFalse();
             assertThat(DictionaryFilterSupport.absentAll(dict(1), new long[]{ 0L, 500L, 700L })).isFalse();
             assertThat(DictionaryFilterSupport.absentAll(null, new long[]{ 0L })).isFalse();
@@ -438,7 +471,7 @@ class DictionaryPushDownTest {
 
         @Test
         void floatingPointInListNeedsTheDictionaryArmOfItsOwnWidth() throws IOException {
-            // Unsorted probes, and a match at the sorted list's first index, as the integer arms above.
+            // A present probe at either end of the list, as the integer arms above.
             assertThat(DictionaryFilterSupport.absentAll(dict(F64_COLUMN), new double[]{ 4.5, 1.5, 3.5 }))
                     .isFalse();
             assertThat(DictionaryFilterSupport.absentAll(dict(F32_COLUMN), new float[]{ 4.5f, 1.5f, 3.5f }))
@@ -582,8 +615,8 @@ class DictionaryPushDownTest {
 
         @Test
         void signedZeroInAnInListIsDecidedAtEachZeroSeparately() throws IOException {
-            // The list path indexes its probes and searches them per entry, where the single-value
-            // path scans; both orders separate the zeroes, so a +0.0 list is proven absent too.
+            // The list path compares the values' bits, under which the zeroes differ as they do
+            // under Float.compare, so a +0.0 list is proven absent too.
             assertThat(absentAll(FLOAT_COLUMN, 0.0f)).isTrue();
             assertThat(absentAll(DOUBLE_COLUMN, 0.0)).isTrue();
 
