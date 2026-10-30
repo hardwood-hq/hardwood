@@ -7,6 +7,10 @@
  */
 package dev.hardwood.internal.bloomfilter;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
+
 /// XXH64 hash, as used by the Parquet split-block bloom filter to turn a value's plain-encoded
 /// bytes into the 64-bit hash that [SplitBlockBloomFilter] probes. The seed is fixed at 0, the
 /// value Parquet specified for bloom filters. All arithmetic is unsigned 64-bit (Java `long`
@@ -26,6 +30,11 @@ public final class XxHash64 {
     /// accumulators and short-input start derive from a zero seed — see the Technical Approach
     /// section of <a href="https://parquet.apache.org/docs/file-format/bloomfilter/#technical-approach">the Parquet Bloom filter spec</a>.
     private static final long SEED = 0;
+
+    private static final VarHandle LONG_LE =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final VarHandle INT_LE =
+            MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
 
     private XxHash64() {
     }
@@ -150,20 +159,10 @@ public final class XxHash64 {
     }
 
     private static long read64(byte[] b, int i) {
-        return (b[i] & 0xFFL)
-                | (b[i + 1] & 0xFFL) << 8
-                | (b[i + 2] & 0xFFL) << 16
-                | (b[i + 3] & 0xFFL) << 24
-                | (b[i + 4] & 0xFFL) << 32
-                | (b[i + 5] & 0xFFL) << 40
-                | (b[i + 6] & 0xFFL) << 48
-                | (b[i + 7] & 0xFFL) << 56;
+        return (long) LONG_LE.get(b, i);
     }
 
     private static long read32(byte[] b, int i) {
-        return (b[i] & 0xFFL)
-                | (b[i + 1] & 0xFFL) << 8
-                | (b[i + 2] & 0xFFL) << 16
-                | (b[i + 3] & 0xFFL) << 24;
+        return (int) INT_LE.get(b, i) & 0xFFFFFFFFL;
     }
 }
