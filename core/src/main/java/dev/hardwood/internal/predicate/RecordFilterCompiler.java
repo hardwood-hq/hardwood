@@ -756,10 +756,11 @@ public final class RecordFilterCompiler {
         String[] path = new String[targetIndex];
 
         for (int i = 0; i < targetIndex; i++) {
-            path[i] = elements.get(i);
+            path[i] = elements.get(i).intern();
         }
 
-        return new NullFieldTarget(path, elements.get(targetIndex));
+        // Interned as pathSegments interns its names: the target is resolved by name per row.
+        return new NullFieldTarget(path, elements.get(targetIndex).intern());
     }
 
     private static SchemaNode child(SchemaNode.GroupNode group, String name) {
@@ -787,6 +788,8 @@ public final class RecordFilterCompiler {
         return current;
     }
 
+    /// The names of the structs above the column, interned: a row's accessors hold their names
+    /// interned, so a matcher resolving these per row finds each by one reference comparison.
     static String[] pathSegments(FileSchema schema, int columnIndex) {
         List<String> elements = schema.getColumn(columnIndex).fieldPath().elements();
         if (elements.size() <= 1) {
@@ -794,12 +797,13 @@ public final class RecordFilterCompiler {
         }
         String[] out = new String[elements.size() - 1];
         for (int i = 0; i < out.length; i++) {
-            out[i] = elements.get(i);
+            out[i] = elements.get(i).intern();
         }
         return out;
     }
 
+    /// The column's name, interned for the reason [#pathSegments] gives.
     static String leafName(FileSchema schema, int columnIndex) {
-        return schema.getColumn(columnIndex).fieldPath().leafName();
+        return schema.getColumn(columnIndex).fieldPath().leafName().intern();
     }
 }
