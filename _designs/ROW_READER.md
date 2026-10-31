@@ -53,9 +53,11 @@ A projected name resolves to exactly one schema node, the node at that path from
 
 | Accessor | Index counts | Name resolves |
 |---|---|---|
-| `FlatRowReader` | Projected leaf columns (all top-level) | Leaf name, through a `StringToIntMap` built at construction |
+| `FlatRowReader` | Projected leaf columns (all top-level) | Leaf name, through an `InternedNameMap` built at construction |
 | `NestedRowReader` | Projected top-level fields | Top-level field name, through `TopLevelFieldMap` |
 | `PqStruct` | Projected children of that struct | Child name, through the `Struct` descriptor's own map |
+
+All three name maps are `InternedNameMap`s, built once from the projected names. They hold the names interned, so a name the caller passes as a string literal is found by one reference comparison; any other instance of the name is found by equality. A name that more than one projected sibling carries, which Parquet does not forbid, resolves to the last of them; the others are reached by index.
 
 The index is not `ColumnSchema.columnIndex()`, the leaf's position in the file schema. The two agree only for a flat file read with `ColumnProjection.all()`; under a projection or on a nested file they differ, and a leaf index passed to an accessor reads another field or fails.
 

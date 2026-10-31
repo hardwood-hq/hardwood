@@ -7668,3 +7668,31 @@ pq.write_table(
 )
 print("\nGenerated empty_row_group.parquet:")
 print("  - one required INT64 column 'id', one row group of 0 rows")
+
+# ===== Sibling fields of one name =====
+# Parquet does not forbid two siblings of one name, and PyArrow writes them. By name a row reader
+# reaches the last of them, by index each of them; the values differ so a test can tell which.
+pq.write_table(
+    pa.Table.from_arrays([pa.array([1, 2], pa.int64()), pa.array([10, 20], pa.int64())],
+                         schema=pa.schema([pa.field('id', pa.int64(), False),
+                                           pa.field('id', pa.int64(), False)])),
+    'core/src/test/resources/duplicate_column_names.parquet',
+)
+print("\nGenerated duplicate_column_names.parquet:")
+print("  - two required INT64 columns both named 'id': 1, 2 and 10, 20")
+
+_dup_struct = pa.struct([pa.field('v', pa.int32(), False), pa.field('v', pa.int32(), False)])
+pq.write_table(
+    pa.Table.from_arrays([pa.array([1, 2], pa.int64()),
+                          pa.array([100, 200], pa.int64()),
+                          pa.StructArray.from_arrays([pa.array([3, 4], pa.int32()),
+                                                      pa.array([30, 40], pa.int32())],
+                                                     fields=list(_dup_struct))],
+                         schema=pa.schema([pa.field('id', pa.int64(), False),
+                                           pa.field('id', pa.int64(), False),
+                                           pa.field('s', _dup_struct, False)])),
+    'core/src/test/resources/duplicate_field_names_nested.parquet',
+)
+print("\nGenerated duplicate_field_names_nested.parquet:")
+print("  - two required INT64 columns both named 'id' (1, 2 and 100, 200), and a struct 's' of two")
+print("    INT32 children both named 'v' (3, 4 and 30, 40)")
