@@ -39,6 +39,7 @@ import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqFile;
@@ -103,6 +104,15 @@ public final class FlatRowReader implements FileAwareRowReader {
     // When every leaf for this column in the current batch is present, the
     // slot points to [#ALL_PRESENT] so the per-row check needs no null guard.
     private Object[] flatValueArrays;
+    // Typed views of `flatValueArrays`: each column's array sits in the slot of its own type,
+    // and the other slots are `null`. The primitive accessors read through these without a
+    // cast, and fail on the `null`.
+    private final int[][] intValues;
+    private final long[][] longValues;
+    private final float[][] floatValues;
+    private final double[][] doubleValues;
+    private final boolean[][] booleanValues;
+    private final BinaryBatchValues[] binaryValues;
     private long[][] flatValidity;
     private BatchExchange.Batch[] previousBatches;
     /// Whether statistics proved every row of the batch being served matches the filter,
@@ -194,6 +204,12 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.payload = payload;
         int payloadColumnCount = payload.getProjectedColumnCount();
         this.flatValueArrays = new Object[payloadColumnCount];
+        this.intValues = new int[payloadColumnCount][];
+        this.longValues = new long[payloadColumnCount][];
+        this.floatValues = new float[payloadColumnCount][];
+        this.doubleValues = new double[payloadColumnCount][];
+        this.booleanValues = new boolean[payloadColumnCount][];
+        this.binaryValues = new BinaryBatchValues[payloadColumnCount];
         this.flatValidity = new long[payloadColumnCount][];
         this.previousBatches = new BatchExchange.Batch[columnCount];
         this.matchMerger = matchMerger;
@@ -569,7 +585,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
             throwNull(columnIndex);
         }
-        return ((int[]) flatValueArrays[columnIndex])[rowIndex];
+        int[] values = intValues[columnIndex];
+        if (values == null) {
+            throw typeMismatch(columnIndex, "an int");
+        }
+        return values[rowIndex];
     }
 
     @Override
@@ -577,7 +597,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
             throwNull(columnIndex);
         }
-        return ((long[]) flatValueArrays[columnIndex])[rowIndex];
+        long[] values = longValues[columnIndex];
+        if (values == null) {
+            throw typeMismatch(columnIndex, "a long");
+        }
+        return values[rowIndex];
     }
 
     @Override
@@ -585,8 +609,9 @@ public final class FlatRowReader implements FileAwareRowReader {
         if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
             throwNull(columnIndex);
         }
-        if (physicalTypes[columnIndex] == PhysicalType.FLOAT) {
-            return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+        float[] values = floatValues[columnIndex];
+        if (values != null) {
+            return values[rowIndex];
         }
         // FLOAT16 surfaces as FIXED_LEN_BYTE_ARRAY(2) annotated Float16Type; any other
         // column is one the caller has asked for a float it does not hold.
@@ -605,7 +630,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
             throwNull(columnIndex);
         }
-        return ((double[]) flatValueArrays[columnIndex])[rowIndex];
+        double[] values = doubleValues[columnIndex];
+        if (values == null) {
+            throw typeMismatch(columnIndex, "a double");
+        }
+        return values[rowIndex];
     }
 
     @Override
@@ -613,7 +642,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
             throwNull(columnIndex);
         }
-        return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+        boolean[] values = booleanValues[columnIndex];
+        if (values == null) {
+            throw typeMismatch(columnIndex, "a boolean");
+        }
+        return values[rowIndex];
     }
 
     // ==================== Primitive Accessors by Name ====================
@@ -654,7 +687,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             ColumnSchema col = columnSchemas[columnIndex];
             throw LogicalAccessorKind.notText(currentFileName, col.name(), col.type(), col.logicalType());
         }
-        return ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
+        return binaryValues[columnIndex].stringAt(rowIndex);
     }
 
     @Override
@@ -667,7 +700,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (isNull(columnIndex)) {
             return null;
         }
-        return ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
+        BinaryBatchValues values = binaryValues[columnIndex];
+        if (values == null) {
+            throw typeMismatch(columnIndex, "bytes");
+        }
+        return values.byteArrayAt(rowIndex);
     }
 
     @Override
@@ -1027,7 +1064,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             // at the position the projection requested them in.
             if (i < flatValueArrays.length) {
                 int position = payload.exposedPosition(i);
-                flatValueArrays[position] = batch.values;
+                installValues(position, batch.values);
                 flatValidity[position] = batch.validity != null ? batch.validity : ALL_PRESENT;
             }
             previousBatches[i] = batch;
@@ -1085,6 +1122,44 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     private String prefix() {
         return ExceptionContext.filePrefix(currentFileName);
+    }
+
+    /// Points the column's value slots at `values`: [#flatValueArrays], and the typed slot of
+    /// its type, leaving the others `null`.
+    private void installValues(int columnIndex, Object values) {
+        flatValueArrays[columnIndex] = values;
+        intValues[columnIndex] = values instanceof int[] ints ? ints : null;
+        longValues[columnIndex] = values instanceof long[] longs ? longs : null;
+        floatValues[columnIndex] = values instanceof float[] floats ? floats : null;
+        doubleValues[columnIndex] = values instanceof double[] doubles ? doubles : null;
+        booleanValues[columnIndex] = values instanceof boolean[] booleans ? booleans : null;
+        binaryValues[columnIndex] = values instanceof BinaryBatchValues binary ? binary : null;
+    }
+
+    /// The failure of a primitive accessor for a type the column at `columnIndex` does not hold,
+    /// worded as [LogicalAccessorKind] words its rejections, and naming the accessor that reads
+    /// the column.
+    private IllegalArgumentException typeMismatch(int columnIndex, String wanted) {
+        ColumnSchema col = columnSchemas[columnIndex];
+        return new IllegalArgumentException(prefix() + "Column '" + col.name() + "' is " + col.type()
+                + (col.logicalType() == null ? "" : " annotated " + col.logicalType())
+                + ", which cannot be read as " + wanted + "; read it with " + fittingAccessor(columnIndex));
+    }
+
+    /// The accessor that reads the column at `columnIndex` as what it holds.
+    private String fittingAccessor(int columnIndex) {
+        ColumnSchema col = columnSchemas[columnIndex];
+        return switch (col.type()) {
+            case BOOLEAN -> "getBoolean";
+            case INT32 -> "getInt";
+            case INT64 -> "getLong";
+            case INT96 -> "getTimestamp";
+            case FLOAT -> "getFloat";
+            case DOUBLE -> "getDouble";
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> col.logicalType() instanceof LogicalType.Float16Type ? "getFloat"
+                    : col.logicalType() != null && textColumns[columnIndex] ? "getString"
+                    : "getBinary";
+        };
     }
 
     private int resolveIndex(String name) {
