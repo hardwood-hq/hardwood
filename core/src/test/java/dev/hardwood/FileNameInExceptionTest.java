@@ -34,16 +34,17 @@ class FileNameInExceptionTest {
     // ==================== RowReader (single file) ====================
 
     @Test
-    void rowReaderTypeMismatchThrowsClassCastException() throws Exception {
+    void rowReaderTypeMismatchIncludesFileName() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
              RowReader reader = fileReader.rowReader()) {
 
             assertThat(reader.hasNext()).isTrue();
             reader.next();
 
-            // "id" is LONG — requesting INT fails via the underlying long[]→int[] cast.
             assertThatThrownBy(() -> reader.getInt("id"))
-                    .isInstanceOf(ClassCastException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("[" + FILE_NAME + "] Column 'id' is INT64, which cannot be read as an int;"
+                            + " read it with getLong");
         }
     }
 
@@ -70,9 +71,7 @@ class FileNameInExceptionTest {
         // is null on every third row (0-indexed positions 2, 5, 8, …). Copy the file
         // under a second, distinct name so file-boundary detection in the batch plan is
         // actually exercised, then read the same null offset from each copy: the NPE
-        // message must be attributed to the file the current row came from. This is
-        // the only multi-file RowReader path that surfaces file-prefixed errors —
-        // wrong-type access goes through a raw `ClassCastException` with no prefix.
+        // message must be attributed to the file the current row came from.
         Path firstFile = Paths.get("src/test/resources/delta_binary_packed_optional_test.parquet");
         String firstFileName = "delta_binary_packed_optional_test.parquet";
         Path secondFile = tempDir.resolve("second_file.parquet");
