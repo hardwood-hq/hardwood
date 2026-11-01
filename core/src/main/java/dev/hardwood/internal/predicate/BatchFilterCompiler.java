@@ -74,16 +74,17 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// Eligibility:
 ///
-/// - Every leaf must be a supported `(type, op)` whose column is a **top-level**
-///   projected field.
+/// - Every leaf must be a supported `(type, op)` whose column is projected, and is a
+///   **top-level** field unless the caller reads the leaves below non-repeated structs as flat
+///   batches. A null test on a group is never eligible.
 /// - `And`/`Or` may nest, as long as no single column appears in more than one
 ///   independent subtree. Same-column leaves under a single shared `And`/`Or`
 ///   fold into a per-column [AndBatchMatcher] / [OrBatchMatcher] composite — the
 ///   same mechanism that handles `id >= x AND id <= y` today.
 ///
-/// Anything else (intermediate-struct paths, `Float16Predicate`,
-/// `GeospatialPredicate`, unsupported `(type, op)`) returns `null` and the caller
-/// falls back to the row reader's record-level matcher.
+/// Anything else (intermediate-struct paths the caller does not read flat, group null tests,
+/// `Float16Predicate`, `GeospatialPredicate`, unsupported `(type, op)`) returns `null` and the
+/// caller falls back to the row reader's record-level matcher.
 ///
 /// A binary leaf only ever names a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96`
 /// column, each of which reaches the batch as a
@@ -96,14 +97,19 @@ public final class BatchFilterCompiler {
     private BatchFilterCompiler() {}
 
     /// Returns a [CompiledBatchFilter] or `null` if the predicate is not eligible.
+    ///
+    /// @param structLeaves whether a leaf below a non-repeated struct reaches the reader as a flat
+    ///        batch whose validity is clear wherever the leaf or a group above it is absent, as on
+    ///        [dev.hardwood.internal.reader.row.FlatRowReader]. Without it only top-level leaves
+    ///        are eligible.
     public static CompiledBatchFilter tryCompile(ResolvedPredicate predicate, FileSchema schema,
-            IntUnaryOperator topLevelFieldIndex) {
+            IntUnaryOperator topLevelFieldIndex, boolean structLeaves) {
         // Shared scratch array — threaded through every recursive `compile` call
         // and populated in-place as subtrees commit their per-column matchers.
         // Not a "result" of any subtree; it lives here, so its lifetime is one
         // tryCompile invocation.
         ColumnBatchMatcher[] matchers = new ColumnBatchMatcher[schema.getColumnCount()];
-        Result r = compile(predicate, schema, topLevelFieldIndex, matchers);
+        Result r = compile(predicate, schema, topLevelFieldIndex, structLeaves, matchers);
         if (r == null) {
             return null;
         }
@@ -137,19 +143,20 @@ public final class BatchFilterCompiler {
     }
 
     private static Result compile(ResolvedPredicate p, FileSchema schema, IntUnaryOperator projection,
-            ColumnBatchMatcher[] matchers) {
-        if (p instanceof ResolvedPredicate.And and) {
-            return compileCompound(and.children(), false, schema, projection, matchers);
+            boolean structLeaves, ColumnBatchMatcher[] matchers) {
+        if (p instanceof ResolvedPredicate.And(List<ResolvedPredicate> children)) {
+            return compileCompound(children, false, schema, projection, structLeaves, matchers);
         }
-        if (p instanceof ResolvedPredicate.Or or) {
-            return compileCompound(or.children(), true, schema, projection, matchers);
+        if (p instanceof ResolvedPredicate.Or(List<ResolvedPredicate> children)) {
+            return compileCompound(children, true, schema, projection, structLeaves, matchers);
         }
-        return compileLeaf(p, schema, projection);
+        return compileLeaf(p, schema, projection, structLeaves);
     }
 
-    private static Result compileLeaf(ResolvedPredicate leaf, FileSchema schema, IntUnaryOperator projection) {
+    private static Result compileLeaf(ResolvedPredicate leaf, FileSchema schema, IntUnaryOperator projection,
+                                      boolean structLeaves) {
         int fileIdx = leafColumnIndex(leaf);
-        if (fileIdx == -1 || !isTopLevel(schema, fileIdx) || !isSupported(leaf)) {
+        if (fileIdx == -1 || !(structLeaves || isTopLevel(schema, fileIdx)) || !isSupported(leaf)) {
             return null;
         }
         int projected = projection.applyAsInt(fileIdx);
@@ -167,10 +174,10 @@ public final class BatchFilterCompiler {
     }
 
     private static Result compileCompound(List<ResolvedPredicate> children, boolean isOr,
-            FileSchema schema, IntUnaryOperator projection, ColumnBatchMatcher[] matchers) {
+            FileSchema schema, IntUnaryOperator projection, boolean structLeaves, ColumnBatchMatcher[] matchers) {
         int n = children.size();
         if (n == 1) {
-            return compile(children.getFirst(), schema, projection, matchers);
+            return compile(children.getFirst(), schema, projection, structLeaves, matchers);
         }
         // Compile each child and track whether every child so far is single-column
         // on the same column. `sharedColumnIndex` ends >= 0 iff that holds for all
@@ -178,7 +185,7 @@ public final class BatchFilterCompiler {
         Result[] childResults = new Result[n];
         int sharedColumnIndex = -1;
         for (int i = 0; i < n; i++) {
-            Result cr = compile(children.get(i), schema, projection, matchers);
+            Result cr = compile(children.get(i), schema, projection, structLeaves, matchers);
             if (cr == null) {
                 return null;
             }
@@ -288,8 +295,10 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.UnsignedLongInPredicate ignored -> true;
             case ResolvedPredicate.FloatInPredicate ignored -> true;
             case ResolvedPredicate.DoubleInPredicate ignored -> true;
-            case ResolvedPredicate.IsNullPredicate ignored -> true;
-            case ResolvedPredicate.IsNotNullPredicate ignored -> true;
+            // A null test on a group reads the leaf it is answered from at the group's definition
+            // level, which a leaf's validity bitmap does not hold.
+            case ResolvedPredicate.IsNullPredicate p -> !p.group();
+            case ResolvedPredicate.IsNotNullPredicate p -> !p.group();
             case ResolvedPredicate.EveryNonNullRowPredicate ignored -> true;
             case ResolvedPredicate.NoRowPredicate ignored -> true;
             case ResolvedPredicate.BooleanPredicate ignored -> true;

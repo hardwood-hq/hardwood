@@ -268,7 +268,8 @@ address top-level fields, and a group name resolves to a record-mode `PqStructIm
 `NestedBatchIndex` of the row-aligned batches, with no offsets. Leaf-null and struct-null
 stay distinct through the definition levels of each nullable struct's first projected leaf,
 which `FlatColumn` keeps beside the values for that leaf alone; a top-level struct's
-presence bitmap is derived from them per batch. That is the capability stage 5 needs for
+presence bitmap is derived from them per batch. A filter leaf below a struct compiles to a batch
+matcher on the flat reader, as a top-level one does. That is the capability stage 5 needs for
 every non-repeated struct: nothing here is written to be deleted.
 
 #631 is a struct perf test in `performance-testing/end-to-end`. Its flat fixture is a

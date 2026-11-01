@@ -110,7 +110,7 @@ public class RecordFilterMicroBenchmark {
 
         ProjectedSchema projection = ProjectedSchema.create(schema, ColumnProjection.all());
         batchCompiled = BatchFilterCompiler.tryCompile(predicate, schema,
-                projection::toProjectedIndex);
+                projection::toProjectedIndex, false);
         if (batchCompiled != null) {
             ColumnBatchMatcher[] fragments = batchCompiled.columnMatchers();
             batchBatches = buildMatcherBatches(rows, fragments.length);

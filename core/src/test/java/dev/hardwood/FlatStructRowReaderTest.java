@@ -153,9 +153,9 @@ class FlatStructRowReaderTest {
         assertThat(readFlatAndNested(null)).hasSize(ROWS);
     }
 
-    /// Filters on leaves below a struct, and a filter on a top-level leaf, which prunes row groups
-    /// and leaves one undecided, so that the struct batches the flat reader serves are the ones
-    /// the filter keeps rows of.
+    /// Filters on leaves below a struct, which the flat reader evaluates with batch matchers, and
+    /// a filter on a top-level leaf, which prunes row groups and leaves one undecided, so that
+    /// the struct batches the flat reader serves are the ones the merger keeps rows of.
     static Stream<FilterPredicate> filters() {
         return Stream.of(
                 FilterPredicate.gt("id", 4_000L),
@@ -170,7 +170,15 @@ class FlatStructRowReaderTest {
 
     @ParameterizedTest
     @MethodSource("filters")
-    void filtersOnStructLeavesAsTheNestedReaderDoes(FilterPredicate filter) throws Exception {
+    void filtersOnStructLeavesWithBatchMatchersAsTheNestedReaderDoes(FilterPredicate filter) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(structs))) {
+            FileSchema schema = reader.getFileSchema();
+            ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+            assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
+                    projected::toProjectedIndex, true))
+                    .as("filter %s must take the batch matchers", filter)
+                    .isNotNull();
+        }
         assertThat(readFlatAndNested(filter)).isNotEmpty();
     }
 
@@ -193,7 +201,7 @@ class FlatStructRowReaderTest {
             FileSchema schema = reader.getFileSchema();
             ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
             assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
-                    projected::toProjectedIndex))
+                    projected::toProjectedIndex, true))
                     .as("filter %s must take the per-row matcher", filter)
                     .isNull();
         }

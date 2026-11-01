@@ -271,7 +271,7 @@ class BatchMatcherRowReaderTest {
     private static void assertBatchMatchers(FilterPredicate filter, FileSchema schema) {
         ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                FilterPredicateResolver.resolve(filter, schema), schema, projected::toProjectedIndex);
+                FilterPredicateResolver.resolve(filter, schema), schema, projected::toProjectedIndex, true);
         assertThat(compiled).as("filter %s must be batch-matcher eligible", filter).isNotNull();
     }
 }

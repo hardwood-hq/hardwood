@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.predicate.matcher.ints.IntInBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.longs.LongGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
 import dev.hardwood.internal.reader.batch.BatchExchange;
@@ -96,7 +97,7 @@ class BatchFilterCompilerTest {
 
     private static ColumnBatchMatcher[] compileMatchers(ResolvedPredicate predicate, FileSchema schema,
             IntUnaryOperator projection) {
-        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(predicate, schema, projection);
+        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(predicate, schema, projection, false);
         return compiled == null ? null : compiled.columnMatchers();
     }
 
@@ -330,7 +331,7 @@ class BatchFilterCompilerTest {
             ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
                     new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
                     new ResolvedPredicate.Float16Predicate(1, Operator.EQ, 1.5f)));
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
+            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity(), false));
         }
 
         @Test
@@ -342,14 +343,47 @@ class BatchFilterCompilerTest {
             SchemaElement id = SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
             FileSchema schema = FileSchema.fromSchemaElements(List.of(root, nest, id));
             ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
+            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity(), false));
+        }
+
+        @Test
+        void leafOnNonTopLevelPath_readAsFlatBatches_returnsOneFragment() {
+            FileSchema schema = nestedId(RepetitionType.OPTIONAL);
+            ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
+            CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
+                    predicate, schema, IntUnaryOperator.identity(), true);
+            assertNotNull(compiled);
+            assertInstanceOf(LongGtBatchMatcher.class, compiled.columnMatchers()[0]);
+        }
+
+        @Test
+        void nullTestOnAGroup_returnsNull() {
+            // `nest IS NULL` is answered from `nest.id` at `nest`'s level, 1, below the leaf's 2:
+            // the leaf's validity cannot tell a null `nest` from a null `id` in a present one.
+            FileSchema optional = nestedId(RepetitionType.OPTIONAL);
+            assertNull(BatchFilterCompiler.tryCompile(new ResolvedPredicate.IsNullPredicate(0, 1, 2), optional,
+                    IntUnaryOperator.identity(), true));
+            assertNull(BatchFilterCompiler.tryCompile(new ResolvedPredicate.IsNotNullPredicate(0, 1, 2), optional,
+                    IntUnaryOperator.identity(), true));
+            // A required `nest` is never null, though its optional leaf is.
+            FileSchema required = nestedId(RepetitionType.REQUIRED);
+            assertNull(BatchFilterCompiler.tryCompile(new ResolvedPredicate.IsNullPredicate(0, 0, 1), required,
+                    IntUnaryOperator.identity(), true));
+        }
+
+        /// root -> nest (group of `nestRepetition`) -> id (optional INT64).
+        private static FileSchema nestedId(RepetitionType nestRepetition) {
+            SchemaElement root = SchemaElement.root("root", 1);
+            SchemaElement nest = SchemaElement.group("nest", nestRepetition, 1);
+            SchemaElement id = SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
+            return FileSchema.fromSchemaElements(List.of(root, nest, id));
         }
 
         @Test
         void topLevelFieldIndex_returnsMinusOne_returnsNull() {
             FileSchema schema = schema(leaf("id", PhysicalType.INT64));
             ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, col -> -1));
+            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, col -> -1, false));
         }
 
     }
@@ -381,7 +415,7 @@ class BatchFilterCompilerTest {
                 new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L)
         ));
         CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
-                predicate, schema, IntUnaryOperator.identity());
+                predicate, schema, IntUnaryOperator.identity(), false);
         assertNotNull(result);
         assertEquals(1, result.columnMatchers().length);
         assertInstanceOf(OrBatchMatcher.class, result.columnMatchers()[0]);
@@ -396,7 +430,7 @@ class BatchFilterCompilerTest {
                 new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
         ));
         CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
-                predicate, schema, IntUnaryOperator.identity());
+                predicate, schema, IntUnaryOperator.identity(), false);
         assertNotNull(result);
         assertInstanceOf(LongBatchMatcher.class, result.columnMatchers()[0]);
         assertInstanceOf(DoubleBatchMatcher.class, result.columnMatchers()[1]);
@@ -417,7 +451,7 @@ class BatchFilterCompilerTest {
                 ))
         ));
         CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
-                predicate, schema, IntUnaryOperator.identity());
+                predicate, schema, IntUnaryOperator.identity(), false);
         assertNotNull(result);
         assertInstanceOf(LongBatchMatcher.class, result.columnMatchers()[0]);
         assertInstanceOf(OrBatchMatcher.class, result.columnMatchers()[1]);
@@ -437,7 +471,7 @@ class BatchFilterCompilerTest {
                         new ResolvedPredicate.DoublePredicate(1, Operator.LT, 0.0)))
         ));
         CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
-                predicate, schema, IntUnaryOperator.identity());
+                predicate, schema, IntUnaryOperator.identity(), false);
         assertNotNull(result);
         assertInstanceOf(MergePlan.Or.class, result.mergePlan());
     }
@@ -454,7 +488,7 @@ class BatchFilterCompilerTest {
                         new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L)))
         ));
         CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
-                predicate, schema, IntUnaryOperator.identity());
+                predicate, schema, IntUnaryOperator.identity(), false);
         assertNotNull(result);
         assertInstanceOf(OrBatchMatcher.class, result.columnMatchers()[0]);
         assertInstanceOf(MergePlan.Column.class, result.mergePlan());
@@ -474,6 +508,6 @@ class BatchFilterCompilerTest {
                         new ResolvedPredicate.LongPredicate(0, Operator.LT, 0L),
                         new ResolvedPredicate.DoublePredicate(1, Operator.LT, 0.0)))
         ));
-        assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
+        assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity(), false));
     }
 }
