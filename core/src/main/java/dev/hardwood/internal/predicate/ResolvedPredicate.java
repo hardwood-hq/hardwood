@@ -403,6 +403,49 @@ public sealed interface ResolvedPredicate {
         }
     }
 
+    /// Whether the tree tests for null a group that a row can leave absent: an
+    /// [IsNullPredicate] or [IsNotNullPredicate] whose node is a group ([IsNullPredicate#group()])
+    /// with a definition level above zero. A group required from the root is present on every
+    /// row, and its null tests are constants.
+    public static boolean testsGroupForNull(ResolvedPredicate predicate) {
+        return switch (predicate) {
+            case IsNullPredicate p -> p.group() && p.definitionLevel() > 0;
+            case IsNotNullPredicate p -> p.group() && p.definitionLevel() > 0;
+            case And(List<ResolvedPredicate> children) -> anyTestsGroupForNull(children);
+            case Or(List<ResolvedPredicate> children) -> anyTestsGroupForNull(children);
+            // Every other leaf tests a leaf column's value.
+            case IntPredicate ignored -> false;
+            case LongPredicate ignored -> false;
+            case UnsignedIntPredicate ignored -> false;
+            case UnsignedLongPredicate ignored -> false;
+            case FloatPredicate ignored -> false;
+            case Float16Predicate ignored -> false;
+            case DoublePredicate ignored -> false;
+            case BooleanPredicate ignored -> false;
+            case BinaryPredicate ignored -> false;
+            case IntInPredicate ignored -> false;
+            case LongInPredicate ignored -> false;
+            case UnsignedIntInPredicate ignored -> false;
+            case UnsignedLongInPredicate ignored -> false;
+            case BinaryInPredicate ignored -> false;
+            case FloatInPredicate ignored -> false;
+            case DoubleInPredicate ignored -> false;
+            case Float16InPredicate ignored -> false;
+            case EveryNonNullRowPredicate ignored -> false;
+            case NoRowPredicate ignored -> false;
+            case GeospatialPredicate ignored -> false;
+        };
+    }
+
+    private static boolean anyTestsGroupForNull(List<ResolvedPredicate> children) {
+        for (ResolvedPredicate child : children) {
+            if (testsGroupForNull(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// Rewrites every leaf's `columnIndex` through `columnMapping`, which maps a
     /// column index in the schema the predicate was resolved against onto the
     /// corresponding index in another schema.

@@ -578,7 +578,7 @@ public class ParquetFileReader implements Closeable {
 
     /// Creates a [RowReader] over `iterator`'s read.
     ///
-    /// Selects [FlatRowReader] when [#isFlatProjection] holds for the decoded columns,
+    /// Selects [FlatRowReader] when [#isFlatProjection] holds for the decoded columns and the filter,
     /// and [NestedRowReader] otherwise. Columns the predicate adds and the caller did
     /// not project count toward that choice. Either reader evaluates a filter per batch
     /// by the batch matchers or per record in the reader, by the predicate's shape.
@@ -597,27 +597,29 @@ public class ParquetFileReader implements Closeable {
         // projection sizes the same whichever reader reads it.
         int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
         long budgetRows = readAheadBudgetRows(projection.decoded(), rowGroups);
-        RowReader reader = isFlatProjection(schema, projection.decoded())
+        RowReader reader = isFlatProjection(schema, projection.decoded(), filter)
                 ? FlatRowReader.create(iterator, schema, projection, context, filter, maxRows, batchSize, budgetRows)
                 : NestedRowReader.create(iterator, schema, projection, context, fixedListFastPathEnabled, filter,
                         maxRows, batchSize, budgetRows);
         return trackedChild(iterator, reader);
     }
 
-    /// Whether [FlatRowReader] can read `decoded`.
+    /// Whether [FlatRowReader] can read `decoded` under `filter`.
     ///
-    /// Every decoded column has repetition level zero, and every decoded top-level field
-    /// is a [SchemaNode.PrimitiveNode]. Both are required: an unannotated repeated primitive
-    /// is a top-level primitive that still repeats, and a non-repeated leaf under a group
-    /// has repetition level zero while its top-level field is a group. Flat accessors address
-    /// leaves by leaf name, so a group field stays on [NestedRowReader].
+    /// No decoded column repeats, and every decoded top-level field is a
+    /// [SchemaNode.PrimitiveNode] or a plain struct whose projected fields are primitives and
+    /// plain structs in turn. Every leaf then holds one value per row, which is what the flat
+    /// reader addresses. An unannotated repeated primitive is a top-level primitive that still
+    /// repeats, so the first clause is needed beside the second. A variant or a `FILE` group
+    /// repeats nothing either, and stays on [NestedRowReader], which assembles their values.
     ///
     /// The test covers filter-only columns. [FlatRowReader] builds a flat column pipeline for
-    /// every decoded column, and its predicate view reads flat batches, so a scalar payload
-    /// filtered on a list or a struct stays on [NestedRowReader].
+    /// every decoded column, and its predicate view reads flat batches, so a payload filtered
+    /// on a list stays on [NestedRowReader]. So does a read whose filter tests a group for null:
+    /// the predicate view serves the leaves below a struct, but not the struct.
     ///
     /// [FileSchema#isFlatSchema] remains the test of the whole file.
-    private static boolean isFlatProjection(FileSchema schema, ProjectedSchema decoded) {
+    private static boolean isFlatProjection(FileSchema schema, ProjectedSchema decoded, ResolvedPredicate filter) {
         for (ColumnSchema column : decoded.getProjectedColumns()) {
             if (column.maxRepetitionLevel() != 0) {
                 return false;
@@ -625,11 +627,30 @@ public class ParquetFileReader implements Closeable {
         }
         List<SchemaNode> rootChildren = schema.getRootNode().children();
         for (int fieldIndex : decoded.getProjectedFieldIndices()) {
-            if (!(rootChildren.get(fieldIndex) instanceof SchemaNode.PrimitiveNode)) {
+            if (!isRowAligned(rootChildren.get(fieldIndex), decoded)) {
                 return false;
             }
         }
-        return true;
+        return filter == null || !ResolvedPredicate.testsGroupForNull(filter);
+    }
+
+    /// Whether `node` is a primitive, or a plain struct whose projected fields are each a
+    /// primitive or such a struct.
+    private static boolean isRowAligned(SchemaNode node, ProjectedSchema decoded) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode ignored -> true;
+            case SchemaNode.GroupNode group -> {
+                if (!group.isStruct() || group.isFile()) {
+                    yield false;
+                }
+                for (SchemaNode child : decoded.projectedChildren(group)) {
+                    if (!isRowAligned(child, decoded)) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+        };
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) throws IOException {

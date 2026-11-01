@@ -35,10 +35,12 @@ import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.reader.row.FlatRowReader;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
@@ -79,6 +81,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Run:
 ///   ./mvnw test -Pperformance-test -pl performance-testing/end-to-end \
 ///     -Dtest="RecordFilterBenchmarkTest" -Dperf.runs=10
+///
+/// [#compareStructFilterOverhead] runs the filters on the leaves of a struct over a file of its
+/// own; run it alone with `-Dtest="RecordFilterBenchmarkTest#compareStructFilterOverhead"`.
 class RecordFilterBenchmarkTest {
 
     private static final Path BENCHMARK_FILE = Path.of("target/record_filter_benchmark_with_long_strings.parquet");
@@ -125,6 +130,16 @@ class RecordFilterBenchmarkTest {
     private static final String PATH_BATCH = "(Batch Matcher Filtration)";
     private static final String PATH_CONSUMER = "(Consumer Side Filtration)";
     private static final String PATH_NONE = "";
+    private static final String PATH_NESTED = "(Nested Row Reader)";
+
+    private static final Path STRUCT_FILE = Path.of("target/record_filter_benchmark_structs.parquet");
+    /// Rows whose struct `s` is null.
+    private static final double STRUCT_NULL_RATE = 0.05;
+    /// Rows of a present `s` whose `s.amount` is null.
+    private static final double AMOUNT_NULL_RATE = 0.10;
+    /// What a struct contender reads: the struct, whose `amount` it reads per row, and `id`.
+    private static final String[] STRUCT_COLUMNS = {"id", "s"};
+    private static final int STRUCT_WARMUPS = 1;
 
     private record Run(long[] times, long[] rows, String path) {}
 
@@ -445,6 +460,182 @@ class RecordFilterBenchmarkTest {
         }
     }
 
+    /// Filters on the leaves of an optional struct `s` (`code` int 0..99, `amount` optional double
+    /// 0..1000, `cat` string over the 100 categories; `s` null on ~5% of rows), with `id` and the
+    /// top-level `value` (double 0..1000) beside it. Every contender but the filter-only one reads
+    /// `s` and its `amount` per row, as a caller of the struct does.
+    @Test
+    void compareStructFilterOverhead() throws Exception {
+        ensureStructFileExists();
+
+        int runs = Integer.parseInt(System.getProperty("perf.runs", String.valueOf(DEFAULT_RUNS)));
+
+        System.out.println("\n=== Struct Filter Benchmark ===");
+        System.out.println("File: " + STRUCT_FILE + " (" + Files.size(STRUCT_FILE) / (1024 * 1024) + " MB)");
+        System.out.println("Total rows: " + String.format("%,d", TOTAL_ROWS));
+        System.out.println("Runs per contender: " + runs);
+
+        Run scan = timeStruct(null, STRUCT_COLUMNS, runs);
+        Run amountHalf = timeStruct(FilterPredicate.lt("s.amount", 500.0), STRUCT_COLUMNS, runs);
+        Run amountSelective = timeStruct(FilterPredicate.lt("s.amount", 10.0), STRUCT_COLUMNS, runs);
+        Run codeIn = timeStruct(FilterPredicate.in("s.code", new int[] {1, 5, 10, 25, 50}), STRUCT_COLUMNS, runs);
+        Run catEq = timeStruct(FilterPredicate.eq("s.cat", EQ_CATEGORY), STRUCT_COLUMNS, runs);
+        Run twoLeaves = timeStruct(FilterPredicate.and(
+                FilterPredicate.lt("s.amount", 500.0),
+                FilterPredicate.lt("s.code", 50)), STRUCT_COLUMNS, runs);
+        Run topAndLeaf = timeStruct(FilterPredicate.and(
+                FilterPredicate.lt("value", 500.0),
+                FilterPredicate.lt("s.amount", 500.0)), new String[] {"id", "value", "s"}, runs);
+        Run amountNull = timeStruct(FilterPredicate.isNull("s.amount"), STRUCT_COLUMNS, runs);
+        Run filterOnly = timeStruct(FilterPredicate.lt("s.amount", 500.0), new String[] {"id"}, runs);
+
+        System.out.println("\nResults:");
+        System.out.printf("  %-50s %-26s %10s %15s %12s%n",
+                "Contender", "Path", "Time (ms)", "Rows", "Records/sec");
+        System.out.println("  " + "-".repeat(117));
+        printResults("Struct scan (id, s; no filter)", scan, runs);
+        System.out.println();
+        printResults("Struct leaf 50% (s.amount<500)", amountHalf, runs);
+        System.out.println();
+        printResults("Struct leaf 1% (s.amount<10)", amountSelective, runs);
+        System.out.println();
+        printResults("Struct leaf IN (s.code IN 5 values)", codeIn, runs);
+        System.out.println();
+        printResults("Struct leaf binary eq (s.cat=" + EQ_CATEGORY + ")", catEq, runs);
+        System.out.println();
+        printResults("Two struct leaves (s.amount<500 AND s.code<50)", twoLeaves, runs);
+        System.out.println();
+        printResults("Top-level and leaf (value<500 AND s.amount<500)", topAndLeaf, runs);
+        System.out.println();
+        printResults("Struct leaf IS NULL (s.amount)", amountNull, runs);
+        System.out.println();
+        printResults("Filter-only struct leaf (id; s.amount<500)", filterOnly, runs);
+
+        double present = (1 - STRUCT_NULL_RATE) * (1 - AMOUNT_NULL_RATE);
+        assertThat(scan.rows[0]).isEqualTo(TOTAL_ROWS);
+        assertFraction(amountHalf, present * 0.5);
+        assertFraction(amountSelective, present * 0.01);
+        assertFraction(codeIn, (1 - STRUCT_NULL_RATE) * 0.05);
+        assertFraction(catEq, (1 - STRUCT_NULL_RATE) * 0.01);
+        assertFraction(twoLeaves, present * 0.25);
+        assertFraction(topAndLeaf, present * 0.25);
+        assertFraction(amountNull, 1 - present);
+        assertThat(filterOnly.rows[0]).isEqualTo(amountHalf.rows[0]);
+    }
+
+    /// `run` kept `expected` of the rows, within half a percentage point.
+    private static void assertFraction(Run run, double expected) {
+        assertThat((double) run.rows[0] / TOTAL_ROWS).isBetween(expected - 0.005, expected + 0.005);
+    }
+
+    /// Sums the `s.amount` the struct contenders read, so that the reads are not optimised away.
+    private double structSink;
+
+    private Run timeStruct(FilterPredicate filter, String[] columns, int runs) throws Exception {
+        ColumnProjection projection = ColumnProjection.columns(columns);
+        boolean readsStruct = Arrays.asList(columns).contains("s");
+        String path = structPath(filter, projection);
+        for (int i = 0; i < STRUCT_WARMUPS; i++) {
+            runStruct(filter, projection, readsStruct);
+        }
+        long[] times = new long[runs];
+        long[] rows = new long[runs];
+        for (int i = 0; i < runs; i++) {
+            long start = System.nanoTime();
+            rows[i] = runStruct(filter, projection, readsStruct);
+            times[i] = System.nanoTime() - start;
+        }
+        return new Run(times, rows, path);
+    }
+
+    /// The reader the read takes and, on the flat reader, the filter's path.
+    private String structPath(FilterPredicate filter, ColumnProjection projection) throws IOException {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(STRUCT_FILE));
+             RowReader rows = structReader(reader, filter, projection)) {
+            if (!(rows instanceof FlatRowReader)) {
+                return PATH_NESTED;
+            }
+            // The read decodes the filter's columns too, which a filter-only contender leaves
+            // out of its projection, so the probe takes every column.
+            return filter == null ? PATH_NONE : probePath(filter, ColumnProjection.all(), reader.getFileSchema());
+        }
+    }
+
+    private long runStruct(FilterPredicate filter, ColumnProjection projection, boolean readsStruct)
+            throws IOException {
+        long count = 0;
+        double sum = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(STRUCT_FILE));
+             RowReader rows = structReader(reader, filter, projection)) {
+            while (rows.hasNext()) {
+                rows.next();
+                count++;
+                if (readsStruct) {
+                    PqStruct s = rows.getStruct("s");
+                    if (s != null && !s.isNull("amount")) {
+                        sum += s.getDouble("amount");
+                    }
+                }
+            }
+        }
+        structSink += sum;
+        return count;
+    }
+
+    private static RowReader structReader(ParquetFileReader reader, FilterPredicate filter,
+                                          ColumnProjection projection) throws IOException {
+        ParquetFileReader.RowReaderBuilder builder = reader.buildRowReader().projection(projection);
+        return (filter != null ? builder.filter(filter) : builder).build();
+    }
+
+    private void ensureStructFileExists() throws IOException {
+        if (Files.exists(STRUCT_FILE) && Files.size(STRUCT_FILE) > 0) {
+            return;
+        }
+        System.out.println("Generating struct benchmark file (" + TOTAL_ROWS / 1_000_000 + "M rows)...");
+
+        Schema struct = Schema.createRecord("s_t", null, "dev.hardwood.perf", false);
+        struct.setFields(List.of(
+                new Schema.Field("code", Schema.create(Schema.Type.INT), null, null),
+                new Schema.Field("amount", Schema.createUnion(Schema.create(Schema.Type.NULL),
+                        Schema.create(Schema.Type.DOUBLE)), null, null),
+                new Schema.Field("cat", Schema.create(Schema.Type.STRING), null, null)));
+        Schema schema = Schema.createRecord("struct_benchmark", null, "dev.hardwood.perf", false);
+        schema.setFields(List.of(
+                new Schema.Field("id", Schema.create(Schema.Type.LONG), null, null),
+                new Schema.Field("value", Schema.create(Schema.Type.DOUBLE), null, null),
+                new Schema.Field("s", Schema.createUnion(Schema.create(Schema.Type.NULL), struct), null, null)));
+
+        Configuration conf = new Configuration();
+        conf.set("parquet.writer.version", "v2");
+        org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(STRUCT_FILE.toAbsolutePath().toString());
+        try (ParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(hadoopPath)
+                .withSchema(schema)
+                .withConf(conf)
+                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                // One row group for the whole file, as the main benchmark file has.
+                .withRowGroupSize((long) TOTAL_ROWS * 256)
+                .withWriteMode(ParquetFileWriter.Mode.OVERWRITE)
+                .withPageWriteChecksumEnabled(false)
+                .build()) {
+            Random rng = new Random(44);
+            for (int i = 0; i < TOTAL_ROWS; i++) {
+                GenericRecord record = new GenericData.Record(schema);
+                record.put("id", (long) i);
+                record.put("value", rng.nextDouble() * 1000.0);
+                if (rng.nextDouble() >= STRUCT_NULL_RATE) {
+                    GenericRecord s = new GenericData.Record(struct);
+                    s.put("code", rng.nextInt(100));
+                    s.put("amount", rng.nextDouble() < AMOUNT_NULL_RATE ? null : rng.nextDouble() * 1000.0);
+                    s.put("cat", CATEGORIES[rng.nextInt(CATEGORY_COUNT)]);
+                    record.put("s", s);
+                }
+                writer.write(record);
+            }
+        }
+        System.out.println("Generated " + STRUCT_FILE + " (" + Files.size(STRUCT_FILE) / (1024 * 1024) + " MB)");
+    }
+
     private record EqualityRuns(Run eq, Run in, Run notIn) {}
 
     private interface Spelling {
@@ -509,7 +700,7 @@ class RecordFilterBenchmarkTest {
         // Probe the actual path the reader will take, **outside** the timing loop, so
         // the resolve + tryCompile work is not counted in the numbers.
         ColumnProjection projection = projectionFor(filter);
-        String path = probePath(filter, projection);
+        String path = probePath(filter, projection, fileSchema());
         for (int i = 0; i < warmups; i++) {
             runFilter(filter, projection);
         }
@@ -552,8 +743,7 @@ class RecordFilterBenchmarkTest {
     /// against the file schema and the contender's projection. Mirrors the gate in
     /// [dev.hardwood.internal.reader.row.FlatRowReader]: `tryCompile` returns `null` →
     /// consumer-side; all-null matcher array → consumer-side; otherwise → batch-matcher.
-    private String probePath(FilterPredicate filter, ColumnProjection projection) throws IOException {
-        FileSchema schema = fileSchema();
+    private static String probePath(FilterPredicate filter, ColumnProjection projection, FileSchema schema) {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         ProjectedSchema projected = ProjectedSchema.create(schema, projection);
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(

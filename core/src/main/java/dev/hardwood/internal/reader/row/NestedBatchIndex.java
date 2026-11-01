@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader.row;
 
+import java.util.Arrays;
+
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BinaryValueTest;
 import dev.hardwood.internal.reader.batch.NestedBatch;
@@ -89,6 +91,25 @@ final class NestedBatchIndex {
                 valueCounts, recordCounts, offsets, multiOffsets,
                 elementValidity, projectedSchema,
                 colCount > 0 ? batches[0].fileName : null);
+    }
+
+    /// Builds the batch index over row-aligned batches, in which no column repeats: every column
+    /// holds one value per record, at the record's index, so no column has offsets.
+    ///
+    /// @param valueArrays each column's values, by projected column
+    /// @param defLevels each column's definition levels, or `null` for a column whose levels no
+    ///        reader of the index consults
+    /// @param elementValidity each column's validity (set bit = present), or `null` for a
+    ///        column every value of which is present
+    /// @param recordCount the records every column holds
+    static NestedBatchIndex rowAligned(Object[] valueArrays, int[][] defLevels, long[][] elementValidity,
+                                       ColumnSchema[] columnSchemas, ProjectedSchema projectedSchema,
+                                       String fileName, int recordCount) {
+        int colCount = valueArrays.length;
+        int[] counts = new int[colCount];
+        Arrays.fill(counts, recordCount);
+        return new NestedBatchIndex(valueArrays, defLevels, columnSchemas, counts, counts,
+                new int[colCount][], new int[colCount][][], elementValidity, projectedSchema, fileName);
     }
 
     /// Compact a layer-indexed offsets array (length `layerCount`, with

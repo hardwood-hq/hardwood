@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.pipeline;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.Arrays;
 
 import dev.hardwood.internal.reader.batch.BitmapWords;
 import dev.hardwood.internal.reader.decode.FlatPageValues;
@@ -48,6 +49,26 @@ final class FlatFill {
         forEachRun(segment, (pageRow, destPos, length) -> {
             values.copy(pageRow, out, destPos, length);
             validity.mark(values.definitionLevels(), pageRow, destPos, length);
+        });
+    }
+
+    /// Copies `segment`'s definition levels from its page's `levels` into the cell's `out`, run by
+    /// run as [#fill] writes its values. Segments of one cell write disjoint ranges of `out`.
+    ///
+    /// @param levels the page's definition levels, or `null` for a page without any, every
+    ///        value of which is at `maxDefinitionLevel`
+    /// @param out the cell's levels, or `null` for a column that keeps none, which copies nothing
+    static void copyDefinitionLevels(Segment segment, int[] levels, int[] out, int maxDefinitionLevel) {
+        if (out == null) {
+            return;
+        }
+        forEachRun(segment, (pageRow, destPos, length) -> {
+            if (levels == null) {
+                Arrays.fill(out, destPos, destPos + length, maxDefinitionLevel);
+            }
+            else {
+                System.arraycopy(levels, pageRow, out, destPos, length);
+            }
         });
     }
 

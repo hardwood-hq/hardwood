@@ -226,7 +226,7 @@ class PredicatePushDownTest {
                 assertThatThrownBy(() -> rows.getFieldName(1))
                         .isInstanceOf(IndexOutOfBoundsException.class)
                         .hasMessage("[filter_pushdown_int.parquet] Field index 1 is out of bounds"
-                                + " for a projection of 1 columns");
+                                + " for a projection of 1 fields");
                 // 'id' is decoded for the filter and is not reachable through the row, by name
                 // or by index. See `_designs/RECORD_FILTERING.md`.
                 assertThatThrownBy(() -> rows.getLong("id"))
