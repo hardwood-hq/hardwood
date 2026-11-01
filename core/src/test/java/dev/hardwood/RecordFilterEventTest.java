@@ -243,7 +243,7 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
     private static void assertTakesRecordPath(FilterPredicate filter, FileSchema schema) {
         ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
         assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
-                projected::toProjectedIndex))
+                projected::toProjectedIndex, true))
                 .as("filter %s must take the record path", filter)
                 .isNull();
     }

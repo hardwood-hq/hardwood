@@ -747,7 +747,7 @@ class RecordFilterBenchmarkTest {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         ProjectedSchema projected = ProjectedSchema.create(schema, projection);
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                resolved, schema, projected::toProjectedIndex);
+                resolved, schema, projected::toProjectedIndex, true);
         if (compiled == null) {
             return PATH_CONSUMER;
         }

@@ -74,14 +74,17 @@ For an eligible predicate the flat row reader evaluates it on each column's batc
 
 A predicate is eligible when every leaf is:
 
-- on a top-level column (field path of length one) present in `decoded()`, and
-- a supported `(type, op)`: `int`, `long`, `float`, `double`, unsigned `int`/`long`, and binary × the six comparison operators; `boolean` × `EQ`/`NOT_EQ`; the `IN` forms of those types; `IS NULL`/`IS NOT NULL`; and the constant leaves `EveryNonNullRow`/`NoRow` that negation produces,
+- on a column present in `decoded()` that is top-level (field path of length one), or, on the flat row reader, any column, and
+- a supported `(type, op)`: `int`, `long`, `float`, `double`, unsigned `int`/`long`, and binary × the six comparison operators; `boolean` × `EQ`/`NOT_EQ`; the `IN` forms of those types; `IS NULL`/`IS NOT NULL` on a leaf; and the constant leaves `EveryNonNullRow`/`NoRow` that negation produces,
 
 and no column appears in two independent subtrees. `Not` never reaches the compiler, since resolution lowers it to operator inversion.
 
+A leaf below a struct is eligible on the flat row reader because no column it decodes repeats, and a flat batch's validity is clear wherever the leaf or a group above it is absent. A value test then fails and a leaf's `IS NULL` holds on exactly the rows where the per-row matcher's walk finds no accessor ([Missing intermediate structs](#per-row-matcher)). The caller states which applies (`tryCompile`'s `structLeaves`), since the compiler sees the schema and not how the reader decodes it.
+
 | Falls back to the per-row matcher | Reason |
 |---|---|
-| A leaf below a struct or list | Batch matchers read a flat typed array per column |
+| A leaf below a struct, on a column reader | The column path decodes a leaf below an optional group as nested, and batch matchers read a flat typed array per column |
+| A null test on a group (`IsNullPredicate.group()`) | A leaf's validity is clear below a present group as well as below an absent one; only the definition level at the group's threshold tells them apart |
 | `FLOAT16` comparison or `IN` | No batch matcher |
 | `intersects` | Row-group decision only |
 | A column in two independent subtrees, e.g. `(a > 5 AND b > 5) OR (a < 0 AND b < 0)` | One column holds one bitmap per batch |
@@ -91,7 +94,7 @@ and no column appears in two independent subtrees. `Not` never reaches the compi
 
 **Compilation.** The compiler walks the tree bottom up. A subtree living on one column collapses into one matcher slot: same-column siblings under an `And` chain through `AndBatchMatcher`, under an `Or` through `OrBatchMatcher`. A subtree spanning columns becomes a `MergePlan.And`/`Or` whose children are `MergePlan.Column(decodedIndex)` references or nested plans. Each column appears in at most one `Column` node.
 
-Tests: `BatchFilterCompilerTest`.
+Tests: `BatchFilterCompilerTest`, `FlatStructRowReaderTest`.
 
 ### Bitmap semantics
 
