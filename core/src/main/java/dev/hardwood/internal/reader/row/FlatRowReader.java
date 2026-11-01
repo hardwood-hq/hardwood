@@ -309,7 +309,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // predicate; null falls through to the record-matcher path below.
         CompiledBatchFilter compiledFilter = null;
         if (filter != null) {
-            compiledFilter = BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex);
+            compiledFilter = BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex, true);
         }
         ColumnBatchMatcher[] columnBatchMatchers = compiledFilter != null ? compiledFilter.columnMatchers() : null;
         final boolean batchMatchers = compiledFilter != null;

@@ -90,7 +90,7 @@ final class SelectionEngine {
         int wordsLen = (batchSize + 63) >>> 6;
         int[] selection = new int[batchSize];
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                resolved, schema, decoded::toProjectedIndex);
+                resolved, schema, decoded::toProjectedIndex, false);
 
         if (compiled != null) {
             // Owning mode: no column ran the matchers as its cells completed, so the
