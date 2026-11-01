@@ -36,6 +36,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - An S3 object of up to 256 KiB is read in the one request that opens it, and the footer and page index of a larger file come with that request ([#1399](https://github.com/hardwood-hq/hardwood/issues/1399))
 - A multi-file read holds the footers of the files it is reading rather than of every file it has read ([#1662](https://github.com/hardwood-hq/hardwood/issues/1662))
 - `AbstractOutputFile` is a base for implementing `OutputFile` that enforces its lifecycle; the bundled outputs extend it ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
+- A row reader projecting structs that hold no list, map or variant reads them without decoding nested records, as it reads top-level columns ([#475](https://github.com/hardwood-hq/hardwood/issues/475))
 
 **Bug fixes:**
 

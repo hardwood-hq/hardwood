@@ -132,6 +132,9 @@ final class Cell implements BatchCell<BatchExchange.Batch> {
                         taken.values = BatchExchange.allocateArray(column, capacity);
                         taken.capacity = capacity;
                     }
+                    if (taken.definitionLevels != null && taken.definitionLevels.length < capacity) {
+                        taken.definitionLevels = new int[capacity];
+                    }
                     if (taken.values instanceof BinaryBatchValues binary) {
                         binary.prepareForFill();
                     }
