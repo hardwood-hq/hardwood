@@ -333,7 +333,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("id"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field 'id' not in projection");
+                    .hasMessage("[nested_struct_test.parquet] Column not in projection: id");
         }
     }
 
@@ -761,6 +761,8 @@ public class ColumnProjectionTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("account")).build()) {
 
+            // No column below `account` repeats, so the flat reader serves its nested structs.
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
             assertThat(rows.getFieldCount()).isEqualTo(1);
 
             // Row 0: Alice with full nested structure
@@ -780,7 +782,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("customer_id"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field 'customer_id' not in projection");
+                    .hasMessage("[deep_nested_struct_test.parquet] Column not in projection: customer_id");
         }
     }
 
@@ -791,8 +793,8 @@ public class ColumnProjectionTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("account.id")).build()) {
 
-            // Repetition level zero is not enough: `account` is a group, so the nested reader stays.
-            assertThat(rows).isInstanceOf(NestedRowReader.class);
+            // `account` is a group, but no column below it repeats: the flat reader serves it.
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
             assertThat(rows.getFieldCount()).isEqualTo(1);
 
             // Row 0: Alice — account.id = "ACC-001"

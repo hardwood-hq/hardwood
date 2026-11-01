@@ -257,7 +257,10 @@ public final class FlatColumn implements DecodedColumn {
         List<Object> completed = new ArrayList<>(1);
         for (Segment segment : task.segments) {
             Cell cell = segment.cell;
-            FlatFill.fill(segment, values, cell.allocate(exchange, column).values, maxDefinitionLevel);
+            BatchExchange.Batch batch = cell.allocate(exchange, column);
+            FlatFill.fill(segment, values, batch.values, maxDefinitionLevel);
+            FlatFill.copyDefinitionLevels(segment, values.definitionLevels(), batch.definitionLevels,
+                    maxDefinitionLevel);
             filled(cell, completed);
         }
         return completed;
@@ -272,7 +275,9 @@ public final class FlatColumn implements DecodedColumn {
         List<Object> completed = new ArrayList<>(1);
         for (Segment segment : task.segments) {
             Cell cell = segment.cell;
-            BinaryFill.fill(segment, values, (BinaryBatchValues) cell.allocate(exchange, column).values,
+            BatchExchange.Batch batch = cell.allocate(exchange, column);
+            BinaryFill.fill(segment, values, (BinaryBatchValues) batch.values, maxDefinitionLevel);
+            FlatFill.copyDefinitionLevels(segment, values.definitionLevels(), batch.definitionLevels,
                     maxDefinitionLevel);
             filled(cell, completed);
         }

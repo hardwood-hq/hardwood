@@ -463,10 +463,10 @@ public class PqRowApiTest {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            // address is a struct, not a list — surfaces as a ClassCastException
-            // from the underlying FieldDesc cast.
+            // address is a struct, not a list
             assertThatThrownBy(() -> rowReader.getList("address"))
-                    .isInstanceOf(ClassCastException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("[nested_struct_test.parquet] Field 'address' is not a list");
         }
     }
 
