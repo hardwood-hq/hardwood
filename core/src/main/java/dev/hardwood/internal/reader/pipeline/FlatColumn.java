@@ -101,10 +101,11 @@ public final class FlatColumn implements DecodedColumn {
     }
 
     /// Places a page of work item `batches`; returns the page to decode, `null` when it has no
-    /// record to decode or the placement has ended.
+    /// record to decode or the placement has ended. A page reads its fetched bytes only in its
+    /// decode, which runs `bytesRead` as it ends.
     @Override
     public Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex,
-                      int pageIndex) throws PlaceFailure {
+                      int pageIndex, Runnable bytesRead) throws PlaceFailure {
         if (placementEnded) {
             return null;
         }
@@ -117,6 +118,7 @@ public final class FlatColumn implements DecodedColumn {
         }
         PageTask task = new PageTask(info, fileName, rowGroupIndex, pageIndex, batches, decoder,
                 batches.readRowsBefore() + rowInRowGroup);
+        task.onBytesRead(bytesRead);
         try {
             placementEnded = !placer.place(task);
         }
@@ -228,6 +230,10 @@ public final class FlatColumn implements DecodedColumn {
         }
         catch (RuntimeException e) {
             throw placed(e, page.task.fileName, page.task.rowGroup, page.task.pageIndex);
+        }
+        finally {
+            // The fill copied the values into the batches
+            page.task.bytesRead();
         }
     }
 

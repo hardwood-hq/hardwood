@@ -137,6 +137,7 @@ public final class RangeBackedInputFile implements InputFile {
                     MappedByteBuffer slot = mapping;
                     slot.position(Math.toIntExact(gapStart));
                     slot.put(fetched);
+                    delegate.release(fetched);
                     populated.add(gapStart, gapEnd);
                 }
             }

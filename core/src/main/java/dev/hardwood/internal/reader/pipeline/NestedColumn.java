@@ -120,10 +120,11 @@ public final class NestedColumn implements DecodedColumn {
 
     /// Takes a page of work item `batches` behind the pages not yet placed; returns the page to
     /// decode, `null` for a boundary marker, which is placed in its turn without a decode, and once
-    /// the placement has ended.
+    /// the placement has ended. A page reads its fetched bytes until every cell it is placed into is
+    /// filled, as a fill reads values stored uncompressed where they lie, and runs `bytesRead` then.
     @Override
     public Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex,
-                      int pageIndex) {
+                      int pageIndex, Runnable bytesRead) {
         if (placementEnded) {
             return null;
         }
@@ -139,6 +140,7 @@ public final class NestedColumn implements DecodedColumn {
         PageDecoder.LevelScratch scratch = marker ? null : scratchPool.poll();
         NestedPageTask page = new NestedPageTask(info, fileName, rowGroupIndex, pageIndex, batches, decoder, nextRow(),
                 marker || scratch != null ? scratch : new PageDecoder.LevelScratch());
+        page.onBytesRead(bytesRead);
         unplaced.addLast(page);
         if (marker) {
             page.measured = true;
@@ -206,6 +208,8 @@ public final class NestedColumn implements DecodedColumn {
             measure(task, buffers);
         }
         catch (RuntimeException e) {
+            // A page whose decode failed is never placed
+            task.bytesRead();
             throw placed(e, task.fileName, task.rowGroup, task.pageIndex);
         }
         return task;
@@ -219,7 +223,13 @@ public final class NestedColumn implements DecodedColumn {
     /// Marks a page measured and places the measured pages at the head of the pages not yet placed.
     @Override
     public void decoded(Object result) {
-        ((NestedPageTask) result).measured = true;
+        NestedPageTask page = (NestedPageTask) result;
+        page.measured = true;
+        if (placementEnded) {
+            // Decoded after the placement ended, which places it no more
+            page.bytesRead();
+            return;
+        }
         placeMeasured();
     }
 
@@ -251,7 +261,13 @@ public final class NestedColumn implements DecodedColumn {
             }
         }
         if (placementEnded) {
-            // Nothing is placed after the end, nor decoded
+            // Nothing is placed after the end, nor decoded; a page not yet measured is dropped by
+            // the read, or its decode in flight ends in decoded()
+            for (Object left : unplaced) {
+                if (left instanceof NestedPageTask page && page.measured) {
+                    page.bytesRead();
+                }
+            }
             unplaced.clear();
             unplacedPages = 0;
         }
@@ -440,6 +456,7 @@ public final class NestedColumn implements DecodedColumn {
 
     /// Returns a page's scratch to `pool`, where it has room; the page reads it no more.
     private static void releaseScratch(NestedPageTask page, ArrayBlockingQueue<PageDecoder.LevelScratch> pool) {
+        page.bytesRead();
         page.inPlace = null;
         page.measure = null;
         page.scratch.trim();

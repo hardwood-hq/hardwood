@@ -22,6 +22,7 @@ Related documents:
 | `length()` | The file's size in bytes. |
 | `name()` | A human-readable identifier. It prefixes exception messages (`ExceptionContext.filePrefix`, which renders `[name] …`) and fills the `file` field of JFR events. |
 | `identity()` | An identifier of the content the file was opened against, or empty. Defaulted to empty. See [Identity](#identity). |
+| `release(ByteBuffer)` | Takes back a buffer `readRange` returned, which the reader reads no more, nor any slice of it. Defaulted to nothing. See [Given-back buffers](#given-back-buffers). |
 | `close()` | Releases what `open()` acquired. |
 
 The mapped and range-backed backends throw `IllegalStateException` for a `readRange` or `length` call before `open()`. Every built-in backend throws `IndexOutOfBoundsException` for a range outside `[0, length())`, through the shared check `ReadRanges.checkBounds`, with the message `[name] readRange(offset, length) out of bounds (n bytes)`. An I/O failure is an `IOException`; an implementation that reports a failed read as `UncheckedIOException` is still treated as a transport failure, not as a corrupt file (see [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md)).
@@ -35,6 +36,14 @@ Nothing in core keys state on an `InputFile` across readers: the parsed-footer c
 **Interruption.** A backend may use an interruptible channel. `FileChannel` is one: interrupting a thread inside a channel operation, or entering one with the interrupt flag set, closes the channel for every user of that `InputFile`. The reader therefore never interrupts a thread that can be inside `readRange`: closing a read interrupts no thread ([THREADING.md](THREADING.md#invariants)), and the decodes a context's `shutdownNow()` interrupts read no file. The walk advances and reads that do read are stopped and awaited, never interrupted ([Closing](#ownership-and-lifecycle)). On a context of zero threads the consumer's thread reads files itself; its poll checks the interrupt flag before each item it runs and ends with an `InterruptedException` instead of reading with the flag set ([THREADING.md](THREADING.md#a-context-of-zero-threads)). A caller that cancels its own reads by interrupting the reading thread (`Future.cancel(true)`) closes the channel of a local file larger than 2 GB.
 
 Tests: `ByteBufferInputFileTest`, `MappedInputFileLargeFileTest`, `FileNameInExceptionTest`, `ColumnReadersTransportFailureTest`. The interruption rule is untested.
+
+### Given-back buffers
+
+A read gives back to its file the buffers its data requests fetched (`InputFile.release`) once it reads them no more, so that a backend that holds the bytes in memory of its own (a pool, an arena, an allocator with a budget) can free them before the file closes. A buffer is given back at most once, only after the reader has read the last byte of it and of every slice of it, and never after the file is closed. The reader gives back only the buffers of data requests; a footer, a tail, a planning read (page index, Bloom filter, a dictionary pruning reads) and a buffer of a read whose `release` failed stay the file's until it closes. A failure of `release` is logged and does not fail the read. A file that does not override `release` leaves its buffers to the garbage collector, as every built-in backend does; `TailedInputFile` passes a release on to the file it wraps, and `RangeBackedInputFile` gives back each buffer of its wrapped file once it has copied it into its cache.
+
+When a read gives a buffer back is in [FETCH_PLANNING.md](FETCH_PLANNING.md#release-failure-and-close).
+
+Tests: `BufferReleaseTest`.
 
 ### Identity
 
