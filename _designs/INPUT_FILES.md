@@ -10,6 +10,7 @@ Related documents:
 - [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md): how transport failures are typed
 - [READ_PIPELINE.md](READ_PIPELINE.md): when a read plans files and when their failures surface, and the lifecycle lock of a reader's close
 - [THREADING.md](THREADING.md): the threads that call into an `InputFile`
+- [docs/content/reference/reader.md](../docs/content/reference/reader.md#custom-inputfile): the `InputFile` contract for users who implement it
 
 ## Contract
 
@@ -39,11 +40,11 @@ Tests: `ByteBufferInputFileTest`, `MappedInputFileLargeFileTest`, `FileNameInExc
 
 ### Given-back buffers
 
-A read gives back to its file the buffers its data requests fetched (`InputFile.release`) once it reads them no more, so that a backend that holds the bytes in memory of its own (a pool, an arena, an allocator with a budget) can free them before the file closes. A buffer is given back at most once, only after the reader has read the last byte of it and of every slice of it, and never after the file is closed. The reader gives back only the buffers of data requests; a footer, a tail, a planning read (page index, Bloom filter, a dictionary pruning reads) and a buffer of a read whose `release` failed stay the file's until it closes. A failure of `release` is logged and does not fail the read. A file that does not override `release` leaves its buffers to the garbage collector, as every built-in backend does; `TailedInputFile` passes a release on to the file it wraps, and `RangeBackedInputFile` gives back each buffer of its wrapped file once it has copied it into its cache.
+A read gives back to its file the buffers its data requests fetched (`InputFile.release`) once it reads them no more, so that a backend that holds the bytes in memory of its own (a pool, an arena, an allocator with a budget) can free them before the file closes. A buffer is given back at most once, only after the reader has read the last byte of it and of every slice of it, and never after the file is closed. The reader gives back only the buffers of data requests; a footer, a tail, a planning read (page index, Bloom filter, a dictionary pruning reads) and a buffer of a read whose `release` failed stay the file's until it closes. A failure of `release` is logged and does not fail the read: the first of a read at `WARNING`, the others at `DEBUG`. A file that does not override `release` leaves its buffers to the garbage collector, as every built-in backend does; `TailedInputFile` passes a release on to the file it wraps, and `RangeBackedInputFile` gives back each buffer of its wrapped file once it has copied it into its cache.
 
 When a read gives a buffer back is in [FETCH_PLANNING.md](FETCH_PLANNING.md#release-failure-and-close).
 
-Tests: `BufferReleaseTest`.
+Tests: `BufferReleaseTest`, `RangeBackedInputFileTest`.
 
 ### Identity
 

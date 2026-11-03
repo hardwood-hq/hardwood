@@ -51,3 +51,21 @@ On a context of zero threads, `executor()` throws an `UnsupportedOperationExcept
 ## Limits
 
 A column chunk read without an OffsetIndex must be at most 2 GB of *compressed* data; a chunk with an OffsetIndex is read in page groups and has no such limit. Files larger than 2 GB are read both locally and from S3, except by the in-memory (`ByteBuffer`) backend and by an S3 file opened with [`RangeBacking.SPARSE_TEMPFILE`](s3.md#range-backing), which the `dive` TUI uses for every file; both are limited to 2 GB per file. For datasets that don't fit a single supported file, split the data into multiple files at write time and read them as one; see [Read Multiple Files as One Dataset](../how-to/multi-file.md).
+
+## Custom InputFile
+
+A reader reads a file through an `InputFile`. An implementation for another store has these methods:
+
+| Method | Contract |
+|---|---|
+| `open()` | Gets the resources the file needs. The reader calls it before the other methods. |
+| `readRange(offset, length)` | Returns the bytes `[offset, offset + length)` at position `0`, with exactly `length` bytes remaining. The reader fails the read with an `IOException` if the buffer has a different position or size. For a range outside the file, it throws `IndexOutOfBoundsException`. |
+| `length()` | Returns the file's size in bytes. |
+| `name()` | Returns the name that starts each exception message and fills the `file` field of JFR events. |
+| `identity()` | Optional. Returns an identifier of the file's content. The default returns empty. See the `InputFile.identity()` JavaDoc. |
+| `release(buffer)` | Optional and experimental. Takes back a buffer that `readRange` returned. The default does nothing. |
+| `close()` | Frees the resources that `open()` got. |
+
+The reader calls these methods from several threads at once, after `open()`. It closes each file it was given when it closes.
+
+The reader calls `release` for the buffers of a row group's data pages, after it has read the last byte of the buffer and of each slice of it. It gives back each buffer only once, and none after `close()`. It can give back several buffers at the same time on different threads. It does not give back the buffers of the footer, the page index, Bloom filters or the dictionaries that a filter reads. Free those in `close()`. If `release` throws an exception, the reader logs it and continues the read.

@@ -77,7 +77,8 @@ public sealed interface DecodedColumn permits FlatColumn, NestedColumn {
     /// Takes a page of work item `batches`; returns the page to decode, `null` when it has none.
     /// The column runs `bytesRead` once the page reads the fetched bytes it was sliced from no
     /// more: at the end of its decode, or once every cell it is placed into is filled. Where it
-    /// returns no page, or fails with none, the caller runs `bytesRead` itself.
+    /// returns no page, or fails with none, the caller runs `bytesRead` itself, and the column does
+    /// not.
     ///
     /// @throws PlaceFailure if placing a flat page fails
     Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex, int pageIndex,

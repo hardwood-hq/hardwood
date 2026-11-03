@@ -140,7 +140,10 @@ public final class NestedColumn implements DecodedColumn {
         PageDecoder.LevelScratch scratch = marker ? null : scratchPool.poll();
         NestedPageTask page = new NestedPageTask(info, fileName, rowGroupIndex, pageIndex, batches, decoder, nextRow(),
                 marker || scratch != null ? scratch : new PageDecoder.LevelScratch());
-        page.onBytesRead(bytesRead);
+        // a boundary marker reads no bytes: the caller runs bytesRead, as for no page returned
+        if (!marker) {
+            page.onBytesRead(bytesRead);
+        }
         unplaced.addLast(page);
         if (marker) {
             page.measured = true;
@@ -280,6 +283,10 @@ public final class NestedColumn implements DecodedColumn {
         }
         catch (RuntimeException e) {
             // a failure inside a work item: the column ends behind the cells before the open one
+            if (page.unfilledSegments.get() == 0) {
+                // no cell holds a segment of the page
+                page.bytesRead();
+            }
             placementEnded = true;
             abandonAt(placed(e, page.fileName, page.rowGroup, page.pageIndex));
             publisher.publish();

@@ -241,6 +241,8 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// The threads giving buffers back past the lock, which the close waits for, since a file is
     /// given back nothing once it is closed.
     private final AtomicInteger givingBack = new AtomicInteger();
+    /// Whether a buffer's release failed before in the read, which logs the next failures lower.
+    private final AtomicBoolean releaseFailed = new AtomicBoolean();
     /// The failure that ended the read ([Phase#FAILED]), kept once the read closes.
     private Throwable failure;
     /// An `Error` a footer read failed with that no listing has raised yet, which the read's close
@@ -298,11 +300,12 @@ public final class RowGroupIterator implements Closeable, Sections {
         /// passed the unit ([#forget]).
         List<Request> requests;
         /// The buffers its data requests fetched, given back to their files once nothing reads them.
-        final UnitBytes bytes = new UnitBytes();
+        final UnitBytes bytes;
 
-        Unit(int file, int holders) {
+        Unit(int file, int holders, UnitBytes bytes) {
             this.file = file;
             this.holders = holders;
+            this.bytes = bytes;
         }
     }
 
@@ -466,7 +469,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// pass each.
     private void appendUnits(int file, int count) {
         for (int i = 0; i < count; i++) {
-            units.add(new Unit(file, placingColumns));
+            units.add(new Unit(file, placingColumns, new UnitBytes(releaseFailed)));
         }
     }
 
@@ -1083,17 +1086,12 @@ public final class RowGroupIterator implements Closeable, Sections {
         giveBack(units.get(unit).bytes.unpin());
     }
 
-    /// Pins `unit`'s bytes for a page; returns what drops the pin, once, when the page reads them no
-    /// more.
+    /// Pins `unit`'s bytes for a page; returns what drops the pin when the page reads them no more.
+    /// Its one owner runs it once: the page's column, or [#place] where the column returns no page.
     private Runnable pagePin(int unit) {
         UnitBytes bytes = units.get(unit).bytes;
         bytes.pin();
-        AtomicBoolean done = new AtomicBoolean();
-        return () -> {
-            if (done.compareAndSet(false, true)) {
-                giveBack(bytes.unpin());
-            }
-        };
+        return () -> giveBack(bytes.unpin());
     }
 
     /// Emits `work` as a job: counted until its result is applied.

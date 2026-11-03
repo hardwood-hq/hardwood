@@ -10,9 +10,10 @@ package dev.hardwood.internal.reader.engine;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.util.Lazy;
+import dev.hardwood.internal.io.ReadRanges;
 
 /// The buffers the data requests of one unit of a read fetched from their files, given back to
 /// them ([InputFile#release]) once nothing reads them: every column has passed the unit, no walk
@@ -27,8 +28,6 @@ import dev.hardwood.internal.util.Lazy;
 /// Thread-safe: a page ends on the job that fills its last cell.
 final class UnitBytes {
 
-    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(UnitBytes.class.getName()));
-
     private record Fetched(InputFile inputFile, ByteBuffer bytes) {
     }
 
@@ -37,6 +36,12 @@ final class UnitBytes {
     private int pins = 1;
     /// Whether the unit's own pin is dropped.
     private boolean passed;
+    /// Whether a release of the read failed before, shared by the read's units ([ReadRanges#release]).
+    private final AtomicBoolean releaseFailed;
+
+    UnitBytes(AtomicBoolean releaseFailed) {
+        this.releaseFailed = releaseFailed;
+    }
 
     /// Pins the bytes for a walk advance or a page.
     ///
@@ -100,14 +105,7 @@ final class UnitBytes {
         };
     }
 
-    /// Gives `f` back to its file; a failure of the file's release is logged, since the read's bytes
-    /// are its own no longer either way.
-    private static void giveBack(Fetched f) {
-        try {
-            f.inputFile().release(f.bytes());
-        }
-        catch (RuntimeException e) {
-            LOG.get().log(System.Logger.Level.WARNING, () -> "Release of a buffer failed for " + f.inputFile().name(), e);
-        }
+    private void giveBack(Fetched f) {
+        ReadRanges.release(f.inputFile(), f.bytes(), releaseFailed);
     }
 }

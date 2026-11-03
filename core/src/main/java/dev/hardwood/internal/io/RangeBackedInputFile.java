@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
@@ -53,6 +54,8 @@ public final class RangeBackedInputFile implements InputFile {
 
     private final InputFile delegate;
     private final Path tempDir;
+    /// Whether a release of a buffer of the wrapped file failed before ([ReadRanges#release]).
+    private final AtomicBoolean releaseFailed = new AtomicBoolean();
 
     private long fileLength = -1;
     private Path tempFile;
@@ -137,8 +140,8 @@ public final class RangeBackedInputFile implements InputFile {
                     MappedByteBuffer slot = mapping;
                     slot.position(Math.toIntExact(gapStart));
                     slot.put(fetched);
-                    delegate.release(fetched);
                     populated.add(gapStart, gapEnd);
+                    ReadRanges.release(delegate, fetched, releaseFailed);
                 }
             }
             return mapping.slice(Math.toIntExact(offset), length);
