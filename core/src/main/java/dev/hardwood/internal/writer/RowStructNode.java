@@ -42,10 +42,9 @@ final class RowStructNode extends RowNode implements StructBuilder {
 
     /// Field name to child index. The by-name surface is a boundary that resolves to an index
     /// and then does exactly what the by-index one does, so the resolution runs once per field
-    /// per record — which a `Map<String, Integer>` would make an unboxing per call. This is the
-    /// same open-addressed, primitive-valued map the read side resolves names through in
-    /// `TopLevelFieldMap` and `FlatRowReader`, and it returns a negative index for a name the
-    /// struct does not have.
+    /// per record — which a `Map<String, Integer>` would make an unboxing per call. An
+    /// open-addressed, primitive-valued map, which compares a name by equality and returns a
+    /// negative index for a name the struct does not have.
     private final StringToIntMap byName;
 
     /// Per-instance nulls of an `OPTIONAL` struct, or `null` when the struct is `REQUIRED`.

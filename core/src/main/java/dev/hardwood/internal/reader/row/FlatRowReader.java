@@ -38,7 +38,7 @@ import dev.hardwood.internal.reader.step.CloseClaim;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.schema.TextColumns;
-import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.internal.util.InternedNameMap;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqFile;
@@ -85,7 +85,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// ones, and the accessor state below spans them alone, so no accessor reaches a column a
     /// predicate added.
     private final ProjectedSchema payload;
-    private final StringToIntMap nameToIndex;
+    private final InternedNameMap nameToIndex;
     private final PhysicalType[] physicalTypes;
     private final ColumnSchema[] columnSchemas;
     /// Per-column decode strategy for [#getValue(int)], precomputed once from each
@@ -199,20 +199,21 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.matchMerger = matchMerger;
 
         // Build name-to-index map and cache column metadata, for the exposed columns only
-        this.nameToIndex = new StringToIntMap(payloadColumnCount);
         this.physicalTypes = new PhysicalType[payloadColumnCount];
         this.columnSchemas = new ColumnSchema[payloadColumnCount];
         this.kinds = new LeafKind[payloadColumnCount];
         this.textColumns = new boolean[payloadColumnCount];
+        String[] names = new String[payloadColumnCount];
         for (int position = 0; position < payloadColumnCount; position++) {
             int originalIndex = payload.toOriginalIndex(payload.exposedColumn(position));
             ColumnSchema col = fileSchema.getColumn(originalIndex);
-            nameToIndex.put(col.name(), position);
+            names[position] = col.name();
             physicalTypes[position] = col.type();
             columnSchemas[position] = col;
             kinds[position] = LeafKind.of(col.type(), col.logicalType());
             textColumns[position] = TextColumns.holdsText(col.type(), col.logicalType());
         }
+        this.nameToIndex = new InternedNameMap(names);
     }
 
     /// Eagerly loads the first batch. Must be called after construction.

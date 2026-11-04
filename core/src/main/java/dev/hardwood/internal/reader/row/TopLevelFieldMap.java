@@ -10,7 +10,7 @@ package dev.hardwood.internal.reader.row;
 import java.util.List;
 
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.internal.util.InternedNameMap;
 import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.RepetitionType;
@@ -63,7 +63,7 @@ final class TopLevelFieldMap {
         ///                          struct (same as `firstPrimitiveCol` when the struct has
         ///                          a direct primitive child), or -1 if no leaf is projected
         record Struct(SchemaNode.GroupNode schema,
-                      StringToIntMap nameToIndex,
+                      InternedNameMap nameToIndex,
                       FieldDesc[] children,
                       int firstPrimitiveCol,
                       int firstLeafProjCol) implements FieldDesc {
@@ -94,11 +94,11 @@ final class TopLevelFieldMap {
                      FieldDesc valueDesc) implements FieldDesc {}
     }
 
-    private final StringToIntMap nameToIndex;
+    private final InternedNameMap nameToIndex;
     private final FieldDesc[] byIndex;
     private final FieldDesc[] byOriginalIndex;
 
-    private TopLevelFieldMap(StringToIntMap nameToIndex, FieldDesc[] byIndex, FieldDesc[] byOriginalIndex) {
+    private TopLevelFieldMap(InternedNameMap nameToIndex, FieldDesc[] byIndex, FieldDesc[] byOriginalIndex) {
         this.nameToIndex = nameToIndex;
         this.byIndex = byIndex;
         this.byOriginalIndex = byOriginalIndex;
@@ -124,7 +124,7 @@ final class TopLevelFieldMap {
         int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
 
         int fieldCount = projectedFieldIndices.length;
-        StringToIntMap nameToIndex = new StringToIntMap(fieldCount);
+        String[] names = new String[fieldCount];
         FieldDesc[] byIndex = new FieldDesc[fieldCount];
 
         int maxOriginalIndex = rootChildren.size();
@@ -136,12 +136,12 @@ final class TopLevelFieldMap {
             FieldDesc desc = topLevelNode.repetitionType() == RepetitionType.REPEATED
                     ? buildBareRepeatedListDesc(topLevelNode, schema, projectedSchema)
                     : buildDesc(topLevelNode, schema, projectedSchema);
-            nameToIndex.put(topLevelNode.name(), i);
+            names[i] = topLevelNode.name();
             byIndex[i] = desc;
             byOriginalIndex[projFieldIdx] = desc;
         }
 
-        return new TopLevelFieldMap(nameToIndex, byIndex, byOriginalIndex);
+        return new TopLevelFieldMap(new InternedNameMap(names), byIndex, byOriginalIndex);
     }
 
     private static FieldDesc buildDesc(SchemaNode node, FileSchema schema, ProjectedSchema projectedSchema) {
@@ -179,14 +179,14 @@ final class TopLevelFieldMap {
                                             ProjectedSchema projectedSchema) {
         // Children sit at the position the projection requested them in
         List<SchemaNode> projectedChildren = projectedSchema.projectedChildren(group);
-        StringToIntMap nameToIndex = new StringToIntMap(projectedChildren.size());
+        String[] names = new String[projectedChildren.size()];
         FieldDesc[] children = new FieldDesc[projectedChildren.size()];
         for (int idx = 0; idx < children.length; idx++) {
             SchemaNode child = projectedChildren.get(idx);
             children[idx] = child.repetitionType() == RepetitionType.REPEATED
                     ? buildBareRepeatedListDesc(child, schema, projectedSchema)
                     : buildDescForChild(child, schema, projectedSchema);
-            nameToIndex.put(child.name(), idx);
+            names[idx] = child.name();
         }
         // The first primitive child in schema order, independent of the request order
         int firstPrimitiveCol = -1;
@@ -202,7 +202,7 @@ final class TopLevelFieldMap {
         int firstLeafProjCol = firstPrimitiveCol >= 0
                 ? firstPrimitiveCol
                 : findFirstLeafProjCol(group, projectedSchema);
-        return new FieldDesc.Struct(group, nameToIndex, children, firstPrimitiveCol, firstLeafProjCol);
+        return new FieldDesc.Struct(group, new InternedNameMap(names), children, firstPrimitiveCol, firstLeafProjCol);
     }
 
     static FieldDesc.ListOf buildListDesc(SchemaNode.GroupNode listGroup,
