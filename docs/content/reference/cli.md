@@ -476,11 +476,13 @@ When no credential source is configured, the CLI sends unsigned requests, which 
 AWS_REGION=us-west-2 hardwood info -f s3://public-bucket/data.parquet
 ```
 
+Region resolution uses `aws.region`, then `AWS_REGION`, then `AWS_DEFAULT_REGION`, then the selected SDK profile's `region`, without querying instance metadata. The profile is selected by `aws.profile`, then `AWS_PROFILE`, defaulting to `default`. Profile files use the SDK's default lookup: `aws.configFile` / `AWS_CONFIG_FILE` override `~/.aws/config`, and `aws.sharedCredentialsFile` / `AWS_SHARED_CREDENTIALS_FILE` override `~/.aws/credentials`; system properties take precedence over environment variables.
+
 The CLI additionally reads these environment variables:
 
 | Environment Variable | Description |
 |----------------------|-------------|
-| `AWS_REGION` | AWS region (also read from `~/.aws/config` if not set) |
+| `AWS_REGION` | AWS region (falls back to `AWS_DEFAULT_REGION`, then the selected SDK profile) |
 | `AWS_ENDPOINT_URL` | Custom endpoint for S3-compatible services (MinIO, LocalStack, R2, etc.) |
 | `AWS_PATH_STYLE` | Set to `true` to use path-style access (required by some S3-compatible services) |
 
