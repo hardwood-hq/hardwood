@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.pipeline;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
@@ -37,6 +38,9 @@ class PageTask {
     final long firstRow;
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
+    /// Runs once the page reads the fetched bytes it was sliced from no more, `null` once it ran
+    /// or where nothing waits for it.
+    private final AtomicReference<Runnable> bytesRead = new AtomicReference<>();
 
     PageTask(PageInfo info, String fileName, int rowGroup, int pageIndex, BatchPlan.RowGroupBatches batches,
              PageDecoder decoder, long firstRow) {
@@ -47,6 +51,22 @@ class PageTask {
         this.batches = batches;
         this.decoder = decoder;
         this.firstRow = firstRow;
+    }
+
+    /// Sets what runs once the page reads its fetched bytes no more ([#bytesRead()]); set by the
+    /// column as it places the page, before any job sees it.
+    void onBytesRead(Runnable done) {
+        bytesRead.set(done);
+    }
+
+    /// Tells that the page reads the fetched bytes it was sliced from no more: its decode ended,
+    /// its scratch went back to its column, or it is dropped undecoded. Runs what [#onBytesRead]
+    /// set at most once, whichever of these comes first.
+    void bytesRead() {
+        Runnable done = bytesRead.getAndSet(null);
+        if (done != null) {
+            done.run();
+        }
     }
 
     /// Whether the page stands for a row group the column is not read in.

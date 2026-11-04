@@ -58,6 +58,20 @@ public interface InputFile extends Closeable {
     /// @throws IndexOutOfBoundsException if offset or length is out of range
     ByteBuffer readRange(long offset, int length) throws IOException;
 
+    /// Gives back a buffer [#readRange] returned: the reader reads neither the buffer nor a slice
+    /// of it again, so the file may free or reuse the memory behind it at once.
+    ///
+    /// The reader gives back each buffer at most once, on any of its threads, and may give back
+    /// several at once on different threads. It gives back only some buffers, and gives back none
+    /// after it has closed the file: a buffer it does not give back is the file's to free when it
+    /// closes. The default implementation does nothing, which leaves the memory to the garbage
+    /// collector.
+    ///
+    /// @param buffer a buffer [#readRange] returned, the same instance
+    @Experimental
+    default void release(ByteBuffer buffer) {
+    }
+
     /// Returns the total size of the file in bytes.
     ///
     /// @return the file size

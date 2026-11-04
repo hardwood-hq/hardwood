@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -149,6 +151,36 @@ class RangeBackedInputFileTest {
                 .isEqualTo(beforeOpen);
     }
 
+    @Test
+    void eachFetchedBufferIsGivenBackToTheWrappedFile(@TempDir Path tempDir) throws IOException {
+        ReleaseRecordingInputFile inner = new ReleaseRecordingInputFile(makeData(4096), false);
+        try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
+            cached.open();
+            cached.readRange(0, 100);
+            cached.readRange(200, 100);
+            // fetches only the [100, 200) gap
+            cached.readRange(0, 300);
+
+            assertThat(inner.released()).hasSize(3);
+            for (int i = 0; i < 3; i++) {
+                assertThat(inner.released().get(i)).isSameAs(inner.returned().get(i));
+            }
+        }
+    }
+
+    @Test
+    void aFailedReleaseDoesNotFailTheRead(@TempDir Path tempDir) throws IOException {
+        ReleaseRecordingInputFile inner = new ReleaseRecordingInputFile(makeData(4096), true);
+        try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
+            cached.open();
+            assertThat(toBytes(cached.readRange(100, 3))).containsExactly(100, 101, 102);
+            // the range is populated although its release failed
+            cached.readRange(100, 3);
+
+            assertThat(inner.readCount()).isEqualTo(1);
+        }
+    }
+
     private static long countCacheFiles(Path dir) throws IOException {
         try (Stream<Path> stream = Files.list(dir)) {
             return stream.filter(p -> p.getFileName().toString().startsWith("hardwood-range-")).count();
@@ -160,5 +192,42 @@ class RangeBackedInputFileTest {
         byte[] out = new byte[dup.remaining()];
         dup.get(out);
         return out;
+    }
+
+    /// A file that records the buffers it returns and those given back to it, whose release fails
+    /// where `failRelease`.
+    private static final class ReleaseRecordingInputFile extends CountingInputFile {
+
+        private final boolean failRelease;
+        private final List<ByteBuffer> returned = new ArrayList<>();
+        private final List<ByteBuffer> released = new ArrayList<>();
+
+        ReleaseRecordingInputFile(byte[] data, boolean failRelease) {
+            super(ByteBuffer.wrap(data));
+            this.failRelease = failRelease;
+        }
+
+        List<ByteBuffer> returned() {
+            return returned;
+        }
+
+        List<ByteBuffer> released() {
+            return released;
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            ByteBuffer bytes = super.readRange(offset, length);
+            returned.add(bytes);
+            return bytes;
+        }
+
+        @Override
+        public void release(ByteBuffer buffer) {
+            released.add(buffer);
+            if (failRelease) {
+                throw new IllegalStateException("release failed");
+            }
+        }
     }
 }
