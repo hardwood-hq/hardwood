@@ -19,15 +19,15 @@
       <demo.parquetFile>${maven.multiModuleProjectDirectory}/performance-testing/test-data-setup/target/overture-maps-data/overture_places.zstd.parquet</demo.parquetFile>
       <demo.tapeFile>${maven.multiModuleProjectDirectory}/docs/screenshots/dive-demo.tape</demo.tapeFile>
       <demo.castFile>${maven.multiModuleProjectDirectory}/docs/content/assets/cli/dive-demo.cast</demo.castFile>
-      <aesh.version>3.18.5</aesh.version>
-      <aesh-readline.version>3.18.6</aesh-readline.version>
+      <aesh.version>3.18.6</aesh.version>
+      <aesh-readline.version>3.18.7</aesh-readline.version>
       <!-- Both test phases run CLI code in the test JVM — the S3 ITs drive the same
            commands the unit tests do, only against a bucket — so both need the same
            JVM configuration. Kept in one property so the two cannot drift apart. -->
       <cli.test.argLine>${test.argLine} --add-opens java.base/java.lang=ALL-UNNAMED</cli.test.argLine>
       <!-- Tracks the brotli4j version managed by the hardwood-bom; the per-platform
            native jar (native-<platform>) shares this version. -->
-      <brotli4j.version>1.23.0</brotli4j.version>
+      <brotli4j.version>1.24.0</brotli4j.version>
       <!-- Defaults to ${skipTests} so -Dquick (skipTests=true) also skips
            Surefire here; the native-image CI job overrides via -DskipSurefire=true
            to skip only the JVM unit test suite while keeping Failsafe. -->
