@@ -33,9 +33,13 @@ whether to fix their code or stop trusting the file.
 | `VariantTypeException` | unchecked: a Variant `as*` accessor called on a value of another type tag | no |
 
 The caller's side is stated except for one case: asking an accessor for a type the column
-does not hold, where validating ahead of the decode would cost every accessor call, so the call surfaces as whatever cast the decode makes raises. #971 covers putting a better
-error back if it can be made free, which the exception path is: it runs only once the call
-has already failed.
+does not hold. `FlatRowReader`'s primitive accessors state it: each reads through a slot typed for
+it, so a column of another type raises an `IllegalArgumentException` naming the column, its type
+and the accessor that reads it, at no cost beyond the cast the slot replaces. Elsewhere, on the
+nested path and in the logical accessors, validating ahead of the decode would cost every
+accessor call, so the call surfaces as whatever cast the decode makes raises. #971 covers putting
+a better error back there if it can be made free, which the exception path is: it runs only once
+the call has already failed.
 
 `getDate`, `getUuid`, `getInterval`, `getString` and the `FLOAT16` branch of `getFloat` are
 outside that, because no cast on their way to the value can fail. A `DATE`, a bare `INT32` and a `TIME(MILLIS)` are one `int[]`, and every
