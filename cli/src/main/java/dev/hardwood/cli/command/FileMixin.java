@@ -18,9 +18,6 @@ import dev.hardwood.s3.RangeBacking;
 import dev.hardwood.s3.S3CredentialsProvider;
 import dev.hardwood.s3.S3Source;
 import software.amazon.awssdk.core.exception.SdkClientException;
-import software.amazon.awssdk.profiles.ProfileFile;
-import software.amazon.awssdk.profiles.ProfileFileSystemSetting;
-import software.amazon.awssdk.profiles.ProfileProperty;
 
 public class FileMixin {
 
@@ -92,28 +89,29 @@ public class FileMixin {
     }
 
     private static S3Source createS3Source(RangeBacking rangeBacking) {
-        String endpointUrl = resolveEndpoint();
+        // Region and endpoint come from local settings and profile files only (no IMDS)
+        S3Settings.Resolved settings;
+        try {
+            settings = S3Settings.resolve();
+        }
+        catch (S3Settings.InvalidSettingException e) {
+            System.err.println(e.getMessage());
+            return null;
+        }
 
         S3Source.Builder builder = S3Source.builder()
                 .rangeBacking(rangeBacking);
 
-        if (endpointUrl != null) {
-            builder.endpoint(endpointUrl);
+        if (settings.endpoint() != null) {
+            builder.endpoint(settings.endpoint());
         }
 
         if (resolvePathStyle()) {
             builder.pathStyle(true);
         }
 
-        // Resolve region from local settings and profile files only (no IMDS)
-        String region = resolveRegion();
-        if (region != null) {
-            builder.region(region);
-        }
-        else if (endpointUrl == null) {
-            System.err.println(
-                    "Unable to determine AWS region. Set AWS_REGION or configure a default region in ~/.aws/config.");
-            return null;
+        if (settings.region() != null) {
+            builder.region(settings.region());
         }
 
         boolean sourceConfigured = CredentialSources.anyConfigured();
@@ -134,15 +132,6 @@ public class FileMixin {
         return builder.build();
     }
 
-    /// Resolves the S3 endpoint URL from system property or env var.
-    private static String resolveEndpoint() {
-        String endpoint = System.getProperty("aws.endpointUrl");
-        if (endpoint != null) {
-            return endpoint;
-        }
-        return System.getenv("AWS_ENDPOINT_URL");
-    }
-
     /// Resolves whether path-style access is enabled from system property or env var.
     private static boolean resolvePathStyle() {
         String pathStyle = System.getProperty("aws.pathStyle");
@@ -150,30 +139,6 @@ public class FileMixin {
             return "true".equalsIgnoreCase(pathStyle);
         }
         return "true".equalsIgnoreCase(System.getenv("AWS_PATH_STYLE"));
-    }
-
-    /// Resolves the AWS region from system property, env vars, and SDK profile files (no network I/O).
-    static String resolveRegion() {
-        // 1. System property
-        String region = System.getProperty("aws.region");
-        if (region != null) {
-            return region;
-        }
-
-        // 2. Environment variables
-        region = System.getenv("AWS_REGION");
-        if (region != null) {
-            return region;
-        }
-        region = System.getenv("AWS_DEFAULT_REGION");
-        if (region != null) {
-            return region;
-        }
-
-        String profile = ProfileFileSystemSetting.AWS_PROFILE.getStringValueOrThrow();
-        return ProfileFile.defaultProfileFile().profile(profile)
-                .flatMap(p -> p.property(ProfileProperty.REGION))
-                .orElse(null);
     }
 
     Path toPath() {
