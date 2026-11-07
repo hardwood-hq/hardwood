@@ -113,6 +113,13 @@ public class Utils {
             // holds Hardwood to the values the fixture documents instead.
             "flba12_timestamp.parquet", // No parquet-java oracle: FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP
 
+            // The fixtures hold data pages with num_values = 0, which the format allows. Up to
+            // 1.18.1, parquet-java reads a value from the first such page instead of skipping it
+            // and fails with "Can not read value at 1 in block 0", so it cannot serve as a
+            // reference. EmptyDataPagesTest holds Hardwood to the values the fixtures document.
+            "empty_data_pages_v1.parquet", // No parquet-java oracle: data pages without values
+            "empty_data_pages_v2.parquet", // No parquet-java oracle: data pages without values
+
             // shredded_variant fixtures are skipped outside this list: spec-invalid
             // ones by isInvalidFixture() (the `-INVALID` suffix), error cases by
             // SHREDDED_VARIANT_ERROR_CASES. Both are folded in by isSkipped().
