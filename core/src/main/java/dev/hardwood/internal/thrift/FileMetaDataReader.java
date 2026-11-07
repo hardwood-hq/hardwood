@@ -99,7 +99,7 @@ public class FileMetaDataReader {
                     List<SchemaElementReader.ReadElement> elements =
                             reader.readStructList(SchemaElementReader::readElement);
                     schema = elements(elements);
-                    checkSchemaDepth(reader, schema);
+                    checkSchemaShape(reader, schema);
                     logicalTypeUnread = logicalTypeUnread(elements);
                     seen |= 1L << fieldId;
                     break;
@@ -154,24 +154,28 @@ public class FileMetaDataReader {
         return Collections.unmodifiableList(schema);
     }
 
-    /// Rejects a schema whose groups nest deeper than [#MAX_SCHEMA_DEPTH], walking the flat
-    /// element list without recursing. Elements past the root's last child are left to the
-    /// schema's own checks.
-    private static void checkSchemaDepth(ThriftCompactReader reader, List<SchemaElement> schema) {
+    /// Rejects a schema whose elements do not form one tree under the root, or whose groups nest
+    /// deeper than [#MAX_SCHEMA_DEPTH], walking the flat element list without recursing. By the
+    /// child counts of the groups before it, every element after the root is a descendant of the
+    /// root, and the list holds every child a group counts.
+    private static void checkSchemaShape(ThriftCompactReader reader, List<SchemaElement> schema) {
         if (schema.isEmpty()) {
             return;
         }
-        // The children still to come of each group on the path to the current element; the
-        // root is at depth 0
+        // Each group on the path to the current element, and the children of it still to come;
+        // the root is at depth 0
         int[] remaining = new int[MAX_SCHEMA_DEPTH + 1];
+        SchemaElement[] groups = new SchemaElement[MAX_SCHEMA_DEPTH + 1];
         int depth = 0;
         remaining[0] = childCount(schema.get(0));
+        groups[0] = schema.get(0);
         for (int i = 1; i < schema.size(); i++) {
             while (depth > 0 && remaining[depth] == 0) {
                 depth--;
             }
             if (remaining[depth] == 0) {
-                return;
+                throw reader.malformed("the schema holds " + (schema.size() - i)
+                        + " element(s) past the root's last descendant, from '" + schema.get(i).name() + "' on");
             }
             remaining[depth]--;
             SchemaElement element = schema.get(i);
@@ -181,6 +185,13 @@ public class FileMetaDataReader {
                             + " levels, but group '" + element.name() + "' is at level " + (depth + 1));
                 }
                 remaining[++depth] = childCount(element);
+                groups[depth] = element;
+            }
+        }
+        for (; depth >= 0; depth--) {
+            if (remaining[depth] > 0) {
+                throw reader.malformed("group '" + groups[depth].name() + "' declares " + childCount(groups[depth])
+                        + " children, but the schema ends after " + (childCount(groups[depth]) - remaining[depth]));
             }
         }
     }

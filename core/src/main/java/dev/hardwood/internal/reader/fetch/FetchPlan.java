@@ -13,14 +13,13 @@ package dev.hardwood.internal.reader.fetch;
 /// Implementations:
 ///
 /// - [IndexedFetchPlan]: pages pre-computed from OffsetIndex, their bytes sliced from the row
-///   group's [FetchSequence] section requests.
-/// - [SequentialFetchPlan]: pages discovered lazily by scanning headers in those section requests.
+///   group's [Section]s.
+/// - [SequentialFetchPlan]: pages discovered lazily by scanning headers in those sections.
 /// - [SkippedColumnFetchPlan]: a column not read in the row group; fetches nothing and
 ///   yields a single boundary marker.
 /// - [#EMPTY]: a column with no pages to read in the row group.
 ///
-/// [dev.hardwood.internal.reader.plan.PageSource] is agnostic of the implementation — it just
-/// drains `walk()`.
+/// The read is agnostic of the implementation: it drains `walk()`.
 public interface FetchPlan {
 
     /// A plan with no pages: the row group is dropped by its dictionaries, or the

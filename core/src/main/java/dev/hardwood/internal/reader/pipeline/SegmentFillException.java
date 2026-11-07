@@ -8,7 +8,7 @@
 package dev.hardwood.internal.reader.pipeline;
 
 /// The failure of a segment's fill, carrying the page the segment reads, for a fill that runs on
-/// another page's task: a nested cell's fill ([NestedFill]). [ScheduledColumn#pageFailed] unwraps it, so the
+/// another page's task: a nested cell's fill ([NestedFill]). [NestedColumn] unwraps it, so the
 /// failure names the segment's page; it never leaves the column.
 final class SegmentFillException extends RuntimeException {
 

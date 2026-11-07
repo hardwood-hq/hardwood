@@ -11,8 +11,8 @@ import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Trims a page read in place to the records its [PageRowMask] keeps, so the page reaches its
-/// measure and fill unmasked. A nested column trims every masked page on its page's task
-/// ([dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn]), and then keeps every value it
+/// measure and fill unmasked. A nested column trims every masked page on its page's job
+/// ([dev.hardwood.internal.reader.pipeline.NestedColumn]), and then keeps every value it
 /// is given. Flat columns are not trimmed: their fills copy each kept interval.
 ///
 /// The trimmed page carries the kept values' levels, copied into the page's scratch, and where

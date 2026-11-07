@@ -17,7 +17,7 @@ import java.util.function.Supplier;
 ///
 /// ```java
 /// private static final Lazy<System.Logger> LOG =
-///         Lazy.of(() -> System.getLogger(RequestAttempt.class.getName()));
+///         Lazy.of(() -> System.getLogger(FileMetadataCache.class.getName()));
 ///
 /// LOG.get().log(Level.DEBUG, () -> "...");
 /// ```

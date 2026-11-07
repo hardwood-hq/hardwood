@@ -23,9 +23,12 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -109,6 +112,38 @@ class MisalignedPageBoundariesTest {
             assertThat(count)
                     .as("row count for range [%d, %d)", lo, hi)
                     .isEqualTo(hi - lo);
+        }
+    }
+
+    /// The same filter through column readers: each batch's `wide` values pair with its `narrow`
+    /// values.
+    @Test
+    void filterOnNarrowReturnsCorrectlyAlignedWideValuesThroughColumnReaders() throws Exception {
+        int lo = 2000;
+        int hi = 8000;
+        FilterPredicate filter = FilterPredicate.and(
+                FilterPredicate.gtEq("narrow", lo),
+                FilterPredicate.lt("narrow", hi));
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MISALIGNED_FILE));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("narrow", "wide"))
+                     .filter(filter).build()) {
+            ColumnReader narrowReader = columns.getColumnReader("narrow");
+            ColumnReader wideReader = columns.getColumnReader("wide");
+            int count = 0;
+            while (columns.nextBatch()) {
+                int[] narrow = narrowReader.getInts();
+                byte[][] wide = wideReader.getBinaries();
+                for (int r = 0; r < columns.getRecordCount(); r++) {
+                    assertThat(narrow[r]).as("row %d: narrow", count).isEqualTo(lo + count);
+                    String actualPrefix = new String(wide[r], 0, Math.min(13, wide[r].length),
+                            StandardCharsets.UTF_8);
+                    assertThat(actualPrefix).as("row %d: wide value", count)
+                            .isEqualTo(String.format("row=%08d-", narrow[r]));
+                    count++;
+                }
+            }
+            assertThat(count).as("row count for range [%d, %d)", lo, hi).isEqualTo(hi - lo);
         }
     }
 

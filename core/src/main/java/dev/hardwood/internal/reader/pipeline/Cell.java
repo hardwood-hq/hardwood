@@ -24,7 +24,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// A cell goes through these steps, each once:
 ///
 /// 1. **Opened** by the [Placer] at its batch's first record.
-/// 2. **Segments placed**, in page order, by the column's fetcher. Each segment's offset is the
+/// 2. **Segments placed**, in page order, by the column's [Placer]. Each segment's offset is the
 ///    cell's record count before it.
 /// 3. **Sealed** when the batch holds every record the plan puts in it.
 /// 4. **Allocated** by the first page task that reaches it ([#allocate]): its arrays are created
@@ -39,7 +39,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// the cell's values without a lock; the validity words at the edges of a segment's bits are
 /// merged atomically ([FlatFill]). A binary column's segments copy their plain bytes into chunks
 /// of their own ([BinaryFill]), so no fill waits for another.
-final class Cell implements ScheduledCell<BatchExchange.Batch> {
+final class Cell implements BatchCell<BatchExchange.Batch> {
 
     /// [#plannedRecords] of a cell whose batch the plan leaves open past the row group it opens in.
     static final int UNKNOWN_RECORDS = -1;

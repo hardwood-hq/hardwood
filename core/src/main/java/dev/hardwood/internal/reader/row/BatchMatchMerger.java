@@ -67,7 +67,7 @@ public final class BatchMatchMerger {
     private final long[] combined;
 
     /// A merger for a consumer whose columns already wrote every batch's `matches` array, as
-    /// [dev.hardwood.internal.reader.pipeline.ScheduledFlatColumn] does as each cell completes on
+    /// [dev.hardwood.internal.reader.pipeline.FlatColumn] does as each cell completes on
     /// the batch-matcher read path.
     ///
     /// @param plan how to combine the per-column bitmaps

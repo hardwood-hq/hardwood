@@ -19,7 +19,7 @@ package dev.hardwood.internal.reader.plan;
 /// `DATA_PAGE` (v1) pages closes the gate for the whole row group.
 ///
 /// Computed at most once per row group, on first request, and cached in the
-/// [LazyMaskCapability] of [RowGroupIterator.SharedRowGroupMetadata]. The
+/// [LazyMaskCapability] of [SharedRowGroupMetadata]. The
 /// per-row-group fetch-plan path asks only when it would apply a page mask,
 /// and the tail-read fast path asks for every row group; both reuse the
 /// cached value rather than re-running the page-format probe.

@@ -23,7 +23,7 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
+import dev.hardwood.internal.reader.fetch.InPlaceSections;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.metadata.ColumnChunk;
@@ -64,7 +64,7 @@ class IndexWindowBloomFilterTest {
         BitSet[] columns = { new BitSet(), column(CODE), column(CODE) };
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, members(rowGroups().subList(0, 3), columns))
                 .getFirst();
-        window.insertSections(FetchSequence.demandOnly(context));
+        window.insertSections(new InPlaceSections());
         assertThat(file.reads()).isEmpty();
 
         IndexWindowTest.awaitMet(window.bloomFiltersNeed());
@@ -90,7 +90,7 @@ class IndexWindowBloomFilterTest {
         RowGroup withoutLength = withoutBloomFilterLength(rowGroups().get(0), CODE);
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
                 members(List.of(withoutLength), new BitSet[] { column(CODE) })).getFirst();
-        window.insertSections(FetchSequence.demandOnly(context));
+        window.insertSections(new InPlaceSections());
         assertThat(window.bloomFiltersNeed()).isNull();
         assertThat(file.reads()).isEmpty();
 

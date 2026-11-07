@@ -75,13 +75,15 @@ class WorkingSetLimitTest {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet));
         assertThat(countValues(file, 3 * PAGE_VALUES)).isEqualTo(3 * PAGE_VALUES);
 
-        // The fetch step parses the three dictionaries before the first page's task runs
+        // The same total crosses the limit whichever order the charges come in; which charge
+        // crosses it depends on that order. The read plans the third row group behind the first
+        // page's task, so the third dictionary crosses.
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
+        String crossing = "[<memory>: row group 2, column 'c0', dictionary page] Dictionary page needs 2097152 bytes";
         assertThatThrownBy(() -> countValues(file, 3 * PAGE_VALUES))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes to decode, "
-                        + "which takes the read's working set to 4202496 bytes, more than its limit of 4202495 "
-                        + "(hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage(crossing + " to decode, which takes the read's working set to 4202496 bytes, more than "
+                        + "its limit of 4202495 (hardwood.internal.maxWorkingSetBytes)");
     }
 
     @Test
@@ -89,6 +91,9 @@ class WorkingSetLimitTest {
         // Pruning reads each row group's dictionary to look for the literal, which it holds, so
         // every row group stays and its column takes the dictionary instead of parsing it again.
         // Each parse fits the limit alone; the batch holding all three row groups' rows does not.
+        // The column's walk takes the third row group's dictionary before the first page is
+        // decoded, so that charge crosses.
+        String crossing = "[<memory>: row group 2, column 'c0'] Dictionary page needs 1048576 bytes";
         long workingSet = 3L * DICTIONARY_BYTES + 8_192 + 4_100;
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
         byte[] file = RleExpansionFile.buildWide(1, 3, DICTIONARY_BYTES, PAGE_VALUES);
@@ -103,9 +108,8 @@ class WorkingSetLimitTest {
             }
         })
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes to decode, "
-                        + "which takes the read's working set to 3158020 bytes, more than its limit of 3158019 "
-                        + "(hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage(crossing + " to decode, which takes the read's working set to 3158020 bytes, more "
+                        + "than its limit of 3158019 (hardwood.internal.maxWorkingSetBytes)");
     }
 
     @Test
@@ -153,7 +157,7 @@ class WorkingSetLimitTest {
             misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 5122 bytes, %1$s
             dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1682 bytes, %1$s
             page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 17568 bytes, %1$s
-            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 2000 bytes to decode, which takes the read's working set to 9389 bytes, %1$s
+            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 2000 bytes to decode, which takes the read's working set to 7206 bytes, %1$s
             """)
     void everyPathChargesBeforeDecompressing(String file, String message) {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, "1");

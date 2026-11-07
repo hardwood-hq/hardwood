@@ -39,7 +39,7 @@ import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -540,12 +540,12 @@ class ZeroThreadContextTest {
             read.reader = ParquetFileReader.openAll(List.copyOf(read.inputs), context);
             // Without read-ahead past the next unit, so a data read is left to hold once armed: the
             // fixtures are small enough to be fetched whole before the first batch otherwise
-            System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
+            System.setProperty(RowGroupIterator.FETCH_AHEAD_BYTES_PROPERTY, "0");
             try {
                 read.columns = read.reader.buildColumnReaders(ColumnProjection.columns("v")).batchSize(100).build();
             }
             finally {
-                System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
+                System.clearProperty(RowGroupIterator.FETCH_AHEAD_BYTES_PROPERTY);
             }
             assertThat(read.columns.nextBatch()).isTrue();
             read.armed.set(true);

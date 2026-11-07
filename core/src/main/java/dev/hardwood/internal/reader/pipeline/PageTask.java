@@ -14,13 +14,12 @@ import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 
-/// One page of a scheduled column on its way into batches: the page, where it came from, its
-/// place in the read's row order, the decoder its task decodes it with, and the [Segment]s the
-/// column's fetcher placed it as. Its subclass [SealedFillTask] stands for no page: it carries
-/// [PageInfo#BOUNDARY_MARKER], so it reports as a boundary marker.
+/// One page of a [DecodedColumn] on its way into batches: the page, where it came from, its place
+/// in the read's row order, the decoder its job decodes it with, and the [Segment]s the column
+/// placed it as.
 ///
-/// The fetcher creates and places it, and the read's scheduler hands it to its task through the
-/// executor, which orders the fetcher's writes before the task's reads.
+/// The column creates and places it under the read's lock, and the read hands it to its job
+/// through the executor, which orders the column's writes before the job's reads.
 class PageTask {
 
     final PageInfo info;
@@ -36,10 +35,6 @@ class PageTask {
     /// The read's row, counted in kept rows over every row group before, of the page's first kept
     /// record. Pages reach the decode pool in this order across the read's columns.
     final long firstRow;
-    /// What the read admitted the page's task under
-    /// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]), set by the scheduler before it
-    /// submits the page.
-    long admission;
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
 

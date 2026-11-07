@@ -57,7 +57,7 @@ class ContextClosedMidReadTest {
         }
     }
 
-    /// The same of a column read, whose fixed-width columns a read's scheduler submits.
+    /// The same of a column read, whose fixed-width columns the read decodes on the pool.
     @RepeatedTest(5)
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aColumnReadOnAClosedContextFailsAndItsReadersClose() throws Exception {

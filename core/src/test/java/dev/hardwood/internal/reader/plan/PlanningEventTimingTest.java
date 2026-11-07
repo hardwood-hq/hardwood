@@ -25,7 +25,6 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.fetch.PrefetchTasks;
 import dev.hardwood.internal.reader.step.ReadTasks;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.metadata.PhysicalType;
@@ -110,9 +109,10 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
         List<InputFile> files = List.of(new NamedFile("f0", write(0), null), new NamedFile("f1", write(1), null));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
             FileMetadataCache cache = new FileMetadataCache(files, context);
-            cache.prefetch(1, new PrefetchTasks(context.ioExecutor()), () -> {}).join();
+            FileMetadataCache.ClaimedLoad load = cache.claim(1).load();
+            load.read();
             Thread.sleep(HOLD_MILLIS);
-            cache.getFile(1);
+            load.parse();
             cache.close();
         }
         awaitEvents();
@@ -126,15 +126,17 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
                 });
     }
 
-    /// A footer read ahead that no read parses reports no open.
+    /// A footer read that no read parses reports no open.
     @Tag("pool")
     @Test
-    void aFooterReadAheadThatIsNeverParsedReportsNoOpen() throws Exception {
+    void aFooterReadThatIsNeverParsedReportsNoOpen() throws Exception {
         enable("dev.hardwood.FileOpened");
         List<InputFile> files = List.of(new NamedFile("f0", write(0), null), new NamedFile("f1", write(1), null));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
             FileMetadataCache cache = new FileMetadataCache(files, context);
-            cache.prefetch(1, new PrefetchTasks(context.ioExecutor()), () -> {}).join();
+            FileMetadataCache.ClaimedLoad load = cache.claim(1).load();
+            load.read();
+            load.abandon();
             cache.close();
         }
         awaitEvents();

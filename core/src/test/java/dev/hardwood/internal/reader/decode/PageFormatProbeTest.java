@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Verifies [PageFormatProbe.firstDataPageType] against fixtures whose writer-version is known at
 /// generation time. The probe's result feeds the row-group-wide mask gate in
-/// [dev.hardwood.internal.reader.plan.RowGroupIterator]; its correctness is the load-bearing piece
+/// [dev.hardwood.internal.reader.engine.RowGroupIterator]; its correctness is the load-bearing piece
 /// of the nested-v1 fallback path that this codebase has no dedicated fixture for.
 class PageFormatProbeTest {
 

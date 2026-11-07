@@ -147,8 +147,8 @@ scratch, up to `MAX_INFLIGHT_PAGES` per nested column, is not measured.
 
 | Kind | What it holds | Decided by | Released when |
 | --- | --- | --- | --- |
-| Working set | per projected column: the entries of the dictionaries of every chunk the batch it fills has rows of, more than one where a batch spans row groups; the batches of the page holding the rows of the batch the column publishes next (`ReadScheduler`'s first submission rule), and for a nested column the page's decompressed bytes and levels; the fetched range that page is read from (a `RangeRead` of priority `DEMAND`). Once per read: the buffers of one task decoding a page, its decompressed bytes and level and dictionary-id scratch | the file's declared sizes | the consumer takes the page's last batch; the column moves past the chunk or the range; the task ends |
-| Read-ahead | everything else: speculative `RequestAttempt`s (the next chunk, region, row group and file), pages inside the scheduler's cap, the task buffers of pages decoded at once beyond the first, the next row group's dictionaries, dictionaries parsed only to prune | the reader | the read reaches it, which moves it into the working set, or abandons it |
+| Working set | per projected column: the entries of the dictionaries of every chunk the batch it fills has rows of, more than one where a batch spans row groups; the batches of the page holding the rows of the batch the column publishes next (`RowGroupIterator` decodes it past the read's cap), and for a nested column the page's decompressed bytes and levels; the fetched range that page is read from (a demanded request). Once per read: the buffers of one task decoding a page, its decompressed bytes and level and dictionary-id scratch | the file's declared sizes | the consumer takes the page's last batch; the column moves past the chunk or the range; the task ends |
+| Read-ahead | everything else: speculative requests (the next chunk, region, row group and file), pages inside the read's cap, the task buffers of pages decoded at once beyond the first, the next row group's dictionaries, dictionaries parsed only to prune | the reader | the read reaches it, which moves it into the working set, or abandons it |
 
 Safety is a bound on the working set, throughput a bound on read-ahead. The working set is not
 optional: short of decoding pages in pieces, a read cannot produce its next batch with less.
@@ -205,11 +205,11 @@ nested column's pool belong to the read and go with it.
 
 A context's reads hold their read-ahead within one buffer `R`. Read-ahead starts only while it
 fits `R`; otherwise it is not started and is considered again on the next release, from the
-places that already re-run on one: the scheduler's `submit` after a task ends or a batch is
+places that already re-run on one: the read's poll after a task ends or a batch is
 published, and the walk that would have used the range. Nothing waits for `R`, so it can be
 shared by every read on the context without the deadlock a shared `W` would bring.
 
-Each read also stops at what its throughput needs, whether or not `R` has room: the scheduler's
+Each read also stops at what its throughput needs, whether or not `R` has room: the read's
 decode cap (`CAP_BUDGETS` batch byte budgets past the read's first unpublished row), and #1264's
 fetch target, which replaces the one-ahead rules of `ChunkHandle`, `SharedRegion`, the next row
 group and the next file. The fetch target is counted in bytes held, about the store's bandwidth

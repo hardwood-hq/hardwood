@@ -25,8 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// A file is planned when the read reaches it, so a caller who stops early never
 /// pays for the files beyond where they stopped. The counts here are deliberately
-/// bounds rather than exact numbers: the fetchers prefetch ahead until
-/// backpressure stops it, and how far it gets is a timing question.
+/// bounds rather than exact numbers: the read's columns read ahead until
+/// backpressure stops them, and how far it gets is a timing question.
 ///
 /// That it stops short of the end is only a property of a read something stops — a
 /// row budget or a cap. A read with neither is bounded by batch backpressure alone,
@@ -61,7 +61,7 @@ class MultiFilePlanningTest {
     }
 
     /// The cap is what bounds planning, not the caller walking away after one row. An
-    /// abandoned loop leaves the fetchers free to run on, so without `head` this asserts
+    /// abandoned loop leaves the read's jobs free to run on, so without `head` this asserts
     /// only that the calling thread reached the assertion first — which on a loaded
     /// machine it does not. See [#anUncappedFilteredReadYieldsWithoutPlanningTheWholeRead],
     /// which is the same read without a cap and therefore asserts no bound at all.
@@ -130,7 +130,7 @@ class MultiFilePlanningTest {
     /// An uncapped filtered read has neither, so it is bounded only by batch
     /// backpressure, and these fixtures hold fewer rows in total than one batch: walking
     /// every file to fill the first batch is the pipeline working, not planning running
-    /// away. A bound here would only pass while the calling thread beat the fetchers
+    /// away. A bound here would only pass while the calling thread beat the read's jobs
     /// to the assertion.
     @Test
     void anUncappedFilteredReadYieldsWithoutPlanningTheWholeRead() throws IOException {

@@ -13,9 +13,9 @@ import java.util.function.Consumer;
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.HardwoodContextImpl;
 
-/// Runs the fetch steps, page tasks and planning of one read: on its context's pool
+/// Runs the walk advances, page tasks and planning of one read: on its context's pool
 /// ([PoolExecutor]), or, on a context of zero threads, on the read's own queue ([ReadQueue]),
-/// which the threads using the read run. Both keep the pool's order: a fetch step at the head, a
+/// which the threads using the read run. Both keep the pool's order: a walk advance at the head, a
 /// page task and planning at the tail.
 public sealed interface ReadExecutor permits ReadExecutor.PoolExecutor, ReadQueue {
 
@@ -25,7 +25,7 @@ public sealed interface ReadExecutor permits ReadExecutor.PoolExecutor, ReadQueu
         return context.hasPool() ? new PoolExecutor(context, new ReadTasks()) : new ReadQueue(context);
     }
 
-    /// Runs a column's fetch step, at the head.
+    /// Runs a column's walk advance, at the head.
     ///
     /// @throws RejectedExecutionException if the context is closed
     void executeStep(Runnable step);
@@ -43,7 +43,7 @@ public sealed interface ReadExecutor permits ReadExecutor.PoolExecutor, ReadQueu
     /// The threads that decode the read's pages: the pool's, or the one driving the read.
     int decodeThreads();
 
-    /// The read's fetch steps and page tasks in flight, and the wait of the threads using it.
+    /// The read's walk advances and page tasks in flight, and the wait of the threads using it.
     ReadTasks tasks();
 
     /// The read's work on its context's pool.

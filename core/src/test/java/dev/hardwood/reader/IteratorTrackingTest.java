@@ -17,7 +17,7 @@ import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// A [ParquetFileReader] tracks the [dev.hardwood.internal.reader.plan.RowGroupIterator]s
+/// A [ParquetFileReader] tracks the [dev.hardwood.internal.reader.engine.RowGroupIterator]s
 /// it hands to child readers so that [ParquetFileReader#close()] can tear down an
 /// iterator whose child reader the caller never closed.
 ///

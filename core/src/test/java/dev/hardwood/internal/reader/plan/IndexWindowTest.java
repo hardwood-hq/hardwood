@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
+import dev.hardwood.internal.reader.fetch.InPlaceSections;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.ColumnChunk;
@@ -148,18 +148,18 @@ class IndexWindowTest {
                 .hasMessage("Work item 2 is not in the index window of work items 0 to 1");
     }
 
-    /// One window over the first `count` row groups of the fixture, its section requests in a
-    /// sequence that starts them on demand.
+    /// One window over the first `count` row groups of the fixture, its sections read in place as
+    /// they are polled.
     private IndexWindow window(InputFile file, int count, BitSet offsetIndexColumns,
             BitSet columnIndexColumns) throws Exception {
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
                 members(rowGroups().subList(0, count), offsetIndexColumns, columnIndexColumns)).getFirst();
-        window.insertSections(FetchSequence.demandOnly(context));
+        window.insertSections(new InPlaceSections());
         return window;
     }
 
     /// The index buffers of `workItem`, once the window's page index has arrived: each need names
-    /// one request not present, so it is asked again until none is, as the planning chain does.
+    /// one request not present, so it is asked again until none is, as the read's planning does.
     private static RowGroupIndexBuffers buffers(IndexWindow window, int workItem) throws Exception {
         for (Need need = window.indexNeed(); need != null; need = window.indexNeed()) {
             awaitMet(need);

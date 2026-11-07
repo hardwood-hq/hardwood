@@ -4,7 +4,7 @@ Describes what `ColumnReader` exposes and how a batch reaches it: the layer mode
 
 Related documents:
 
-- [READ_PIPELINE.md](READ_PIPELINE.md): how pages become published batches (row-group iteration, `PageSource`, the scheduled columns, `BatchExchange`, threading, batch sizing, `ReaderConfig`)
+- [READ_PIPELINE.md](READ_PIPELINE.md): how pages become published batches (the read's `RowGroupIterator`, the decoded columns, `BatchExchange`, batch sizing, `ReaderConfig`)
 - [NESTED_DECODE.md](NESTED_DECODE.md): how definition and repetition levels become nested batches (cells, index modes, the real view built before publish, the fixed-size-list fast path)
 - [VALUE_DECODE.md](VALUE_DECODE.md): value decoders and dictionaries
 - [RECORD_FILTERING.md](RECORD_FILTERING.md): exact filtering on the column readers (selection and compaction)
@@ -87,7 +87,7 @@ Tests: `ValidityTest`, `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
 - **No per-byte accessor.** A per-byte read checked against the value's length keeps its check inside the caller's loop; an unchecked one reads past the value into its neighbour. A loop over the window compiles as one over a raw array.
 - **No per-value string accessor.** Taking a batch's windows builds its dictionary values' views (see **Deferred views** below); `getStrings()` resolves strings through the dictionary without them and is the string accessor.
 - **A final class.** Its call sites in a caller's loop stay monomorphic and inline. A callback API would put one call site inside the library, megamorphic across callers.
-- Views are not contiguous or ordered, and may overlap. A value from a dictionary-encoded page points at its entry in the dictionary's own bytes, so values naming one entry cover the same bytes; a value from a plain page is copied once, by its segment, into a chunk of the batch ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)).
+- Views are not contiguous or ordered, and may overlap. A value from a dictionary-encoded page points at its entry in the dictionary's own bytes, so values naming one entry cover the same bytes; a value from a plain page is copied once, by its segment, into a chunk of the batch ([READ_PIPELINE.md](READ_PIPELINE.md#decoded-columns)).
 - `getBinaryValues()` throws `IllegalStateException` on a fixed-width column.
 
 Views are what keep a dictionary-encoded column from costing a byte copy per value. A batch of binary values draws on at most one dictionary ([Dictionary ids](#dictionary-ids)), whose bytes it takes as one of its buffers: building its dictionary values' views records a buffer id and two `int`s per value and copies no bytes. Views must stay free to overlap and to leave value order: that freedom is what lets a dictionary value point at its entry instead of being copied.
@@ -102,7 +102,7 @@ A view is `int`, which bounds one buffer, not the batch: a batch's bytes are spr
 
 `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf, `null` at null positions, and cache the result per batch. `getStrings()` requires a text column (`BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or unannotated) and throws `IllegalArgumentException` otherwise; on a dictionary-encoded `STRING`, `ENUM` or `JSON` column it returns one interned `String` per dictionary entry through the batch's dictionary indices (see [VALUE_DECODE.md](VALUE_DECODE.md)), and on an unannotated column one `String` per value. Both arrays have length `getValueCount()`, not `getRecordCount()`.
 
-Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`, `BinaryBatchValuesTest`, `ScheduledBinaryViewsTest`, `BinaryFillChunksTest`.
+Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`, `BinaryBatchValuesTest`, `FlatColumnBinaryViewsTest`, `BinaryFillChunksTest`.
 
 ### Dictionary ids
 
@@ -131,8 +131,8 @@ Tests: `ColumnReaderLayerModelTest`, `FixedSizeListFastPathReadTest`, `ColumnRea
 
 Every column-reader read (one `ColumnReader`, an unfiltered `ColumnReaders` group, a filtered group, a filtered single column) runs on one model in `dev.hardwood.reader`:
 
-- **`ColumnCursor`** (package-private) owns one decoded column's `ScheduledColumn`, its `BatchExchange` and its current raw batch. `advance()` polls the exchange, rethrows a pipeline error, and returns `false` at end of stream and on every call after it. It exposes the current batch, record count, file name and `filterAlwaysMatches`, and `close()` stops the column. It holds no accessor or cache state.
-- **`ColumnScan`** (package-private) owns the cursors of every decoded column, in `ReadProjection.decoded()` order (payload columns first, then filter-only predicate columns), the shared `RowGroupIterator`, and for a filtered read the `SelectionEngine`. One iterator feeds every cursor, which is what keeps the columns row-aligned.
+- **`ColumnCursor`** (package-private) owns the `BatchExchange` one decoded column of the read publishes into and its current raw batch. `advance()` polls the exchange, rethrows the column's failure, and returns `false` at end of stream and on every call after it. It exposes the current batch, record count, file name and `filterAlwaysMatches`. It holds no accessor or cache state; the read's close stops its column.
+- **`ColumnScan`** (package-private) owns the cursors of every decoded column, in `ReadProjection.decoded()` order (payload columns first, then filter-only predicate columns), the shared `RowGroupIterator`, and for a filtered read the `SelectionEngine`. One read feeds every cursor, which is what keeps the columns row-aligned; the scan's close closes the read.
 - **Views.** `ColumnReader` holds its scan and the index of its payload cursor plus per-batch caches (the real view, trimmed or gathered leaf arrays, trimmed binary views, materialised binaries and strings). `ColumnReaders` holds the scan and one `ColumnReader` per payload column. Views own no pipeline state.
 
 Each scan has one owner, which advances and closes it. A single `ColumnReader` owns a one-column scan (`ParquetFileReader.buildSingleColumnReader`) and is its only view; a filtered single column's scan also holds the predicate columns' cursors, which have no view. A `ColumnReaders` owns its scan, and its `ColumnReader`s are group members: views that neither advance nor close it. Single-column readers are single-file; `ColumnReaders` spans the files of an `openAll` reader.
@@ -147,7 +147,7 @@ Tests: `ProjectionOrderTest`.
 
 `ColumnScan.advance()` polls every payload cursor once, then every filter-only cursor unless the first cursor's batch is proven by statistics (see [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)). It checks that the polled cursors agree: every one produced a batch, all with the same record count. A cursor exhausted early or a differing record count throws `IllegalStateException`. When the first cursor reaches the end, `advance()` drains every other cursor, and one that still produces a batch throws `IllegalStateException`. With a filter, it then computes the selection and compacts each payload cursor's batch to the matching records.
 
-A read with no row group left gets a scan with no cursors (`ColumnScan.empty`), whose first `advance()` returns `false` and starts no column. Before it builds its cursors, the read probes the bloom filters and dictionaries of its leading row groups on the calling thread (`RowGroupIterator.hasLiveWorkItem`, which the row readers ask as well), which hands each dictionary page to the context's pool to parse, up to the first one they do not drop, so a read that every probe drops, such as a point lookup of an absent key, starts no column and allocates no batch. The decisions are cached per work item, and the columns reuse them; the surviving row group's page index is still read by a column's fetcher, so a failure there carries the column it was read for.
+A read with no row group left gets a scan with no cursors (`ColumnScan.empty`), whose first `advance()` returns `false` and starts no column. Before it builds its cursors, the read probes the bloom filters and dictionaries of its leading row groups (`RowGroupIterator.hasLiveWorkItem`, which the row readers ask as well), on planning jobs of the read while the calling thread waits, up to the first one they do not drop, so a read that every probe drops, such as a point lookup of an absent key, starts no column and allocates no batch. The decisions are kept per work item, and the read's planning reuses them; the surviving row group's page index is read by its planning once the columns start.
 
 Tests: `LiveWorkItemTest`, `EmptyOffsetIndexTest`.
 

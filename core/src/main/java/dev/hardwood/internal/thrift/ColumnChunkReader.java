@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.thrift;
 
+import dev.hardwood.internal.EncryptedFileException;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -34,6 +35,7 @@ public class ColumnChunkReader {
         // Absent means this file, and so does the empty string the spec allows for it.
         String filePath = "";
         boolean fileOffsetSeen = false;
+        boolean encrypted = false;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -77,6 +79,10 @@ public class ColumnChunkReader {
                         columnIndexLength = reader.readNonNegativeI32();
                     }
                     break;
+                case 8: // crypto_metadata (optional): the column is encrypted
+                    reader.skipField(ThriftCompactReader.fieldType(header));
+                    encrypted = true;
+                    break;
                 default:
                     reader.skipField(ThriftCompactReader.fieldType(header));
                     break;
@@ -88,6 +94,15 @@ public class ColumnChunkReader {
         }
         requireBothOrNeither(offsetIndexOffset, offsetIndexLength, 4, 5);
         requireBothOrNeither(columnIndexOffset, columnIndexLength, 6, 7);
+        if (metaData == null) {
+            // The format leaves meta_data optional for an encrypted column, which carries
+            // encrypted_column_metadata instead, and requires writers to set it otherwise
+            if (encrypted) {
+                throw new EncryptedFileException();
+            }
+            throw new ParquetReadException(ThriftStruct.COLUMN_CHUNK.structName() + " omits "
+                    + ThriftStruct.COLUMN_CHUNK.fieldName(3) + ", which only an encrypted column may");
+        }
 
         return new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength, columnIndexOffset,
                 columnIndexLength, filePath);

@@ -14,6 +14,7 @@ import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -208,6 +209,10 @@ final class TopLevelFieldMap {
                                           FileSchema schema,
                                           ProjectedSchema projectedSchema) {
         SchemaNode elementSchema = listGroup.getListElement();
+        if (elementSchema == null) {
+            throw new ParquetReadException("LIST group '" + listGroup.name()
+                    + "' holds no repeated field, so its rows have no elements to read");
+        }
 
         // Compute defLevel thresholds
         int nullDefLevel = listGroup.maxDefinitionLevel();
@@ -220,6 +225,11 @@ final class TopLevelFieldMap {
         int firstProjCol = range[0];
         int lastProjCol = range[1];
         int leafCount = (firstProjCol <= lastProjCol) ? (lastProjCol - firstProjCol + 1) : 0;
+        if (leafCount == 0) {
+            // A list's elements are counted from the levels of its columns
+            throw new ParquetReadException("LIST group '" + listGroup.name()
+                    + "' holds no column, so its rows have no elements to read");
+        }
 
         // Pre-build element descriptor for nested types
         FieldDesc elementDesc = null;
@@ -299,6 +309,10 @@ final class TopLevelFieldMap {
     static FieldDesc.MapOf buildMapDesc(SchemaNode.GroupNode mapGroup,
                                         FileSchema schema,
                                         ProjectedSchema projectedSchema) {
+        if (mapGroup.getMapKey() == null) {
+            throw new ParquetReadException("MAP group '" + mapGroup.name()
+                    + "' holds no repeated group with a key, so its rows have no entries to read");
+        }
         // Compute defLevel thresholds
         int nullDefLevel = mapGroup.maxDefinitionLevel();
         // The inner repeated key_value group
@@ -306,6 +320,11 @@ final class TopLevelFieldMap {
         int entryDefLevel = keyValueGroup.maxDefinitionLevel();
 
         SchemaNode keyNode = mapGroup.getMapKey();
+        if (!holdsColumn(keyNode)) {
+            // A map's entries are counted from the levels of its key's column
+            throw new ParquetReadException("MAP group '" + mapGroup.name()
+                    + "' holds no column in its key, so its rows have no entries to read");
+        }
         SchemaNode valueNode = mapGroup.getMapValue();
 
         int keyProjCol = findFirstLeafProjCol(keyNode, projectedSchema);
@@ -379,6 +398,13 @@ final class TopLevelFieldMap {
                 }
             }
         }
+    }
+
+    private static boolean holdsColumn(SchemaNode node) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> true;
+            case SchemaNode.GroupNode group -> group.children().stream().anyMatch(TopLevelFieldMap::holdsColumn);
+        };
     }
 
     private static int findFirstLeafProjCol(SchemaNode node, ProjectedSchema projectedSchema) {

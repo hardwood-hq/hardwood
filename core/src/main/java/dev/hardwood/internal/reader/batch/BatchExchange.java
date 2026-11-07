@@ -21,7 +21,7 @@ import dev.hardwood.jfr.BatchWaitEvent;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
-/// Exchange buffer between a [dev.hardwood.internal.reader.pipeline.ScheduledColumn]'s page tasks
+/// Exchange buffer between a [dev.hardwood.internal.reader.pipeline.DecodedColumn]'s decode jobs
 /// and the consumer. The column publishes without waiting ([#tryPublish]); a batch that finds no
 /// room waits in the column until the consumer's next take ([#setRoomListener]).
 ///
@@ -128,12 +128,12 @@ public class BatchExchange<B> {
     ///
     /// Three batches are pre-allocated (`READY_QUEUE_CAPACITY + 1`): one filling
     /// plus up to two queued. The consumer must return consumed batches to `freeQueue()`.
-    /// A scheduled column fills holders past those three while it decodes ahead
+    /// A decoded column fills holders past those three while it decodes ahead
     /// ([#newBatch]); the free queue keeps at most three of the holders returned, for holders
     /// whose arrays are allocated per batch anyway.
     ///
     /// @param columnName column name for error messages
-    /// @param batchFactory creates the initial batch holders, and those a scheduled column
+    /// @param batchFactory creates the initial batch holders, and those a decoded column
     ///        needs beyond them
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]
@@ -142,12 +142,12 @@ public class BatchExchange<B> {
     }
 
     /// Creates a recycling exchange whose free queue keeps every holder returned, the ones a
-    /// scheduled column filled past the three pre-allocated while it decoded ahead included, so
+    /// decoded column filled past the three pre-allocated while it decoded ahead included, so
     /// that a read reuses the arrays of every holder its read-ahead filled rather than allocating
     /// new ones. The holders kept are at most those the read-ahead filled at once.
     ///
     /// @param columnName column name for error messages
-    /// @param batchFactory creates the initial batch holders, and those a scheduled column
+    /// @param batchFactory creates the initial batch holders, and those a decoded column
     ///        needs beyond them
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]
@@ -392,8 +392,8 @@ public class BatchExchange<B> {
     /// reads in flight. An interrupt ends the wait before the next item runs, as it ends a pooled
     /// read's wait: an item may read a file, whose channel an interrupted thread would close.
     ///
-    /// @throws IllegalStateException if no fetch step or page task of the read is in flight and no batch
-    ///         is ready: nothing could publish one any more
+    /// @throws IllegalStateException if no job of the read is in flight and no batch is ready:
+    ///         nothing could publish one any more
     @SuppressWarnings("unchecked")
     private B drive() throws InterruptedException, IOException {
         while (true) {
@@ -478,7 +478,7 @@ public class BatchExchange<B> {
     /// Call this after detecting a finished/null batch to surface pipeline errors.
     ///
     /// An [IOException], a `RuntimeException` and an [Error] are all rethrown as they stand.
-    /// [dev.hardwood.internal.reader.pipeline.ScheduledColumn] has already said what a failure
+    /// [dev.hardwood.internal.reader.pipeline.DecodedColumn] has already said what a failure
     /// means by the time it reaches here — a decode failure is a `ParquetReadException`, a fetch
     /// failure the `IOException` it was — and an `Error` is neither the file's fault nor something
     /// a caller retries. Relabelling any of them would undo that one frame below the reader, and an

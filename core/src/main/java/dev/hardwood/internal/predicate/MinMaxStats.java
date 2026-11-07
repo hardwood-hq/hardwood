@@ -183,6 +183,10 @@ sealed interface MinMaxStats {
             // way the leaf's decoder does not expect.
             return new NoBounds(UNKNOWN_SORT_ORDER);
         }
+        int width = boundWidth(leaf);
+        if (width != 0 && (min.length != width || max.length != width)) {
+            return new NoBounds(NOT_THE_COLUMN_WIDTH);
+        }
         return switch (leaf) {
             case ResolvedPredicate.IntPredicate ignored -> IntStats.of(
                     StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max));
@@ -230,6 +234,38 @@ sealed interface MinMaxStats {
             case ResolvedPredicate.GeospatialPredicate ignored -> new NoBounds(null);
             case ResolvedPredicate.And ignored -> new NoBounds(null);
             case ResolvedPredicate.Or ignored -> new NoBounds(null);
+        };
+    }
+
+    /// The bytes each bound of a leaf decoding fixed-width values takes, or `0` for a leaf whose
+    /// bounds are byte strings, which [BinaryStats] and [Int96Stats] check, or that reads none.
+    private static int boundWidth(ResolvedPredicate leaf) {
+        return switch (leaf) {
+            case ResolvedPredicate.IntPredicate ignored -> Integer.BYTES;
+            case ResolvedPredicate.IntInPredicate ignored -> Integer.BYTES;
+            case ResolvedPredicate.UnsignedIntPredicate ignored -> Integer.BYTES;
+            case ResolvedPredicate.UnsignedIntInPredicate ignored -> Integer.BYTES;
+            case ResolvedPredicate.FloatPredicate ignored -> Float.BYTES;
+            case ResolvedPredicate.FloatInPredicate ignored -> Float.BYTES;
+            case ResolvedPredicate.LongPredicate ignored -> Long.BYTES;
+            case ResolvedPredicate.LongInPredicate ignored -> Long.BYTES;
+            case ResolvedPredicate.UnsignedLongPredicate ignored -> Long.BYTES;
+            case ResolvedPredicate.UnsignedLongInPredicate ignored -> Long.BYTES;
+            case ResolvedPredicate.DoublePredicate ignored -> Double.BYTES;
+            case ResolvedPredicate.DoubleInPredicate ignored -> Double.BYTES;
+            case ResolvedPredicate.Float16Predicate ignored -> FixedWidths.FLOAT16;
+            case ResolvedPredicate.Float16InPredicate ignored -> FixedWidths.FLOAT16;
+            // A boolean bound is one plain-encoded byte, not the one bit of a value
+            case ResolvedPredicate.BooleanPredicate ignored -> 1;
+            case ResolvedPredicate.BinaryPredicate ignored -> 0;
+            case ResolvedPredicate.BinaryInPredicate ignored -> 0;
+            case ResolvedPredicate.IsNullPredicate ignored -> 0;
+            case ResolvedPredicate.IsNotNullPredicate ignored -> 0;
+            case ResolvedPredicate.EveryNonNullRowPredicate ignored -> 0;
+            case ResolvedPredicate.NoRowPredicate ignored -> 0;
+            case ResolvedPredicate.GeospatialPredicate ignored -> 0;
+            case ResolvedPredicate.And ignored -> 0;
+            case ResolvedPredicate.Or ignored -> 0;
         };
     }
 

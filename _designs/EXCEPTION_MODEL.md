@@ -115,7 +115,7 @@ passed to `computeIfAbsent`. Those are the only places an I/O failure is wrapped
 caller sees one. **A boundary counts when the language forbids the declaration, not when an
 interface we chose happens to.**
 
-The read pipeline's tasks (fetch steps, page tasks) meet at boundaries that catch
+A read's jobs (walk advances, decodes, planning, requests) meet at boundaries that catch
 `Exception`, record where they were, and hand it to the consumer
 ([READ_PIPELINE.md](READ_PIPELINE.md#error-propagation)). Whatever the decoders raise there,
 other than an `UnsupportedOperationException`, becomes a `ParquetReadException` keeping the
@@ -126,19 +126,16 @@ this, also where a footer is loaded and in the byte-level reads outside the pipe
 and reaches the consumer as raised, but is recorded on the way past, or a consumer waiting on
 work that thread will never finish waits for ever.
 
-A read started ahead of demand is the exception: nothing waits on it, so its failure does not
-fail the read. Every read of a read, a chunk's or region's (a `FetchSequence` section request) and a
-file's footer (`FileMetadataCache`), keeps its failure in its `RequestAttempt`. One started ahead of
-demand that failed with an exception is logged at DEBUG as it fails, and a walk that reaches
-the handle, or a load that reaches the file, takes it as not present: the read is issued again
-as demand, and that read's failure is raised with a caller waiting. One that failed with an
-`Error` is not read again: the demand that reaches it takes the `Error`, and an `Error` no step
-or load took is thrown once, by the close of the read's `PrefetchTasks`, once the files are
-closed ([THREADING.md](THREADING.md#invariants)). A demand read's failure reaches the
-step that waits for it, and a work item's planning's failure every column that reaches the work
-item. An `Error` a read or a planning fails with reaches the caller once: through a step that
-takes it, or through the iterator's close when no step did, as when the column stopped while it
-waited.
+A read started ahead of demand is the exception: nothing waits on it, so its first failure
+does not fail the read. Every read of a read, a request's (a chunk's or a region's) and a file's
+footer (`FileMetadataCache`), that fails with an exception is read once more, at once; only the
+second failure is final. A request's final failure is an `IOException` naming the file, offset
+and length, which a walk that reaches the request raises for its column and a planning stage
+raises as the planning failure every column that reaches the work item takes. A footer's final
+failure, or an `Error` its read failed with, completes the file's footer entry and is raised when
+the read lists the file; an `Error` of a footer read ahead that no listing raised is thrown once,
+by the read's close ([THREADING.md](THREADING.md#invariants)). An `Error` a request's read fails
+with fails the whole read at once.
 
 ## An annotation the reader cannot use is dropped, not raised
 

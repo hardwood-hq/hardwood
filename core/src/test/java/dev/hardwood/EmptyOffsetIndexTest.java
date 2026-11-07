@@ -117,7 +117,7 @@ class EmptyOffsetIndexTest {
     }
 
     /// The same through a filtered column read, which probes its leading row groups on the
-    /// calling thread before it starts its columns: the page index is still read by a fetcher,
+    /// calling thread before it starts its columns: the page index is still read by the read's planning,
     /// and the failure names where the read stopped.
     @Test
     void aFilteredColumnReadRejectsTheIndex() throws Exception {

@@ -30,14 +30,14 @@ import dev.hardwood.schema.ColumnSchema;
 /// [FetchPlan] for columns with an OffsetIndex.
 ///
 /// Pages are pre-computed at plan time from the OffsetIndex (with filter and maxRows already
-/// applied). The bytes come from the row group's [FetchSequence] section requests that overlap the
+/// applied). The bytes come from the row group's [Section]s that overlap the
 /// chunk, located by offset; dictionary parsing is deferred until the walk is first advanced. No
 /// I/O happens at plan time.
 public final class IndexedFetchPlan implements FetchPlan {
 
     private final List<NeededPage> neededPages;
-    /// The section requests overlapping the column chunk, in offset order.
-    private final List<SectionRequest> sections;
+    /// The requests overlapping the column chunk, in offset order.
+    private final List<? extends Section> sections;
     /// Where the dictionary page starts, or `0` when the plan reads none: the chunk has no
     /// dictionary page, or pruning has read it.
     private final long dictionaryStart;
@@ -56,7 +56,7 @@ public final class IndexedFetchPlan implements FetchPlan {
     ///
     /// @param neededPages needed pages paired with their per-page row masks
     ///        (filter + maxRows applied)
-    /// @param sections the section requests overlapping the column chunk, in offset order, which
+    /// @param sections the requests overlapping the column chunk, in offset order, which
     ///        hold every needed page and the dictionary page
     /// @param dictionaryStart where the dictionary page starts, or `0` when the plan reads none;
     ///        see [DictionaryParser#dictionaryPageStart]
@@ -65,7 +65,7 @@ public final class IndexedFetchPlan implements FetchPlan {
     /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
     ///        the plan reads no dictionary page; `null` otherwise
     /// @param workingSet where the plan charges the dictionary it parses
-    public IndexedFetchPlan(List<NeededPage> neededPages, List<SectionRequest> sections,
+    public IndexedFetchPlan(List<NeededPage> neededPages, List<? extends Section> sections,
                      long dictionaryStart, long firstDataPageOffset,
                      ColumnSchema columnSchema, ColumnChunk columnChunk,
                      HardwoodContextImpl context, int rowGroupIndex, String fileName,
@@ -94,8 +94,8 @@ public final class IndexedFetchPlan implements FetchPlan {
     }
 
     /// Walk that parses the dictionary on first access and yields [PageInfo] objects whose bytes it
-    /// slices from the section requests that hold them. Its needs are known from the offset index:
-    /// the dictionary page's section request, then each page's.
+    /// slices from the requests that hold them. Its needs are known from the offset index:
+    /// the dictionary page's request, then each page's.
     private class IndexedPageWalk implements PageWalk {
 
         private final SectionCursor cursor = new SectionCursor(sections, null);
@@ -115,6 +115,11 @@ public final class IndexedFetchPlan implements FetchPlan {
         @Override
         public Need pending() {
             return pending;
+        }
+
+        @Override
+        public void stop() {
+            cursor.releaseAll();
         }
 
         @Override

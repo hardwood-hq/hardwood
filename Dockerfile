@@ -90,7 +90,7 @@ ENV JAVA_HOME="$SDKMAN_DIR/candidates/java/current"
 # Install the Hardwood CLI from a tagged GitHub release. The tarball ships the
 # native binary alongside a lib/ of codec .so files it resolves relative to its
 # real path, so keep them together under /opt and symlink only the launcher.
-ARG HARDWOOD_CLI_VERSION=1.0.0.Final
+ARG HARDWOOD_CLI_VERSION=1.0.1.Final
 RUN arch="$(uname -m)" \
     && url="https://github.com/hardwood-hq/hardwood/releases/download/v${HARDWOOD_CLI_VERSION}/hardwood-cli-${HARDWOOD_CLI_VERSION}-linux-${arch}.tar.gz" \
     && curl -fsSL "$url" | tar -xz -C /opt \

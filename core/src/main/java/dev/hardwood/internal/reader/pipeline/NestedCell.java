@@ -12,7 +12,7 @@ import java.util.List;
 
 import dev.hardwood.internal.reader.batch.NestedBatch;
 
-/// The work of one [ScheduledNestedColumn] for one planned batch: the [NestedSegment]s of the
+/// The work of one [NestedColumn] for one planned batch: the [NestedSegment]s of the
 /// measured pages placed into it, in page order.
 ///
 /// A cell goes through these steps, each once:
@@ -29,7 +29,7 @@ import dev.hardwood.internal.reader.batch.NestedBatch;
 ///
 /// The segments and totals are guarded by the column lock until the cell is sealed; the thread
 /// that takes it off the sealed cells then owns it until it is completed.
-final class NestedCell implements ScheduledCell<NestedBatch> {
+final class NestedCell implements BatchCell<NestedBatch> {
 
     final String fileName;
     final boolean alwaysMatches;

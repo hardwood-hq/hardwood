@@ -22,7 +22,6 @@ import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
-import dev.hardwood.internal.reader.plan.RowGroupIterator.WorkItem;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.jfr.RowGroupBloomFilterEvent;
 import dev.hardwood.jfr.RowGroupDictionaryFilterEvent;

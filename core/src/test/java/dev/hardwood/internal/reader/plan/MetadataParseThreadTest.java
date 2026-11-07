@@ -65,11 +65,11 @@ class MetadataParseThreadTest {
         }
 
         assertThat(rows).isEqualTo(20);
-        // The second file's footer is parsed by the read's planning chain, in place on the pool;
+        // The second file's footer is parsed by the read's planning, in place on the pool;
         // the rest of planning runs there too, with no computation handed over
         assertThat(computed).extracting(Computed::what).contains("footer");
         assertRanOnThePool();
-        assertThat(computed).as("computations the planning chain ran in place").anySatisfy(
+        assertThat(computed).as("computations the read's planning ran in place").anySatisfy(
                 c -> assertThat(c.caller()).isSameAs(c.runner()));
     }
 
@@ -95,7 +95,7 @@ class MetadataParseThreadTest {
     }
 
     /// Every computation ran on a thread of the pool: handed over by a thread off the pool, or
-    /// in place on the thread of the pool that needed it, such as a column's fetch step, which
+    /// in place on the thread of the pool that needed it, such as a read's planning job, which
     /// never waits for another thread of the pool.
     private void assertRanOnThePool() {
         assertThat(computed).allSatisfy(c -> {

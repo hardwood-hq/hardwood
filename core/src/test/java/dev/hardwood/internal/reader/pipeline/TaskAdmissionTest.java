@@ -28,8 +28,10 @@ import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 import dev.hardwood.metadata.PageType;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -166,6 +168,26 @@ class TaskAdmissionTest {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
+            }
+            assertThat(count).isEqualTo(3L * pageValues);
+        }
+    }
+
+    /// The file of [#readWithNoReadAheadBufferReadsEveryRow] read through column readers: each
+    /// column's large tasks wait for the read's one task, and the read returns every row.
+    @ParameterizedTest
+    @CsvSource({ "0, false", "4, false", "0, true", "4, true" })
+    void columnReadWithNoReadAheadBufferReadsEveryRow(int threads, boolean indexed) throws IOException {
+        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
+        int pageValues = 5 * 1024 * 1024;
+        byte[] file = RleExpansionFile.buildWide(4, 3, 2 * DecodeBuffers.RETAINED_BYTES, pageValues, indexed);
+
+        try (HardwoodContext context = HardwoodContext.create(threads);
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
+                ColumnReaders columns = reader.columnReaders(ColumnProjection.all())) {
+            long count = 0;
+            while (columns.nextBatch()) {
+                count += columns.getRecordCount();
             }
             assertThat(count).isEqualTo(3L * pageValues);
         }

@@ -8,6 +8,7 @@
 package dev.hardwood;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,8 @@ import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -73,6 +76,44 @@ class EmptyPageRangesUnindexedColumnTest {
     }
 
     @Test
+    void aFilterRulingOutEveryPageReadsNoPageThroughColumnReaders() throws Exception {
+        assertNoPageRead(file -> {
+            try (ColumnReaders columns = file.buildColumnReaders(ColumnProjection.all())
+                    .filter(FilterPredicate.eq("id", 75)).build()) {
+                assertThat(columns.nextBatch()).isFalse();
+            }
+        });
+    }
+
+    @Test
+    void aFilterKeepingOnePageReturnsItsMatchWithTheGateOpenThroughColumnReaders() throws Exception {
+        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(FIXTURE));
+             ColumnReaders columns = file.buildColumnReaders(FLAT).filter(FilterPredicate.eq("id", 120)).build()) {
+            assertThat(columns.nextBatch()).isTrue();
+            assertThat(columns.getRecordCount()).isEqualTo(1);
+            assertThat(columns.getColumnReader("id").getInts()[0]).isEqualTo(120);
+            assertThat(columns.getColumnReader("value").getInts()[0]).isEqualTo(70);
+            assertThat(columns.nextBatch()).isFalse();
+        }
+    }
+
+    @Test
+    void aFilterKeepingOnePageReturnsItsMatchWithTheGateClosedThroughColumnReaders() throws Exception {
+        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(FIXTURE));
+             ColumnReaders columns = file.buildColumnReaders(ColumnProjection.columns("id", "value", "tags"))
+                     .filter(FilterPredicate.eq("id", 120)).build()) {
+            assertThat(columns.nextBatch()).isTrue();
+            assertThat(columns.getRecordCount()).isEqualTo(1);
+            assertThat(columns.getColumnReader("id").getInts()[0]).isEqualTo(120);
+            assertThat(columns.getColumnReader("value").getInts()[0]).isEqualTo(70);
+            ColumnReader tags = columns.getColumnReader(2);
+            int[] offsets = tags.getLayerOffsets(0);
+            assertThat(Arrays.copyOfRange(tags.getInts(), offsets[0], offsets[1])).containsExactly(70, 70);
+            assertThat(columns.nextBatch()).isFalse();
+        }
+    }
+
+    @Test
     void aFilterKeepingOnePageReturnsItsMatchWithTheGateOpen() throws Exception {
         try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(FIXTURE));
              RowReader rows = file.buildRowReader()
@@ -104,14 +145,26 @@ class EmptyPageRangesUnindexedColumnTest {
     }
 
     private static void assertNoRowAndNoPageRead(ColumnProjection projection) throws Exception {
+        assertNoPageRead(file -> {
+            try (RowReader rows = file.buildRowReader()
+                    .projection(projection)
+                    .filter(FilterPredicate.eq("id", 75))
+                    .build()) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+        });
+    }
+
+    /// A read of the fixture, which asserts what it returns.
+    private interface Read {
+        void run(ParquetFileReader file) throws Exception;
+    }
+
+    private static void assertNoPageRead(Read fileRead) throws Exception {
         CountingInputFile input = new CountingInputFile(InputFile.of(FIXTURE));
         List<ColumnMetaData> chunks;
-        try (ParquetFileReader file = ParquetFileReader.open(input);
-             RowReader rows = file.buildRowReader()
-                     .projection(projection)
-                     .filter(FilterPredicate.eq("id", 75))
-                     .build()) {
-            assertThat(rows.hasNext()).isFalse();
+        try (ParquetFileReader file = ParquetFileReader.open(input)) {
+            fileRead.run(file);
             chunks = file.getFileMetaData().rowGroups().get(0).columns().stream()
                     .map(chunk -> chunk.metaData())
                     .toList();

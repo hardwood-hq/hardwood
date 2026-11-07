@@ -10,12 +10,12 @@ package dev.hardwood.internal.reader.plan;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -23,25 +23,20 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.fetch.FetchSequence;
-import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
-import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// How a read drives its page-index windows: which windows a read that stops early fetches, how
-/// a failed prefetch reaches the demand path, the budget in a whole read, and that every window
-/// is released.
+/// How a read drives its page-index windows: how a failed window read reaches the read, the budget
+/// in a whole read, and that every window is released.
 ///
 /// Uses page_index_windows.parquet: twelve row groups of 400 rows over twenty INT64 columns, a
 /// page index. At the default budget the twelve row groups are one window; the tests that need
-/// several give the iterator a budget of one byte, which makes every row group a window of its
+/// several give the read a budget of one byte, which makes every row group a window of its
 /// own.
 class IndexWindowLifecycleTest {
 
@@ -49,69 +44,19 @@ class IndexWindowLifecycleTest {
     private static final int ROW_GROUPS = 12;
     private static final long DEFAULT_BUDGET = 16L * 1024 * 1024;
     private static final long ONE_ROW_GROUP_PER_WINDOW = 1;
-
-    /// With no room for speculative data (F of zero), planning goes no further than the next unit,
-    /// so a read that stops in its first row group fetches the next one's window and no other.
-    @Test
-    void aReadThatStopsAfterTheFirstRowGroupFetchesNoWindowBeyondThePrefetchedOne() throws Exception {
-        System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
-        try {
-            readFirstRowGroupOnly();
-        }
-        finally {
-            System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
-        }
-    }
-
-    private static void readFirstRowGroupOnly() throws Exception {
-        CountDownLatch prefetched = new CountDownLatch(1);
-        CountingInputFile file = countingFile(new FailingInputFile(InputFile.of(FIXTURE)) {
-            @Override
-            boolean fails() {
-                if (FetchReason.current().equals("rg=1 indexes")) {
-                    prefetched.countDown();
-                }
-                return false;
-            }
-        });
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = iterator(file, context, ONE_ROW_GROUP_PER_WINDOW);
-            try {
-                iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                // Closing at once would stop the prefetch before it reads anything.
-                assertThat(prefetched.await(10, TimeUnit.SECONDS)).isTrue();
-            }
-            finally {
-                iterator.close();
-            }
-        }
-
-        assertThat(indexReasons(file)).containsExactlyInAnyOrder("rg=0 indexes", "rg=1 indexes");
-    }
+    private static final long ROWS = 12 * 400;
 
     @Test
     void aFileWhoseIndexFitsTheBudgetIsFetchedOnce() throws Exception {
         CountingInputFile file = countingFile(InputFile.of(FIXTURE));
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = iterator(file, context, DEFAULT_BUDGET);
-            try {
-                for (RowGroupIterator.WorkItem workItem : iterator.getWorkItems()) {
-                    iterator.getColumnPlan(workItem, 0);
-                }
-            }
-            finally {
-                iterator.close();
-            }
-        }
 
+        assertThat(readColumn(file, DEFAULT_BUDGET)).isEqualTo(ROWS);
         assertThat(indexReasons(file)).containsExactly("rg=0-11 indexes");
     }
 
-    /// A window read that fails while planning reads ahead of the read ends planning there: the
-    /// read fails at the row group, with the failure planning met, and is not read again.
+    /// A window read that fails is read again, as every request of a read is, and the read goes on.
     @Test
-    void aWindowThatFailedAheadFailsTheReadAtItsRowGroup() throws Exception {
-        System.setProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY, "0");
+    void aWindowThatFailsOnceIsReadAgain() throws Exception {
         AtomicBoolean failed = new AtomicBoolean();
         CountingInputFile file = countingFile(new FailingInputFile(InputFile.of(FIXTURE)) {
             @Override
@@ -119,50 +64,38 @@ class IndexWindowLifecycleTest {
                 return FetchReason.current().equals("rg=1 indexes") && !failed.getAndSet(true);
             }
         });
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = iterator(file, context, ONE_ROW_GROUP_PER_WINDOW);
-            try {
-                iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                RowGroupIterator.WorkItem second = iterator.workItemAt(1);
 
-                assertThatThrownBy(() -> iterator.getColumnPlan(second, 0))
-                        .isInstanceOf(IOException.class)
-                        .hasMessage("[page_index_windows.parquet] Failed to fetch metadata for row group 1")
-                        .rootCause()
-                        .hasMessage("injected");
-            }
-            finally {
-                iterator.close();
-                System.clearProperty(FetchSequence.FETCH_AHEAD_BYTES_PROPERTY);
-            }
-        }
-        assertThat(indexReasons(file)).containsExactlyInAnyOrder("rg=0 indexes", "rg=1 indexes");
+        assertThat(readColumn(file, ONE_ROW_GROUP_PER_WINDOW)).isEqualTo(ROWS);
+        assertThat(failed).isTrue();
+        assertThat(indexReasons(file)).as("the failed read and the read again")
+                .filteredOn(reason -> reason.equals("rg=1 indexes")).hasSize(2);
     }
 
+    /// A window that cannot be fetched fails the read at its row group, behind every row before it.
     @Test
-    void aWindowThatCannotBeFetchedFailsTheDemandPath() throws Exception {
+    void aWindowThatCannotBeFetchedFailsTheReadAtItsRowGroup() throws Exception {
         CountingInputFile file = countingFile(new FailingInputFile(InputFile.of(FIXTURE)) {
             @Override
             boolean fails() {
                 return FetchReason.current().equals("rg=1 indexes");
             }
         });
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = iterator(file, context, ONE_ROW_GROUP_PER_WINDOW);
-            try {
-                iterator.getColumnPlan(iterator.workItemAt(0), 0);
-                RowGroupIterator.WorkItem second = iterator.workItemAt(1);
+        AtomicLong rows = new AtomicLong();
 
-                assertThatThrownBy(() -> iterator.getColumnPlan(second, 0))
-                        .isInstanceOf(IOException.class)
-                        .hasMessage("[page_index_windows.parquet] Failed to fetch metadata for row group 1")
-                        .rootCause()
-                        .hasMessage("injected");
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(file);
+                    ColumnReader column = withBudget(ONE_ROW_GROUP_PER_WINDOW,
+                            () -> reader.buildColumnReader("c05").build())) {
+                while (column.nextBatch()) {
+                    rows.addAndGet(column.getRecordCount());
+                }
             }
-            finally {
-                iterator.close();
-            }
-        }
+        })
+                .isInstanceOf(IOException.class)
+                .hasMessage("[page_index_windows.parquet] Failed to fetch metadata for row group 1")
+                .rootCause()
+                .hasMessage("injected");
+        assertThat(rows).hasValue(ROWS / ROW_GROUPS);
     }
 
     @Test
@@ -193,39 +126,37 @@ class IndexWindowLifecycleTest {
     void aWholeReadReleasesEveryWindow() throws Exception {
         CountingInputFile file = countingFile(InputFile.of(FIXTURE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = iterator(file, context, ONE_ROW_GROUP_PER_WINDOW);
-            try {
-                List<RowGroupIterator.WorkItem> workItems = iterator.getWorkItems();
-                for (RowGroupIterator.WorkItem workItem : workItems) {
-                    iterator.getColumnPlan(workItem, 0);
-                    iterator.releaseWorkItem(workItem);
-                }
+            FileMetadataCache metadata = new FileMetadataCache(List.of(file), context);
+            ReadPlanning planning = planning(metadata, context);
+            List<WorkItem> workItems = workItems(planning);
+            for (WorkItem workItem : workItems) {
+                RowGroupIterators.plans(planning, workItem.workItemIndex());
+                planning.release(workItem.workItemIndex());
+            }
 
-                assertEveryWindowReleased(workItems);
-            }
-            finally {
-                iterator.close();
-            }
+            assertEveryWindowReleased(workItems);
+            metadata.close();
         }
     }
 
     @Test
     void closingAReadThatStoppedEarlyReleasesEveryWindow() throws Exception {
         CountingInputFile file = countingFile(InputFile.of(FIXTURE));
-        List<RowGroupIterator.WorkItem> workItems;
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = iterator(file, context, ONE_ROW_GROUP_PER_WINDOW);
-            workItems = iterator.getWorkItems();
-            iterator.getColumnPlan(workItems.get(0), 0);
-            iterator.close();
-        }
+            FileMetadataCache metadata = new FileMetadataCache(List.of(file), context);
+            ReadPlanning planning = planning(metadata, context);
+            List<WorkItem> workItems = workItems(planning);
+            RowGroupIterators.plans(planning, 0);
+            planning.discard();
 
-        assertEveryWindowReleased(workItems);
+            assertEveryWindowReleased(workItems);
+            metadata.close();
+        }
     }
 
-    private static void assertEveryWindowReleased(List<RowGroupIterator.WorkItem> workItems) {
+    private static void assertEveryWindowReleased(List<WorkItem> workItems) {
         assertThat(workItems).hasSize(ROW_GROUPS);
-        for (RowGroupIterator.WorkItem workItem : workItems) {
+        for (WorkItem workItem : workItems) {
             int index = workItem.workItemIndex();
             assertThatThrownBy(() -> workItem.indexWindow().buffersFor(index))
                     .isInstanceOf(IllegalStateException.class)
@@ -234,22 +165,32 @@ class IndexWindowLifecycleTest {
         }
     }
 
-    /// An iterator over the fixture, projecting `c05` alone, so each work item has one column to
-    /// release it, whose windows fetch at most `budget` bytes each.
-    private static RowGroupIterator iterator(CountingInputFile file, HardwoodContextImpl context,
-            long budget) throws Exception {
-        FileMetaData metaData;
-        FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
-            metaData = reader.getFileMetaData();
-            schema = reader.getFileSchema();
+    /// The planning of a read of the fixture, projecting `c05` alone, each row group a window of
+    /// its own.
+    private static ReadPlanning planning(FileMetadataCache metadata, HardwoodContextImpl context) throws Exception {
+        return RowGroupIterators.planning(metadata, context, ColumnProjection.columns("c05"),
+                ONE_ROW_GROUP_PER_WINDOW);
+    }
+
+    private static List<WorkItem> workItems(ReadPlanning planning) {
+        List<WorkItem> workItems = new ArrayList<>();
+        for (int i = 0; i < ROW_GROUPS; i++) {
+            workItems.add(planning.workItem(i));
         }
-        RowGroupIterator iterator = withBudget(budget,
-                () -> RowGroupIterators.standalone(List.of(file), context));
-        iterator.setFirstFile(schema, metaData.rowGroups());
-        iterator.initialize(ReadProjection.of(
-                ProjectedSchema.create(schema, ColumnProjection.columns("c05"))), null, true);
-        return iterator;
+        return workItems;
+    }
+
+    /// The rows of column `c05` of `file`, read through a column reader whose windows fetch at most
+    /// `budget` bytes each.
+    private static long readColumn(InputFile file, long budget) throws Exception {
+        long rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                ColumnReader column = withBudget(budget, () -> reader.buildColumnReader("c05").build())) {
+            while (column.nextBatch()) {
+                rows += column.getRecordCount();
+            }
+        }
+        return rows;
     }
 
     @FunctionalInterface
@@ -257,8 +198,7 @@ class IndexWindowLifecycleTest {
         T build() throws Exception;
     }
 
-    /// Runs `build` with the window budget set to `budget`; the iterator reads it as it is
-    /// created.
+    /// Runs `build` with the window budget set to `budget`; the read takes it as it is created.
     static <T> T withBudget(long budget, Build<T> build) throws Exception {
         String previous = System.setProperty("hardwood.internal.indexWindowBytes", Long.toString(budget));
         try {

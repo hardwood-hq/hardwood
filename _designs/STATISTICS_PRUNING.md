@@ -60,7 +60,7 @@ A pair the filter layer cannot compare against never becomes a typed variant. It
 | `UNKNOWN_SORT_ORDER` | `BoundsReadability` marks the column unreadable (see below) |
 | `NOT_A_NUMBER` | a floating-point bound is `NaN` |
 | `INVERTED` | `min` sorts above `max` in the column's order |
-| `NOT_THE_COLUMN_WIDTH` | a `FIXED_LEN_BYTE_ARRAY(12)` timestamp or `INT96` bound of another width |
+| `NOT_THE_COLUMN_WIDTH` | a bound of another width than the values the leaf decodes: 4 bytes for an `INT32` or `FLOAT`, 8 for an `INT64` or `DOUBLE`, 2 for a `FLOAT16`, 1 for a `BOOLEAN`, 12 for a `FIXED_LEN_BYTE_ARRAY(12)` timestamp or an `INT96` |
 | `NANOS_OUTSIDE_A_DAY` | an `INT96` bound whose nanoseconds of the day lie outside `[0, 1 day)` |
 
 A discard is reported through `reportIfDiscarded`. A pair discarded for a fault of its own is reported per unit, naming the file, row group, column and page. `UNKNOWN_SORT_ORDER` holds for the column throughout the file, so it is reported once per column and read, naming the file and column (see below). Deciding usability where the bounds are sourced keeps every comparator free of the question.
@@ -241,7 +241,7 @@ Tests: `SizeStatisticsMetadataTest`, `MalformedMetadataValidationTest`, `PageFil
 
 `GeospatialPredicate` is decided in the fold from `ColumnMetaData.geospatialStatistics().bbox()`, which lives on the chunk alone ([LOGICAL_TYPES.md](LOGICAL_TYPES.md)).
 
-A `CANNOT_MATCH` row group is dropped; a surviving one carries whether it is `ALWAYS_MATCHES`, the `LeafDecisions` recorded for each leaf and the recorded bloom-filter columns. Bloom filters and dictionaries are probed later, by the read's planning chain through `RowGroupPruning.probeOnArrival`, when it plans an undecided row group (a reader reaches its leading row groups before it starts its columns, see [COLUMN_READER.md](COLUMN_READER.md#advancing-the-scan)); an `ALWAYS_MATCHES` one is not probed, since either probe can only prove absence and so cannot contradict the statistics. Two passes each replay the recorded leaf decisions and repeat no statistics warning:
+A `CANNOT_MATCH` row group is dropped; a surviving one carries whether it is `ALWAYS_MATCHES`, the `LeafDecisions` recorded for each leaf and the recorded bloom-filter columns. Bloom filters and dictionaries are probed later, by the read's planning through `RowGroupPruning.probeOnArrival`, when it plans an undecided row group (a reader reaches its leading row groups before it starts its columns, see [COLUMN_READER.md](COLUMN_READER.md#advancing-the-scan)); an `ALWAYS_MATCHES` one is not probed, since either probe can only prove absence and so cannot contradict the statistics. Two passes each replay the recorded leaf decisions and repeat no statistics warning:
 
 1. `refineWithBloomFilters` probes the bloom filter of each leaf left `MIGHT_MATCH`, and records the leaf decisions it reaches. A row group without recorded columns skips this pass.
 2. `refineWithDictionaries` starts from those decisions and reads a dictionary only for a leaf still `MIGHT_MATCH`, so a leaf its bloom filter dropped reads no dictionary, and a row group its bloom filters dropped reads none at all.

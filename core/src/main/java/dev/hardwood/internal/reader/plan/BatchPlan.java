@@ -13,8 +13,9 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// The batch boundaries of one read, decided once for every decoded column.
 ///
-/// [RowGroupIterator] plans the row groups of a read in work-list order, as it computes their
-/// fetch plans, and hands each row group's [RowGroupBatches] to every decoded column. A column
+/// A read ([dev.hardwood.internal.reader.engine.RowGroupIterator]) plans its row groups in work-list
+/// order, as it computes their fetch plans, and hands each row group's [RowGroupBatches] to every
+/// decoded column. A column
 /// closes a batch where the plan closes it and takes the batch's file name and always-match flag
 /// from the plan, so every column of the read closes its batches at the same rows.
 ///
@@ -35,8 +36,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// is known once a row group's fetch plans are: the kept rows come from the row ranges its page
 /// masks apply, which apply to every decoded column of the row group or to none.
 ///
-/// Planning is synchronized, since the first column to reach a row group plans it on its own
-/// fetcher, or the previous row group's prefetch does on a speculative task.
+/// Planning is synchronized, since the read's planning jobs, one at a time, may run on different
+/// threads.
 public final class BatchPlan {
 
     /// The plan of a row group after the row cap ended the read; no column reaches it.
@@ -88,7 +89,7 @@ public final class BatchPlan {
     /// a binary column has a use for.
     ///
     /// @param columns every column the read decodes, predicate columns included
-    static boolean endsBatchesAtRowGroupBoundaries(List<ColumnSchema> columns) {
+    public static boolean endsBatchesAtRowGroupBoundaries(List<ColumnSchema> columns) {
         for (ColumnSchema column : columns) {
             switch (column.type()) {
                 case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {

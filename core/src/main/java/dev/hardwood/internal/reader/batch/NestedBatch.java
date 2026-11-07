@@ -8,7 +8,7 @@
 package dev.hardwood.internal.reader.batch;
 
 /// Batch holder for nested schemas, filled by
-/// [dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn].
+/// [dev.hardwood.internal.reader.pipeline.NestedColumn].
 ///
 /// This is a separate class from [BatchExchange.Batch] (not a subclass) so
 /// that the JIT's class hierarchy analysis keeps `Batch` as a leaf type,

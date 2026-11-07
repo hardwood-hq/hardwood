@@ -11,20 +11,18 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.predicate.FilterPredicateResolver;
-import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -44,14 +42,15 @@ class BloomFilterWindowIoTest {
     private static final int CODE = 3;
     private static final int ROW_GROUPS = 5;
 
-    @Test
-    void aWindowsBloomFiltersAreFetchedInOneRequest() throws Exception {
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void aWindowsBloomFiltersAreFetchedInOneRequest(ReadKind kind) throws Exception {
         FileMetaData metaData = metaData();
         CountingInputFile file = countingFile();
 
         // Between the statistics' 0 and 9, but in no row group: every row group is a candidate,
         // and its bloom filter drops it.
-        long rows = count(file, FilterPredicate.eq("code", 5));
+        long rows = count(kind, file, FilterPredicate.eq("code", 5));
 
         assertThat(rows).isZero();
         long start = Long.MAX_VALUE;
@@ -65,13 +64,14 @@ class BloomFilterWindowIoTest {
                 new CountingInputFile.Read(start, Math.toIntExact(end - start), "rg=0-4 pruning"));
     }
 
-    @Test
-    void aRowGroupItsStatisticsDropHasNoBloomFilterFetched() throws Exception {
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void aRowGroupItsStatisticsDropHasNoBloomFilterFetched(ReadKind kind) throws Exception {
         FileMetaData metaData = metaData();
         CountingInputFile file = countingFile();
 
         // `id` is ascending, so statistics keep row group 2 alone, and only its filter is read.
-        long rows = count(file, FilterPredicate.eq("id", 450L));
+        long rows = count(kind, file, FilterPredicate.eq("id", 450L));
 
         assertThat(rows).isEqualTo(1);
         ColumnMetaData id = metaData.rowGroups().get(2).columns().get(0).metaData();
@@ -79,15 +79,16 @@ class BloomFilterWindowIoTest {
                 id.bloomFilterOffset(), id.bloomFilterLength(), "rg=2 pruning"));
     }
 
-    @Test
-    void aRowGroupStatisticsProveToMatchHasNoBloomFilterFetched() throws Exception {
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void aRowGroupStatisticsProveToMatchHasNoBloomFilterFetched(ReadKind kind) throws Exception {
         FileMetaData metaData = metaData();
         CountingInputFile file = countingFile();
 
         // `eq(code, 5)` is open in every row group and asks for `code`'s filter before
         // `lt(id, 200)` decides the OR: statistics prove row group 0 matches in full, so its
         // filter cannot change the decision, and the bloom filters drop row groups 1 to 4.
-        long rows = count(file, FilterPredicate.or(FilterPredicate.eq("code", 5), FilterPredicate.lt("id", 200L)));
+        long rows = count(kind, file, FilterPredicate.or(FilterPredicate.eq("code", 5), FilterPredicate.lt("id", 200L)));
 
         assertThat(rows).isEqualTo(200);
         ColumnMetaData first = metaData.rowGroups().get(1).columns().get(CODE).metaData();
@@ -97,13 +98,14 @@ class BloomFilterWindowIoTest {
                 Math.toIntExact(end - first.bloomFilterOffset()), "rg=0-4 pruning"));
     }
 
-    @Test
-    void rowGroupsTheirBloomFiltersDropReadNoDictionaryAndNoPageIndex() throws Exception {
+    @ParameterizedTest
+    @EnumSource(ReadKind.class)
+    void rowGroupsTheirBloomFiltersDropReadNoDictionaryAndNoPageIndex(ReadKind kind) throws Exception {
         // The same rows, dictionary-encoded and with a page index: `code`'s dictionary could
         // drop every row group too, and the read would need the page index of a kept one.
         CountingInputFile file = countingFile(DICT_INDEX_FIXTURE);
 
-        long rows = count(file, FilterPredicate.eq("code", 5));
+        long rows = count(kind, file, FilterPredicate.eq("code", 5));
 
         assertThat(rows).isZero();
         assertThat(file.reads()).extracting(CountingInputFile.Read::reason)
@@ -111,46 +113,27 @@ class BloomFilterWindowIoTest {
                 .containsExactly("rg=0-4 pruning");
     }
 
+    /// Listing a file reads no Bloom filter; the read's first question about its work items reads
+    /// the window's filters in one request.
     @Test
     void planningAFileReadsNoBloomFilter() throws Exception {
-        FileMetaData metaData;
-        FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
-            metaData = reader.getFileMetaData();
-            schema = reader.getFileSchema();
-        }
         CountingInputFile file = countingFile();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            RowGroupIterator iterator = RowGroupIterators.standalone(List.of(file), context);
-            try {
-                iterator.setFirstFile(schema, metaData.rowGroups());
-                iterator.initialize(ReadProjection.of(ProjectedSchema.create(schema, ColumnProjection.columns("code"))),
-                        FilterPredicateResolver.resolve(FilterPredicate.eq("code", 5), schema), true);
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context,
+                     ColumnProjection.columns("code"), FilterPredicate.eq("code", 5), 0)) {
+            assertThat(pruningReads(file)).isEmpty();
 
-                assertThat(iterator.getWorkItems()).hasSize(ROW_GROUPS);
-                assertThat(pruningReads(file)).isEmpty();
+            assertThat(iterator.hasLiveWorkItem()).isFalse();
 
-                iterator.getSharedMetadata(iterator.workItemAt(0));
-
-                assertThat(pruningReads(file)).extracting(CountingInputFile.Read::reason)
-                        .containsExactly("rg=0-4 pruning");
-            }
-            finally {
-                iterator.close();
-            }
+            assertThat(pruningReads(file)).extracting(CountingInputFile.Read::reason)
+                    .containsExactly("rg=0-4 pruning");
         }
     }
 
-    private static long count(CountingInputFile file, FilterPredicate filter) throws Exception {
-        long rows = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(file);
-                RowReader rowReader = reader.buildRowReader().filter(filter).build()) {
-            while (rowReader.hasNext()) {
-                rowReader.next();
-                rows++;
-            }
+    private static long count(ReadKind kind, CountingInputFile file, FilterPredicate filter) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            return kind.count(reader, ColumnProjection.all(), filter);
         }
-        return rows;
     }
 
     private static List<CountingInputFile.Read> pruningReads(CountingInputFile file) {

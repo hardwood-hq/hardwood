@@ -20,100 +20,48 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.internal.HardwoodContextImpl;
 
-/// A decode pool for tests that decides the order a read's page tasks and fetch steps run in, one
-/// task at a time.
+/// A decode pool for tests that runs a read's jobs one at a time, in an order a seed decides: it
+/// queues the jobs and runs them on a thread of its own, each time picking one of the queued jobs at
+/// random from a seeded generator. Before it picks, it lets the read submit what it may: it waits
+/// until as many jobs are queued as the read may have in flight, or until the thread that created
+/// the executor, which reads, can submit no more before a job runs, being parked other than for
+/// the executor's lock, or ended; the files a test reads are in memory, so no other thread submits.
+/// The jobs of one column then run in any order, not only in page order.
 ///
-/// - [#inline()] runs each task on the thread that submits it, as it is submitted: a page's task
-///   has run before its column's fetch step takes the next page, and a fetch step runs on the
-///   thread whose change queued it.
-/// - [#shuffling(long)] queues the tasks and runs them on a thread of its own, each time picking
-///   one of the queued tasks at random from a seeded generator. Before it picks, it lets the
-///   scheduler submit what it may: it waits until the read has as many tasks queued as it may have
-///   in flight, or until the thread that created the executor, which reads, can submit no more
-///   before a task runs, being parked other than for the executor's lock, or ended; the files a
-///   test reads are in memory, so no other thread submits. The tasks of one column then run in
-///   any order, not only in page order.
-///
-/// Every task runs to its end before the next starts, so the order of the tasks is what varies:
-/// the steps of the cell protocol that span tasks (which task measures, sizes, places, fills
-/// and completes a cell, and which parks) are taken in the order the seed gives, while the
-/// races inside one step, which the cell's monitor and atomics settle, are left to the tests
-/// running real threads. The fetch steps are tasks of the executor like the page tasks, so a seed
-/// orders them among the pages too. The [Listener] sees every page task before and after it
-/// runs, on the thread running it, with the page the scheduler submitted it for, and may inspect
-/// the page's state there without racing the task; it does not see the fetch steps.
-///
-/// The pages are told to the executor through [ReadScheduler#submissionObserver], which
-/// [#install] sets and [#uninstall] clears.
+/// Every job runs to its end before the next starts, so the order of the jobs is what varies: the
+/// steps of the cell protocol that span jobs (which job decodes, measures, fills and completes a
+/// cell) are taken in the order the seed gives, while the races inside one step are left to the
+/// tests running real threads.
 final class TaskOrderExecutor extends AbstractExecutorService {
-
-    /// Sees each task run.
-    interface Listener {
-
-        /// On the submitting thread, as the scheduler hands the page's task to the pool.
-        default void submitted(ScheduledColumn<?> column, PageTask page) {
-        }
-
-        void beforeRun(ScheduledColumn<?> column, PageTask page);
-
-        void afterRun(ScheduledColumn<?> column, PageTask page);
-    }
-
-    /// The page each thread is about to hand to the pool, from the scheduler's observer.
-    private static final ThreadLocal<Submission> SUBMITTING = new ThreadLocal<>();
-
-    private record Submission(ScheduledColumn<?> column, PageTask page) {
-    }
-
-    private record Task(Submission submission, Runnable run) {
-    }
 
     private final Random random;
     private final int target;
-    private final Listener listener;
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition arrived = lock.newCondition();
-    private final List<Task> queued = new ArrayList<>();
+    private final List<Runnable> queued = new ArrayList<>();
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private final Thread runner;
     /// The thread that created the executor, which reads through it.
     private final Thread caller = Thread.currentThread();
     private volatile boolean shutdown;
 
-    private TaskOrderExecutor(Random random, int target, Listener listener) {
+    private TaskOrderExecutor(Random random, int target) {
         this.random = random;
         this.target = target;
-        this.listener = listener;
-        this.runner = random == null ? null : Thread.ofPlatform().daemon().name("task-order").start(this::runQueued);
+        this.runner = Thread.ofPlatform().daemon().name("task-order").start(this::runQueued);
     }
 
-    /// An executor running each task on the submitting thread.
-    static TaskOrderExecutor inline(Listener listener) {
-        return new TaskOrderExecutor(null, 0, listener);
-    }
-
-    /// An executor running the queued tasks in the order `seed` picks.
+    /// An executor running the queued jobs in the order `seed` picks.
     ///
-    /// @param target the tasks it lets queue before it picks: the read's pages in flight
-    static TaskOrderExecutor shuffling(long seed, int target, Listener listener) {
-        return new TaskOrderExecutor(new Random(seed), target, listener);
+    /// @param target the jobs it lets queue before it picks: the read's jobs in flight
+    static TaskOrderExecutor shuffling(long seed, int target) {
+        return new TaskOrderExecutor(new Random(seed), target);
     }
 
-    /// A context whose decode pool is this executor, taken as `threads` threads. The shuffling
-    /// executor's thread is the context's pool thread, so that a fetch step it runs decodes in
-    /// place, as on a pool; the inline executor runs a decode a step waits for as it is
-    /// submitted.
+    /// A context whose decode pool is this executor, taken as `threads` threads. The executor's
+    /// thread is the context's pool thread, so that a job it runs decodes in place, as on a pool.
     HardwoodContextImpl context(int threads) {
-        return HardwoodContextImpl.create(this, threads, runner == null ? Set.of() : Set.of(runner));
-    }
-
-    /// Lets the executor see the page of each task the scheduler submits.
-    static void install() {
-        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> SUBMITTING.set(new Submission(column, page));
-    }
-
-    static void uninstall() {
-        ReadScheduler.submissionObserver = null;
+        return HardwoodContextImpl.create(this, threads, Set.of(runner));
     }
 
     /// The first failure a task threw, which the pool would have dropped; `null` if none.
@@ -126,19 +74,9 @@ final class TaskOrderExecutor extends AbstractExecutorService {
         if (shutdown) {
             throw new RejectedExecutionException("The executor is shut down");
         }
-        Submission submission = SUBMITTING.get();
-        SUBMITTING.remove();
-        Task task = new Task(submission, command);
-        if (listener != null && submission != null) {
-            listener.submitted(submission.column(), submission.page());
-        }
-        if (runner == null) {
-            run(task);
-            return;
-        }
         lock.lock();
         try {
-            queued.add(task);
+            queued.add(command);
             arrived.signalAll();
         }
         finally {
@@ -148,7 +86,7 @@ final class TaskOrderExecutor extends AbstractExecutorService {
 
     private void runQueued() {
         while (true) {
-            Task task;
+            Runnable task;
             lock.lock();
             try {
                 while (queued.isEmpty() && !shutdown) {
@@ -181,16 +119,9 @@ final class TaskOrderExecutor extends AbstractExecutorService {
         return caller.isAlive() && (caller.getState() == Thread.State.RUNNABLE || lock.hasQueuedThread(caller));
     }
 
-    private void run(Task task) {
-        Submission submission = task.submission();
+    private void run(Runnable task) {
         try {
-            if (listener != null && submission != null) {
-                listener.beforeRun(submission.column(), submission.page());
-            }
-            task.run().run();
-            if (listener != null && submission != null) {
-                listener.afterRun(submission.column(), submission.page());
-            }
+            task.run();
         }
         catch (Throwable t) {
             failure.compareAndSet(null, t);
@@ -222,14 +153,12 @@ final class TaskOrderExecutor extends AbstractExecutorService {
 
     @Override
     public boolean isTerminated() {
-        return shutdown && (runner == null || !runner.isAlive());
+        return shutdown && !runner.isAlive();
     }
 
     @Override
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
-        if (runner != null) {
-            runner.join(unit.toMillis(timeout));
-        }
+        runner.join(unit.toMillis(timeout));
         return isTerminated();
     }
 }

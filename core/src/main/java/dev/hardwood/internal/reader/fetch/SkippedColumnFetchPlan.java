@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.fetch;
 
 import dev.hardwood.internal.reader.decode.PageInfo;
+import dev.hardwood.internal.reader.step.Need;
 
 /// The plan of a column that is not read in a row group: it fetches nothing and yields
 /// one [PageInfo#BOUNDARY_MARKER]. The column places no rows for the row
@@ -44,7 +45,7 @@ public final class SkippedColumnFetchPlan implements FetchPlan {
             }
 
             @Override
-            public ByteNeed pending() {
+            public Need pending() {
                 return null;
             }
         };

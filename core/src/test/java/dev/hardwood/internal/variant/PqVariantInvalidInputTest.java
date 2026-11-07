@@ -220,6 +220,20 @@ class PqVariantInvalidInputTest {
                 .hasMessage("Variant value buffer truncated: need 8 bytes at offset 1, buffer length 3");
     }
 
+    /// A dictionary holding a key twice maps the name to its first entry, which the object does not
+    /// use; the field it names is still found by the name [PqVariantObject#getFieldName] gives it.
+    @Test
+    void objectFieldIsFoundByItsNameWhereTheDictionaryRepeatsIt() {
+        byte[] metadata = { 0x01, 0x02, 0x00, 0x01, 0x02, 0x61, 0x61 };
+        byte[] encoded = new byte[32];
+        int length = VariantValueEncoder.writeObject(
+                encoded, 0, new int[] { 1 }, new byte[][] { LEAF_INT8 }, 1);
+        PqVariantObject object = new PqVariantImpl(metadata, Arrays.copyOf(encoded, length)).asObject();
+
+        assertThat(object.getFieldName(0)).isEqualTo("a");
+        assertThat(object.getInt("a")).isEqualTo(42);
+    }
+
     @Test
     void objectFieldNameChecksCallerIndexBeforeEncodedDictionaryId() {
         byte[] encoded = new byte[32];

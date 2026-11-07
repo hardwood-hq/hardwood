@@ -23,12 +23,9 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.io.HeldBytes;
-import dev.hardwood.internal.reader.plan.FileMetadataCache;
-import dev.hardwood.internal.reader.plan.RowGroupIterator;
-import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -123,42 +120,24 @@ class FileTailTest {
         assertThat(HeldBytes.heldFrom(tailed)).isEqualTo(Long.MAX_VALUE);
     }
 
-    /// The tail is the reader's, shared by its reads: a read that has listed the file keeps the
-    /// page index it plans to slice from the tail when another read of the reader drops the tail
-    /// by closing. The two reads are iterators over one metadata cache, as a reader's child reads
-    /// are.
+    /// The tail is the reader's, shared by its reads: a read that has listed the file reads every
+    /// row when another read of the reader drops the tail by closing. On a context of zero threads,
+    /// so that the first read plans nothing before the second closes.
     @Test
-    void aReadKeepsWhatItSlicesFromTheTailWhenAnotherReadDropsIt() throws Exception {
+    void aReadReadsOnWhenAnotherReadDropsTheTail() throws Exception {
         System.clearProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
         CountingInputFile file = new CountingInputFile(InputFile.of(PAGE_INDEX_WINDOWS));
-        file.open();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            FileMetadataCache cache = new FileMetadataCache(List.of(file), context);
-            RowGroupIterator planning = iterator(cache, context);
-            RowGroupIterator closing = iterator(cache, context);
-            try {
-                // Lists the file, whose page index lies inside the tail, and plans nothing yet
-                RowGroupIterator.WorkItem workItem = planning.workItemAt(0);
-                closing.workItemAt(0);
-                closing.close();
-
-                assertThat(planning.getColumnPlan(workItem, 0).isEmpty()).isFalse();
-            }
-            finally {
-                planning.close();
-                cache.close();
-                file.close();
+        long rows = 0;
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(0);
+             ParquetFileReader reader = ParquetFileReader.open(file, context);
+             ColumnReader planning = reader.buildColumnReader("c05").build()) {
+            reader.buildColumnReader("c05").build().close();
+            while (planning.nextBatch()) {
+                rows += planning.getRecordCount();
             }
         }
-    }
 
-    private static RowGroupIterator iterator(FileMetadataCache cache, HardwoodContextImpl context)
-            throws IOException {
-        RowGroupIterator iterator = new RowGroupIterator(cache, ignored -> {}, context, 0, 0, 0);
-        iterator.openFirst();
-        iterator.initialize(ReadProjection.of(
-                ProjectedSchema.create(iterator.referenceSchema(), ColumnProjection.columns("c05"))), null, true);
-        return iterator;
+        assertThat(rows).isEqualTo(12 * 400);
     }
 
     /// A file whose bytes are in memory takes no tail: it slices every read in place.

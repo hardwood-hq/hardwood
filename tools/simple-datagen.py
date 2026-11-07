@@ -7659,3 +7659,12 @@ with open(_snappy_understated_path, 'r+b') as f:
     f.write(_understated)
 print("\nGenerated snappy_understated_page_size.parquet:")
 print("  - 20000 INT64 rows, SNAPPY, one data page declaring 80000 of its 160000 uncompressed bytes")
+
+# ===== A file whose only row group holds no rows =====
+# PyArrow writes an empty table as one row group of 0 rows (Hardwood's writer writes none).
+pq.write_table(
+    pa.table({'id': pa.array([], pa.int64())}, schema=pa.schema([pa.field('id', pa.int64(), False)])),
+    'core/src/test/resources/empty_row_group.parquet',
+)
+print("\nGenerated empty_row_group.parquet:")
+print("  - one required INT64 column 'id', one row group of 0 rows")

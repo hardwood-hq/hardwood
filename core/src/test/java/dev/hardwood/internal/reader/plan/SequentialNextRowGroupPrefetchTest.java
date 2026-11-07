@@ -29,7 +29,7 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The first section request of the next row group, which the read starts as its next unit (#1324),
+/// The first request of the next row group, which the read starts as its next unit (#1324),
 /// is read once, whether the next unit or the read of the row group gets to it first.
 class SequentialNextRowGroupPrefetchTest {
 
@@ -46,8 +46,8 @@ class SequentialNextRowGroupPrefetchTest {
     }
 
     @Test
-    void theNextRowGroupsSharedSectionRequestIsReadOnce() throws Exception {
-        // Two back-to-back columns: their chunks are coalesced into one section request.
+    void theNextRowGroupsSharedRequestIsReadOnce() throws Exception {
+        // Two back-to-back columns: their chunks are coalesced into one request.
         CountingInputFile file = read(write("a", "b"));
 
         assertThat(file.reads())

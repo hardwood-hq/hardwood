@@ -13,6 +13,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
@@ -25,11 +28,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.pipeline.ReadScheduler;
-import dev.hardwood.internal.reader.pipeline.ScheduledColumn;
-import dev.hardwood.internal.reader.pipeline.ScheduledNestedColumn;
-import dev.hardwood.internal.reader.plan.PageSource;
-import dev.hardwood.internal.reader.plan.RowGroupIterator;
+import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.internal.reader.step.CloseClaim;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
@@ -52,7 +51,6 @@ import dev.hardwood.schema.FileSchema;
 public final class NestedRowReader implements FileAwareRowReader {
 
     private final BatchExchange<NestedBatch>[] exchanges;
-    private final ScheduledColumn<?>[] columnPipelines;
     private final int columnCount;
 
     private final FileSchema fileSchema;
@@ -67,10 +65,10 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// filter and nothing evaluates records.
     private final RecordFilterTally tally;
 
-    /// The iterator this reader consumes. No column reader owns it — they all
-    /// draw from the one iterator — so this reader releases it, which is also
-    /// what stops the owning [dev.hardwood.reader.ParquetFileReader] tracking it.
-    private final RowGroupIterator rowGroupIterator;
+    /// The read this reader consumes. No column reader owns it — they all draw from the one read —
+    /// so this reader releases it, which is also what stops the owning
+    /// [dev.hardwood.reader.ParquetFileReader] tracking it.
+    private final RowGroupIterator read;
 
     // Iteration state
     private NestedBatch[] previousBatches;
@@ -94,7 +92,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// [#recordMatcher] is.
     private final PredicateView predicateView;
     /// Cap on matching rows yielded (SQL LIMIT over the filtered relation);
-    /// [ScheduledColumn#UNLIMITED] means no cap.
+    /// [FlatRowReader#UNLIMITED] means no cap.
     private final long maxMatchedRows;
     private long matchedRowsYielded;
     /// Row [#hasNext] picked for [#next] to hand out, or `-1` when none is parked.
@@ -107,17 +105,16 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// parent's, waits until that close has completed.
     private final CloseClaim closeClaim = new CloseClaim();
 
-    NestedRowReader(BatchExchange<NestedBatch>[] exchanges, ScheduledColumn<?>[] columnPipelines,
+    NestedRowReader(BatchExchange<NestedBatch>[] exchanges,
                     FileSchema fileSchema, ProjectedSchema payload, NestedBatchDataView dataView,
                     long maxMatchedRows, RowMatcher recordMatcher, PredicateView predicateView,
-                    RecordFilterTally tally, RowGroupIterator rowGroupIterator) {
-        this.rowGroupIterator = rowGroupIterator;
+                    RecordFilterTally tally, RowGroupIterator read) {
+        this.read = read;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
         this.predicateView = predicateView;
         this.tally = tally;
         this.exchanges = exchanges;
-        this.columnPipelines = columnPipelines;
         this.columnCount = exchanges.length;
         this.fileSchema = fileSchema;
         this.dataView = dataView;
@@ -140,14 +137,11 @@ public final class NestedRowReader implements FileAwareRowReader {
 
     // ==================== Factory ====================
 
-    /// Creates a nested pipeline and returns a [RowReader].
+    /// Creates a [RowReader] over a read the [RowGroupIterator] drives: the read's columns, each decoded
+    /// through levels, publish into the reader's recycling exchanges, and the reader is
+    /// initialized. When a filter is present, the reader evaluates it a record at a time.
     ///
-    /// Wires up `RowGroupIterator → PageSource → ScheduledNestedColumn → BatchExchange →
-    /// NestedRowReader`, a [ScheduledNestedColumn] for each column, starts them, and initializes
-    /// the reader.
-    /// When a filter is present, the reader evaluates it a record at a time.
-    ///
-    /// @param rowGroupIterator pre-configured iterator
+    /// @param iterator the read, initialized
     /// @param schema the file schema
     /// @param projection the exposed and decoded columns
     /// @param context the hardwood context
@@ -162,7 +156,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// @param budgetRows the rows of the read's batch byte budget
     ///         ([dev.hardwood.internal.reader.plan.BatchSizing#readAheadBudgetRows])
     /// @return a [NestedRowReader]
-    public static RowReader create(RowGroupIterator rowGroupIterator,
+    public static RowReader create(RowGroupIterator iterator,
                             FileSchema schema,
                             ReadProjection projection,
                             HardwoodContextImpl context,
@@ -177,7 +171,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         // The views and the matcher are built from the schema alone, and the views reject
         // what the reader cannot assemble (a shredded Variant `typed_value` of a type the
         // shredding spec does not allow), so all three are built before any column starts: a failure
-        // here leaves no fetcher running.
+        // here leaves no column running.
         NestedBatchDataView dataView;
         PredicateView predicateView;
         try {
@@ -189,22 +183,21 @@ public final class NestedRowReader implements FileAwareRowReader {
                     : null;
         }
         catch (RuntimeException e) {
-            throw ExceptionContext.addFileContext(rowGroupIterator.referenceFileName(), e);
+            throw ExceptionContext.addFileContext(iterator.referenceFileName(), e);
         }
         RowMatcher recordMatcher = predicateView != null
                 ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
                 : null;
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
-        long readerMatchLimit = filter != null ? maxRows : ScheduledColumn.UNLIMITED;
+        long readerMatchLimit = filter != null ? maxRows : FlatRowReader.UNLIMITED;
 
         // No row group left once the leading row groups' bloom filters and dictionaries are
         // probed: the reader starts no column and is exhausted from the start.
-        if (!rowGroupIterator.hasLiveWorkItem()) {
+        if (!iterator.hasLiveWorkItem()) {
             @SuppressWarnings("unchecked")
             BatchExchange<NestedBatch>[] none = new BatchExchange[0];
-            NestedRowReader reader = new NestedRowReader(none, new ScheduledColumn<?>[0], schema,
-                    projection.payload(), dataView, readerMatchLimit, recordMatcher, predicateView, tally,
-                    rowGroupIterator);
+            NestedRowReader reader = new NestedRowReader(none, schema,
+                    projection.payload(), dataView, readerMatchLimit, recordMatcher, predicateView, tally, iterator);
             reader.exhausted = true;
             return reader;
         }
@@ -217,32 +210,21 @@ public final class NestedRowReader implements FileAwareRowReader {
         // Nothing here asks a question about the read as a whole, so nothing here plans
         // beyond the first file: statistics reach the reader per row group, on
         // NestedBatch.filterAlwaysMatches (see #1107).
-        rowGroupIterator.planBatches(batchSize, maxRows);
-        ScheduledColumn<?>[] pipelines = new ScheduledColumn<?>[projectedColumnCount];
-        ReadScheduler scheduler = new ReadScheduler(rowGroupIterator.readExecutor(), batchSize, budgetRows);
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
-
         NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
+        List<NestedLevelComputer.Layers> columnLayers = new ArrayList<>(projectedColumnCount);
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = decoded.toOriginalIndex(i);
-            ColumnSchema columnSchema = schema.getColumn(originalIndex);
-
-            PageSource pageSource = new PageSource(rowGroupIterator, i);
-
             // A batch's arrays are allocated for it when it is filled, so a holder comes without any.
-            BatchExchange<NestedBatch> buffer = BatchExchange.recycling(columnSchema.name(), NestedBatch::new);
-            buffers[i] = buffer;
-            pipelines[i] = new ScheduledNestedColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), layers[originalIndex], NestedIndexMode.ALL_ITEMS,
-                    fixedListFastPathEnabled);
+            buffers[i] = BatchExchange.recycling(schema.getColumn(originalIndex).name(), NestedBatch::new);
+            columnLayers.add(layers[originalIndex]);
         }
-        if (scheduler.hasColumns()) {
-            scheduler.start();
-        }
+        iterator.start(decoded, columnLayers, NestedIndexMode.ALL_ITEMS, fixedListFastPathEnabled, batchSize,
+                budgetRows, maxRows, new ArrayList<>(Arrays.asList(buffers)), null);
 
-        NestedRowReader reader = new NestedRowReader(buffers, pipelines, schema, projection.payload(), dataView,
-                readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
+        NestedRowReader reader = new NestedRowReader(buffers, schema, projection.payload(), dataView,
+                readerMatchLimit, recordMatcher, predicateView, tally, iterator);
         reader.initialize();
         return reader;
     }
@@ -277,7 +259,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// Returns to [#hasNext]'s plain cursor as soon as a batch loads that statistics
     /// decided, so a proven batch never pays for the per-row protocol.
     private boolean hasNextMatching() throws IOException {
-        if (maxMatchedRows != ScheduledColumn.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
+        if (maxMatchedRows != FlatRowReader.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
             exhausted = true;
             return false;
         }
@@ -351,6 +333,12 @@ public final class NestedRowReader implements FileAwareRowReader {
             }
         }
         int payloadColumnCount = payloadBatches.length;
+        if (payloadColumnCount == 0) {
+            // A projection of groups without a column reads as no rows, as one without a
+            // field does on the flat path
+            exhausted = true;
+            return false;
+        }
         if (!pollColumns(0, payloadColumnCount)) {
             return false;
         }
@@ -363,7 +351,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         // A batch statistics decided, with no cap to count matches against, needs
         // nothing evaluated and nothing counted per row: hand it to the plain cursor
         // and tally it whole.
-        activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == ScheduledColumn.UNLIMITED
+        activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == FlatRowReader.UNLIMITED
                 ? null : recordMatcher;
         // A filter-only column is not read in a row group statistics proved, so its
         // exchange holds batches for the evaluated steps alone.
@@ -504,19 +492,16 @@ public final class NestedRowReader implements FileAwareRowReader {
         if (!closeClaim.claim()) {
             return;
         }
-        // The iterator is released even when tearing the pipeline down fails: this
-        // reader will not run its close body again, so skipping the release would
-        // leave the work list reachable for the parent reader's whole lifetime. A
-        // failure to release is suppressed beneath the original.
-        try (rowGroupIterator) {
+        // The read is released even when closing the tally fails: this reader will not
+        // run its close body again, so skipping the release would leave the work list
+        // reachable for the parent reader's whole lifetime. A failure to release is
+        // suppressed beneath the original.
+        try (read) {
             if (tally != null) {
                 tally.close();
             }
-            if (columnPipelines != null) {
-                for (ScheduledColumn<?> pipeline : columnPipelines) {
-                    pipeline.close();
-                }
-            }
+            // Stops the read's columns and waits for its jobs before their holders are recycled
+            read.close();
             for (int i = 0; i < columnCount; i++) {
                 if (previousBatches[i] != null) {
                     exchanges[i].recycle(previousBatches[i]);

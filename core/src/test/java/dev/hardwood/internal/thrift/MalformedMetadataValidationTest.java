@@ -9,15 +9,27 @@ package dev.hardwood.internal.thrift;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.EncryptedFileException;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PageType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ParquetReadException;
@@ -190,6 +202,7 @@ class MalformedMetadataValidationTest {
         byte[] chunk = new ThriftStructBuilder()
                 .field(1, FieldType.BINARY).binary("data-2.parquet".getBytes(UTF_8))
                 .field(2, FieldType.I64).i64(0)
+                .field(3, FieldType.STRUCT).nested(columnMetaData())
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
         assertThat(columnChunk.filePath()).isEqualTo("data-2.parquet");
@@ -201,6 +214,49 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void columnChunkWithoutMetaDataRejected() {
+        byte[] chunk = new ThriftStructBuilder()
+                .field(2, FieldType.I64).i64(0)
+                .stop().build();
+        assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ColumnChunk omits meta_data, which only an encrypted column may");
+    }
+
+    @Test
+    void columnChunkOfNoValuesInARowGroupWithRowsRejected() {
+        assertThatThrownBy(() -> RowGroupReader.read(reader(rowGroupOfAnEmptyChunk(1))))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ColumnMetaData of column 'a' declares no values in num_values, but its RowGroup "
+                        + "holds 1 rows");
+    }
+
+    @Test
+    void columnChunkOfNoValuesInARowGroupOfNoRowsParses() {
+        assertThat(RowGroupReader.read(reader(rowGroupOfAnEmptyChunk(0))).numRows()).isZero();
+    }
+
+    /// A `RowGroup` of `numRows` rows whose one column chunk declares no values.
+    private static byte[] rowGroupOfAnEmptyChunk(long numRows) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        RowGroupWriter.write(writer, new RowGroup(List.of(new ColumnChunk(new ColumnMetaData(PhysicalType.INT32,
+                List.of(Encoding.PLAIN), FieldPath.of("a"), CompressionCodec.UNCOMPRESSED, 0, 0, 0, null, 4, null,
+                null, null, null, null, List.of(), null), null, null, null, null, null)), 0, numRows));
+        return writer.toByteArray();
+    }
+
+    @Test
+    void encryptedColumnChunkWithoutMetaDataIsEncrypted() {
+        // ColumnChunk: field8 crypto_metadata, an empty struct standing for its union
+        byte[] chunk = new ThriftStructBuilder()
+                .field(2, FieldType.I64).i64(0)
+                .field(8, FieldType.STRUCT).raw(STOP)
+                .stop().build();
+        assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
+                .isInstanceOf(EncryptedFileException.class);
+    }
+
+    @Test
     void emptyFilePathIsThisFile() {
         // An empty file_path is the writer naming the file it is writing, not a split layout.
         byte[] chunk = new ThriftStructBuilder()
@@ -208,6 +264,7 @@ class MalformedMetadataValidationTest {
                 .field(2, FieldType.I64).i64(0)
                 .field(4, FieldType.I64).i64(1000)
                 .field(5, FieldType.I32).i32(64)
+                .field(3, FieldType.STRUCT).nested(columnMetaData())
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
         assertThat(columnChunk.offsetIndexLength()).isEqualTo(64);
@@ -221,6 +278,7 @@ class MalformedMetadataValidationTest {
                 .field(2, FieldType.I64).i64(0)
                 .field(4, FieldType.I64).i64(1000)
                 .field(5, FieldType.I32).i32(64)
+                .field(3, FieldType.STRUCT).nested(columnMetaData())
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
         assertThat(columnChunk.filePath()).isEmpty();
@@ -238,6 +296,32 @@ class MalformedMetadataValidationTest {
         assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("FileMetaData.schema \u2014 wrong Thrift element type 0x5 (expected 0xc)");
+    }
+
+    @Test
+    void schemaElementPastTheRootsLastDescendantRejected() {
+        byte[] footer = footerOfSchema(
+                SchemaElement.root("root", 1),
+                leaf("a"),
+                leaf("b"));
+
+        assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("FileMetaData.schema \u2014 the schema holds 1 element(s) past the root's last "
+                        + "descendant, from 'b' on");
+    }
+
+
+    @Test
+    void schemaEndingBeforeAGroupsChildrenRejected() {
+        byte[] footer = footerOfSchema(
+                SchemaElement.root("root", 2),
+                SchemaElement.group("g", RepetitionType.OPTIONAL, 3),
+                leaf("a"));
+
+        assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("FileMetaData.schema \u2014 group 'g' declares 3 children, but the schema ends after 1");
     }
 
     @Test
@@ -451,5 +535,25 @@ class MalformedMetadataValidationTest {
         assertThat(header.type()).isEqualTo(PageType.DATA_PAGE);
         assertThat(header.uncompressedPageSize()).isEqualTo(10);
         assertThat(header.compressedPageSize()).isEqualTo(8);
+    }
+
+    private static SchemaElement leaf(String name) {
+        return SchemaElement.primitive(name, PhysicalType.INT32, RepetitionType.OPTIONAL);
+    }
+
+    private static byte[] footerOfSchema(SchemaElement... schema) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        FileMetaDataWriter.write(writer, new FileMetaData(2, List.of(schema), 0, List.of(), Map.of(), null,
+                List.of()));
+        return writer.toByteArray();
+    }
+
+    /// A `ColumnMetaData` of an `INT32` column `a` of no values.
+    private static byte[] columnMetaData() {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        ColumnMetaDataWriter.write(writer, new ColumnMetaData(PhysicalType.INT32, List.of(Encoding.PLAIN),
+                FieldPath.of("a"), CompressionCodec.UNCOMPRESSED, 0, 0, 0, null, 4, null, null, null, null, null,
+                List.of(), null));
+        return writer.toByteArray();
     }
 }
