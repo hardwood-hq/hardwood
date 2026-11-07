@@ -67,6 +67,11 @@ public class BatchExchange<B> {
     public static final class Batch {
         public Object values;
         public long[] validity;
+        /// The definition level of each row, for a leaf whose levels tell a reader more than
+        /// [#validity] does: whether a struct above it is null. `null` for any other column,
+        /// which the fill then leaves at its validity alone. When non-null, sized to the
+        /// batch capacity and overwritten on every fill.
+        public int[] definitionLevels;
         public int recordCount;
         /// The rows [#values] was allocated for, at least [#recordCount]. A batch ended early,
         /// at a file or by a row cap, can hold far fewer rows than its arrays have room for, and

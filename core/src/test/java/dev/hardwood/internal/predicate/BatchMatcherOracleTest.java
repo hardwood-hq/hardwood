@@ -685,7 +685,7 @@ class BatchMatcherOracleTest {
 
     private static BitSet batchMatcherSurvivors(ResolvedPredicate predicate, Workload w) {
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(predicate, w.schema,
-                w.projection::toProjectedIndex);
+                w.projection::toProjectedIndex, false);
         if (compiled == null) {
             // Predicate not eligible for batch-matcher compilation. Callers in this file
             // intentionally use eligible predicates, so `assertSurvivorsAgree` will

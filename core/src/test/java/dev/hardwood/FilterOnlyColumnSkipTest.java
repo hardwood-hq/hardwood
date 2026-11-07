@@ -23,6 +23,8 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.internal.io.CountingInputFile;
+import dev.hardwood.internal.reader.row.FlatRowReader;
+import dev.hardwood.internal.reader.row.NestedRowReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.LogicalType;
@@ -109,19 +111,24 @@ class FilterOnlyColumnSkipTest {
             }
         }
 
-        // `s` is optional, so a column reader decodes its leaves as nested.
+        // `s` is optional, so a column reader decodes its leaves as nested. Its `tags` list
+        // repeats, so a row reader projecting all of `s` is the nested one, and a row reader
+        // projecting `s.amount` alone is the flat one.
         nestedFixture = dir.resolve("filter_only_nested.parquet");
         FileSchema nested = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .addColumn("code", PhysicalType.INT64, RepetitionType.REQUIRED)
-                        .addColumn("amount", PhysicalType.DOUBLE, RepetitionType.REQUIRED))
+                        .addColumn("amount", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                        .list("tags", RepetitionType.OPTIONAL,
+                                element -> element.primitive(PhysicalType.INT64, RepetitionType.REQUIRED)))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(nestedFixture), nested, config)) {
             for (int i = 0; i < ROWS; i++) {
                 final long id = i;
                 writer.rowWriter().writeRow(row -> row.setLong("id", id)
-                        .setStruct("s", s -> s.setLong("code", id).setDouble("amount", amount(id))));
+                        .setStruct("s", s -> s.setLong("code", id).setDouble("amount", amount(id))
+                                .setList("tags", tags -> tags.addLong(id))));
             }
         }
     }
@@ -369,7 +376,7 @@ class FilterOnlyColumnSkipTest {
         assertSkipped(nestedFile, "code", "amount");
     }
 
-    // ==================== Nested row reader ====================
+    // ==================== Row readers over a struct ====================
 
     @Test
     void nestedRowReaderSkipsATopLevelFilterOnlyColumn() throws Exception {
@@ -379,6 +386,7 @@ class FilterOnlyColumnSkipTest {
                      .projection(ColumnProjection.columns("s"))
                      .filter(FilterPredicate.lt("id", THRESHOLD))
                      .build()) {
+            assertThat(rows).isInstanceOf(NestedRowReader.class);
             while (rows.hasNext()) {
                 rows.next();
                 amounts.add(rows.getStruct("s").getDouble("amount"));
@@ -392,7 +400,7 @@ class FilterOnlyColumnSkipTest {
     }
 
     @Test
-    void nestedRowReaderSkipsAFilterOnlyLeafUnderAProjectedStruct() throws Exception {
+    void flatRowReaderSkipsAFilterOnlyLeafUnderAProjectedStruct() throws Exception {
         List<Double> amounts = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              RowReader rows = reader.buildRowReader()
@@ -400,6 +408,7 @@ class FilterOnlyColumnSkipTest {
                      .filter(FilterPredicate.lt("s.code", THRESHOLD))
                      .head(1200)
                      .build()) {
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
             while (rows.hasNext()) {
                 rows.next();
                 PqStruct s = rows.getStruct("s");
@@ -424,6 +433,7 @@ class FilterOnlyColumnSkipTest {
                      .filter(FilterPredicate.lt("id", THRESHOLD))
                      .head(head)
                      .build()) {
+            assertThat(rows).isInstanceOf(NestedRowReader.class);
             while (rows.hasNext()) {
                 rows.next();
                 amounts.add(rows.getStruct("s").getDouble("amount"));
@@ -635,13 +645,14 @@ class FilterOnlyColumnSkipTest {
     }
 
     @Test
-    void nestedRowReaderSkipsTheFilterOnlyColumnBetweenUndecidedRowGroups() throws Exception {
+    void flatRowReaderSkipsTheFilterOnlyStructLeafBetweenUndecidedRowGroups() throws Exception {
         List<Double> amounts = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("s.amount"))
                      .filter(between("s.code"))
                      .build()) {
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
             while (rows.hasNext()) {
                 rows.next();
                 amounts.add(rows.getStruct("s").getDouble("amount"));

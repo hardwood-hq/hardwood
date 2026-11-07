@@ -187,7 +187,7 @@ the reader merge is the last thing that should meet two copies of a decode.
 | 1 | State the leaf decode once | Finding 4 | #1334; unblocks #971, #1156, #447, #1021 | — |
 | 2 | Benchmark projected reads | — | none (hardwood-benchmarks) | — |
 | 3 | Choose the reader from the projection (done in #1335, see below) | Finding 1 | #1335 | 2 for numbers |
-| 4 | Non-repeated structs on the flat path | — | #475, #631 | 1, 3 |
+| 4 | Non-repeated structs on the flat path (#475 done, see below) | — | #475, #631 | 1, 3 |
 | 5 | One reader, pipeline chosen per column | Findings 2 and 5; remainder of 1 | #732 | 1, 4 |
 | 6 | Cut the nested column's per-batch cost (done in #1287, see below) | Finding 6 | #1024, #750, #1045 | — |
 
@@ -260,14 +260,17 @@ of them, matching the scalar-only twin file.
 
 Issues: #475, #631.
 
-#475 widens stage 3's predicate from "every projected top-level field is a primitive"
-to "nothing in the projection repeats" — the axis the end state settles on. A group
-name resolves to a `PqStruct` flyweight over row-aligned leaves, and an optional group
-carries a group-present bitset so leaf-null and struct-null stay distinct.
-`FlatColumn` reduces definition levels to a leaf-present bit, so that bitset is
-the capability stage 5 needs for every non-repeated struct: nothing here is written to
-be deleted. Stage 1 is what makes this small: without the shared helper it adds a sixth
-copy of the accessors to `FlatRowReader`.
+Done in #475: `isFlatProjection` takes the flat reader when nothing in the decoded
+projection repeats and every top-level field is a primitive or a plain struct of such
+fields; a variant, a `FILE` group and a filter testing a group for null stay nested
+([ROW_READER.md](../_designs/ROW_READER.md#flat-and-nested-readers)). The flat accessors
+address top-level fields, and a group name resolves to a record-mode `PqStructImpl` over a
+`NestedBatchIndex` of the row-aligned batches, with no offsets. Leaf-null and struct-null
+stay distinct through the definition levels of each nullable struct's first projected leaf,
+which `FlatColumn` keeps beside the values for that leaf alone; a top-level struct's
+presence bitmap is derived from them per batch. A filter leaf below a struct compiles to a batch
+matcher on the flat reader, as a top-level one does. That is the capability stage 5 needs for
+every non-repeated struct: nothing here is written to be deleted.
 
 #631 is a struct perf test in `performance-testing/end-to-end`. Its flat fixture is a
 struct of primitives that must dispatch to `FlatRowReader`, which only happens once
