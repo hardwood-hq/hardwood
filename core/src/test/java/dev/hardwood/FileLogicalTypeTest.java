@@ -70,7 +70,8 @@ class FileLogicalTypeTest {
                 .struct("meta", RepetitionType.OPTIONAL, meta -> meta
                         .file("thumbnail", RepetitionType.OPTIONAL))
                 .list("attachments", RepetitionType.OPTIONAL, element -> element.file(RepetitionType.OPTIONAL))
-                .map("renditions", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                .map("renditions", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
                         value -> value.file(RepetitionType.OPTIONAL))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -242,7 +243,8 @@ class FileLogicalTypeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(PhysicalType.INT32,
                         RepetitionType.OPTIONAL))
-                .map("labels", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                .map("labels", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -366,7 +368,8 @@ class FileLogicalTypeTest {
                 .file("photo", RepetitionType.REQUIRED)
                 .struct("meta", RepetitionType.REQUIRED, meta -> meta.file("thumbnail", RepetitionType.REQUIRED))
                 .list("attachments", RepetitionType.REQUIRED, element -> element.file(RepetitionType.REQUIRED))
-                .map("renditions", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                .map("renditions", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
                         value -> value.file(RepetitionType.REQUIRED))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -532,7 +535,8 @@ class FileLogicalTypeTest {
     @Test
     void fileOnALeafIsRefused() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("photo", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.file()))
+                .addColumn("photo", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.logicalType(LogicalType.file())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("FILE annotates a group, not a primitive column: photo; declare it with the file "
                         + "builder verb instead");
@@ -543,7 +547,8 @@ class FileLogicalTypeTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .file("photo", RepetitionType.OPTIONAL)
                 .struct("meta", RepetitionType.OPTIONAL, meta -> meta
-                        .addColumn("note", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()))
+                        .addColumn("note", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                col -> col.logicalType(LogicalType.string())))
                 .list("attachments", RepetitionType.OPTIONAL, element -> element.file(RepetitionType.OPTIONAL))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {

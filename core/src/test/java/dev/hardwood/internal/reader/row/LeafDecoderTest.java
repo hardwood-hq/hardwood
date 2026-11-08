@@ -63,6 +63,6 @@ class LeafDecoderTest {
 
     private static SchemaNode.PrimitiveNode primitive(PhysicalType type, LogicalType logicalType) {
         return new SchemaNode.PrimitiveNode(
-                "field", type, RepetitionType.REQUIRED, logicalType, 0, 0, 0);
+                "field", type, RepetitionType.REQUIRED, logicalType, 0, 0, 0, null);
     }
 }

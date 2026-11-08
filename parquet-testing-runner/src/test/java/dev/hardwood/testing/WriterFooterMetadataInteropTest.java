@@ -17,6 +17,8 @@ import java.util.Map;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.format.ColumnOrder;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.MessageType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -30,8 +32,8 @@ import dev.hardwood.writer.ParquetFileWriter;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The interop gate over the footer fields a value comparison cannot see: `key_value_metadata`,
-/// `created_by` and `column_orders`. What Hardwood stamps on a file is what an independent
-/// implementation reads back out of it.
+/// `created_by`, `column_orders` and the `field_id` of the schema elements. What Hardwood stamps
+/// on a file is what an independent implementation reads back out of it.
 ///
 /// These are the fields Hardwood's own round trip cannot vouch for. `key_value_metadata` carries
 /// `ARROW:schema`, the pandas descriptor and the table-format stamps, which means the consumer
@@ -130,6 +132,51 @@ class WriterFooterMetadataInteropTest {
                 .isEqualTo("myapp version 2.1.0 (build deadbeef)");
     }
 
+    /// Iceberg and Delta Lake find a column by its `field_id`, so the consumer that must find the
+    /// id is a table format that reads through parquet-java, not Hardwood.
+    @Test
+    void parquetJavaReadsTheFieldIdsHardwoodWrote(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("field-ids.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
+                .struct("person", RepetitionType.OPTIONAL, person -> person
+                        .fieldId(2)
+                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                col -> col.logicalType(LogicalType.string()).fieldId(3)))
+                .list("tags", RepetitionType.OPTIONAL, element -> element
+                        .groupFieldId(4)
+                        .primitive(PhysicalType.INT32, RepetitionType.OPTIONAL, col -> col.fieldId(5)))
+                .map("attributes", RepetitionType.OPTIONAL, PhysicalType.INT32, key -> key.fieldId(7),
+                        value -> value
+                                .groupFieldId(6)
+                                .primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(8)))
+                .file("document", RepetitionType.OPTIONAL, 9)
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.rowWriter().writeRow(row -> row.setLong("id", 1L));
+        }
+
+        MessageType read = ParquetJavaReader.readFooter(file).getFileMetaData().getSchema();
+        GroupType tags = read.getType("tags").asGroupType();
+        GroupType keyValue = read.getType("attributes").asGroupType().getType("key_value").asGroupType();
+        assertThat(List.of(
+                read.getType("id"),
+                read.getType("person"),
+                read.getType("person").asGroupType().getType("name"),
+                tags,
+                tags.getType("list").asGroupType().getType("element"),
+                read.getType("attributes"),
+                keyValue.getType("key"),
+                keyValue.getType("value"),
+                read.getType("document")))
+                .extracting(type -> type.getId().intValue())
+                .containsExactly(1, 2, 3, 4, 5, 6, 7, 8, 9);
+        assertThat(tags.getType("list").getId()).isNull();
+        assertThat(keyValue.getId()).isNull();
+        assertThat(read.getType("document").asGroupType().getFields())
+                .allSatisfy(child -> assertThat(child.getId()).isNull());
+    }
+
     private static Path write(Path dir, Map<String, String> metadata) throws IOException {
         Path file = dir.resolve("footer-metadata.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema())) {
@@ -150,7 +197,7 @@ class WriterFooterMetadataInteropTest {
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("person", RepetitionType.REQUIRED, person -> person
                         .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                LogicalType.string())
+                                col -> col.logicalType(LogicalType.string()))
                         .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED))
                 .addColumn("active", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();

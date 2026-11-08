@@ -71,11 +71,12 @@ class FileReferenceValidationTest {
     static void writeFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("photo", RepetitionType.OPTIONAL, photo -> photo
-                        .addColumn("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
+                        .addColumn("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                col -> col.logicalType(LogicalType.string()))
                         .addColumn("offset", PhysicalType.INT64, RepetitionType.OPTIONAL)
                         .addColumn("size", PhysicalType.INT64, RepetitionType.OPTIONAL)
                         .addColumn("content_type", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                                LogicalType.string())
+                                col -> col.logicalType(LogicalType.string()))
                         .addColumn("inline", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -127,12 +128,14 @@ class FileReferenceValidationTest {
     @Test
     void anInvalidNestedValueFailsOnEveryRouteAndNamesItsPath() throws IOException {
         Consumer<FileSchema.StructBuilder> children = group -> group
-                .addColumn("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
+                .addColumn("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.logicalType(LogicalType.string()))
                 .addColumn("size", PhysicalType.INT64, RepetitionType.OPTIONAL);
         FileSchema schema = FileSchema.builder("schema")
                 .struct("meta", RepetitionType.OPTIONAL, meta -> meta.struct("photo", RepetitionType.OPTIONAL, children))
                 .list("attachments", RepetitionType.OPTIONAL, element -> element.struct(RepetitionType.OPTIONAL, children))
-                .map("renditions", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                .map("renditions", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
                         value -> value.struct(RepetitionType.OPTIONAL, children))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

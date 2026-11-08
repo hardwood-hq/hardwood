@@ -83,8 +83,9 @@ class WriterBloomFilterInteropTest {
                 .addColumn("l", PhysicalType.INT64, RepetitionType.OPTIONAL)
                 .addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
                 .addColumn("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
-                .addColumn("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8)
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.string()))
+                .addColumn("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(8))
                 .addColumn("delta", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
@@ -144,7 +145,8 @@ class WriterBloomFilterInteropTest {
         }
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.string()))
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())
