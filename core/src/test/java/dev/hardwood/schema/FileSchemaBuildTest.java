@@ -127,4 +127,34 @@ class FileSchemaBuildTest {
         assertThat(top.get(5)).isInstanceOf(SchemaNode.PrimitiveNode.class);    // footer (resumed correctly)
         assertThat((top.get(5)).name()).isEqualTo("footer");
     }
+
+    /// Every name of the schema is the interned instance, also when the footer's strings are
+    /// not: the names are built here with `new String`, as the footer parser builds them, and each
+    /// must come out as the very instance of its literal.
+    @Test
+    void namesAreInterned() {
+        List<SchemaElement> elements = List.of(
+                root(new String("user"), 2),
+                primitive(new String("id"), PhysicalType.INT64, RepetitionType.REQUIRED),
+                group(new String("address"), RepetitionType.OPTIONAL, 1),
+                primitive(new String("city"), PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL));
+
+        FileSchema schema = FileSchema.fromSchemaElements(elements);
+
+        assertThat(schema.getName()).isSameAs("user");
+        SchemaNode.GroupNode root = schema.getRootNode();
+        assertThat(root.name()).isSameAs("user");
+        assertThat(root.children().get(0).name()).isSameAs("id");
+        SchemaNode.GroupNode address = (SchemaNode.GroupNode) root.children().get(1);
+        assertThat(address.name()).isSameAs("address");
+        assertThat(address.children().get(0).name()).isSameAs("city");
+
+        ColumnSchema id = schema.getColumn(0);
+        assertThat(id.name()).isSameAs("id");
+        assertThat(id.fieldPath().elements().get(0)).isSameAs("id");
+        ColumnSchema city = schema.getColumn(1);
+        assertThat(city.name()).isSameAs("city");
+        assertThat(city.fieldPath().elements().get(0)).isSameAs("address");
+        assertThat(city.fieldPath().elements().get(1)).isSameAs("city");
+    }
 }
