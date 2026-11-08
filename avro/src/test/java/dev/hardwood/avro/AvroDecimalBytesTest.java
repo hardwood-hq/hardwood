@@ -61,11 +61,13 @@ class AvroDecimalBytesTest {
                 new BigDecimal("-" + largest));
         LogicalType decimal = LogicalType.decimal(precision, 3);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("d", physicalType, RepetitionType.REQUIRED, decimal)
+                .addColumn("d", physicalType, RepetitionType.REQUIRED, col -> col.logicalType(decimal))
                 .list("ds", RepetitionType.REQUIRED, element -> element.primitive(physicalType,
-                        RepetitionType.REQUIRED, decimal))
-                .map("dm", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, LogicalType.string(),
-                        value -> value.primitive(physicalType, RepetitionType.REQUIRED, decimal))
+                        RepetitionType.REQUIRED, col -> col.logicalType(decimal)))
+                .map("dm", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
+                        value -> value.primitive(physicalType, RepetitionType.REQUIRED,
+                                col -> col.logicalType(decimal)))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -115,7 +117,8 @@ class AvroDecimalBytesTest {
     @Test
     void anEmptyStoredValueMaterializesAsZero() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.decimal(10, 2))
+                .addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.decimal(10, 2)))
                 .build();
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
         RowReader rows = (RowReader) Proxy.newProxyInstance(RowReader.class.getClassLoader(),

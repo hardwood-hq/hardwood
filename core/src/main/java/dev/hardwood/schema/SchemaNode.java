@@ -33,6 +33,10 @@ public sealed interface SchemaNode {
     /// Returns the maximum repetition level, computed from the schema hierarchy.
     int maxRepetitionLevel();
 
+    /// Returns the field id of the schema element (`field_id` in `parquet.thrift`), or `null`
+    /// if the element has no field id.
+    Integer fieldId();
+
     /// Primitive leaf node representing an actual data column.
     ///
     /// @param name field name
@@ -42,6 +46,7 @@ public sealed interface SchemaNode {
     /// @param columnIndex zero-based index among all leaf columns
     /// @param maxDefinitionLevel maximum definition level
     /// @param maxRepetitionLevel maximum repetition level
+    /// @param fieldId field id of the schema element, or `null` if absent
     record PrimitiveNode(
             String name,
             PhysicalType type,
@@ -49,7 +54,14 @@ public sealed interface SchemaNode {
             LogicalType logicalType,
             int columnIndex,
             int maxDefinitionLevel,
-            int maxRepetitionLevel) implements SchemaNode {
+            int maxRepetitionLevel,
+            Integer fieldId) implements SchemaNode {
+
+        /// Creates a primitive node without a field id.
+        public PrimitiveNode(String name, PhysicalType type, RepetitionType repetitionType, LogicalType logicalType,
+                             int columnIndex, int maxDefinitionLevel, int maxRepetitionLevel) {
+            this(name, type, repetitionType, logicalType, columnIndex, maxDefinitionLevel, maxRepetitionLevel, null);
+        }
     }
 
     /// Group node representing a struct, list, map, or variant.
@@ -61,6 +73,7 @@ public sealed interface SchemaNode {
     /// @param children child nodes of this group
     /// @param maxDefinitionLevel maximum definition level
     /// @param maxRepetitionLevel maximum repetition level
+    /// @param fieldId field id of the schema element, or `null` if absent
     record GroupNode(
             String name,
             RepetitionType repetitionType,
@@ -68,7 +81,16 @@ public sealed interface SchemaNode {
             LogicalType logicalType,
             List<SchemaNode> children,
             int maxDefinitionLevel,
-            int maxRepetitionLevel) implements SchemaNode {
+            int maxRepetitionLevel,
+            Integer fieldId) implements SchemaNode {
+
+        /// Creates a group node without a field id.
+        public GroupNode(String name, RepetitionType repetitionType, ConvertedType convertedType,
+                         LogicalType logicalType, List<SchemaNode> children, int maxDefinitionLevel,
+                         int maxRepetitionLevel) {
+            this(name, repetitionType, convertedType, logicalType, children, maxDefinitionLevel, maxRepetitionLevel,
+                    null);
+        }
 
     /// Returns true if this is a LIST group.
         public boolean isList() {

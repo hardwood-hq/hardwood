@@ -58,6 +58,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
         System.out.println("Column " + i + ": " + column.name()
             + " (" + column.type() + ", " + column.repetitionType()
             + (column.logicalType() != null ? ", " + column.logicalType() : "")
+            + (column.fieldId() != null ? ", field id " + column.fieldId() : "")
             + ")");
     }
 
@@ -86,6 +87,8 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 ```
 
 The map `keyValueMetadata()` returns can be handed to `ParquetFileWriter.keyValueMetadata(Map)` to stamp the same entries on a file being written; see [File Metadata](../reference/writer.md#file-metadata).
+
+`ColumnSchema.fieldId()` and `SchemaNode.fieldId()` return the field id of a column or a field, or `null` when the file gives it none. Iceberg, Delta Lake (column mapping mode `id`) and DuckLake identify columns by these ids; see [Field ids](../reference/writer.md#field-ids).
 
 ## Reuse a parsed footer across readers
 

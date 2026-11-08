@@ -186,7 +186,7 @@ class EncodingRoundTripTest {
 
     private static void addColumn(FileSchema.Builder builder, String name, PhysicalType type) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            builder.addColumn(name, type, RepetitionType.OPTIONAL, FLBA_WIDTH);
+            builder.addColumn(name, type, RepetitionType.OPTIONAL, col -> col.typeLength(FLBA_WIDTH));
         }
         else {
             builder.addColumn(name, type, RepetitionType.OPTIONAL);
@@ -195,7 +195,7 @@ class EncodingRoundTripTest {
 
     private static void addColumn(FileSchema.StructBuilder builder, String name, PhysicalType type) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            builder.addColumn(name, type, RepetitionType.OPTIONAL, FLBA_WIDTH);
+            builder.addColumn(name, type, RepetitionType.OPTIONAL, col -> col.typeLength(FLBA_WIDTH));
         }
         else {
             builder.addColumn(name, type, RepetitionType.OPTIONAL);
@@ -204,7 +204,7 @@ class EncodingRoundTripTest {
 
     private static void primitive(FileSchema.ElementBuilder element, PhysicalType type) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            element.primitive(type, RepetitionType.OPTIONAL, FLBA_WIDTH);
+            element.primitive(type, RepetitionType.OPTIONAL, col -> col.typeLength(FLBA_WIDTH));
         }
         else {
             element.primitive(type, RepetitionType.OPTIONAL);

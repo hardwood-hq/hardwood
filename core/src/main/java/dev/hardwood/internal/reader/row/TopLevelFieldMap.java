@@ -348,7 +348,8 @@ final class TopLevelFieldMap {
                 null,
                 List.of(node),
                 node.maxDefinitionLevel() - 1,
-                node.maxRepetitionLevel() - 1);
+                node.maxRepetitionLevel() - 1,
+                null);
     }
 
     static FieldDesc.MapOf buildMapDesc(SchemaNode.GroupNode mapGroup,

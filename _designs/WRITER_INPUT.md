@@ -15,20 +15,25 @@ Related documents:
 
 The writer reuses the immutable `FileSchema` / `SchemaNode` model the reader builds, so a file it writes is read back through the same model. `FileSchema.Builder` constructs that model programmatically: `build()` flattens the declared tree into the `SchemaElement` list the footer carries and parses it back through `FileSchema.fromSchemaElements`, so the max definition and repetition levels, the leaf-column indices and the column paths are computed by the reader's own code, and a declared schema is exactly the schema a reader of the file sees.
 
+Each `SchemaNode` and `ColumnSchema` carries the `field_id` of its schema element, and `FileSchema.toSchemaElements` writes it back, so a schema read from a file and passed to the writer keeps the field ids that table formats such as Iceberg use to identify columns.
+
 The builder emits the **canonical** physical layout only: a `LIST` expands to `group (LIST) { repeated group list { element } }`, a `MAP` to `group (MAP) { repeated group key_value { key, value } }`. The builder verbs are `struct` / `list` / `map`, not a bare `group`. In the schema model `group` is the abstract super-type, a `SchemaNode.GroupNode` carrying an annotation (`LIST` / `MAP` / none) from which the reader resolves the concrete shape. Construction cannot leave that abstract: the concrete shape dictates the physical bytes emitted, so there is no byte layout for an unspecialized group to build. The builder offers only the concrete shapes, and they share the `struct` / `list` / `map` vocabulary with the batch setters.
 
 | Verb | Declares |
 |---|---|
-| `addColumn(name, type, repetition[, typeLength][, logicalType])` | a primitive leaf |
+| `addColumn(name, type, repetition[, column])` | a primitive leaf; its optional attributes (logical type, type length, field id) set on a `ColumnBuilder` |
 | `struct(name, repetition, filler)` | a plain group; children declared on a `StructBuilder` |
 | `list(name, repetition, element)` | a `LIST`; the element declared on an `ElementBuilder` via `primitive`, `struct`, `list` or `map` |
-| `map(name, repetition, keyType[, keyTypeLength][, keyLogicalType], value)` | a `MAP` with a `REQUIRED` primitive key; the value declared like a list element |
+| `map(name, repetition, keyType[, key], value)` | a `MAP` with a `REQUIRED` primitive key whose optional attributes `key` sets; the value declared like a list element |
+
+Name, physical type and repetition are positional, because a leaf always needs all three. The attributes that are optional independently of each other go in the `ColumnBuilder` lambda, so each declaration surface has one overload with the lambda and one without, and the lambda's scope ends the column declaration.
 
 Declaration rules, all enforced where the field is declared:
 
 - `repetition` is `REQUIRED` or `OPTIONAL`. `REPEATED` is rejected on every verb: repetition is what `list` and `map` express.
 - A `typeLength` is rejected for every type but `FIXED_LEN_BYTE_ARRAY`, whose length is positive, either given or implied by its annotation. A `FIXED_LEN_BYTE_ARRAY` leaf declared without one takes the width its annotation implies, a fact of its `AnnotationKind` constant (`AnnotationKind.impliedFixedWidth`): for `UUID`, `INTERVAL` and `FLOAT16` the one width the format defines them over, from which their pairing rule is built, and for `DECIMAL` the narrowest width whose digit count reaches the precision (`AnnotationPairings.minDecimalWidth`, the inverse of `maxDecimalPrecision(int)`). Any other annotation implies none, and the leaf is refused. An explicit `typeLength` is kept as given, so a `DECIMAL` wider than its precision needs stays declarable for reproducing a foreign file's layout. A map key is built through the same `leaf` helper as any other primitive, so its type length and annotation are derived and validated identically.
 - A `struct` needs at least one field, a `list` its element, a `map` its value; `build()` rejects a schema with no fields.
+- A field id is set in the scope that declares the field: `ColumnBuilder.fieldId` for a leaf, `StructBuilder.fieldId` for a `struct`, the `fieldId` argument of `file` for a `FILE` group, and `ElementBuilder.groupFieldId` for the `LIST` or `MAP` group whose element or value the `ElementBuilder` declares. The synthetic `list` and `key_value` groups, the root and the children of a `FILE` group get none. Each attribute can be set one time per scope. Uniqueness of field ids is not checked.
 - An annotation rides on the leaf and is checked against the physical type and type length by `LogicalTypeValidator` (see [Physical × logical legality](#physical--logical-legality)). Groups take no logical-type parameter: `LIST` and `MAP` groups are annotated by their verbs, and a plain `struct` carries no annotation.
 - `build()` also checks every leaf against `LeafAnnotation.dropFault`, the rule by which the reader drops an annotation its physical type cannot carry, so a declared schema never carries an annotation the reader of its own file would discard. Untested.
 
@@ -50,7 +55,7 @@ Everything else repeated is refused with `UnsupportedOperationException`:
 
 A nullable struct enclosing a `LIST` or `MAP` is producible and is not a schema rule. What that shape adds is a rule about the batch, enforced where the masks that decide it exist (see [Batch validation](#batch-validation)). Rules about *addressing* a shape rather than producing it belong to the row layer alone (see [One API per file, and row-layer shapes](#one-api-per-file-and-row-layer-shapes)).
 
-Tests: `FileSchemaFlattenTest`, `WriterSchemaShapeTest`, `WriterNestedRoundTripTest`.
+Tests: `FileSchemaFlattenTest`, `FileSchemaFieldIdTest`, `WriterSchemaShapeTest`, `WriterNestedRoundTripTest`; `WriterFooterMetadataInteropTest` checks that parquet-java reads the field ids.
 
 ## Column batches
 

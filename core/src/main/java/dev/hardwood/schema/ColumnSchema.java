@@ -25,6 +25,7 @@ import dev.hardwood.metadata.RepetitionType;
 /// @param maxDefinitionLevel maximum definition level, computed from the schema hierarchy
 /// @param maxRepetitionLevel maximum repetition level, computed from the schema hierarchy
 /// @param logicalType logical type annotation, or `null` if absent
+/// @param fieldId field id of the schema element (`field_id` in `parquet.thrift`), or `null` if absent
 /// @see <a href="https://parquet.apache.org/docs/file-format/nestedencoding/">File Format – Nested Encoding</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record ColumnSchema(
@@ -35,7 +36,15 @@ public record ColumnSchema(
         int columnIndex,
         int maxDefinitionLevel,
         int maxRepetitionLevel,
-        LogicalType logicalType) {
+        LogicalType logicalType,
+        Integer fieldId) {
+
+    /// Creates a column schema without a field id.
+    public ColumnSchema(FieldPath fieldPath, PhysicalType type, RepetitionType repetitionType, Integer typeLength,
+                        int columnIndex, int maxDefinitionLevel, int maxRepetitionLevel, LogicalType logicalType) {
+        this(fieldPath, type, repetitionType, typeLength, columnIndex, maxDefinitionLevel, maxRepetitionLevel,
+                logicalType, null);
+    }
 
     /// Returns the leaf (last) element of the field path, i.e. the column name.
     public String name() {
@@ -55,6 +64,9 @@ public record ColumnSchema(
         sb.append(name());
         if (logicalType != null) {
             sb.append(" (").append(logicalType).append(")");
+        }
+        if (fieldId != null) {
+            sb.append(" = ").append(fieldId);
         }
         sb.append(";");
         return sb.toString();

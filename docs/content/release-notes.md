@@ -20,6 +20,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - The native CLI is no longer published for macOS on Intel; on those machines the CLI runs from the Docker image ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
 - `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()`; `buffer().remaining()` gives the file's length ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 - `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, the getter `codec()` by `compression()`, and `WriterConfig.DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
+- `FileSchema.Builder` sets the logical type and type length of a primitive leaf in a `FileSchema.ColumnBuilder` lambda, for example `addColumn("name", BYTE_ARRAY, REQUIRED, col -> col.logicalType(LogicalType.string()))`. The overloads that took a `typeLength` or a `LogicalType` are removed ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
+- `ColumnSchema`, `SchemaNode.PrimitiveNode` and `SchemaNode.GroupNode` have a last record component `fieldId`. The previous constructors remain, but a record pattern needs the new component, and two schemas that differ only in field ids are no longer equal ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
 
 **Deprecations:**
 
@@ -47,6 +49,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - `WriterConfig.Builder.dataPageVersion(DataPageVersion.V2)` writes every data page as `DATA_PAGE_V2` ([#1820](https://github.com/hardwood-hq/hardwood/issues/1820))
 - `StructBuilder.setValue` writes a field from a value in the form `getValue` returns, so rows can be copied without switching on field types ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - A filtered `ColumnReader` or `ColumnReaders` returns no batch without rows: `nextBatch()` passes over the batches the filter keeps no row of ([#1815](https://github.com/hardwood-hq/hardwood/issues/1815))
+- The field id of each schema element (`field_id`, used by Iceberg, Delta Lake and DuckLake) is available as `ColumnSchema.fieldId()` and `SchemaNode.fieldId()`. A file written with a schema read from another file keeps the field ids, and `FileSchema.Builder` can set them ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
 
 **Bug fixes:**
 

@@ -30,12 +30,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ListBackwardCompatRulesTest {
 
     private static PrimitiveNode prim(String name, RepetitionType rep) {
-        return new PrimitiveNode(name, PhysicalType.BYTE_ARRAY, rep, null, 0, 0, 0);
+        return new PrimitiveNode(name, PhysicalType.BYTE_ARRAY, rep, null, 0, 0, 0, null);
     }
 
     private static GroupNode group(String name, RepetitionType rep, ConvertedType ct,
                                    SchemaNode... children) {
-        return new GroupNode(name, rep, ct, null, List.of(children), 0, 0);
+        return new GroupNode(name, rep, ct, null, List.of(children), 0, 0, null);
     }
 
     /// Wraps `inner` in an `optional group my_list (LIST) { ... }`.
