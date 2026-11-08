@@ -47,6 +47,12 @@ public sealed interface DecodedColumn permits FlatColumn, NestedColumn {
         public long taskBytes() {
             return task.info == null ? 0 : task.info.taskBytes();
         }
+
+        /// Records that the read dropped the page before its decode. Thus the page does not read its
+        /// fetched bytes, and its pin on them is removed.
+        public void dropped() {
+            task.unpin();
+        }
     }
 
     /// A placement's failure, placed at its page, and the page to decode that holds the segments
@@ -70,9 +76,14 @@ public sealed interface DecodedColumn permits FlatColumn, NestedColumn {
     }
 
     /// Takes a page of work item `batches`; returns the page to decode, `null` when it has none.
+    /// The column runs `unpin` when the page does not read the fetched bytes that it was sliced
+    /// from any more: at the end of its decode, or when each cell that holds a segment of the page
+    /// is filled. If the column returns no page, or fails without a page, the caller runs `unpin`,
+    /// and the column does not.
     ///
     /// @throws PlaceFailure if placing a flat page fails
-    Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex, int pageIndex)
+    Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex, int pageIndex,
+               Runnable unpin)
             throws PlaceFailure;
 
     /// Whether the column's placement has ended, at the read's row cap or, for a column decoded

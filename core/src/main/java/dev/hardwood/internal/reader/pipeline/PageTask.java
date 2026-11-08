@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.pipeline;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
@@ -37,6 +38,9 @@ class PageTask {
     final long firstRow;
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
+    /// Removes the pin of the page on the fetched bytes that it was sliced from. It is `null` after
+    /// it ran, or if the column did not set it.
+    private final AtomicReference<Runnable> unpin = new AtomicReference<>();
 
     PageTask(PageInfo info, String fileName, int rowGroup, int pageIndex, BatchPlan.RowGroupBatches batches,
              PageDecoder decoder, long firstRow) {
@@ -47,6 +51,22 @@ class PageTask {
         this.batches = batches;
         this.decoder = decoder;
         this.firstRow = firstRow;
+    }
+
+    /// Sets the operation that removes the pin of the page on its fetched bytes ([#unpin()]). The
+    /// column sets it when it places the page, before a job can see the page.
+    void setUnpin(Runnable unpin) {
+        this.unpin.set(unpin);
+    }
+
+    /// Removes the pin of the page on the fetched bytes that it was sliced from, because the page
+    /// does not read them any more: its decode ended, its scratch went back to its column, or the
+    /// read dropped it before its decode. Only the first call has an effect.
+    void unpin() {
+        Runnable pending = unpin.getAndSet(null);
+        if (pending != null) {
+            pending.run();
+        }
     }
 
     /// Whether the page stands for a row group the column is not read in.

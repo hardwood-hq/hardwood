@@ -138,6 +138,7 @@ public final class RangeBackedInputFile implements InputFile {
                     slot.position(Math.toIntExact(gapStart));
                     slot.put(fetched);
                     populated.add(gapStart, gapEnd);
+                    ReadRanges.release(delegate, fetched);
                 }
             }
             return mapping.slice(Math.toIntExact(offset), length);

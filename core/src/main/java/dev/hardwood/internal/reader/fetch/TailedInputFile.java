@@ -114,6 +114,13 @@ public final class TailedInputFile implements InputFile, HeldBytes {
         return slice != null ? slice : delegate.readRange(offset, length);
     }
 
+    /// Gives a buffer back to the file: a buffer [#readRange] returned is the file's own read, since
+    /// a slice of the tail is a [#sliceHeld] the reader does not give back.
+    @Override
+    public void release(ByteBuffer buffer) {
+        delegate.release(buffer);
+    }
+
     @Override
     public long length() throws IOException {
         return delegate.length();

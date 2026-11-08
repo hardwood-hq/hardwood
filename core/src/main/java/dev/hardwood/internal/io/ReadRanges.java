@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Validation of the ranges requested from an [InputFile], shared by its implementations
@@ -19,7 +20,20 @@ import dev.hardwood.reader.ParquetReadException;
 /// buffers a backend returns, which every read of the reader checks ([#read]).
 public final class ReadRanges {
 
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(ReadRanges.class.getName()));
+
     private ReadRanges() {
+    }
+
+    /// Gives `buffer` back to `inputFile` ([InputFile#release]). A failure of the release is logged
+    /// at `WARNING` and not thrown, because the caller does not read the buffer again.
+    public static void release(InputFile inputFile, ByteBuffer buffer) {
+        try {
+            inputFile.release(buffer);
+        }
+        catch (RuntimeException e) {
+            LOG.get().log(System.Logger.Level.WARNING, () -> "Release of a buffer failed for " + inputFile.name(), e);
+        }
     }
 
     /// Checks that `[offset, offset + length)` lies within a file of `fileBytes` bytes.

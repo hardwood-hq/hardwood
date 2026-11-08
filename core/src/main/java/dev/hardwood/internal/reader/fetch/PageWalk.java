@@ -40,6 +40,13 @@ public interface PageWalk {
     /// ([dev.hardwood.internal.reader.memory.WorkingSet#admit]).
     Need pending();
 
+    /// The section that the bytes of the page the last [#advance] returned are a slice of. The read
+    /// keeps the bytes of the section until it is done with the page. It is `null` for a page
+    /// without bytes, and for a page whose bytes are a copy because they cross the end of a section.
+    default Section pageSource() {
+        return null;
+    }
+
     /// Stops the walk where it is: passes every section it holds, as its end does. The read stops a
     /// column's walk once its placement has reached the row cap.
     default void stop() {
