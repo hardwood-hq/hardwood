@@ -45,6 +45,8 @@ public final class SectionCursor implements ByteSource {
     /// The first request the walk has not passed.
     private int held;
     private Section pending;
+    /// The request that the last [#read] returned a slice of.
+    private Section sliced;
 
     /// @param sections the requests overlapping the column chunk, in offset order
     /// @param rest inserts the rest of the chunk, or `null` when the requests cover every
@@ -59,6 +61,12 @@ public final class SectionCursor implements ByteSource {
         return pending;
     }
 
+    /// The request that the last [#read] returned a slice of. It is `null` if that read returned a
+    /// copy of the bytes of two or more requests, or returned no bytes.
+    Section sliced() {
+        return sliced;
+    }
+
     /// The `length` bytes at absolute `start`, or `null` when a request holding some of
     /// them is not present, which [#pending] then names.
     ///
@@ -66,6 +74,7 @@ public final class SectionCursor implements ByteSource {
     @Override
     public ByteBuffer read(long start, int length) throws IOException {
         pending = null;
+        sliced = null;
         long end = start + length;
         int first = covering(start);
         Section section = sections.get(first);
@@ -75,6 +84,7 @@ public final class SectionCursor implements ByteSource {
                 pending = section;
                 return null;
             }
+            sliced = section;
             return section.slice(bytes, start, length);
         }
         // Straddles a cut: copied once every request holding a byte of it is present, so a

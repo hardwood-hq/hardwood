@@ -9,7 +9,6 @@ package dev.hardwood.internal.io;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -27,18 +26,13 @@ public final class ReadRanges {
     }
 
     /// Gives `buffer` back to `inputFile` ([InputFile#release]). A failure of the release is logged
-    /// and not thrown, since the caller reads the buffer no more either way: the first failure of
-    /// those `failedBefore` records at `WARNING`, the others at `DEBUG`, so that a backend whose
-    /// every release fails does not fill the log.
-    public static void release(InputFile inputFile, ByteBuffer buffer, AtomicBoolean failedBefore) {
+    /// at `WARNING` and not thrown, because the caller does not read the buffer again.
+    public static void release(InputFile inputFile, ByteBuffer buffer) {
         try {
             inputFile.release(buffer);
         }
         catch (RuntimeException e) {
-            System.Logger.Level level = failedBefore.compareAndSet(false, true)
-                    ? System.Logger.Level.WARNING
-                    : System.Logger.Level.DEBUG;
-            LOG.get().log(level, () -> "Release of a buffer failed for " + inputFile.name(), e);
+            LOG.get().log(System.Logger.Level.WARNING, () -> "Release of a buffer failed for " + inputFile.name(), e);
         }
     }
 

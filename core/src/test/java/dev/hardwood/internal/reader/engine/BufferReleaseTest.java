@@ -26,19 +26,29 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.HardwoodContext;
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
+import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,22 +65,57 @@ class BufferReleaseTest {
     /// A context with a pool, and one without, whose reads run on the thread that reads the rows.
     private static final int[] THREADS = { 0, 4 };
 
-    private String tailBytes;
+    /// A tail too short to hold the data of a file, so that the data are requests of their own.
+    private static final String SHORT_TAIL_BYTES = "64";
+    /// The rows of the file of [#wideFile()].
+    private static final int WIDE_ROWS = 40_000;
 
-    /// A tail too short to hold a file's data, so that the data are requests of their own.
+    /// How the read gets the bytes of a file: the tail it takes, and the maximum size of a request.
+    /// A `null` value keeps the default.
+    private enum Shape {
+        /// Each data range is a request.
+        SHORT_TAIL(SHORT_TAIL_BYTES, null),
+        /// Each column chunk is cut into many requests, and a page that crosses a cut is a copy.
+        SMALL_REQUESTS(SHORT_TAIL_BYTES, "4096"),
+        /// The data of a small file are slices of its tail, which the read does not give back.
+        DEFAULT_TAIL(null, null);
+
+        final String tailBytes;
+        final String maxSpanBytes;
+
+        Shape(String tailBytes, String maxSpanBytes) {
+            this.tailBytes = tailBytes;
+            this.maxSpanBytes = maxSpanBytes;
+        }
+
+        void apply() {
+            set(TailedInputFile.TAIL_BYTES_PROPERTY, tailBytes);
+            set(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, maxSpanBytes);
+        }
+    }
+
+    private String tailBytes;
+    private String maxSpanBytes;
+
     @BeforeEach
     void shortTail() {
         tailBytes = System.getProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
-        System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, "64");
+        maxSpanBytes = System.getProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
+        Shape.SHORT_TAIL.apply();
     }
 
     @AfterEach
-    void restoreTail() {
-        if (tailBytes == null) {
-            System.clearProperty(TailedInputFile.TAIL_BYTES_PROPERTY);
+    void restoreProperties() {
+        set(TailedInputFile.TAIL_BYTES_PROPERTY, tailBytes);
+        set(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, maxSpanBytes);
+    }
+
+    private static void set(String property, String value) {
+        if (value == null) {
+            System.clearProperty(property);
         }
         else {
-            System.setProperty(TailedInputFile.TAIL_BYTES_PROPERTY, tailBytes);
+            System.setProperty(property, value);
         }
     }
 
@@ -88,17 +133,21 @@ class BufferReleaseTest {
     /// Every fixture reads the same rows, or fails the same way, through a file that frees each
     /// buffer it gives back, and is given back only buffers it returned, each once, before it closes.
     /// The fixtures that fail to read cover the give-backs of a failed walk, placement and decode.
+    /// Each [Shape] of the requests is read.
     @ParameterizedTest(name = "{0} threads={1}")
     @MethodSource("fixtures")
-    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void aReadReadsNoBufferItGaveBack(String fixture, int threads) {
         Path path = RESOURCES.resolve(fixture);
-        for (long head : new long[]{ 0, 7 }) {
-            Query query = reader -> head > 0 ? reader.buildRowReader().head(head).build() : reader.rowReader();
-            Outcome expected = read(List.of(InputFile.of(path)), threads, query);
-            ReleasingInputFile file = new ReleasingInputFile(InputFile.of(path));
-            assertThat(read(List.of(file), threads, query)).as("head %d", head).isEqualTo(expected);
-            assertThat(file.misuse()).as("head %d", head).isEmpty();
+        for (Shape shape : Shape.values()) {
+            shape.apply();
+            for (long head : new long[]{ 0, 7 }) {
+                Query query = reader -> head > 0 ? reader.buildRowReader().head(head).build() : reader.rowReader();
+                Outcome expected = read(List.of(InputFile.of(path)), threads, query);
+                ReleasingInputFile file = new ReleasingInputFile(InputFile.of(path));
+                assertThat(read(List.of(file), threads, query)).as("%s head %d", shape, head).isEqualTo(expected);
+                assertThat(file.misuse()).as("%s head %d", shape, head).isEmpty();
+            }
         }
     }
 
@@ -171,6 +220,68 @@ class BufferReleaseTest {
                     .isEmpty();
         }
         assertThat(file.misuse()).isEmpty();
+    }
+
+    /// The read gives back the buffer of a request when it has decoded each page of the request,
+    /// before it passes the row group. Here, the read decodes only some batches ahead of the rows
+    /// that the test reads, thus its walk gets to the end of the row group only near its last row.
+    @ParameterizedTest(name = "threads={0}")
+    @ValueSource(ints = { 0, 4 })
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void buffersOfDecodedRequestsAreGivenBackInsideARowGroup(int threads, @TempDir Path dir) throws Exception {
+        Path path = dir.resolve("wide.parquet");
+        Files.write(path, wideFile());
+        set(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, "256");
+        ReleasingInputFile file = new ReleasingInputFile(InputFile.of(path));
+        try (HardwoodContext context = HardwoodContext.create(threads);
+             ParquetFileReader reader = ParquetFileReader.open(file, context);
+             RowReader rows = reader.rowReader()) {
+            List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
+            assertThat(rowGroups).hasSize(1);
+            long read = 0;
+            if (threads > 0) {
+                assertThat(rows.hasNext()).isTrue();
+                rows.next();
+                read++;
+                file.awaitAnyReleased();
+            }
+            else {
+                // Without a pool, the read runs only while the test reads rows
+                while (file.released().isEmpty() && rows.hasNext()) {
+                    rows.next();
+                    read++;
+                }
+            }
+            assertThat(file.released()).isNotEmpty();
+            assertThat(read).as("rows read before the first give-back").isLessThan(WIDE_ROWS / 2);
+            assertThat(file.notReleased(file.readsWithin(rowGroups.getFirst())))
+                    .as("buffers of the row group not given back")
+                    .isNotEmpty();
+        }
+        assertThat(file.misuse()).isEmpty();
+    }
+
+    /// One row group of one `FIXED_LEN_BYTE_ARRAY` column whose rows all have the same value. The
+    /// file is small, but the row reader sizes its batches by the width of the column, so the read
+    /// decodes few rows ahead.
+    private static byte[] wideFile() throws IOException {
+        int width = 4096;
+        int rowCount = WIDE_ROWS;
+        FileSchema schema = FileSchema.builder("wide")
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, width)
+                .build();
+        byte[][] values = new byte[rowCount][];
+        Arrays.fill(values, new byte[width]);
+        WriterConfig config = WriterConfig.builder()
+                .rowGroupTargetRows(rowCount)
+                .rowGroupBufferTargetBytes(Long.MAX_VALUE)
+                .pageTargetRows(500)
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            writer.columnWriter().writeBatch(batch -> batch.fixed("v", values));
+        }
+        return InMemoryFiles.toByteArray(out);
     }
 
     /// The rows of a read, or the failure it ends with.
@@ -262,6 +373,15 @@ class BufferReleaseTest {
                 }
             }
             return within;
+        }
+
+        /// Waits until a buffer is given back.
+        void awaitAnyReleased() throws InterruptedException {
+            synchronized (live) {
+                while (released.isEmpty()) {
+                    live.wait();
+                }
+            }
         }
 
         /// Waits until every buffer of `buffers` is given back: a buffer is given back on whichever

@@ -106,6 +106,8 @@ public final class IndexedFetchPlan implements FetchPlan {
         private int index;
         /// What the last advance stopped on: bytes, or a task of the read ending.
         private Need pending;
+        /// The section that the page the last advance returned is a slice of.
+        private Section pageSource;
 
         @Override
         public int currentPage() {
@@ -118,6 +120,11 @@ public final class IndexedFetchPlan implements FetchPlan {
         }
 
         @Override
+        public Section pageSource() {
+            return pageSource;
+        }
+
+        @Override
         public void stop() {
             cursor.releaseAll();
         }
@@ -125,6 +132,7 @@ public final class IndexedFetchPlan implements FetchPlan {
         @Override
         public PageInfo advance() throws IOException {
             pending = null;
+            pageSource = null;
             if (index >= neededPages.size()) {
                 cursor.releaseAll();
                 return null;
@@ -171,6 +179,7 @@ public final class IndexedFetchPlan implements FetchPlan {
                 pending = cursor.pending();
                 return null;
             }
+            pageSource = cursor.sliced();
             index++;
             // The header gives the buffers decoding the page takes, which the read admits before
             // it submits the page

@@ -38,9 +38,9 @@ class PageTask {
     final long firstRow;
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
-    /// Runs once the page reads the fetched bytes it was sliced from no more, `null` once it ran
-    /// or where nothing waits for it.
-    private final AtomicReference<Runnable> bytesRead = new AtomicReference<>();
+    /// Removes the pin of the page on the fetched bytes that it was sliced from. It is `null` after
+    /// it ran, or if the column did not set it.
+    private final AtomicReference<Runnable> unpin = new AtomicReference<>();
 
     PageTask(PageInfo info, String fileName, int rowGroup, int pageIndex, BatchPlan.RowGroupBatches batches,
              PageDecoder decoder, long firstRow) {
@@ -53,19 +53,19 @@ class PageTask {
         this.firstRow = firstRow;
     }
 
-    /// Sets what runs once the page reads its fetched bytes no more ([#bytesRead()]); set by the
-    /// column as it places the page, before any job sees it.
-    void onBytesRead(Runnable done) {
-        bytesRead.set(done);
+    /// Sets the operation that removes the pin of the page on its fetched bytes ([#unpin()]). The
+    /// column sets it when it places the page, before a job can see the page.
+    void setUnpin(Runnable unpin) {
+        this.unpin.set(unpin);
     }
 
-    /// Tells that the page reads the fetched bytes it was sliced from no more: its decode ended,
-    /// its scratch went back to its column, or it is dropped undecoded. Runs what [#onBytesRead]
-    /// set at most once, whichever of these comes first.
-    void bytesRead() {
-        Runnable done = bytesRead.getAndSet(null);
-        if (done != null) {
-            done.run();
+    /// Removes the pin of the page on the fetched bytes that it was sliced from, because the page
+    /// does not read them any more: its decode ended, its scratch went back to its column, or the
+    /// read dropped it before its decode. Only the first call has an effect.
+    void unpin() {
+        Runnable pending = unpin.getAndSet(null);
+        if (pending != null) {
+            pending.run();
         }
     }
 

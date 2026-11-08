@@ -120,11 +120,12 @@ public final class NestedColumn implements DecodedColumn {
 
     /// Takes a page of work item `batches` behind the pages not yet placed; returns the page to
     /// decode, `null` for a boundary marker, which is placed in its turn without a decode, and once
-    /// the placement has ended. A page reads its fetched bytes until every cell it is placed into is
-    /// filled, as a fill reads values stored uncompressed where they lie, and runs `bytesRead` then.
+    /// the placement has ended. A page reads its fetched bytes until each cell that holds a segment of
+    /// it is filled, because a fill reads uncompressed values where they are in the fetched bytes.
+    /// Then the page runs `unpin`.
     @Override
     public Page place(PageInfo info, BatchPlan.RowGroupBatches batches, String fileName, int rowGroupIndex,
-                      int pageIndex, Runnable bytesRead) {
+                      int pageIndex, Runnable unpin) {
         if (placementEnded) {
             return null;
         }
@@ -140,9 +141,9 @@ public final class NestedColumn implements DecodedColumn {
         PageDecoder.LevelScratch scratch = marker ? null : scratchPool.poll();
         NestedPageTask page = new NestedPageTask(info, fileName, rowGroupIndex, pageIndex, batches, decoder, nextRow(),
                 marker || scratch != null ? scratch : new PageDecoder.LevelScratch());
-        // a boundary marker reads no bytes: the caller runs bytesRead, as for no page returned
+        // A boundary marker reads no bytes. This method returns no page for it, thus the caller runs unpin
         if (!marker) {
-            page.onBytesRead(bytesRead);
+            page.setUnpin(unpin);
         }
         unplaced.addLast(page);
         if (marker) {
@@ -211,8 +212,8 @@ public final class NestedColumn implements DecodedColumn {
             measure(task, buffers);
         }
         catch (RuntimeException e) {
-            // A page whose decode failed is never placed
-            task.bytesRead();
+            // The read does not place a page whose decode failed
+            task.unpin();
             throw placed(e, task.fileName, task.rowGroup, task.pageIndex);
         }
         return task;
@@ -229,8 +230,9 @@ public final class NestedColumn implements DecodedColumn {
         NestedPageTask page = (NestedPageTask) result;
         page.measured = true;
         if (placementEnded) {
-            // Decoded after the placement ended, which places it no more
-            page.bytesRead();
+            // The placement ended before the decode of this page ended. Nothing places the page,
+            // thus remove its pin now
+            page.unpin();
             return;
         }
         placeMeasured();
@@ -264,11 +266,11 @@ public final class NestedColumn implements DecodedColumn {
             }
         }
         if (placementEnded) {
-            // Nothing is placed after the end, nor decoded; a page not yet measured is dropped by
-            // the read, or its decode in flight ends in decoded()
+            // Nothing is placed or decoded after the end. The read drops a page that is not
+            // measured, or decoded() removes its pin when its decode ends
             for (Object left : unplaced) {
                 if (left instanceof NestedPageTask page && page.measured) {
-                    page.bytesRead();
+                    page.unpin();
                 }
             }
             unplaced.clear();
@@ -284,8 +286,8 @@ public final class NestedColumn implements DecodedColumn {
         catch (RuntimeException e) {
             // a failure inside a work item: the column ends behind the cells before the open one
             if (page.unfilledSegments.get() == 0) {
-                // no cell holds a segment of the page
-                page.bytesRead();
+                // No cell holds a segment of the page
+                page.unpin();
             }
             placementEnded = true;
             abandonAt(placed(e, page.fileName, page.rowGroup, page.pageIndex));
@@ -463,7 +465,7 @@ public final class NestedColumn implements DecodedColumn {
 
     /// Returns a page's scratch to `pool`, where it has room; the page reads it no more.
     private static void releaseScratch(NestedPageTask page, ArrayBlockingQueue<PageDecoder.LevelScratch> pool) {
-        page.bytesRead();
+        page.unpin();
         page.inPlace = null;
         page.measure = null;
         page.scratch.trim();

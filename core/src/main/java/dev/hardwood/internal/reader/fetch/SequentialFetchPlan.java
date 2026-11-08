@@ -287,6 +287,8 @@ public final class SequentialFetchPlan implements FetchPlan {
         private int currentPage = ExceptionContext.UNKNOWN_PAGE;
         /// What the last [#advance] stopped on: bytes, or a task of the read ending.
         private Need pending;
+        /// The section that the page the last [#advance] returned is a slice of.
+        private Section pageSource;
 
         // The page under way, reset by clearPage() once the walk is done with it
         /// The header of the page at [#position], `null` until it is parsed.
@@ -311,6 +313,11 @@ public final class SequentialFetchPlan implements FetchPlan {
         }
 
         @Override
+        public Section pageSource() {
+            return pageSource;
+        }
+
+        @Override
         public void stop() {
             cursor.releaseAll();
         }
@@ -318,6 +325,7 @@ public final class SequentialFetchPlan implements FetchPlan {
         @Override
         public PageInfo advance() throws IOException {
             pending = null;
+            pageSource = null;
             if (exhausted) {
                 return null;
             }
@@ -540,6 +548,7 @@ public final class SequentialFetchPlan implements FetchPlan {
                     if (pageData == null) {
                         return null;
                     }
+                    pageSource = cursor.sliced();
                     pageInfo = new PageInfo(new DataPage(header, headerSize, pageData), columnSchema, metaData,
                             dictionary, mask, PageInfo.keptRecords(columnSchema, mask, numValues));
                 }

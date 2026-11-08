@@ -21,7 +21,6 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -123,6 +122,9 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// Pages a column holds at most: not decoded for a flat column, not placed for one decoded
     /// through levels.
     private static final int MAX_PAGES_HELD = 8;
+    /// The pin of a page whose bytes the read does not give back ([#pagePin]).
+    private static final Runnable NO_PIN = () -> {
+    };
     /// Batch byte budgets a read decodes at most ahead of its first unpublished row (READ_PIPELINE.md,
     /// the cap).
     public static final int CAP_BUDGETS = 8;
@@ -236,13 +238,12 @@ public final class RowGroupIterator implements Closeable, Sections {
     private boolean repoll;
     /// The bytes the read released from R under the lock, returned once it lets go of it.
     private long toRelease;
-    /// The buffers the read gave back under the lock, given to their files once it lets go of it.
+    /// The give-backs of buffers that the read found under the lock. They run when it lets go of
+    /// the lock.
     private List<Runnable> toGiveBack = new ArrayList<>();
-    /// The threads giving buffers back past the lock, which the close waits for, since a file is
-    /// given back nothing once it is closed.
+    /// The threads that give buffers back after they let go of the lock. The close waits for them,
+    /// because the read must give nothing back to a file after the file is closed.
     private final AtomicInteger givingBack = new AtomicInteger();
-    /// Whether a buffer's release failed before in the read, which logs the next failures lower.
-    private final AtomicBoolean releaseFailed = new AtomicBoolean();
     /// The failure that ended the read ([Phase#FAILED]), kept once the read closes.
     private Throwable failure;
     /// An `Error` a footer read failed with that no listing has raised yet, which the read's close
@@ -299,7 +300,7 @@ public final class RowGroupIterator implements Closeable, Sections {
         /// The data requests planning inserted, `null` before it does and once every column has
         /// passed the unit ([#forget]).
         List<Request> requests;
-        /// The buffers its data requests fetched, given back to their files once nothing reads them.
+        /// The buffers that its data requests fetched. Each goes back to its file when nothing reads it.
         final UnitBytes bytes;
 
         Unit(int file, int holders, UnitBytes bytes) {
@@ -382,6 +383,8 @@ public final class RowGroupIterator implements Closeable, Sections {
         int unit;
         PageWalk walk;
         boolean walking;
+        /// The number of the walk advance in flight ([UnitBytes#advanceStarted]).
+        long advance;
         /// The section the walk stopped on, or another need it waits for.
         Need waitingOn;
         boolean needMet = true;
@@ -469,7 +472,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// pass each.
     private void appendUnits(int file, int count) {
         for (int i = 0; i < count; i++) {
-            units.add(new Unit(file, placingColumns, new UnitBytes(releaseFailed)));
+            units.add(new Unit(file, placingColumns, new UnitBytes()));
         }
     }
 
@@ -772,15 +775,19 @@ public final class RowGroupIterator implements Closeable, Sections {
     private record PendingFooterDone(FileState footer) implements Fact {
     }
 
-    /// A walk advance of column `column` over unit `unit` took `pages`, and ended, stopped on
-    /// `pending`, or ran out of room.
+    /// A walk advance of column `column` over unit `unit` took `pages`, each sliced from its
+    /// section in `sources` ([PageWalk#pageSource]), and ended, stopped on `pending`, or ran out of
+    /// room.
     private record Walked(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
-                          List<PageInfo> pages, List<Integer> ordinals, Need pending, boolean ended) implements Fact {
+                          List<PageInfo> pages, List<Integer> ordinals, List<Section> sources, Need pending,
+                          boolean ended) implements Fact {
     }
 
-    /// A walk advance of column `column` over unit `unit` took `pages` and then failed.
+    /// A walk advance of column `column` over unit `unit` took `pages`, each sliced from its
+    /// section in `sources`, and then failed.
     private record WalkFailed(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
-                              List<PageInfo> pages, List<Integer> ordinals, Throwable failure) implements Fact {
+                              List<PageInfo> pages, List<Integer> ordinals, List<Section> sources,
+                              Throwable failure) implements Fact {
     }
 
     /// A need a column's walk stopped on, other than one of the read's requests, was met.
@@ -989,20 +996,21 @@ public final class RowGroupIterator implements Closeable, Sections {
             case PendingFooterDone f -> footerPendingDone(f.footer());
             case Walked f -> {
                 try {
-                    walked(f.column(), f.unit(), f.workItem(), f.batches(), f.pages(), f.ordinals(), f.pending(),
-                            f.ended());
+                    walked(f.column(), f.unit(), f.workItem(), f.batches(), f.pages(), f.ordinals(), f.sources(),
+                            f.pending(), f.ended());
                 }
                 finally {
-                    // after its pages are placed, each of which pins the unit's bytes on its own
-                    unpin(f.unit());
+                    // The pages of the advance are placed now, and each page pins its own buffer
+                    advanceEnded(f.unit(), f.column());
                 }
             }
             case WalkFailed f -> {
                 try {
-                    walked(f.column(), f.unit(), f.workItem(), f.batches(), f.pages(), f.ordinals(), f.failure());
+                    walked(f.column(), f.unit(), f.workItem(), f.batches(), f.pages(), f.ordinals(), f.sources(),
+                            f.failure());
                 }
                 finally {
-                    unpin(f.unit());
+                    advanceEnded(f.unit(), f.column());
                 }
             }
             case NeedMet f -> needMet(f.column());
@@ -1067,31 +1075,39 @@ public final class RowGroupIterator implements Closeable, Sections {
         }
     }
 
-    /// Gives buffers back to their files ([UnitBytes]): once the lock is let go of where the
-    /// thread holds it, since a file's release is the caller's code, and at once on a job.
-    private void giveBack(Runnable giveBack) {
-        if (giveBack == null) {
+    /// Runs `pendingRelease`, which gives buffers back to their files ([UnitBytes]). If this thread
+    /// holds the lock, it runs when the thread lets go of the lock, because `InputFile.release` is
+    /// code from the caller. Otherwise, it runs now. Nothing happens if `pendingRelease` is `null`.
+    private void giveBack(Runnable pendingRelease) {
+        if (pendingRelease == null) {
             return;
         }
         if (lock.isHeldByCurrentThread()) {
-            toGiveBack.add(giveBack);
+            toGiveBack.add(pendingRelease);
         }
         else {
-            giveBack.run();
+            pendingRelease.run();
         }
     }
 
-    /// Drops a pin on `unit`'s bytes ([UnitBytes#unpin]).
-    private void unpin(int unit) {
-        giveBack(units.get(unit).bytes.unpin());
+    /// Records that the walk advance of `column` over `unit` has ended ([UnitBytes#advanceEnded]).
+    private void advanceEnded(int unit, int column) {
+        giveBack(units.get(unit).bytes.advanceEnded(columns[column].advance));
     }
 
-    /// Pins `unit`'s bytes for a page; returns what drops the pin when the page reads them no more.
-    /// Its one owner runs it once: the page's column, or [#place] where the column returns no page.
-    private Runnable pagePin(int unit) {
-        UnitBytes bytes = units.get(unit).bytes;
-        bytes.pin();
-        return () -> giveBack(bytes.unpin());
+    /// Pins the buffer of `source` for a page sliced from it. Returns the operation that removes the
+    /// pin when the page does not read the buffer any more. Only one owner runs it, once: the column
+    /// of the page, or [#place] if the column returns no page. If the read does not give the bytes
+    /// of `source` back, the operation does nothing: a page without bytes, a page copied from two
+    /// requests, or bytes that the file holds in memory.
+    private Runnable pagePin(Section source) {
+        if (!(source instanceof Request r) || r.fetched == null) {
+            return NO_PIN;
+        }
+        UnitBytes bytes = units.get(r.unit).bytes;
+        UnitBytes.Fetched fetched = r.fetched;
+        bytes.pin(fetched);
+        return () -> giveBack(bytes.unpin(fetched));
     }
 
     /// Emits `work` as a job: counted until its result is applied.
@@ -1749,34 +1765,36 @@ public final class RowGroupIterator implements Closeable, Sections {
             int room = MAX_PAGES_HELD - c.side.pagesHeld();
             WorkItem workItem = planning.workItem(unit);
             BatchPlan.RowGroupBatches batches = planning.batches(unit);
-            // the advance slices the unit's bytes
-            units.get(unit).bytes.pin();
+            // The read gives back no buffer that the advance can slice until the advance ends
+            c.advance = units.get(unit).bytes.advanceStarted();
             emit(Kind.STEP, buffers -> {
                 List<PageInfo> pages = new ArrayList<>();
                 List<Integer> ordinals = new ArrayList<>();
+                List<Section> sources = new ArrayList<>();
                 PageInfo page;
                 try {
                     while (pages.size() < room && (page = walk.advance()) != null) {
                         pages.add(page);
                         ordinals.add(walk.currentPage());
+                        sources.add(walk.pageSource());
                     }
                 }
                 catch (IOException | RuntimeException e) {
                     // the pages taken before the failure are placed ahead of it
                     Exception placed = c.side.placed(e, workItem.inputFile().name(), workItem.rowGroupIndex(),
                             walk.currentPage());
-                    return new WalkFailed(column, unit, workItem, batches, pages, ordinals, placed);
+                    return new WalkFailed(column, unit, workItem, batches, pages, ordinals, sources, placed);
                 }
                 catch (Error e) {
                     if (!requestErrors.contains(e)) {
                         throw e;
                     }
                     // a request's read failed with it: the column fails where it reached the bytes
-                    return new WalkFailed(column, unit, workItem, batches, pages, ordinals, e);
+                    return new WalkFailed(column, unit, workItem, batches, pages, ordinals, sources, e);
                 }
                 Need pending = pages.size() < room ? walk.pending() : null;
                 boolean ended = pages.size() < room && pending == null;
-                return new Walked(column, unit, workItem, batches, pages, ordinals, pending, ended);
+                return new Walked(column, unit, workItem, batches, pages, ordinals, sources, pending, ended);
             });
         }
     }
@@ -1809,7 +1827,7 @@ public final class RowGroupIterator implements Closeable, Sections {
     /// whose batches close the batch left open is met between two batches: the open cell, which
     /// every column ends at the same row, is sealed and published ahead of the failure.
     private void walked(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
-                        List<PageInfo> pages, List<Integer> ordinals, Throwable failure) {
+                        List<PageInfo> pages, List<Integer> ordinals, List<Section> sources, Throwable failure) {
         Column c = columns[column];
         c.walking = false;
         if (c.placed || c.ended) {
@@ -1817,7 +1835,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             return;
         }
         c.sealAtFailure = pages.isEmpty() && !c.unitTaken && batches.closesOpenBatch();
-        if (!place(c, unit, workItem, batches, pages, ordinals)) {
+        if (!place(c, workItem, batches, pages, ordinals, sources)) {
             return;
         }
         if (c.side.placementEnded()) {
@@ -1855,24 +1873,24 @@ public final class RowGroupIterator implements Closeable, Sections {
 
     /// Places the pages a walk took; returns `false` where a placement failed, which ends the
     /// column as a walk's failure does, behind the segments placed before it.
-    private boolean place(Column c, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
-                          List<PageInfo> pages, List<Integer> ordinals) {
+    private boolean place(Column c, WorkItem workItem, BatchPlan.RowGroupBatches batches,
+                          List<PageInfo> pages, List<Integer> ordinals, List<Section> sources) {
         c.unitTaken |= !pages.isEmpty();
-        Runnable bytesRead = null;
+        Runnable unpin = null;
         try {
             for (int p = 0; p < pages.size(); p++) {
-                bytesRead = pagePin(unit);
+                unpin = pagePin(sources.get(p));
                 DecodedColumn.Page page = c.side.place(pages.get(p), batches, workItem.inputFile().name(),
-                        workItem.rowGroupIndex(), ordinals.get(p), bytesRead);
+                        workItem.rowGroupIndex(), ordinals.get(p), unpin);
                 if (page == null) {
-                    bytesRead.run();
+                    unpin.run();
                 }
                 ready(c, page);
             }
         }
         catch (DecodedColumn.PlaceFailure e) {
             if (e.page() == null) {
-                bytesRead.run();
+                unpin.run();
             }
             ready(c, e.page());
             sealed(c);
@@ -1892,7 +1910,8 @@ public final class RowGroupIterator implements Closeable, Sections {
     }
 
     private void walked(int column, int unit, WorkItem workItem, BatchPlan.RowGroupBatches batches,
-                        List<PageInfo> pages, List<Integer> ordinals, Need pending, boolean ended) {
+                        List<PageInfo> pages, List<Integer> ordinals, List<Section> sources, Need pending,
+                        boolean ended) {
         Column c = columns[column];
         c.walking = false;
         if (c.placed || c.ended) {
@@ -1900,7 +1919,7 @@ public final class RowGroupIterator implements Closeable, Sections {
             stopWalk(c);
             return;
         }
-        if (!place(c, unit, workItem, batches, pages, ordinals)) {
+        if (!place(c, workItem, batches, pages, ordinals, sources)) {
             return;
         }
         if (c.side.placementEnded()) {
@@ -2006,7 +2025,6 @@ public final class RowGroupIterator implements Closeable, Sections {
                 r.drop();
             }
         }
-        giveBack(u.bytes.passed());
     }
 
     /// The requests the read holds, for tests: those of the units not every column has passed.
@@ -2252,12 +2270,16 @@ public final class RowGroupIterator implements Closeable, Sections {
     }
 
     private void arrived(Request r, ByteBuffer bytes) {
+        if (!r.planning && r.unit >= 0) {
+            // The read does not give back the bytes of a planning read: they stay the file's until it closes
+            UnitBytes unitBytes = units.get(r.unit).bytes;
+            r.fetched = unitBytes.add(r.inputFile, bytes);
+            if (r.released) {
+                giveBack(unitBytes.released(r.fetched));
+            }
+        }
         if (!r.released) {
             r.bytes = bytes;
-        }
-        if (!r.planning && r.unit >= 0) {
-            // planning reads, whose bytes the unit's pins do not cover, stay the file's until it closes
-            giveBack(units.get(r.unit).bytes.add(r.inputFile, bytes));
         }
         wakeWaiting(r);
     }
@@ -2411,6 +2433,9 @@ public final class RowGroupIterator implements Closeable, Sections {
         /// Whether every holder has passed the request.
         boolean released;
         int holders;
+        /// The buffer of a data request whose bytes arrived, which the read gives back to the file
+        /// ([UnitBytes]); `null` for other requests.
+        UnitBytes.Fetched fetched;
         /// The columns whose walk stopped on the request.
         final List<Column> waiting = new ArrayList<>(1);
 
@@ -2520,6 +2545,9 @@ public final class RowGroupIterator implements Closeable, Sections {
         /// Returns the request's charge, and takes it out of the bytes not started.
         private void released() {
             released = true;
+            if (fetched != null) {
+                giveBack(units.get(unit).bytes.released(fetched));
+            }
             uncharge(this);
             if (counted) {
                 counted = false;
