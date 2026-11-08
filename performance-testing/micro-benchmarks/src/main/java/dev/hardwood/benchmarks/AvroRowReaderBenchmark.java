@@ -36,9 +36,9 @@ import dev.hardwood.reader.ParquetFileReader;
 /// schema gives it, twice per field (the null test, then the getter), so the cost of resolving a
 /// name by the schema's own string is a large part of each record.
 ///
-/// Every invocation opens the file again, so each reads with a schema whose strings are new: the
-/// names a lookup passes are the footer's, while the reader's name maps hold whichever instance
-/// the JVM interned first.
+/// Every invocation opens the file again and reads with a schema built from that footer. The
+/// schema holds its names interned, so the names the binding passes are the instances the
+/// reader's name maps hold, and each lookup is one reference comparison.
 ///
 /// - `overture-maps-data/overture_places.zstd.parquet`: Overture Maps places, nested structs,
 ///   lists and maps.
