@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import dev.hardwood.AbstractOutputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.s3.internal.S3Api;
 import dev.hardwood.s3.internal.S3Xml;
@@ -27,7 +28,7 @@ import dev.hardwood.s3.internal.S3Xml;
 /// The object is sent as a multipart upload, or in a single `PUT` when it is smaller than one
 /// part, and appears at its key only once [#close()] succeeds. [#discard()] aborts the upload.
 /// See [S3Source#outputFile(String, String)] for buffering, size limits and failure handling.
-public final class S3OutputFile implements OutputFile {
+public final class S3OutputFile extends AbstractOutputFile {
 
     /// The smallest part S3 accepts, except for the last.
     static final int MIN_PART_SIZE = 5 * 1024 * 1024;
@@ -49,17 +50,16 @@ public final class S3OutputFile implements OutputFile {
     /// Buffers whose upload finished, for reuse.
     private final ArrayDeque<byte[]> spareBuffers = new ArrayDeque<>();
 
-    private State state = State.NEW;
     private byte[] buffer;
     private int buffered;
-    private long position;
     private String uploadId;
     private ExecutorService uploads;
 
     S3OutputFile(S3Api api, String bucket, String key, int partSize) {
+        super(target(Objects.requireNonNull(bucket, "bucket"), Objects.requireNonNull(key, "key")));
         this.api = Objects.requireNonNull(api, "api");
-        this.bucket = Objects.requireNonNull(bucket, "bucket");
-        this.key = Objects.requireNonNull(key, "key");
+        this.bucket = bucket;
+        this.key = key;
         validatePartSize(partSize);
         this.partSize = partSize;
     }
@@ -73,79 +73,50 @@ public final class S3OutputFile implements OutputFile {
     }
 
     @Override
-    public void create() {
-        if (state != State.NEW) {
-            throw new IllegalStateException("Output for " + target() + " was already created");
-        }
+    protected void doCreate() {
         buffer = new byte[partSize];
-        state = State.OPEN;
     }
 
     @Override
-    public void write(ByteBuffer data) throws IOException {
-        requireOpen();
-        requireCapacity(target(), position, data.remaining(), partSize);
+    protected void doWrite(ByteBuffer data) throws IOException {
+        requireCapacity(target(), position(), data.remaining(), partSize);
         while (data.hasRemaining()) {
             int length = Math.min(data.remaining(), partSize - buffered);
             data.get(buffer, buffered, length);
             buffered += length;
-            position += length;
             if (buffered == partSize) {
                 startPartUpload(false);
             }
         }
     }
 
+    /// Publishes the object: one `PUT`, or the remaining parts and the completion of the
+    /// multipart upload. When it fails, [#doDiscard()] aborts the upload.
     @Override
-    public long position() {
-        requireOpen();
-        return position;
-    }
-
-    /// Publishes the object. A failure aborts the upload before it is thrown, with an abort
-    /// failure attached as suppressed. Does nothing once the output is closed or discarded.
-    @Override
-    public void close() throws IOException {
-        if (state != State.OPEN) {
-            return;
+    protected void doClose() throws IOException {
+        if (uploadId == null) {
+            api.putObject(bucket, key, buffer, buffered);
         }
-        try {
-            if (uploadId == null) {
-                api.putObject(bucket, key, buffer, buffered);
+        else {
+            if (buffered > 0) {
+                startPartUpload(true);
             }
-            else {
-                if (buffered > 0) {
-                    startPartUpload(true);
-                }
-                while (!inFlight.isEmpty()) {
-                    finishOldestPart();
-                }
-                api.completeMultipartUpload(bucket, key, uploadId, parts);
-                uploadId = null;
+            while (!inFlight.isEmpty()) {
+                finishOldestPart();
             }
-        }
-        catch (IOException | RuntimeException e) {
-            try {
-                discard();
-            }
-            catch (IOException | RuntimeException abortFailure) {
-                e.addSuppressed(abortFailure);
-            }
-            throw e;
+            api.completeMultipartUpload(bucket, key, uploadId, parts);
+            uploadId = null;
         }
         finish();
     }
 
     /// Waits for the part uploads in flight to end and aborts the multipart upload, if one was
-    /// started. Does nothing once the output is closed.
+    /// started.
     ///
     /// The wait and the abort run with the thread's interrupt status cleared, and the status
     /// restored afterwards, so that an interrupted writer still releases its parts.
     @Override
-    public void discard() throws IOException {
-        if (state == State.CLOSED) {
-            return;
-        }
+    protected void doDiscard() throws IOException {
         boolean interrupted = Thread.interrupted();
         try {
             // S3 keeps a part whose upload completes after the abort, so the uploads end first.
@@ -243,7 +214,6 @@ public final class S3OutputFile implements OutputFile {
     /// Ends the output: waits for the part uploads still running to end, then releases the
     /// buffers.
     private void finish() {
-        state = State.CLOSED;
         if (uploads != null) {
             uploads.close();
             uploads = null;
@@ -255,20 +225,14 @@ public final class S3OutputFile implements OutputFile {
         buffered = 0;
     }
 
-    private void requireOpen() {
-        if (state != State.OPEN) {
-            throw new IllegalStateException("Output for " + target() + " is not open");
-        }
+    private String target() {
+        return target(bucket, key);
     }
 
-    private String target() {
+    private static String target(String bucket, String key) {
         return "s3://" + bucket + "/" + key;
     }
 
     private record PendingPart(int partNumber, byte[] buffer, Future<String> etag) {
-    }
-
-    private enum State {
-        NEW, OPEN, CLOSED
     }
 }

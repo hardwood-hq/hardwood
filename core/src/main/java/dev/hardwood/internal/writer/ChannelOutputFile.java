@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 
+import dev.hardwood.AbstractOutputFile;
 import dev.hardwood.OutputFile;
 
 /// [OutputFile] backed by a local file channel.
@@ -28,7 +29,7 @@ import dev.hardwood.OutputFile;
 /// bulk, so the many small `write` calls a Parquet footer produces do not each incur a
 /// channel write. A write at least as large as the buffer bypasses it and goes straight
 /// to the channel, so a whole column chunk is not chopped into buffer-sized pieces.
-public final class ChannelOutputFile implements OutputFile {
+public final class ChannelOutputFile extends AbstractOutputFile {
 
     /// Size of the coalescing buffer. Small enough to stay off the heap's radar, large
     /// enough that a footer's handful of small writes flush as one channel write.
@@ -38,30 +39,25 @@ public final class ChannelOutputFile implements OutputFile {
     private final Path tempPath;
     private FileChannel channel;
     private ByteBuffer buffer;
-    private long position;
 
     public ChannelOutputFile(Path target) {
+        super(target.toString());
         this.target = target;
         this.tempPath = target.resolveSibling(target.getFileName() + ".hardwood-tmp");
     }
 
     @Override
-    public void create() throws IOException {
-        if (channel != null) {
-            throw new IllegalStateException("OutputFile already created: " + target);
-        }
+    protected void doCreate() throws IOException {
+        // Allocated first, so that a failure leaves no channel open.
+        buffer = ByteBuffer.allocate(BUFFER_SIZE);
         channel = FileChannel.open(tempPath,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING);
-        buffer = ByteBuffer.allocate(BUFFER_SIZE);
-        position = 0;
     }
 
     @Override
-    public void write(ByteBuffer data) throws IOException {
-        requireCreated();
-        int accepted = data.remaining();
+    protected void doWrite(ByteBuffer data) throws IOException {
         if (data.remaining() >= buffer.capacity()) {
             // Too big to be worth buffering: flush what's pending to keep byte order,
             // then hand the data straight to the channel.
@@ -74,44 +70,37 @@ public final class ChannelOutputFile implements OutputFile {
             }
             buffer.put(data);
         }
-        position += accepted;
     }
 
+    /// Flushes the buffer and atomically renames the temporary file onto the target. When the
+    /// flush or the rename fails, [#doDiscard()] releases the channel and deletes the
+    /// temporary file, so nothing is left behind at either path.
     @Override
-    public long position() {
-        requireCreated();
-        return position;
+    protected void doClose() throws IOException {
+        flushBuffer();
+        releaseChannel();
+        Files.move(tempPath, target,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE);
     }
 
-    /// Flushes the buffer and atomically renames the temporary file onto the target.
-    /// When the flush or the rename fails, the channel is released and the temporary
-    /// file deleted before the failure is rethrown, so nothing is left behind at either
-    /// path; a failure to delete is attached to it as suppressed.
+    /// Drops the buffered bytes unwritten, releases the channel if [#doClose()] has not, and
+    /// deletes the temporary file, also when the channel fails to close: the output is already
+    /// discarded, so nothing retries the deletion.
     @Override
-    public void close() throws IOException {
-        if (channel == null) {
-            return;
-        }
+    protected void doDiscard() throws IOException {
         try {
-            flushBuffer();
             releaseChannel();
-            Files.move(tempPath, target,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE);
         }
         catch (IOException | RuntimeException e) {
-            deleteAfterFailure(e);
+            try {
+                Files.deleteIfExists(tempPath);
+            }
+            catch (IOException deleteFailure) {
+                e.addSuppressed(deleteFailure);
+            }
             throw e;
         }
-    }
-
-    @Override
-    public void discard() throws IOException {
-        if (channel == null) {
-            return;
-        }
-        // Drop the buffered bytes unwritten; the temp file is thrown away anyway.
-        releaseChannel();
         Files.deleteIfExists(tempPath);
     }
 
@@ -119,23 +108,8 @@ public final class ChannelOutputFile implements OutputFile {
         FileChannel open = channel;
         channel = null;
         buffer = null;
-        open.close();
-    }
-
-    private void deleteAfterFailure(Exception failure) {
-        if (channel != null) {
-            try {
-                releaseChannel();
-            }
-            catch (IOException e) {
-                failure.addSuppressed(e);
-            }
-        }
-        try {
-            Files.deleteIfExists(tempPath);
-        }
-        catch (IOException e) {
-            failure.addSuppressed(e);
+        if (open != null) {
+            open.close();
         }
     }
 
@@ -151,12 +125,6 @@ public final class ChannelOutputFile implements OutputFile {
     private void writeFully(ByteBuffer data) throws IOException {
         while (data.hasRemaining()) {
             channel.write(data);
-        }
-    }
-
-    private void requireCreated() {
-        if (channel == null) {
-            throw new IllegalStateException("OutputFile not created: " + target);
         }
     }
 }

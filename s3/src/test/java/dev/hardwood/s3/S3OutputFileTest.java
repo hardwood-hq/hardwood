@@ -343,11 +343,11 @@ class S3OutputFileTest {
         S3OutputFile out = output();
         assertThatThrownBy(() -> out.write(ByteBuffer.allocate(1)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Output for s3://bucket/dir/file.parquet is not open");
+                .hasMessage("Output for s3://bucket/dir/file.parquet is not open; it has not been created");
         out.create();
         assertThatThrownBy(out::create)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Output for s3://bucket/dir/file.parquet was already created");
+                .hasMessage("Output for s3://bucket/dir/file.parquet cannot be created; it is open");
         out.close();
         out.close();
         assertThat(requests).containsExactly("PUT /bucket/dir/file.parquet");
