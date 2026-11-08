@@ -7,6 +7,9 @@
  */
 package dev.hardwood.internal.writer;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
@@ -15,7 +18,9 @@ import dev.hardwood.internal.schema.ByteColumnOrder;
 import dev.hardwood.metadata.Statistics;
 
 /// Accumulates a binary column page's or chunk's `min` / `max` / `null_count` in the column's
-/// [ByteColumnOrder], compared through `BinaryComparator`. The writer uses three:
+/// [ByteColumnOrder]. [BinaryComparator] defines the ordering; unsigned lexicographic values use a
+/// cached prefix fast path, while the other orders delegate each comparison to it. The writer
+/// uses three orders:
 /// unsigned lexicographic — the type-defined order for an
 /// unannotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` and for the string-like annotations —,
 /// signed big-endian two's complement, the order of a `DECIMAL`'s represented value, or signed
@@ -41,6 +46,9 @@ final class BinaryStatisticsCollector extends BinaryStatistics {
     private final boolean text;
     private byte[] min;
     private byte[] max;
+    /// The first eight bytes of [#min] and [#max], zero-padded where shorter.
+    private long minPrefix;
+    private long maxPrefix;
     private boolean hasValues;
 
     BinaryStatisticsCollector(ByteColumnOrder order, int truncationLength, boolean text) {
@@ -54,15 +62,76 @@ final class BinaryStatisticsCollector extends BinaryStatistics {
         if (!hasValues) {
             min = Arrays.copyOfRange(array, offset, offset + length);
             max = min.clone();
+            if (order == ByteColumnOrder.BYTES) {
+                minPrefix = prefix(array, offset, length);
+                maxPrefix = minPrefix;
+            }
             hasValues = true;
+            return;
+        }
+        if (order == ByteColumnOrder.BYTES) {
+            acceptUnsigned(array, offset, length);
             return;
         }
         if (BinaryComparator.compare(array, offset, offset + length, min, order) < 0) {
             min = Arrays.copyOfRange(array, offset, offset + length);
         }
-        if (BinaryComparator.compare(array, offset, offset + length, max, order) > 0) {
+        else if (BinaryComparator.compare(array, offset, offset + length, max, order) > 0) {
             max = Arrays.copyOfRange(array, offset, offset + length);
         }
+    }
+
+    /// Compares an unsigned lexicographic value with the current bounds. The first eight bytes
+    /// decide unless their prefixes tie, in which case the remainder or the lengths decide. A new
+    /// minimum cannot also exceed the maximum, so this path skips the second comparison.
+    private void acceptUnsigned(byte[] array, int offset, int length) {
+        long prefix = prefix(array, offset, length);
+        int toMin = Long.compareUnsigned(prefix, minPrefix);
+        if (toMin < 0 || toMin == 0 && compareUnsignedAfterPrefix(array, offset, length, min) < 0) {
+            min = Arrays.copyOfRange(array, offset, offset + length);
+            minPrefix = prefix;
+        }
+        else if (Long.compareUnsigned(prefix, maxPrefix) > 0
+                || prefix == maxPrefix && compareUnsignedAfterPrefix(array, offset, length, max) > 0) {
+            max = Arrays.copyOfRange(array, offset, offset + length);
+            maxPrefix = prefix;
+        }
+    }
+
+    /// Returns the first up-to-eight bytes as a big-endian `long`, with shorter values zero-padded.
+    /// If an eight-byte read would pass the end of the backing array, the prefix is assembled byte
+    /// by byte instead.
+    private static long prefix(byte[] array, int offset, int length) {
+        if (length >= Long.BYTES) {
+            return (long) LONG_BE.get(array, offset);
+        }
+        if (offset <= array.length - Long.BYTES) {
+            return (long) LONG_BE.get(array, offset) & PREFIX_MASKS[length];
+        }
+        long prefix = 0L;
+        for (int i = 0; i < length; i++) {
+            prefix |= Byte.toUnsignedLong(array[offset + i]) << (Long.SIZE - Byte.SIZE * (i + 1));
+        }
+        return prefix;
+    }
+
+    /// Compares values whose prefixes from [#prefix] are equal. If both fit within the prefix,
+    /// their lengths decide; if only one fits, the shorter value sorts first. Otherwise, compare
+    /// the remaining slices as unsigned bytes.
+    private static int compareUnsignedAfterPrefix(byte[] array, int offset, int length, byte[] bound) {
+        boolean valueShort = length <= Long.BYTES;
+        boolean boundShort = bound.length <= Long.BYTES;
+        if (valueShort && boundShort) {
+            return Integer.compare(length, bound.length);
+        }
+        if (valueShort) {
+            return -1;
+        }
+        if (boundShort) {
+            return 1;
+        }
+        return Arrays.compareUnsigned(array, offset + Long.BYTES, offset + length,
+                bound, Long.BYTES, bound.length);
     }
 
     /// Takes over `page`'s bound arrays rather than copying them: a page's collector is
@@ -76,14 +145,18 @@ final class BinaryStatisticsCollector extends BinaryStatistics {
         if (!hasValues) {
             min = other.min;
             max = other.max;
+            minPrefix = other.minPrefix;
+            maxPrefix = other.maxPrefix;
             hasValues = true;
             return;
         }
         if (compareBounds(other.min, min) < 0) {
             min = other.min;
+            minPrefix = other.minPrefix;
         }
         if (compareBounds(other.max, max) > 0) {
             max = other.max;
+            maxPrefix = other.maxPrefix;
         }
     }
 
@@ -229,6 +302,20 @@ final class BinaryStatisticsCollector extends BinaryStatistics {
     }
 
     private static final int UTF8_MAX_BYTES = 4;
+
+    private static final VarHandle LONG_BE =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.BIG_ENDIAN);
+
+    /// `PREFIX_MASKS[k]` keeps the first `k` bytes of a big-endian `long` and clears the rest.
+    private static final long[] PREFIX_MASKS = prefixMasks();
+
+    private static long[] prefixMasks() {
+        long[] masks = new long[Long.BYTES + 1];
+        for (int length = 1; length <= Long.BYTES; length++) {
+            masks[length] = -1L << (Long.SIZE - Byte.SIZE * length);
+        }
+        return masks;
+    }
 
     /// Marks a text bound whose bytes are not well-formed UTF-8, truncated as bytes instead.
     private static final byte[] MALFORMED = new byte[0];
