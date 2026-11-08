@@ -59,14 +59,21 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | Method | Declares |
 |---|---|
 | `addColumn(name, type, repetition)` | a primitive column |
-| `addColumn(name, type, repetition, logicalType)` | a primitive column carrying an annotation; a `FIXED_LEN_BYTE_ARRAY` column takes the length the annotation implies |
-| `addColumn(name, type, repetition, typeLength)` | a `FIXED_LEN_BYTE_ARRAY` column of the given byte length |
-| `addColumn(name, type, repetition, typeLength, logicalType)` | both of the above |
+| `addColumn(name, type, repetition, column)` | a primitive column whose optional attributes `column` sets on a `FileSchema.ColumnBuilder` |
 | `struct(name, repetition, filler)` | a `struct` group whose fields `filler` declares |
 | `file(name, repetition)` | a `FILE` group with all six children, each `OPTIONAL`, in the order `uri`, `offset`, `size`, `content_type`, `checksum`, `inline` (see [FILE groups](accessors.md#file-groups)) |
+| `file(name, repetition, fieldId)` | the same `FILE` group, with a field id (see [Field ids](#field-ids)) |
 | `list(name, repetition, element)` | a `LIST` group whose element `element` declares |
-| `map(name, repetition, keyType[, keyTypeLength][, keyLogicalType], value)` | a `MAP` group with a `REQUIRED` key of `keyType` and a value `value` declares |
+| `map(name, repetition, keyType[, key], value)` | a `MAP` group with a `REQUIRED` key of `keyType`, whose optional attributes `key` sets, and a value `value` declares |
 | `build()` | the `FileSchema` |
+
+A `FileSchema.ColumnBuilder` sets the optional attributes of one primitive leaf. Each attribute can be set one time; a second call throws `IllegalArgumentException`.
+
+| Method | Sets |
+|---|---|
+| `logicalType(logicalType)` | the annotation, which must be legal for the physical type; `null` leaves the leaf unannotated |
+| `typeLength(typeLength)` | the byte length of a `FIXED_LEN_BYTE_ARRAY` leaf |
+| `fieldId(fieldId)` | the field id (`field_id` in the footer) |
 
 The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as, both with `UnsupportedOperationException`.
 
@@ -79,20 +86,54 @@ The writer requires at least one column: `build()` rejects a schema with no fiel
 | `FLOAT16` | 2 |
 | `DECIMAL(precision, scale)` | the fewest bytes whose two's complement holds `precision` digits: 1 for precision 1–2, 4 for 9, 8 for 18, 16 for 38 |
 
-Any other annotation, or none, implies no length, and the column is declared through a `typeLength` overload. A `typeLength` given explicitly is kept as given; a `DECIMAL` may take more bytes than its precision needs, while a `UUID`, `INTERVAL` or `FLOAT16` of any other length is rejected.
+Any other annotation, or none, implies no length, and the column needs `typeLength`. A `typeLength` given explicitly is kept as given; a `DECIMAL` may take more bytes than its precision needs, while a `UUID`, `INTERVAL` or `FLOAT16` of any other length is rejected.
 
 ```java
 FileSchema schema = FileSchema.builder("event")
         .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
-                LogicalType.uuid())                                                 // 16 bytes
+                col -> col.logicalType(LogicalType.uuid()))                         // 16 bytes
         .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
-                LogicalType.decimal(18, 2))                                         // 8 bytes
-        .addColumn("legacy_amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 16,
-                LogicalType.decimal(18, 2))
+                col -> col.logicalType(LogicalType.decimal(18, 2)))                 // 8 bytes
+        .addColumn("legacy_amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                col -> col.typeLength(16).logicalType(LogicalType.decimal(18, 2)))
         .build();
 ```
 
-Inside a `struct` filler the same methods appear on `FileSchema.StructBuilder`; a list element and a map value are declared on `FileSchema.ElementBuilder`, whose `primitive(type, repetition[, typeLength][, logicalType])`, `struct`, `file`, `list` and `map` carry no name, the surrounding layout supplying it.
+Inside a `struct` filler the same methods appear on `FileSchema.StructBuilder`; a list element and a map value are declared on `FileSchema.ElementBuilder`, whose `primitive(type, repetition[, column])`, `struct`, `file`, `list` and `map` carry no name, the surrounding layout supplying it.
+
+### Field ids
+
+A field id identifies a field independently of its name. Table formats such as Iceberg, Delta Lake (column mapping mode `id`) and DuckLake map columns by it. Each declaration scope sets the field id of the field it declares:
+
+| Field | Set with |
+|---|---|
+| a primitive column, list element, map key or map value | `ColumnBuilder.fieldId(int)` |
+| a `struct` group, also as a list element or map value | `StructBuilder.fieldId(int)` in its filler |
+| a `LIST` or `MAP` group | `ElementBuilder.groupFieldId(int)` in its `element` or `value` filler |
+| a `FILE` group | the `fieldId` argument of `file(name, repetition, fieldId)` |
+
+The synthetic `list` and `key_value` groups, the root and the children of a `FILE` group carry no field id. The builder does not check that field ids are unique.
+
+```java
+FileSchema schema = FileSchema.builder("event")
+        .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
+        .struct("location", RepetitionType.OPTIONAL, location -> location
+                .fieldId(2)
+                .addColumn("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(3))
+                .addColumn("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(4)))
+        .list("tags", RepetitionType.OPTIONAL, element -> element
+                .groupFieldId(5)
+                .primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.string()).fieldId(6)))
+        .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                key -> key.logicalType(LogicalType.string()).fieldId(8),
+                value -> value
+                        .groupFieldId(7)
+                        .primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(9)))
+        .build();
+```
+
+A schema read from a file keeps the field ids of its elements: `SchemaNode.fieldId()` and `ColumnSchema.fieldId()` return them, or `null` for an element without one. A file written with that schema carries the same field ids.
 
 ### Logical Type Factories
 

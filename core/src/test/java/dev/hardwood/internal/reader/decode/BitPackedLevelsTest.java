@@ -187,7 +187,7 @@ class BitPackedLevelsTest {
     /// level shape the fixed-size-list fast path takes, with the fast path enabled.
     private static PageDecoder.InPlaceNestedPage decodeFixedListShape(ByteBuffer page) {
         ColumnSchema column = new ColumnSchema(FieldPath.of("c", "list", "element"), PhysicalType.INT32,
-                RepetitionType.REQUIRED, null, 0, 2, 1, null);
+                RepetitionType.REQUIRED, null, 0, 2, 1, null, null);
         PageDecoder decoder = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED);
         return TestDecodeBuffers.decode(buffers -> decoder.decodeNestedInPlace(DataPage.parse(page, 0), null,
                 new PageDecoder.LevelScratch(), buffers));

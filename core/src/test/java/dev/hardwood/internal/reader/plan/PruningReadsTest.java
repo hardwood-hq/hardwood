@@ -124,7 +124,8 @@ class PruningReadsTest {
     /// Bloom filter and `encoding`.
     private static byte[] float16Rows(ColumnEncoding encoding) throws Exception {
         FileSchema schema = FileSchema.builder("t")
-                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 2, LogicalType.float16())
+                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.typeLength(2).logicalType(LogicalType.float16()))
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(1_000).bloomFilter("f16").encoding(encoding)
                 .build();
@@ -163,7 +164,8 @@ class PruningReadsTest {
         }
         FileSchema schema = FileSchema.builder("t")
                 .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         WriterConfig.Builder builder = WriterConfig.builder().rowGroupTargetRows(1_000);
         for (String column : bloomFilters) {

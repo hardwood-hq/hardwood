@@ -50,7 +50,7 @@ record ChunkInput(ColumnSchema column, CompressionCodec codec, ByteBuffer pages)
                 : RepetitionType.REQUIRED;
         FieldPath path = maxRepetition > 0 ? FieldPath.of("c", "list", "element") : FieldPath.of("c");
         ColumnSchema column = new ColumnSchema(path, type, repetition, typeLength, 0, maxDefinition, maxRepetition,
-                null);
+                null, null);
         return new ChunkInput(column, codec, ByteBuffer.wrap(bytes, SHAPE_BYTES, bytes.length - SHAPE_BYTES).slice());
     }
 

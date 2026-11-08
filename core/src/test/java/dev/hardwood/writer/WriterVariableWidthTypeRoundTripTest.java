@@ -267,7 +267,7 @@ class WriterVariableWidthTypeRoundTripTest {
     @Test
     void builderRejectsTypeLengthOnNonFixedType() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, 4)
+                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -357,7 +357,8 @@ class WriterVariableWidthTypeRoundTripTest {
     private static FileSchema oneColumn(String name, PhysicalType type, RepetitionType repetition, Integer typeLength) {
         return typeLength == null
                 ? FileSchema.builder("schema").addColumn(name, type, repetition).build()
-                : FileSchema.builder("schema").addColumn(name, type, repetition, typeLength).build();
+                : FileSchema.builder("schema").addColumn(name, type, repetition,
+                        col -> col.typeLength(typeLength)).build();
     }
 
     private static ParquetFileReader openReader(InMemoryOutputFile out) throws Exception {

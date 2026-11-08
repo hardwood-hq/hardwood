@@ -498,7 +498,8 @@ class WriterDifferentialTest {
     void duckDbReadsWrittenMapWithAnAnnotatedKey(@TempDir Path dir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
                         v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
@@ -663,7 +664,7 @@ class WriterDifferentialTest {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        LogicalType.string())
+                        col -> col.logicalType(LogicalType.string()))
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("v", encoding)
@@ -1143,7 +1144,7 @@ class WriterDifferentialTest {
 
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
                 .build();
         Path file = dir.resolve("fixed.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -1183,14 +1184,15 @@ class WriterDifferentialTest {
 
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
-                .addColumn("d", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.string()))
+                .addColumn("d", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
                 .addColumn("ts", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        LogicalType.timestamp(false, TimeUnit.MICROS))
+                        col -> col.logicalType(LogicalType.timestamp(false, TimeUnit.MICROS)))
                 .addColumn("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        LogicalType.decimal(18, 4))
-                .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                        LogicalType.uuid())
+                        col -> col.logicalType(LogicalType.decimal(18, 4)))
+                .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.typeLength(16).logicalType(LogicalType.uuid()))
                 .build();
 
         Path file = dir.resolve("logical.parquet");

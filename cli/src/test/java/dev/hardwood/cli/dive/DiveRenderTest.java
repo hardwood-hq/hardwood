@@ -1423,6 +1423,28 @@ class DiveRenderTest {
     }
 
     @Test
+    void schemaShowsFieldIdsWhenTheFileCarriesThem(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("field_ids.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(17))
+                .addColumn("note", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .build();
+        try (ParquetFileWriter ignored = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+        }
+        try (ParquetModel withIds = ParquetModel.open(InputFile.of(file), file.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(
+                    new Rect(0, 0, 120, 12), ScreenState.Schema.initial(), withIds);
+
+            assertThat(frame.contains("│  Name    Type   Logical  Repetition  Field id ")).isTrue();
+            assertThat(frame.contains("│▶   id    INT64           REQUIRED    17        [col 0]")).isTrue();
+            assertThat(frame.contains("│    note  INT32           OPTIONAL              [col 1]")).isTrue();
+        }
+        RenderHarness.RenderedFrame withoutIds = RenderHarness.render(
+                new Rect(0, 0, 120, 12), ScreenState.Schema.initial(), model);
+        assertThat(withoutIds.contains("Field id")).isFalse();
+    }
+
+    @Test
     void schemaKeepsTheCursorOnScreen() throws Exception {
         // The schema tree moved its cursor and rendered from row zero, so on
         // any file with more columns than the viewport the cursor left the

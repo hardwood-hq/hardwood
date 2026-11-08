@@ -796,7 +796,7 @@ class ValueFormatterTest {
     @Test
     void flba12TimestampOfAnotherWidthRendersAsHex() {
         ColumnSchema column = new ColumnSchema(FieldPath.of("ts"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                RepetitionType.OPTIONAL, 12, 0, 1, 0, LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS));
+                RepetitionType.OPTIONAL, 12, 0, 1, 0, LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS), null);
         assertThat(ValueFormatter.formatDictionary(new byte[8], column, true, NO_LIMIT)).isEqualTo(zeroHex(8));
         assertThat(ValueFormatter.formatBytes(new byte[8], column, true)).isEqualTo(zeroHex(8));
     }
@@ -808,7 +808,7 @@ class ValueFormatterTest {
         byte[] pastRange = HexFormat.of().parseHex("ffffffffffffffffffffff7f");
         for (boolean utc : new boolean[] { true, false }) {
             ColumnSchema column = new ColumnSchema(FieldPath.of("ts"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                    RepetitionType.OPTIONAL, 12, 0, 1, 0, LogicalType.timestamp(utc, LogicalType.TimeUnit.NANOS));
+                    RepetitionType.OPTIONAL, 12, 0, 1, 0, LogicalType.timestamp(utc, LogicalType.TimeUnit.NANOS), null);
             assertThat(ValueFormatter.formatDictionary(pastRange, column, true, NO_LIMIT))
                     .isEqualTo("0xffffffffffffffffffffff7f");
             assertThat(ValueFormatter.formatBytes(pastRange, column, true)).isEqualTo("0xffffffffffffffffffffff7f");
@@ -934,7 +934,7 @@ class ValueFormatterTest {
     }
 
     private static SchemaNode.PrimitiveNode primitive(PhysicalType type, LogicalType logical) {
-        return new SchemaNode.PrimitiveNode("f", type, RepetitionType.REQUIRED, logical, 0, 0, 0);
+        return new SchemaNode.PrimitiveNode("f", type, RepetitionType.REQUIRED, logical, 0, 0, 0, null);
     }
 
     private static ColumnSchema column(PhysicalType type, LogicalType logical) {
@@ -946,39 +946,39 @@ class ValueFormatterTest {
                 0,
                 0,
                 0,
-                logical);
+                logical, null);
     }
 
     // ==================== statistics/decoded helpers ====================
 
     private static ColumnSchema stringColumn() {
         return new ColumnSchema(FieldPath.of("s"), PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                null, 0, 1, 0, LogicalType.string());
+                null, 0, 1, 0, LogicalType.string(), null);
     }
 
     private static ColumnSchema intColumn() {
         return new ColumnSchema(FieldPath.of("i"), PhysicalType.INT32, RepetitionType.OPTIONAL,
-                null, 0, 1, 0, null);
+                null, 0, 1, 0, null, null);
     }
 
     private static ColumnSchema bareByteArrayColumn() {
         return new ColumnSchema(FieldPath.of("geometry"), PhysicalType.BYTE_ARRAY,
-                RepetitionType.OPTIONAL, null, 0, 1, 0, null);
+                RepetitionType.OPTIONAL, null, 0, 1, 0, null, null);
     }
 
     private static ColumnSchema timestampColumn(boolean isUtc, LogicalType.TimeUnit unit) {
         return new ColumnSchema(FieldPath.of("ts"), PhysicalType.INT64, RepetitionType.OPTIONAL,
-                null, 0, 1, 0, LogicalType.timestamp(isUtc, unit));
+                null, 0, 1, 0, LogicalType.timestamp(isUtc, unit), null);
     }
 
     private static ColumnSchema intervalColumn() {
         return new ColumnSchema(FieldPath.of("iv"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                RepetitionType.OPTIONAL, null, 0, 1, 0, LogicalType.interval());
+                RepetitionType.OPTIONAL, null, 0, 1, 0, LogicalType.interval(), null);
     }
 
     private static ColumnSchema int96Column() {
         return new ColumnSchema(FieldPath.of("ts96"), PhysicalType.INT96, RepetitionType.OPTIONAL,
-                null, 0, 1, 0, null);
+                null, 0, 1, 0, null, null);
     }
 
     private static byte[] littleEndian(int value) {
@@ -1055,7 +1055,7 @@ class ValueFormatterTest {
 
     private static ColumnSchema byteBackedColumn(LogicalType logical) {
         return new ColumnSchema(FieldPath.of("value"), PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                null, 0, 1, 0, logical);
+                null, 0, 1, 0, logical, null);
     }
 
     // ==================== BSON ====================
@@ -1067,7 +1067,8 @@ class ValueFormatterTest {
     void bsonRendersAsItsBytesFromEverySource(@TempDir Path tempDir) throws IOException {
         Path file = tempDir.resolve("bson.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.bson())
+                .addColumn("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.bson()))
                 .build();
         // The BSON document { "n": "hi\u0080" }, whose last string byte is not UTF-8.
         String hex = "10000000026e00040000006869800000";
@@ -1104,11 +1105,13 @@ class ValueFormatterTest {
         Path file = tempDir.resolve("nested_unsigned.parquet");
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, struct -> struct
-                        .addColumn("u32", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.intType(32, false))
-                        .addColumn("u64", PhysicalType.INT64, RepetitionType.REQUIRED, LogicalType.intType(64, false)))
+                        .addColumn("u32", PhysicalType.INT32, RepetitionType.REQUIRED,
+                                col -> col.logicalType(LogicalType.intType(32, false)))
+                        .addColumn("u64", PhysicalType.INT64, RepetitionType.REQUIRED,
+                                col -> col.logicalType(LogicalType.intType(64, false))))
                 .list("l", RepetitionType.REQUIRED,
                         element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED,
-                                LogicalType.intType(32, false)))
+                                col -> col.logicalType(LogicalType.intType(32, false))))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
             writer.rowWriter().writeRow(row -> row
@@ -1320,7 +1323,8 @@ class ValueFormatterTest {
     void physicalModeReadsListElementsRaw() {
         SchemaNode dates = FileSchema.builder("m")
                 .list("dates", RepetitionType.REQUIRED,
-                        element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date()))
+                        element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED,
+                                col -> col.logicalType(LogicalType.date())))
                 .build()
                 .getField("dates");
         PqList list = (PqList) Proxy.newProxyInstance(

@@ -64,7 +64,8 @@ class LongBatchLookAheadTest {
     /// stays small.
     private static byte[] writeWideStrings() throws Exception {
         FileSchema schema = FileSchema.builder("wide")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         byte[][] values = new byte[ROWS][];
         for (int i = 0; i < ROWS; i++) {

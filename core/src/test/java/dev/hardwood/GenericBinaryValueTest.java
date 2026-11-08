@@ -69,10 +69,11 @@ class GenericBinaryValueTest {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, GenericBinaryValueTest::leaves)
                 .list("decimals", RepetitionType.REQUIRED, element -> element.primitive(PhysicalType.BYTE_ARRAY,
-                        RepetitionType.REQUIRED, LogicalType.decimal(30, 4)))
-                .map("ids", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, LogicalType.string(),
-                        value -> value.primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                                LogicalType.uuid()))
+                        RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.decimal(30, 4))))
+                .map("ids", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
+                        value -> value.primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                                col -> col.typeLength(16).logicalType(LogicalType.uuid())))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -107,8 +108,10 @@ class GenericBinaryValueTest {
         LogicalType decimal = LogicalType.decimal(2500, 2);
         FileSchema schema = nested
                 ? FileSchema.builder("schema").struct("s", RepetitionType.REQUIRED,
-                        s -> s.addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, decimal)).build()
-                : FileSchema.builder("schema").addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, decimal)
+                        s -> s.addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                                col -> col.logicalType(decimal))).build()
+                : FileSchema.builder("schema").addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(decimal))
                         .build();
         // 1 KB of unscaled value: a copy of it outweighs whatever escape analysis saves either call
         BigDecimal wide = new BigDecimal(BigInteger.ONE.shiftLeft(1024 * 8 - 2), 2);
@@ -140,7 +143,8 @@ class GenericBinaryValueTest {
     @Test
     void mapLookupByKeyCopiesNoKeys() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .map("m", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                .map("m", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.REQUIRED))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -186,23 +190,29 @@ class GenericBinaryValueTest {
 
     private static FileSchema.Builder leaves(FileSchema.Builder schema) {
         return schema
-                .addColumn("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.decimal(30, 4))
-                .addColumn("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 13,
-                        LogicalType.decimal(30, 4))
-                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 16, LogicalType.uuid())
-                .addColumn("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 12,
-                        LogicalType.interval())
-                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 2, LogicalType.float16());
+                .addColumn("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.logicalType(LogicalType.decimal(30, 4)))
+                .addColumn("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(13).logicalType(LogicalType.decimal(30, 4)))
+                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(16).logicalType(LogicalType.uuid()))
+                .addColumn("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(12).logicalType(LogicalType.interval()))
+                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(2).logicalType(LogicalType.float16()));
     }
 
     private static void leaves(FileSchema.StructBuilder struct) {
-        struct.addColumn("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.decimal(30, 4))
-                .addColumn("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 13,
-                        LogicalType.decimal(30, 4))
-                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 16, LogicalType.uuid())
-                .addColumn("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 12,
-                        LogicalType.interval())
-                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 2, LogicalType.float16());
+        struct.addColumn("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                col -> col.logicalType(LogicalType.decimal(30, 4)))
+                .addColumn("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(13).logicalType(LogicalType.decimal(30, 4)))
+                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(16).logicalType(LogicalType.uuid()))
+                .addColumn("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(12).logicalType(LogicalType.interval()))
+                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        col -> col.typeLength(2).logicalType(LogicalType.float16()));
     }
 
     private static void setLeaves(StructBuilder r, int row, boolean dictionary) {

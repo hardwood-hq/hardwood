@@ -115,7 +115,7 @@ class UnreadableSortOrderTest {
     void boundsOnAnOrderedAnnotationStillPrune() {
         FileSchema string = FileSchema.builder("s")
                 .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        LogicalType.string())
+                        col -> col.logicalType(LogicalType.string()))
                 .build();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("g", "M"), string);
@@ -169,7 +169,8 @@ class UnreadableSortOrderTest {
     @Test
     void storedByteBoundsAreNotReadAndReportNothing() {
         FileSchema decimal = FileSchema.builder("s")
-                .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.decimal(10, 2))
+                .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.decimal(10, 2)))
                 .build();
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new byte[]{0x7F}), decimal);
@@ -514,7 +515,7 @@ class UnreadableSortOrderTest {
             UnaryOperator<byte[]> patch) throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
-                .addColumn("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
+                .addColumn("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(16))
                 .build())) {
             writer.columnWriter().writeBatch(batch -> batch.fixed(0, new byte[][] {
                     littleEndian(256), littleEndian(300), littleEndian(513) }));
@@ -588,7 +589,7 @@ class UnreadableSortOrderTest {
     private static FileSchema geometrySchema() {
         return FileSchema.builder("s")
                 .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        new LogicalType.GeometryType(null))
+                        col -> col.logicalType(new LogicalType.GeometryType(null)))
                 .build();
     }
 
@@ -611,7 +612,8 @@ class UnreadableSortOrderTest {
     private Path geometryThenValue() throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
-                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.string()))
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build())) {
             writer.columnWriter().writeBatch(batch -> batch
@@ -626,7 +628,8 @@ class UnreadableSortOrderTest {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.string()))
                 .build())) {
             writer.columnWriter().writeBatch(batch -> batch
                     .ints(0, new int[] { 2 })
