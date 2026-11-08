@@ -100,7 +100,7 @@ class ValueEncoderReinternTest {
     private static ValueEncoder encoder(PhysicalType type) {
         FileSchema.Builder schema = FileSchema.builder("m");
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            schema.addColumn("v", type, RepetitionType.REQUIRED, 4);
+            schema.addColumn("v", type, RepetitionType.REQUIRED, col -> col.typeLength(4));
         }
         else {
             schema.addColumn("v", type, RepetitionType.REQUIRED);

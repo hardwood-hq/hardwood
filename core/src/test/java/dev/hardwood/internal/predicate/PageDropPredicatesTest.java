@@ -217,7 +217,7 @@ class PageDropPredicatesTest {
 
     private static ColumnSchema column(RepetitionType repetition, int maxDefinitionLevel, int maxRepetitionLevel) {
         return new ColumnSchema(FieldPath.of("order", "price"), PhysicalType.INT32, repetition, null, COLUMN,
-                maxDefinitionLevel, maxRepetitionLevel, null);
+                maxDefinitionLevel, maxRepetitionLevel, null, null);
     }
 
     private static PageHeader v1(Statistics stats) {

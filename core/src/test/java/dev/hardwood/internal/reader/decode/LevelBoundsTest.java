@@ -30,12 +30,12 @@ class LevelBoundsTest {
 
     /// An optional leaf in an optional group: definition levels up to 2, stored at two bits.
     private static final ColumnSchema FLAT = new ColumnSchema(FieldPath.of("g", "c"), PhysicalType.INT32,
-            RepetitionType.OPTIONAL, null, 0, 2, 0, null);
+            RepetitionType.OPTIONAL, null, 0, 2, 0, null, null);
 
     /// A list of lists of required elements: repetition levels up to 2, definition levels up to 3,
     /// both stored at two bits.
     private static final ColumnSchema NESTED = new ColumnSchema(FieldPath.of("c", "list", "element", "list",
-            "element"), PhysicalType.INT32, RepetitionType.REQUIRED, null, 0, 3, 2, null);
+            "element"), PhysicalType.INT32, RepetitionType.REQUIRED, null, 0, 3, 2, null, null);
 
     @Test
     void readsLevelsAtTheirMaximum() {

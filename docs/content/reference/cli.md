@@ -20,7 +20,7 @@ A command writes its result to standard output and any warning or error to stand
 | Command | Description |
 |---------|-------------|
 | `hardwood info` | Display high-level file information, including key-value metadata |
-| `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups |
+| `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups and field ids as `= <id>` |
 | `hardwood print` | Print rows as an ASCII table (head, tail, or all) |
 | `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all) |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
@@ -433,7 +433,7 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
 
 - **Overview** — file summary and key/value metadata, with Spark JSON schemas pretty-printed and
   Arrow IPC schemas decoded to a hex dump
-- **Schema** — expandable tree of groups and leaves, navigated with `→` / `←`
+- **Schema** — expandable tree of groups and leaves, navigated with `→` / `←`; a file whose schema carries field ids shows them in a `Field id` column
 - **Row groups** — `:` jumps to a row group by number, `d` opens the Data preview at the selected group's first row
 - **Row group detail** — `d` opens the Data preview at this row group's first row
 - **Column chunks** — the chunks of one row group in column order, with type, codec, compressed size and

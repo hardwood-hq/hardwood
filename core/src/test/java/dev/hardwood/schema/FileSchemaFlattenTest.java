@@ -75,8 +75,7 @@ class FileSchemaFlattenTest {
         assertThat(column.typeLength()).isEqualTo(3);
     }
 
-    /// `Builder.map` rejects a `FIXED_LEN_BYTE_ARRAY` key because the builder has no
-    /// key-width parameter.
+    /// `Builder.map` rejects a `FIXED_LEN_BYTE_ARRAY` key that has no type length.
     @Test
     void mapWithFixedWidthKeyRequiresAByteLength() {
         assertThatThrownBy(() -> FileSchema.builder("schema")

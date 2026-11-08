@@ -192,7 +192,8 @@ class FileColumnarWriteTest {
     @Test
     void checksMapValues() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .map("renditions", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                .map("renditions", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        key -> key.logicalType(LogicalType.string()),
                         value -> value.file(RepetitionType.OPTIONAL))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {

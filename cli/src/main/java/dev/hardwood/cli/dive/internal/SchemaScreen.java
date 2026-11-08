@@ -169,6 +169,7 @@ public final class SchemaScreen {
         int maxType = "Type".length();
         int maxLogical = "Logical".length();
         int maxRepetition = "Repetition".length();
+        int maxFieldId = 0;
         TypeParts[] parts = new TypeParts[rows.size()];
         for (int i = 0; i < rows.size(); i++) {
             Row row = rows.get(i);
@@ -180,6 +181,11 @@ public final class SchemaScreen {
             maxType = Math.max(maxType, parts[i].type().length());
             maxLogical = Math.max(maxLogical, parts[i].logical().length());
             maxRepetition = Math.max(maxRepetition, parts[i].repetition().length());
+            maxFieldId = Math.max(maxFieldId, parts[i].fieldId().length());
+        }
+        // The field-id column appears only for a schema that carries field ids.
+        if (maxFieldId > 0) {
+            maxFieldId = Math.max(maxFieldId, "Field id".length());
         }
         // Column widths are measured over every row so they do not shift as
         // the tree scrolls; only the rows on screen become Lines. See
@@ -192,7 +198,8 @@ public final class SchemaScreen {
                 new Span(padRight("Name", maxName), headerStyle),
                 new Span("  " + padRight("Type", maxType), headerStyle),
                 new Span("  " + padRight("Logical", maxLogical), headerStyle),
-                new Span("  " + padRight("Repetition", maxRepetition), headerStyle)));
+                new Span("  " + padRight("Repetition", maxRepetition), headerStyle),
+                new Span(fieldIdCell("Field id", maxFieldId), headerStyle)));
         for (int i = window.start(); i < window.end(); i++) {
             Row row = rows.get(i);
             boolean selected = i == state.selection();
@@ -212,6 +219,7 @@ public final class SchemaScreen {
                         new Span("  " + padRight(p.type(), maxType), rowStyle),
                         new Span("  " + padRight(p.logical(), maxLogical), rowStyle),
                         new Span("  " + padRight(p.repetition(), maxRepetition), rowStyle),
+                        new Span(fieldIdCell(p.fieldId(), maxFieldId), rowStyle),
                         new Span("  " + colSuffix, rowStyle)));
                 continue;
             }
@@ -234,6 +242,7 @@ public final class SchemaScreen {
                     new Span("  " + padRight(p.type(), maxType), rowStyle),
                     new Span("  " + padRight(p.logical(), maxLogical), rowStyle),
                     new Span("  " + padRight(p.repetition(), maxRepetition), rowStyle),
+                    new Span(fieldIdCell(p.fieldId(), maxFieldId), rowStyle),
                     new Span("  " + colSuffix, rowStyle)));
         }
         Block block = Block.builder()
@@ -358,15 +367,24 @@ public final class SchemaScreen {
     }
 
     /// Decomposed type-info columns (physical type or group tag, optional
-    /// logical type, repetition). Each is padded to a per-column max so the
-    /// columns line up vertically across rows.
-    private record TypeParts(String type, String logical, String repetition) {
+    /// logical type, repetition, optional field id). Each is padded to a
+    /// per-column max so the columns line up vertically across rows.
+    private record TypeParts(String type, String logical, String repetition, String fieldId) {
+    }
+
+    /// The field-id cell, empty when no row of the schema carries a field id.
+    private static String fieldIdCell(String text, int width) {
+        return width == 0 ? "" : "  " + padRight(text, width);
+    }
+
+    private static String fieldIdOf(SchemaNode node) {
+        return node.fieldId() != null ? node.fieldId().toString() : "";
     }
 
     private static TypeParts typeOf(SchemaNode node) {
         if (node instanceof SchemaNode.PrimitiveNode p) {
             String logical = p.logicalType() != null ? p.logicalType().toString() : "";
-            return new TypeParts(p.type().name(), logical, p.repetitionType().name());
+            return new TypeParts(p.type().name(), logical, p.repetitionType().name(), fieldIdOf(p));
         }
         SchemaNode.GroupNode g = (SchemaNode.GroupNode) node;
         String tag;
@@ -385,7 +403,7 @@ public final class SchemaScreen {
         else {
             tag = "(group)";
         }
-        return new TypeParts(tag, "", g.repetitionType().name());
+        return new TypeParts(tag, "", g.repetitionType().name(), fieldIdOf(g));
     }
 
     private static String padRight(String s, int width) {
