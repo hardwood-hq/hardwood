@@ -23,7 +23,7 @@ try (RowReader rows = fileReader.rowReader()) {
         if (photo == null) {
             continue;   // null group
         }
-        String uri = photo.uri();                 // null for a value stored inline
+        String uri = photo.uri();                 // null when the value records no URI
         String mediaType = photo.contentType();   // null when the file records none
     }
 }
