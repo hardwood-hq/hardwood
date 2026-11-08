@@ -286,11 +286,12 @@ The logging setting matters for any benchmark that writes through parquet-java's
 
 ### Data
 
-A benchmark gets its data in one of three ways:
+A benchmark gets its data in one of four ways:
 
 | Source | Used by | Location |
 |--------|---------|----------|
 | Downloaded taxi corpus | `PageHandlingBenchmark`, `MemoryMapBenchmark` | `performance-testing/test-data-setup/target/tlc-trip-record-data`, passed with `-p dataDir=...` |
+| Downloaded taxi and Overture files | `AvroRowReaderBenchmark` | below `performance-testing/test-data-setup/target`, overridable with `-p dataRoot=...` |
 | Generated corpus files | the nested, mixed and wide benchmarks; some single-class benchmarks through the `performance-testing/generate_*.py` scripts | `performance-testing/test-data-setup/target/benchmark-data`, overridable with `-Dperf.dataDir` |
 | In-memory fixture | `FlatWriteBenchmark`, `WriteEncodingBenchmark` | built per trial by `FlatWriteFixture` |
 
