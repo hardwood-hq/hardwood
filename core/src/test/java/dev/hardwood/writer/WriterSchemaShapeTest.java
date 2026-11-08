@@ -76,7 +76,7 @@ class WriterSchemaShapeTest {
         // Refused before the destination was opened, so there is nothing at it to clean up.
         assertThatThrownBy(out::position)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile not created");
+                .hasMessage("Output for an in-memory file is not open; it has not been created");
     }
 
     @Test
@@ -432,7 +432,7 @@ class WriterSchemaShapeTest {
         // Refused before the destination was opened.
         assertThatThrownBy(out::position)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile not created");
+                .hasMessage("Output for an in-memory file is not open; it has not been created");
     }
 
     /// The limit is inclusive: 254 `OPTIONAL` structs around an `OPTIONAL` leaf give it a

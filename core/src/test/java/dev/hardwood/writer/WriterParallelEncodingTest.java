@@ -184,7 +184,7 @@ class WriterParallelEncodingTest {
         }
         assertThatThrownBy(out::buffer)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile was discarded");
+                .hasMessage("Output for an in-memory file is not closed; it was discarded");
     }
 
     /// Of three chunks the last two fail, the third first. Whichever thread encodes which, the
@@ -313,7 +313,7 @@ class WriterParallelEncodingTest {
         writer.close();
         assertThatThrownBy(out::buffer)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile was discarded");
+                .hasMessage("Output for an in-memory file is not closed; it was discarded");
     }
 
     private static FileSchema idSchema() {

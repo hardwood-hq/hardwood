@@ -15,7 +15,7 @@ Application code should import only from the packages marked **Public API**.
 
 | Package | Visibility | Purpose |
 |---------|-----------|---------|
-| [`dev.hardwood`](/api/latest/dev/hardwood/package-summary.html) | **Public API** | Entry point for creating readers, the `OutputFile` write destination, managing shared resources (thread pool, decompressor pool), and the shared `Validity` null bitmap. |
+| [`dev.hardwood`](/api/latest/dev/hardwood/package-summary.html) | **Public API** | Entry point for creating readers, the `OutputFile` write destination and its `AbstractOutputFile` base, managing shared resources (thread pool, decompressor pool), and the shared `Validity` null bitmap. |
 | [`dev.hardwood.reader`](/api/latest/dev/hardwood/reader/package-summary.html) | **Public API** | Single-file and multi-file readers for row-oriented and column-oriented access. |
 | [`dev.hardwood.writer`](/api/latest/dev/hardwood/writer/package-summary.html) | **Public API** | Parquet file writing: `ParquetFileWriter` with its columnar (`ColumnWriter`) and row-oriented (`RowWriter`) APIs, and `WriterConfig`. |
 | [`dev.hardwood.metadata`](/api/latest/dev/hardwood/metadata/package-summary.html) | **Public API** | Parquet file metadata: row groups, column chunks, physical/logical types, and compression codecs. |

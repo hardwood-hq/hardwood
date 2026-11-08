@@ -306,7 +306,7 @@ class FlatAppendTest {
         };
     }
 
-    private static byte[] bytes(InMemoryOutputFile out) {
+    private static byte[] bytes(InMemoryOutputFile out) throws IOException {
         out.close();
         ByteBuffer buffer = out.buffer();
         byte[] bytes = new byte[buffer.remaining()];
