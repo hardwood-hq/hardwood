@@ -65,6 +65,8 @@ import dev.hardwood.writer.WriterConfig;
 /// |---|---|---|---|
 /// | `AUTO` | — | nothing | today's behaviour, the baseline the others are read against |
 /// | `PLAIN_ON_DISTINCT` | `PLAIN` | `id`, `pickup_ts`, `fare` | what interning a column that discards its dictionary costs |
+/// | `PLAIN_STRINGS` | `PLAIN` | `payment_type`, `vendor` | what collecting binary bounds costs per value without a dictionary |
+/// | `DELTA_LENGTH_STRINGS` | `DELTA_LENGTH_BYTE_ARRAY` | `payment_type`, `vendor` | whether a string policy's page encoding hides or exposes that cost |
 /// | `DELTA_INTEGERS` | `DELTA_BINARY_PACKED` | `id`, `pickup_ts`, `passenger_count` | what delta buys on ascending integers, and what producing it costs |
 /// | `SPLIT_NUMERIC` | `BYTE_STREAM_SPLIT` | `fare`, `id`, `pickup_ts` | whether reordering bytes pays for itself once the codec runs |
 ///
@@ -73,6 +75,11 @@ import dev.hardwood.writer.WriterConfig;
 /// flush-time comparison rejects anyway writes the same pages as `AUTO` while skipping the
 /// interning that produced them. **The gap between the two cases is what the writer's most
 /// expensive per-value decision costs.**
+///
+/// The two string cases put the same named-policy treatment on the columns a dictionary usually
+/// keeps. They differ from `AUTO` in more than the statistics, since the columns are low
+/// cardinality; read them against each other for the cost of the bounds, which every
+/// non-dictionary chunk pays whatever its page encoding.
 ///
 /// ## The codecs
 ///
@@ -140,11 +147,17 @@ public class WriteEncodingBenchmark {
     /// are the low-cardinality ones a dictionary wins on.
     private static final List<String> ALL_DISTINCT = List.of("id", "pickup_ts", "fare");
 
+    /// The low-cardinality string columns a dictionary usually keeps, written under a named
+    /// policy so their statistics collect a bound per value rather than per dictionary entry.
+    private static final List<String> STRINGS = List.of("payment_type", "vendor");
+
     /// One encoding case: the policy each named column is written under.
     enum Case {
 
         AUTO(Map.of()),
         PLAIN_ON_DISTINCT(policy(ColumnEncoding.PLAIN, ALL_DISTINCT)),
+        PLAIN_STRINGS(policy(ColumnEncoding.PLAIN, STRINGS)),
+        DELTA_LENGTH_STRINGS(policy(ColumnEncoding.DELTA_LENGTH_BYTE_ARRAY, STRINGS)),
         DELTA_INTEGERS(policy(ColumnEncoding.DELTA_BINARY_PACKED,
                 List.of("id", "pickup_ts", "passenger_count"))),
         SPLIT_NUMERIC(policy(ColumnEncoding.BYTE_STREAM_SPLIT, List.of("fare", "id", "pickup_ts")));
@@ -169,7 +182,8 @@ public class WriteEncodingBenchmark {
         }
     }
 
-    @Param({ "AUTO", "PLAIN_ON_DISTINCT", "DELTA_INTEGERS", "SPLIT_NUMERIC" })
+    @Param({ "AUTO", "PLAIN_ON_DISTINCT", "PLAIN_STRINGS", "DELTA_LENGTH_STRINGS", "DELTA_INTEGERS",
+            "SPLIT_NUMERIC" })
     private String encoding;
 
     @Param({ "ZSTD", "UNCOMPRESSED" })
