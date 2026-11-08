@@ -12,12 +12,15 @@ package dev.hardwood.internal.util;
 ///
 /// Each name is held interned, so a name the caller passes as a string literal (or any interned
 /// string) is the very instance the table holds and is found by identity, without comparing
-/// characters. A name's slot is the low bits of its hash. Since the names are known when the map
-/// is built, it doubles the table, up to [#MAX_SLOTS_PER_NAME] slots a name, until every name has
-/// a slot of its own: a lookup is then one mask and one comparison. When no size separates them
-/// (two names of one hash code), the table keeps the largest size, where the fewest names share a
-/// slot; such a name moves on to the next free one, and a lookup probes on. Above
-/// [#MAX_PERFECT_NAMES] names the table stays at its smallest size. Another instance than the
+/// characters. A name's slot is the low bits of its hash. The table starts at
+/// [#MIN_SLOTS_PER_NAME] slots a name, which leaves most names a slot of their own, and since
+/// the names are known when the map is built, it doubles the table until every name has one: a
+/// lookup is then one mask and one comparison. It doubles up to [#MAX_SLOTS_PER_NAME] slots a
+/// name and to no more than [#MAX_GROWN_SLOTS] slots, so a map that grows stays small, and a
+/// map that starts larger than that does not grow. Both bounds rise with the number of names,
+/// so a map of more names is never given a smaller table to work with. When no size separates
+/// the names, the table keeps the largest size tried, where the fewest names share a slot; such a
+/// name moves on to the next free one, and a lookup probes on. Another instance than the
 /// interned one is found along the same probe sequence by equality.
 ///
 /// A name given more than once maps to its last index, so that of sibling fields of one name,
@@ -27,12 +30,17 @@ public final class InternedNameMap {
     /// What [#get] answers for a name that is not in the map.
     public static final int NOT_FOUND = -1;
 
-    /// The most names for which the map grows its table: the table that gives every name a slot
-    /// of its own grows with the square of the names, and past this rarely fits in
-    /// [#MAX_SLOTS_PER_NAME] slots a name.
-    private static final int MAX_PERFECT_NAMES = 128;
-    private static final int MAX_SLOTS_PER_NAME = 64;
+    /// The table's size to start from, in slots a name. At this size four names in five or more
+    /// already have a slot of their own.
     private static final int MIN_SLOTS_PER_NAME = 4;
+
+    /// The most slots a name the table grows to. Each doubling halves the names that share a slot
+    /// and doubles the memory, and past this it buys a name or two of a hundred.
+    private static final int MAX_SLOTS_PER_NAME = 16;
+
+    /// The most slots the table grows to, 32 KB of keys and values. Past a few hundred names no
+    /// size up to this separates them all, so a larger map keeps the size it starts at.
+    private static final int MAX_GROWN_SLOTS = 4096;
 
     private final String[] keys;
     private final int[] values;
@@ -44,10 +52,8 @@ public final class InternedNameMap {
         for (int i = 0; i < names.length; i++) {
             interned[i] = names[i].intern();
         }
-        int minSlots = tableSizeFor(Math.multiplyExact(Math.max(1, names.length), MIN_SLOTS_PER_NAME));
-        int maxSlots = names.length <= MAX_PERFECT_NAMES
-                ? tableSizeFor(Math.max(minSlots, names.length * MAX_SLOTS_PER_NAME))
-                : minSlots;
+        int minSlots = minSlots(names.length);
+        int maxSlots = maxSlots(names.length);
         Table table = separated(interned, minSlots, maxSlots);
         if (table == null) {
             table = probed(interned, maxSlots);
@@ -55,6 +61,18 @@ public final class InternedNameMap {
         this.keys = table.keys();
         this.values = table.values();
         this.mask = keys.length - 1;
+    }
+
+    /// The table size the map starts at for `names` names.
+    static int minSlots(int names) {
+        return tableSizeFor(Math.multiplyExact(Math.max(1, names), MIN_SLOTS_PER_NAME));
+    }
+
+    /// The largest table size the map grows to for `names` names: [#MAX_SLOTS_PER_NAME] slots a
+    /// name, no more than [#MAX_GROWN_SLOTS], and never less than [#minSlots].
+    static int maxSlots(int names) {
+        int grown = tableSizeFor(Math.multiplyExact(Math.max(1, names), MAX_SLOTS_PER_NAME));
+        return Math.max(minSlots(names), Math.min(grown, MAX_GROWN_SLOTS));
     }
 
     /// A filled table: each name and its index, at the same slot.

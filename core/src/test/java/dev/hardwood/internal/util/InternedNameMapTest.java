@@ -7,9 +7,12 @@
  */
 package dev.hardwood.internal.util;
 
+import java.time.Duration;
+
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 class InternedNameMapTest {
 
@@ -81,6 +84,24 @@ class InternedNameMapTest {
     }
 
     @Test
+    void answersNotFoundForAMissingNameThatProbes() {
+        // "C#" shares the hash code of "Aa" and "BB", so its lookup starts at an occupied slot of
+        // the probing table and walks past both names to the next free slot.
+        assertThat("C#".hashCode()).isEqualTo("Aa".hashCode());
+        for (int count : new int[] { 2, 32, 129, 2_000 }) {
+            String[] names = names(count);
+            names[0] = "Aa";
+            names[1] = "BB";
+            InternedNameMap map = new InternedNameMap(names);
+
+            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+                assertThat(map.get("C#")).isEqualTo(InternedNameMap.NOT_FOUND);
+                assertThat(map.get("col_missing")).isEqualTo(InternedNameMap.NOT_FOUND);
+            });
+        }
+    }
+
+    @Test
     void mapsANameGivenTwiceToItsLastIndex() {
         InternedNameMap map = new InternedNameMap("id", "name", new String("id".toCharArray()));
 
@@ -99,6 +120,46 @@ class InternedNameMapTest {
         assertThat(map.get("id")).isEqualTo(4);
         assertThat(map.get("Aa")).isEqualTo(0);
         assertThat(map.get("BB")).isEqualTo(2);
+    }
+
+    @Test
+    void neverGivesMoreNamesASmallerTableToWorkWith() {
+        for (int names = 1; names <= 5_000; names++) {
+            assertThat(InternedNameMap.minSlots(names)).isGreaterThanOrEqualTo(InternedNameMap.minSlots(names - 1));
+            assertThat(InternedNameMap.maxSlots(names)).isGreaterThanOrEqualTo(InternedNameMap.maxSlots(names - 1));
+            assertThat(InternedNameMap.maxSlots(names)).isGreaterThanOrEqualTo(InternedNameMap.minSlots(names));
+        }
+    }
+
+    @Test
+    void growsToSixteenSlotsANameUpToTheCeiling() {
+        assertThat(InternedNameMap.maxSlots(20)).isEqualTo(512);
+        assertThat(InternedNameMap.maxSlots(128)).isEqualTo(2_048);
+        assertThat(InternedNameMap.maxSlots(129)).isEqualTo(4_096);
+        assertThat(InternedNameMap.maxSlots(300)).isEqualTo(4_096);
+    }
+
+    @Test
+    void keepsTheTableItStartsAtPastTheCeiling() {
+        assertThat(InternedNameMap.maxSlots(1_000)).isEqualTo(InternedNameMap.minSlots(1_000)).isEqualTo(4_096);
+        assertThat(InternedNameMap.maxSlots(2_000)).isEqualTo(InternedNameMap.minSlots(2_000)).isEqualTo(8_192);
+        assertThat(InternedNameMap.maxSlots(100_000)).isEqualTo(InternedNameMap.minSlots(100_000)).isEqualTo(524_288);
+    }
+
+    @Test
+    void findsEveryNameOfOneHashCodeBesideManyAtTheCeiling() {
+        // "Aa" and "BB" share a hash code, so no size separates the names and the map probes in
+        // the largest table it may grow to.
+        for (int count : new int[] { 128, 129, 300, 2_000 }) {
+            String[] names = names(count);
+            names[0] = "Aa";
+            names[1] = "BB";
+            InternedNameMap map = new InternedNameMap(names);
+            for (int i = 0; i < count; i++) {
+                assertThat(map.get(names[i].intern())).isEqualTo(i);
+                assertThat(map.get(new String(names[i].toCharArray()))).isEqualTo(i);
+            }
+        }
     }
 
     private static String[] names(int count) {
