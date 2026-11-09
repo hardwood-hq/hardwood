@@ -527,8 +527,9 @@ public record LevelSummary(
         SchemaNode current = schema.getRootNode();
         StringBuilder dotted = new StringBuilder();
         String parentName = null;
-        for (String element : column.fieldPath().elements()) {
-            SchemaNode child = childNamed(current, element);
+        while (current instanceof SchemaNode.GroupNode group) {
+            SchemaNode child = childHolding(group, column.columnIndex());
+            String element = child.name();
             if (!dotted.isEmpty()) {
                 dotted.append('.');
             }
@@ -540,19 +541,43 @@ public record LevelSummary(
             parentName = element;
             current = child;
         }
+        if (((SchemaNode.PrimitiveNode) current).columnIndex() != column.columnIndex()) {
+            throw new IllegalStateException("column " + column.columnIndex() + " is not a leaf of the schema");
+        }
         return nodes;
     }
 
-    private static SchemaNode childNamed(SchemaNode parent, String name) {
-        if (!(parent instanceof SchemaNode.GroupNode group)) {
-            throw new IllegalStateException("expected a group while walking to " + name
-                    + ", found leaf " + parent.name());
-        }
+    /// The child of `group` whose subtree holds the leaf column `columnIndex`. Leaves are numbered
+    /// in schema order, so it is the last child whose first leaf is not beyond `columnIndex`. The
+    /// walk follows the column's index rather than its path, since two siblings may share a name.
+    private static SchemaNode childHolding(SchemaNode.GroupNode group, int columnIndex) {
+        SchemaNode holder = null;
         for (SchemaNode child : group.children()) {
-            if (child.name().equals(name)) {
-                return child;
+            int firstLeaf = firstLeaf(child);
+            if (firstLeaf > columnIndex) {
+                break;
+            }
+            if (firstLeaf >= 0) {
+                holder = child;
             }
         }
-        throw new IllegalStateException("no child named " + name + " under " + group.name());
+        if (holder == null) {
+            throw new IllegalStateException("no child of " + group.name() + " holds column " + columnIndex);
+        }
+        return holder;
+    }
+
+    /// The index of the first leaf column under `node`, or -1 when it holds none.
+    private static int firstLeaf(SchemaNode node) {
+        if (node instanceof SchemaNode.PrimitiveNode primitive) {
+            return primitive.columnIndex();
+        }
+        for (SchemaNode child : ((SchemaNode.GroupNode) node).children()) {
+            int firstLeaf = firstLeaf(child);
+            if (firstLeaf >= 0) {
+                return firstLeaf;
+            }
+        }
+        return -1;
     }
 }

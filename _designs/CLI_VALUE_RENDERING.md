@@ -151,7 +151,7 @@ Tests: `SizesTest` (cli), `EncodingsTest` (cli), `FmtTest` (cli), `PluralsTest` 
 
 ## Size statistics
 
-`SizeStatistics` is the only metadata that separates an absent field from an empty list: `null_count` lumps both together. A raw definition-level histogram says nothing without the schema to name its buckets, and those names follow from the column's path alone. The CLI presents the chunk-level statistics in `ColumnMetaData` on two surfaces: the dive column chunk detail screen and `hardwood inspect columns`. The per-page copies in `ColumnIndex` and `OffsetIndex` are read only to report whether they exist.
+`SizeStatistics` is the only metadata that separates an absent field from an empty list: `null_count` lumps both together. A raw definition-level histogram says nothing without the schema to name its buckets, and those names follow from the column's place in the schema alone. The CLI presents the chunk-level statistics in `ColumnMetaData` on two surfaces: the dive column chunk detail screen and `hardwood inspect columns`. The per-page copies in `ColumnIndex` and `OffsetIndex` are read only to report whether they exist.
 
 ### `LevelSummary`
 
@@ -163,7 +163,7 @@ The factory always returns a summary. A chunk with no `SizeStatistics` has a sha
 
 ### Level labels
 
-Walk the column's path from the schema root and collect the nodes whose repetition is `OPTIONAL` or `REPEATED`; there are exactly `maxDefinitionLevel` of them, `d₁…d_maxDef`. Definition level `i` names the node the value failed to reach:
+Walk from the schema root to the column's leaf by its column index (two siblings may share a name) and collect the nodes whose repetition is `OPTIONAL` or `REPEATED`; there are exactly `maxDefinitionLevel` of them, `d₁…d_maxDef`. Definition level `i` names the node the value failed to reach:
 
 | Condition | Label |
 |---|---|
