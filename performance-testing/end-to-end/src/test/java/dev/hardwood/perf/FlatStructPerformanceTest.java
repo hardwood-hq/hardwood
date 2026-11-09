@@ -29,6 +29,7 @@ import org.apache.parquet.io.LocalOutputFile;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.row.FlatRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqStruct;
@@ -94,6 +95,7 @@ class FlatStructPerformanceTest {
         System.out.println("File: " + DATA_FILE + String.format(" (%,.1f MB)", Files.size(DATA_FILE) / (1024.0 * 1024.0)));
         System.out.println("Contenders: " + contenders);
         System.out.println("Runs: " + runs);
+        assertReadByFlatRowReader();
 
         for (Contender contender : contenders) {
             Reader reader = switch (contender) {
@@ -125,6 +127,15 @@ class FlatStructPerformanceTest {
             expected = check(expected, sums);
         }
         printResults(contender, durationsMs);
+    }
+
+    /// Checks that the contenders' projection is read by [FlatRowReader], so that a change
+    /// sending it to the nested reader fails here rather than showing up as a slower run.
+    private static void assertReadByFlatRowReader() throws IOException {
+        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(DATA_FILE));
+             RowReader rows = file.buildRowReader().projection(ColumnProjection.columns("id", "location", "score")).build()) {
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
+        }
     }
 
     /// Checks that a run read every row and the sums every earlier run read.

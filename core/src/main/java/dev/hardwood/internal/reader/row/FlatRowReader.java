@@ -1288,7 +1288,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     private int resolveIndex(String name) {
         int index = nameToIndex.get(name);
         if (index < 0) {
-            throw new IllegalArgumentException(prefix() + "Column not in projection: " + name);
+            throw new IllegalArgumentException(prefix() + "Field '" + name + "' not in projection");
         }
         return index;
     }

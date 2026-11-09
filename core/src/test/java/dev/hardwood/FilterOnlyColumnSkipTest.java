@@ -234,7 +234,7 @@ class FilterOnlyColumnSkipTest {
                 count++;
                 assertThatThrownBy(() -> rows.getLong("id"))
                         .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage("[" + flatFixture.getFileName() + "] Column not in projection: id");
+                        .hasMessage("[" + flatFixture.getFileName() + "] Field 'id' not in projection");
                 // The JVM's own bounds check raises it; its message is dropped once the
                 // throw site is compiled, so only the type is pinned.
                 assertThatThrownBy(() -> rows.getLong(1))

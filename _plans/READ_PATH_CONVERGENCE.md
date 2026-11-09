@@ -187,7 +187,7 @@ the reader merge is the last thing that should meet two copies of a decode.
 | 1 | State the leaf decode once | Finding 4 | #1334; unblocks #971, #1156, #447, #1021 | — |
 | 2 | Benchmark projected reads | — | none (hardwood-benchmarks) | — |
 | 3 | Choose the reader from the projection (done in #1335, see below) | Finding 1 | #1335 | 2 for numbers |
-| 4 | Non-repeated structs on the flat path (#475 done, see below) | — | #475, #631 | 1, 3 |
+| 4 | Non-repeated structs on the flat path (done in #475 and #631, see below) | — | #475, #631 | 1, 3 |
 | 5 | One reader, pipeline chosen per column | Findings 2 and 5; remainder of 1 | #732 | 1, 4 |
 | 6 | Cut the nested column's per-batch cost (done in #1287, see below) | Finding 6 | #1024, #750, #1045 | — |
 
@@ -272,10 +272,9 @@ presence bitmap is derived from them per batch. A filter leaf below a struct com
 matcher on the flat reader, as a top-level one does. That is the capability stage 5 needs for
 every non-repeated struct: nothing here is written to be deleted.
 
-#631 is a struct perf test in `performance-testing/end-to-end`. Its flat fixture is a
-struct of primitives that must dispatch to `FlatRowReader`, which only happens once
-#475 lands. Its reader-class assertion is the in-repo counterpart of the one stage 3
-adds.
+Done in #631: `FlatStructPerformanceTest` in `performance-testing/end-to-end` reads a
+file of primitives and optional structs of primitives, and asserts that its projection
+dispatches to `FlatRowReader`, the in-repo counterpart of the assertion stage 3 adds.
 
 ### Stage 5 — one reader, pipeline chosen per column
 

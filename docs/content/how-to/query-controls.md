@@ -160,7 +160,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
         Instant createdAt = rowReader.getTimestamp("created_at");
 
         // Accessing non-projected columns throws IllegalArgumentException
-        // rowReader.getInt("age");  // throws "Column not in projection: age"
+        // rowReader.getInt("age");  // throws "Field 'age' not in projection"
     }
 }
 ```

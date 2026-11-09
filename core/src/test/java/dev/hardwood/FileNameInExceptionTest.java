@@ -59,7 +59,7 @@ class FileNameInExceptionTest {
             // Non-existent column throws via resolveIndex
             assertThatThrownBy(() -> reader.getLong("nonexistent"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("[" + FILE_NAME + "] Column not in projection: nonexistent");
+                    .hasMessage("[" + FILE_NAME + "] Field 'nonexistent' not in projection");
         }
     }
 
