@@ -27,7 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// [DictionaryFilterSupport#PASS_LIMIT] literals, and above it a [RangeBitmask] for integer
 /// literals that lie close together or a [LongSet] / [BinarySet] otherwise; integer literals too
 /// spread out for a bitmask run passes up to [DictionaryFilterSupport#SPARSE_PASS_LIMIT] before
-/// they are hashed. Each kernel is driven to both decisions, with the present value at the
+/// they are hashed, as floating-point literals do; a `FLOAT16` list takes a bitmask over its raw
+/// half bits. Each kernel is driven to both decisions, with the present value at the
 /// dictionary's first and last entry.
 ///
 /// `DictionaryPushDownTest` covers the row-group decision over real fixtures.
@@ -377,35 +378,35 @@ class DictionaryFilterSupportTest {
 
         @Test
         void shortListsRunOnePassPerLiteral() {
-            assertThat(DictionaryFilterSupport.absentAll(floats, floats(PASS_LIMIT, 10f))).isTrue();
-            assertThat(DictionaryFilterSupport.absentAll(floats, floats(PASS_LIMIT, 4.5f))).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(PASS_LIMIT, 10))).isTrue();
-            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(PASS_LIMIT, 4.5))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(floats, floats(SPARSE_PASS_LIMIT, 10f))).isTrue();
+            assertThat(DictionaryFilterSupport.absentAll(floats, floats(SPARSE_PASS_LIMIT, 4.5f))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(SPARSE_PASS_LIMIT, 10))).isTrue();
+            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(SPARSE_PASS_LIMIT, 4.5))).isFalse();
         }
 
         @Test
         void longListsAreIndexedByTheirBits() {
-            assertThat(DictionaryFilterSupport.absentAll(floats, floats(INDEXED, 10f))).isTrue();
-            assertThat(DictionaryFilterSupport.absentAll(floats, floats(INDEXED, 1.5f))).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(INDEXED, 10))).isTrue();
-            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(INDEXED, 1.5))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(floats, floats(HASHED, 10f))).isTrue();
+            assertThat(DictionaryFilterSupport.absentAll(floats, floats(HASHED, 1.5f))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(HASHED, 10))).isTrue();
+            assertThat(DictionaryFilterSupport.absentAll(doubles, doubles(HASHED, 1.5))).isFalse();
         }
 
         @Test
         void everyNaNIsOneValueOnBothKernels() {
             // Float.compare treats every NaN as equal, so a canonical NaN literal finds the stored
             // payload NaN, in a pass and in the indexed set alike.
-            float[] shortFloats = floats(PASS_LIMIT, 10f);
-            shortFloats[PASS_LIMIT - 1] = Float.NaN;
+            float[] shortFloats = floats(SPARSE_PASS_LIMIT, 10f);
+            shortFloats[SPARSE_PASS_LIMIT - 1] = Float.NaN;
             assertThat(DictionaryFilterSupport.absentAll(floats, shortFloats)).isFalse();
-            float[] longFloats = floats(INDEXED, 10f);
+            float[] longFloats = floats(HASHED, 10f);
             longFloats[0] = Float.NaN;
             assertThat(DictionaryFilterSupport.absentAll(floats, longFloats)).isFalse();
 
-            double[] shortDoubles = doubles(PASS_LIMIT, 10);
-            shortDoubles[PASS_LIMIT - 1] = Double.NaN;
+            double[] shortDoubles = doubles(SPARSE_PASS_LIMIT, 10);
+            shortDoubles[SPARSE_PASS_LIMIT - 1] = Double.NaN;
             assertThat(DictionaryFilterSupport.absentAll(doubles, shortDoubles)).isFalse();
-            double[] longDoubles = doubles(INDEXED, 10);
+            double[] longDoubles = doubles(HASHED, 10);
             longDoubles[0] = Double.NaN;
             assertThat(DictionaryFilterSupport.absentAll(doubles, longDoubles)).isFalse();
         }
@@ -416,28 +417,28 @@ class DictionaryFilterSupportTest {
             // list of nothing but NaN literals is decided by the NaN scan on its own.
             Dictionary noNaNFloats = new Dictionary.FloatDictionary(new float[]{ -0.0f, 1.5f, 4.5f });
             Dictionary noNaNDoubles = new Dictionary.DoubleDictionary(new double[]{ -0.0, 1.5, 4.5 });
-            float[] shortFloats = floats(PASS_LIMIT, 10f);
+            float[] shortFloats = floats(SPARSE_PASS_LIMIT, 10f);
             shortFloats[0] = Float.NaN;
             assertThat(DictionaryFilterSupport.absentAll(noNaNFloats, shortFloats)).isTrue();
-            float[] longFloats = floats(INDEXED, 10f);
+            float[] longFloats = floats(HASHED, 10f);
             longFloats[0] = Float.NaN;
             assertThat(DictionaryFilterSupport.absentAll(noNaNFloats, longFloats)).isTrue();
             longFloats[1] = 4.5f;
             assertThat(DictionaryFilterSupport.absentAll(noNaNFloats, longFloats)).isFalse();
-            float[] allNaNFloats = new float[INDEXED];
+            float[] allNaNFloats = new float[HASHED];
             Arrays.fill(allNaNFloats, Float.NaN);
             assertThat(DictionaryFilterSupport.absentAll(noNaNFloats, allNaNFloats)).isTrue();
             assertThat(DictionaryFilterSupport.absentAll(floats, allNaNFloats)).isFalse();
 
-            double[] shortDoubles = doubles(PASS_LIMIT, 10);
+            double[] shortDoubles = doubles(SPARSE_PASS_LIMIT, 10);
             shortDoubles[0] = Double.NaN;
             assertThat(DictionaryFilterSupport.absentAll(noNaNDoubles, shortDoubles)).isTrue();
-            double[] longDoubles = doubles(INDEXED, 10);
+            double[] longDoubles = doubles(HASHED, 10);
             longDoubles[0] = Double.NaN;
             assertThat(DictionaryFilterSupport.absentAll(noNaNDoubles, longDoubles)).isTrue();
             longDoubles[1] = 4.5;
             assertThat(DictionaryFilterSupport.absentAll(noNaNDoubles, longDoubles)).isFalse();
-            double[] allNaNDoubles = new double[INDEXED];
+            double[] allNaNDoubles = new double[HASHED];
             Arrays.fill(allNaNDoubles, Double.NaN);
             assertThat(DictionaryFilterSupport.absentAll(noNaNDoubles, allNaNDoubles)).isTrue();
             assertThat(DictionaryFilterSupport.absentAll(doubles, allNaNDoubles)).isFalse();
@@ -457,34 +458,34 @@ class DictionaryFilterSupportTest {
         @Test
         void signedZeroesStayApartOnBothKernels() {
             // The dictionaries hold -0.0 only: a +0.0 literal is absent, a -0.0 literal present.
-            float[] shortFloats = floats(PASS_LIMIT, 10f);
+            float[] shortFloats = floats(SPARSE_PASS_LIMIT, 10f);
             shortFloats[0] = 0.0f;
             assertThat(DictionaryFilterSupport.absentAll(floats, shortFloats)).isTrue();
             shortFloats[0] = -0.0f;
             assertThat(DictionaryFilterSupport.absentAll(floats, shortFloats)).isFalse();
-            float[] longFloats = floats(INDEXED, 10f);
-            longFloats[INDEXED - 1] = 0.0f;
+            float[] longFloats = floats(HASHED, 10f);
+            longFloats[HASHED - 1] = 0.0f;
             assertThat(DictionaryFilterSupport.absentAll(floats, longFloats)).isTrue();
-            longFloats[INDEXED - 1] = -0.0f;
+            longFloats[HASHED - 1] = -0.0f;
             assertThat(DictionaryFilterSupport.absentAll(floats, longFloats)).isFalse();
 
-            double[] shortDoubles = doubles(PASS_LIMIT, 10);
+            double[] shortDoubles = doubles(SPARSE_PASS_LIMIT, 10);
             shortDoubles[0] = 0.0;
             assertThat(DictionaryFilterSupport.absentAll(doubles, shortDoubles)).isTrue();
             shortDoubles[0] = -0.0;
             assertThat(DictionaryFilterSupport.absentAll(doubles, shortDoubles)).isFalse();
-            double[] longDoubles = doubles(INDEXED, 10);
-            longDoubles[INDEXED - 1] = 0.0;
+            double[] longDoubles = doubles(HASHED, 10);
+            longDoubles[HASHED - 1] = 0.0;
             assertThat(DictionaryFilterSupport.absentAll(doubles, longDoubles)).isTrue();
-            longDoubles[INDEXED - 1] = -0.0;
+            longDoubles[HASHED - 1] = -0.0;
             assertThat(DictionaryFilterSupport.absentAll(doubles, longDoubles)).isFalse();
         }
 
         @Test
         void wrongArmOrNoDictionaryProvesNothing() {
-            assertThat(DictionaryFilterSupport.absentAll(null, floats(INDEXED, 10f))).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(doubles, floats(INDEXED, 10f))).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(floats, doubles(INDEXED, 10))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(null, floats(HASHED, 10f))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(doubles, floats(HASHED, 10f))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(floats, doubles(HASHED, 10))).isFalse();
         }
     }
 
@@ -555,6 +556,127 @@ class DictionaryFilterSupportTest {
             assertThat(DictionaryFilterSupport.absentAll(null, literals(INDEXED, "dog_"))).isFalse();
             assertThat(DictionaryFilterSupport.absentAll(new Dictionary.IntDictionary(new int[]{ 1 }),
                     literals(INDEXED, "dog_"))).isFalse();
+        }
+    }
+
+    /// `FLOAT16` lists, stored as two-byte entries of a byte-array dictionary, decided by a bitmask
+    /// over the literals' raw half bits at every list length.
+    @Nested
+    class Float16Lists {
+
+        /// A half `NaN` with a payload other than the canonical one, as a writer may store it.
+        private static final short HALF_NAN_PAYLOAD = (short) 0x7e01;
+
+        /// The smallest positive subnormal half.
+        private static final float HALF_MIN_SUBNORMAL = Float.float16ToFloat((short) 1);
+
+        private final Dictionary dictionary = byteArrayDictionary(new byte[][]{
+                half(-0.0f), half(1.0f), half(HALF_MIN_SUBNORMAL), halfBits(HALF_NAN_PAYLOAD), half(4.5f),
+                // An entry of another width, whose first two bytes are the half 2.5: never a match.
+                { half(2.5f)[0], half(2.5f)[1], 0 } });
+
+        private static byte[] half(float value) {
+            return halfBits(Float.floatToFloat16(value));
+        }
+
+        private static byte[] halfBits(short bits) {
+            return new byte[]{ (byte) bits, (byte) (bits >>> 8) };
+        }
+
+        private static float[] halves(int count, float first) {
+            float[] values = new float[count];
+            for (int i = 0; i < count; i++) {
+                values[i] = first + i;
+            }
+            return values;
+        }
+
+        @Test
+        void listsOfAnyLengthAreDecidedByTheirBits() {
+            for (int length : new int[]{ 1, PASS_LIMIT, INDEXED, HASHED }) {
+                assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, halves(length, 10f))).as("%d literals", length).isTrue();
+                float[] present = halves(length, 10f);
+                present[length - 1] = 4.5f;
+                assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, present)).as("%d literals", length).isFalse();
+            }
+        }
+
+        @Test
+        void everyNaNIsOneValue() {
+            // A canonical NaN literal finds the stored payload NaN; without a NaN entry it is absent,
+            // alone or beside other literals.
+            float[] values = halves(INDEXED, 10f);
+            values[0] = Float.NaN;
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, values)).isFalse();
+            Dictionary noNaN = byteArrayDictionary(new byte[][]{ half(-0.0f), half(1.0f), half(4.5f) });
+            assertThat(DictionaryFilterSupport.absentAllFloat16(noNaN, values)).isTrue();
+            values[1] = 4.5f;
+            assertThat(DictionaryFilterSupport.absentAllFloat16(noNaN, values)).isFalse();
+            assertThat(DictionaryFilterSupport.absentAllFloat16(noNaN, new float[]{ Float.NaN })).isTrue();
+        }
+
+        @Test
+        void signedZeroesStayApart() {
+            // The dictionary holds -0.0 only: a +0.0 literal is absent, a -0.0 literal present.
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, new float[]{ 0.0f, 10f })).isTrue();
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, new float[]{ -0.0f, 10f })).isFalse();
+        }
+
+        @Test
+        void subnormalsAreHalvesLikeAnyOther() {
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, new float[]{ HALF_MIN_SUBNORMAL })).isFalse();
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, new float[]{ 2 * HALF_MIN_SUBNORMAL })).isTrue();
+        }
+
+        @Test
+        void aLiteralBinary16CannotRepresentMatchesNothing() {
+            // The float just above 1.0 rounds to the half 1.0, which the dictionary holds; the literal
+            // itself is no half, so it is absent rather than rounded onto a stored value.
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, new float[]{ Math.nextUp(1.0f) })).isTrue();
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, new float[]{ Math.nextUp(1.0f), 1.0f })).isFalse();
+        }
+
+        @Test
+        void entriesOfAnotherWidthAreSkipped() {
+            assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, new float[]{ 2.5f })).isTrue();
+        }
+
+        @Test
+        void agreesWithTheSingleValueCheckOnRandomLists() {
+            // Pools of halves that recur: both zeroes, NaN payloads, a subnormal and a literal no half
+            // represents, so both decisions and every carve-out come up.
+            float[] pool = { 0.0f, -0.0f, 1.0f, 1.5f, 4.5f, HALF_MIN_SUBNORMAL, Float.NaN,
+                    Float.float16ToFloat(HALF_NAN_PAYLOAD), Math.nextUp(1.0f), 65504f, -2.0f };
+            Random random = new Random(1594L);
+            int[] decisions = new int[2];
+            for (int round = 0; round < 2_000; round++) {
+                byte[][] entries = new byte[1 + random.nextInt(6)][];
+                for (int i = 0; i < entries.length; i++) {
+                    entries[i] = random.nextInt(8) == 0 ? halfBits(HALF_NAN_PAYLOAD) : half(pool[random.nextInt(pool.length)]);
+                }
+                Dictionary dictionary = byteArrayDictionary(entries);
+                float[] values = new float[1 + random.nextInt(HASHED)];
+                for (int i = 0; i < values.length; i++) {
+                    values[i] = pool[random.nextInt(pool.length)];
+                }
+                boolean expected = true;
+                for (float value : values) {
+                    expected &= DictionaryFilterSupport.valueAbsentFloat16(dictionary, value);
+                }
+                assertThat(DictionaryFilterSupport.absentAllFloat16(dictionary, values))
+                        .as("round %d: %s against %d entries", round, Arrays.toString(values), entries.length)
+                        .isEqualTo(expected);
+                decisions[expected ? 1 : 0]++;
+            }
+            assertThat(decisions[0]).as("rounds deciding present").isPositive();
+            assertThat(decisions[1]).as("rounds deciding absent").isPositive();
+        }
+
+        @Test
+        void wrongArmOrNoDictionaryProvesNothing() {
+            assertThat(DictionaryFilterSupport.absentAllFloat16(null, halves(INDEXED, 10f))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAllFloat16(new Dictionary.FloatDictionary(new float[]{ 10f }),
+                    halves(INDEXED, 10f))).isFalse();
         }
     }
 }

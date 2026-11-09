@@ -53,16 +53,11 @@ import dev.hardwood.metadata.PhysicalType;
 /// - `BITS_PASS_PER_LITERAL`: the same passes over a `DOUBLE` dictionary comparing
 ///   `Double.doubleToLongBits` of each entry with the literal's, which is equal exactly when
 ///   `Double.compare` is zero, instead of calling `Double.compare` per entry. `DOUBLE` only.
-/// - `INNER_LOOP`: one pass over the dictionary with an inner loop over the unsorted literals,
-///   the shape `absentAllFloat16` has. Every branch falls through in the all-absent case.
-/// - `MASKED_SEARCH`: a binary search over the sorted literals, padded to a power of two, that
-///   steers with an arithmetic mask instead of a branch, so its cost does not depend on C2
-///   turning a branch into a conditional move.
 /// - `HASH_SET`: an open-addressing table over the literals at a load factor of at most 1/4,
 ///   probed once per entry. The empty slot marker is a value chosen not to be a literal. The
 ///   binary table hashes an entry a word at a time and only when its length is a literal's.
 /// - `RANGE_BITMASK`: one bit per value in `[min, max]` of the literals, after a range check,
-///   when that span is below 2^24 bits; otherwise it falls back to `HASH_SET`. Only integer
+///   when that span is below 2^20 bits, the limit `RangeBitmask` applies; otherwise it falls back to `HASH_SET`. Only integer
 ///   types have a span; the `double` kernels work on the canonical `doubleToLongBits`, which
 ///   `Double.compare` orders, so the kernel is not applicable to `DOUBLE` and `BINARY16` and
 ///   its setup throws for those types.
@@ -70,13 +65,14 @@ import dev.hardwood.metadata.PhysicalType;
 /// `distribution` shapes the values: `SPARSE` draws them over the type's whole range; the
 /// `DENSE_<n>X` distributions draw dictionary and literals from the same span of `n * entries`
 /// consecutive integers, the shape of an id column, so a range check cannot reject most entries
-/// and the bitmask has to be probed. At 131072 entries the bitmask is 32 KiB, 128 KiB and 2 MiB.
+/// and the bitmask has to be probed. At 131072 entries the bitmask is 32 KiB and 128 KiB; the
+/// `DENSE_128X` span exceeds the limit, so `RANGE_BITMASK` falls back to `HASH_SET` there.
 ///
 /// `absentAll` measures a call as the evaluator makes it per row group today: build the
 /// structure over the literals, then scan. `scanOnly` measures the scan with the structure
 /// built in setup, which is what caching the structure in the resolved predicate would save.
 /// `SORTED_SEARCH` and `PRODUCTION` build inside the call, so both of their scores include it;
-/// `PASS_PER_LITERAL` and `INNER_LOOP` build nothing, so their two scores agree.
+/// `PASS_PER_LITERAL` builds nothing, so its two scores agree.
 ///
 /// Run:
 /// ```shell
@@ -104,8 +100,6 @@ public class DictionaryInListBenchmark {
         PRODUCTION,
         PASS_PER_LITERAL,
         BITS_PASS_PER_LITERAL,
-        INNER_LOOP,
-        MASKED_SEARCH,
         HASH_SET,
         RANGE_BITMASK
     }
@@ -125,8 +119,9 @@ public class DictionaryInListBenchmark {
         }
     }
 
-    /// Largest literal span the bitmask kernel builds a bitmask for, in bits: 2 MiB of bits.
-    private static final long BITMASK_SPAN_LIMIT = 1L << 24;
+    /// Largest literal span the bitmask kernel builds a bitmask for, in bits: 128 KiB of words,
+    /// `RangeBitmask.SPAN_LIMIT` in production.
+    private static final long BITMASK_SPAN_LIMIT = 1L << 20;
 
     private static final int BINARY_WIDTH = 16;
 
@@ -343,57 +338,6 @@ public class DictionaryInListBenchmark {
         return false;
     }
 
-    /// `-1` when `a < b` as signed `long`s, else `0`, without a branch (Hacker's Delight 2-12).
-    private static long lessThanMask(long a, long b) {
-        long d = a - b;
-        return (d ^ ((a ^ b) & (d ^ a))) >> 63;
-    }
-
-    /// `-1` when `a < b` as signed `int`s, else `0`.
-    private static int lessThanMask(int a, int b) {
-        int d = a - b;
-        return (d ^ ((a ^ b) & (d ^ a))) >> 31;
-    }
-
-    /// The literals sorted and padded to a power of two with copies of the largest, so a
-    /// branch-free search over them runs a fixed number of halving steps.
-    private static long[] paddedSorted(long[] values) {
-        long[] sorted = values.clone();
-        Arrays.sort(sorted);
-        int length = Math.max(1, Integer.highestOneBit(sorted.length * 2 - 1));
-        long[] padded = Arrays.copyOf(sorted, length);
-        Arrays.fill(padded, sorted.length, length, sorted[sorted.length - 1]);
-        return padded;
-    }
-
-    private static int[] paddedSorted(int[] values) {
-        int[] sorted = values.clone();
-        Arrays.sort(sorted);
-        int length = Math.max(1, Integer.highestOneBit(sorted.length * 2 - 1));
-        int[] padded = Arrays.copyOf(sorted, length);
-        Arrays.fill(padded, sorted.length, length, sorted[sorted.length - 1]);
-        return padded;
-    }
-
-    /// Whether `padded`, sorted with a power-of-two length, holds `key`: a search whose steps
-    /// move the base by `half & mask` instead of branching.
-    private static boolean containsMasked(long[] padded, long key) {
-        int base = 0;
-        for (int half = padded.length >>> 1; half > 0; half >>>= 1) {
-            // Step forward unless key < padded[base + half].
-            base += half & (int) ~lessThanMask(key, padded[base + half]);
-        }
-        return padded[base] == key;
-    }
-
-    private static boolean containsMasked(int[] padded, int key) {
-        int base = 0;
-        for (int half = padded.length >>> 1; half > 0; half >>>= 1) {
-            base += half & ~lessThanMask(key, padded[base + half]);
-        }
-        return padded[base] == key;
-    }
-
     /// Open-addressing table of `long` keys with linear probing. Slots hold `empty`, which is
     /// not a key, so a probe for `empty` itself finds it and correctly reports no key.
     private static final class LongTable {
@@ -527,41 +471,6 @@ public class DictionaryInListBenchmark {
                         return true;
                     }
                 };
-                case INNER_LOOP -> new Probe() {
-                    @Override
-                    public void build() {
-                    }
-
-                    @Override
-                    public boolean scan() {
-                        for (long entry : dict) {
-                            for (long literal : literals) {
-                                if (entry == literal) {
-                                    return false;
-                                }
-                            }
-                        }
-                        return true;
-                    }
-                };
-                case MASKED_SEARCH -> new Probe() {
-                    private long[] padded;
-
-                    @Override
-                    public void build() {
-                        padded = paddedSorted(literals);
-                    }
-
-                    @Override
-                    public boolean scan() {
-                        for (long entry : dict) {
-                            if (containsMasked(padded, entry)) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    }
-                };
                 case HASH_SET -> new Probe() {
                     private LongTable table;
 
@@ -663,41 +572,6 @@ public class DictionaryInListBenchmark {
                     public boolean scan() {
                         for (int literal : literals) {
                             if (!DictionaryFilterSupport.valueAbsent(dictionary, literal)) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    }
-                };
-                case INNER_LOOP -> new Probe() {
-                    @Override
-                    public void build() {
-                    }
-
-                    @Override
-                    public boolean scan() {
-                        for (int entry : dict) {
-                            for (int literal : literals) {
-                                if (entry == literal) {
-                                    return false;
-                                }
-                            }
-                        }
-                        return true;
-                    }
-                };
-                case MASKED_SEARCH -> new Probe() {
-                    private int[] padded;
-
-                    @Override
-                    public void build() {
-                        padded = paddedSorted(literals);
-                    }
-
-                    @Override
-                    public boolean scan() {
-                        for (int entry : dict) {
-                            if (containsMasked(padded, entry)) {
                                 return false;
                             }
                         }
@@ -818,41 +692,6 @@ public class DictionaryInListBenchmark {
                                 if (Double.doubleToLongBits(entry) == bits) {
                                     return false;
                                 }
-                            }
-                        }
-                        return true;
-                    }
-                };
-                case INNER_LOOP -> new Probe() {
-                    @Override
-                    public void build() {
-                    }
-
-                    @Override
-                    public boolean scan() {
-                        for (double entry : dict) {
-                            for (double literal : literals) {
-                                if (Double.compare(entry, literal) == 0) {
-                                    return false;
-                                }
-                            }
-                        }
-                        return true;
-                    }
-                };
-                case MASKED_SEARCH -> new Probe() {
-                    private long[] padded;
-
-                    @Override
-                    public void build() {
-                        padded = paddedSorted(literalBits);
-                    }
-
-                    @Override
-                    public boolean scan() {
-                        for (double entry : dict) {
-                            if (containsMasked(padded, Double.doubleToLongBits(entry))) {
-                                return false;
                             }
                         }
                         return true;
@@ -991,25 +830,6 @@ public class DictionaryInListBenchmark {
                         return true;
                     }
                 };
-                case INNER_LOOP -> new Probe() {
-                    @Override
-                    public void build() {
-                    }
-
-                    @Override
-                    public boolean scan() {
-                        for (int i = 0; i < size; i++) {
-                            int from = offsets[i];
-                            int to = offsets[i + 1];
-                            for (byte[] literal : literals) {
-                                if (BinaryComparator.sliceEquals(bytes, from, to, literal)) {
-                                    return false;
-                                }
-                            }
-                        }
-                        return true;
-                    }
-                };
                 case HASH_SET -> new Probe() {
                     /// Slots hold a literal index, `-1` when empty.
                     private int[] slots;
@@ -1055,7 +875,7 @@ public class DictionaryInListBenchmark {
                         return true;
                     }
                 };
-                case BITS_PASS_PER_LITERAL, MASKED_SEARCH, RANGE_BITMASK -> throw notApplicable(kernel, Type.BINARY16);
+                case BITS_PASS_PER_LITERAL, RANGE_BITMASK -> throw notApplicable(kernel, Type.BINARY16);
             };
         }
     }

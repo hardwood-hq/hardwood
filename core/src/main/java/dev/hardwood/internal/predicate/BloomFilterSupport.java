@@ -107,7 +107,7 @@ final class BloomFilterSupport {
     /// `IN`-list bloom check for `FLOAT` values. Returns `false` when any probe is NaN, for the
     /// reason the single-value `FLOAT` overload gives.
     static boolean absentAll(BloomFilter bloomFilter, float[] values) {
-        if (anyNaN(values) || bloomFilter == null) {
+        if (NaNLiterals.containsNaN(values) || bloomFilter == null) {
             return false;
         }
         for (float value : values) {
@@ -120,7 +120,7 @@ final class BloomFilterSupport {
 
     /// `IN`-list bloom check for `DOUBLE` values. See the `FLOAT` overload.
     static boolean absentAll(BloomFilter bloomFilter, double[] values) {
-        if (anyNaN(values) || bloomFilter == null) {
+        if (NaNLiterals.containsNaN(values) || bloomFilter == null) {
             return false;
         }
         for (double value : values) {
@@ -129,27 +129,5 @@ final class BloomFilterSupport {
             }
         }
         return true;
-    }
-
-    /// Whether any probe in an `IN` list is `NaN`, which makes the bloom check undecidable for the
-    /// whole list. Callers evaluating a row group check this before resolving the filter, so the
-    /// filter is not read for a list it could not decide either way.
-    static boolean anyNaN(float[] values) {
-        for (float value : values) {
-            if (Float.isNaN(value)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// See the `float[]` overload.
-    static boolean anyNaN(double[] values) {
-        for (double value : values) {
-            if (Double.isNaN(value)) {
-                return true;
-            }
-        }
-        return false;
     }
 }

@@ -247,7 +247,7 @@ final class StatisticsFilterSupport {
         // See canDropFloat: widen ±0 bounds.
         min = (min == 0.0f) ? -0.0f : min;
         max = (max == 0.0f) ? 0.0f : max;
-        if (containsNaN(values)) {
+        if (NaNLiterals.containsNaN(values)) {
             return false;
         }
         for (float value : values) {
@@ -262,7 +262,7 @@ final class StatisticsFilterSupport {
         // See canDropFloat: widen ±0 bounds.
         min = (min == 0.0) ? -0.0 : min;
         max = (max == 0.0) ? 0.0 : max;
-        if (containsNaN(values)) {
+        if (NaNLiterals.containsNaN(values)) {
             return false;
         }
         for (double value : values) {
@@ -271,25 +271,6 @@ final class StatisticsFilterSupport {
             }
         }
         return true;
-    }
-
-    /// Whether a floating-point `IN` list holds a `NaN` probe, which a `NaN` row matches.
-    static boolean containsNaN(float[] values) {
-        for (float value : values) {
-            if (Float.isNaN(value)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    static boolean containsNaN(double[] values) {
-        for (double value : values) {
-            if (Double.isNaN(value)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max, Comparator<byte[]> order) {
@@ -335,7 +316,7 @@ final class StatisticsFilterSupport {
     static boolean alwaysMatchesFloatIn(float[] values, float min, float max, boolean nanFree) {
         min = (min == 0.0f) ? -0.0f : min;
         max = (max == 0.0f) ? 0.0f : max;
-        if (Float.compare(min, max) != 0 || !(nanFree || containsNaN(values))) {
+        if (Float.compare(min, max) != 0 || !(nanFree || NaNLiterals.containsNaN(values))) {
             return false;
         }
         for (float value : values) {
@@ -349,7 +330,7 @@ final class StatisticsFilterSupport {
     static boolean alwaysMatchesDoubleIn(double[] values, double min, double max, boolean nanFree) {
         min = (min == 0.0) ? -0.0 : min;
         max = (max == 0.0) ? 0.0 : max;
-        if (Double.compare(min, max) != 0 || !(nanFree || containsNaN(values))) {
+        if (Double.compare(min, max) != 0 || !(nanFree || NaNLiterals.containsNaN(values))) {
             return false;
         }
         for (double value : values) {

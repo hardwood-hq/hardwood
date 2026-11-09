@@ -283,12 +283,14 @@ public class RowGroupFilterEvaluator {
             case ResolvedPredicate.BinaryInPredicate p -> p.byteExact()
                     && (BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
                             || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values())));
+            // A NaN literal leaves the bloom check undecided for the whole list, so the filter is
+            // not read for it.
             case ResolvedPredicate.FloatInPredicate p ->
-                    (!BloomFilterSupport.anyNaN(p.values())
+                    (!NaNLiterals.containsNaN(p.values())
                             && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
                             || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             case ResolvedPredicate.DoubleInPredicate p ->
-                    (!BloomFilterSupport.anyNaN(p.values())
+                    (!NaNLiterals.containsNaN(p.values())
                             && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
                             || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
             // As for Float16Predicate: the dictionary holds the chunk's exact halves and decides
