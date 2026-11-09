@@ -28,7 +28,6 @@ import dev.hardwood.internal.predicate.BinaryComparator;
 /// no agreement with any other hash of the same bytes.
 final class BinarySet {
 
-    private static final int MIN_SLOTS = 16;
     private static final int EMPTY = -1;
 
     private static final VarHandle LONG_LE =
@@ -46,8 +45,11 @@ final class BinarySet {
     private final long lengths;
 
     BinarySet(byte[][] keys) {
+        if (keys.length == 0) {
+            throw new IllegalArgumentException("A BinarySet needs at least one key");
+        }
         this.keys = keys;
-        int length = Math.max(MIN_SLOTS, Integer.highestOneBit(Math.multiplyExact(keys.length, 4) - 1) << 1);
+        int length = Integer.highestOneBit(Math.multiplyExact(keys.length, 4) - 1) << 1;
         slots = new int[length];
         hashes = new long[length];
         Arrays.fill(slots, EMPTY);

@@ -15,6 +15,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// [BinarySet] against `HashSet`, probing slices of a shared buffer as a dictionary's entries are.
 class BinarySetTest {
@@ -68,5 +69,12 @@ class BinarySetTest {
             bytes[i] = (byte) random.nextInt(3);
         }
         return bytes;
+    }
+
+    @Test
+    void anEmptyKeySetIsRejected() {
+        assertThatThrownBy(() -> new BinarySet(new byte[0][]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A BinarySet needs at least one key");
     }
 }

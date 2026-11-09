@@ -7,9 +7,12 @@
  */
 package dev.hardwood.internal.predicate.dictionary;
 
+import java.util.Arrays;
+
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.BinaryComparator;
+import dev.hardwood.internal.predicate.NaNLiterals;
 import dev.hardwood.internal.reader.batch.Dictionary;
 
 /// Shared utilities for evaluating equality / membership predicates against a row group's
@@ -20,8 +23,9 @@ import dev.hardwood.internal.reader.batch.Dictionary;
 /// goes the same way until a match, so the passes stay cheap. A longer list is indexed once, and
 /// the single pass over the dictionary probes the index per entry: a [RangeBitmask] where integer
 /// literals lie close together, else a [LongSet] over the values' raw bits or a [BinarySet] over
-/// byte strings. Integer literals too spread out for a bitmask stay on passes a while longer, since a
-/// pass over primitives is cheap next to a hash probe.
+/// byte strings. A `FLOAT16` list always takes a bitmask over the halves' raw bits, which span at
+/// most 2^16 values. Integer literals too spread out for a bitmask, and floating-point literals,
+/// stay on passes a while longer, since a pass over primitives is cheap next to a hash probe.
 ///
 /// Each scan is a method of its own holding one loop, so the JIT compiles every kernel's loop on
 /// its own terms rather than as one branch of a method holding three.
@@ -30,9 +34,10 @@ public final class DictionaryFilterSupport {
     /// Literal count up to which a membership check runs one pass per literal. Tuning: #1594.
     static final int PASS_LIMIT = 8;
 
-    /// Literal count up to which an integer membership check whose literals lie too far apart for
-    /// a [RangeBitmask] still runs one pass per literal. A pass over primitive integers costs far
-    /// less per entry than a hash probe, so the hash set only wins from this count. Tuning: #1594.
+    /// Literal count up to which a membership check over primitives that takes no [RangeBitmask]
+    /// still runs one pass per literal: integer literals too far apart for one, and `FLOAT` /
+    /// `DOUBLE` literals, whose passes compare raw bits. A pass over primitives costs far less per
+    /// entry than a hash probe, so the hash set only wins from this count. Tuning: #1594.
     static final int SPARSE_PASS_LIMIT = 16;
 
     private DictionaryFilterSupport() {
@@ -99,24 +104,24 @@ public final class DictionaryFilterSupport {
                 && Float.compare(LogicalTypeConverter.float16At(bytes, from), value) == 0);
     }
 
-    /// Whether every probe of a `FLOAT16` membership test is provably absent, each compared with
-    /// the halves the dictionary holds — the list form of [#valueAbsentFloat16].
+    /// Whether every probe of a `FLOAT16` membership test is provably absent, the list form of
+    /// [#valueAbsentFloat16] under the same equality.
+    ///
+    /// A half that is not `NaN` has one bit pattern, and no `NaN` shares it, so the literals are
+    /// indexed by their raw half bits in a [RangeBitmask], and each entry is probed by its two raw
+    /// bytes with no widening. A literal binary16 cannot represent matches no entry and is left out;
+    /// a `NaN` literal is decided by one scan for any `NaN` entry.
     public static boolean absentAllFloat16(Dictionary dictionary, float[] values) {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        return !dict.anyEntry((bytes, from, to) -> to - from == FixedWidths.FLOAT16
-                && containsFloat(values, LogicalTypeConverter.float16At(bytes, from)));
-    }
-
-    /// Whether `values` holds `stored`, compared with [Float#compare].
-    private static boolean containsFloat(float[] values, float stored) {
-        for (float value : values) {
-            if (Float.compare(stored, value) == 0) {
-                return true;
-            }
+        if (NaNLiterals.containsNaN(values) && !absentNaNFloat16(dict)) {
+            return false;
         }
-        return false;
+        long[] keys = halfBits(values);
+        // Half bits span at most 2^16 values, well within RangeBitmask.SPAN_LIMIT, so `of` never
+        // declines them.
+        return keys.length == 0 || absentHalfBits(dict, RangeBitmask.of(keys));
     }
 
     public static boolean valueAbsent(Dictionary dictionary, byte[] value) {
@@ -178,16 +183,16 @@ public final class DictionaryFilterSupport {
 
     /// `IN`-list dictionary check for `FLOAT` values, under the equality of the single-value check:
     /// a `NaN` literal is decided by one scan for any `NaN` entry, the other literals by their raw
-    /// bits, in passes or as a [LongSet].
+    /// bits, in passes up to [#SPARSE_PASS_LIMIT] literals or as a [LongSet].
     public static boolean absentAll(Dictionary dictionary, float[] values) {
         if (!(dictionary instanceof Dictionary.FloatDictionary dict)) {
             return false;
         }
         float[] entries = dict.values();
-        if (values.length <= PASS_LIMIT) {
+        if (values.length <= SPARSE_PASS_LIMIT) {
             return absentByPasses(entries, values);
         }
-        if (containsNaN(values) && !absentNaN(entries)) {
+        if (NaNLiterals.containsNaN(values) && !absentNaN(entries)) {
             return false;
         }
         long[] keys = rawBits(values);
@@ -200,32 +205,14 @@ public final class DictionaryFilterSupport {
             return false;
         }
         double[] entries = dict.values();
-        if (values.length <= PASS_LIMIT) {
+        if (values.length <= SPARSE_PASS_LIMIT) {
             return absentByPasses(entries, values);
         }
-        if (containsNaN(values) && !absentNaN(entries)) {
+        if (NaNLiterals.containsNaN(values) && !absentNaN(entries)) {
             return false;
         }
         long[] keys = rawBits(values);
         return keys.length == 0 || absentRawBits(entries, new LongSet(keys));
-    }
-
-    private static boolean containsNaN(float[] values) {
-        for (float value : values) {
-            if (Float.isNaN(value)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean containsNaN(double[] values) {
-        for (double value : values) {
-            if (Double.isNaN(value)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /// The raw bits of the values that are not `NaN`.
@@ -262,6 +249,25 @@ public final class DictionaryFilterSupport {
             }
         }
         return keys;
+    }
+
+    /// The raw half bits of the values that are neither `NaN` nor beyond binary16's exact values.
+    private static long[] halfBits(float[] values) {
+        long[] keys = new long[values.length];
+        int count = 0;
+        for (float value : values) {
+            short half = Float.floatToFloat16(value);
+            if (!Float.isNaN(value)
+                    && Float.floatToRawIntBits(Float.float16ToFloat(half)) == Float.floatToRawIntBits(value)) {
+                keys[count++] = Short.toUnsignedLong(half);
+            }
+        }
+        return Arrays.copyOf(keys, count);
+    }
+
+    /// The raw bits of the `FLOAT16` entry at `from`, stored little-endian.
+    private static int halfBitsAt(byte[] bytes, int from) {
+        return (bytes[from] & 0xFF) | (bytes[from + 1] & 0xFF) << 8;
     }
 
     // One pass per literal.
@@ -375,6 +381,20 @@ public final class DictionaryFilterSupport {
         return true;
     }
 
+    private static boolean absentNaNFloat16(Dictionary.ByteArrayDictionary dict) {
+        for (int c = 0; c < dict.chunkCount(); c++) {
+            byte[] bytes = dict.chunkBytes(c);
+            int[] offsets = dict.chunkOffsets(c);
+            for (int k = 0; k < offsets.length - 1; k++) {
+                // A half is NaN when its exponent bits are all set and its mantissa is not zero.
+                if (offsets[k + 1] - offsets[k] == FixedWidths.FLOAT16 && (halfBitsAt(bytes, offsets[k]) & 0x7FFF) > 0x7C00) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private static boolean absent(Dictionary.ByteArrayDictionary dict, byte[] value) {
         for (int c = 0; c < dict.chunkCount(); c++) {
             byte[] bytes = dict.chunkBytes(c);
@@ -439,6 +459,19 @@ public final class DictionaryFilterSupport {
         for (double entry : entries) {
             if (set.contains(Double.doubleToRawLongBits(entry))) {
                 return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean absentHalfBits(Dictionary.ByteArrayDictionary dict, RangeBitmask bitmask) {
+        for (int c = 0; c < dict.chunkCount(); c++) {
+            byte[] bytes = dict.chunkBytes(c);
+            int[] offsets = dict.chunkOffsets(c);
+            for (int k = 0; k < offsets.length - 1; k++) {
+                if (offsets[k + 1] - offsets[k] == FixedWidths.FLOAT16 && bitmask.contains(halfBitsAt(bytes, offsets[k]))) {
+                    return false;
+                }
             }
         }
         return true;

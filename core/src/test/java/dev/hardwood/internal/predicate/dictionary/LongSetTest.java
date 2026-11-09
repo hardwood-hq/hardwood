@@ -14,6 +14,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// [LongSet] against `HashSet`, on keys that exercise its empty-slot marker and its probe chain.
 class LongSetTest {
@@ -65,5 +66,12 @@ class LongSetTest {
         }
         assertThat(set.contains(Long.MAX_VALUE - keys.length)).isFalse();
         assertThat(set.contains(Long.MIN_VALUE)).isFalse();
+    }
+
+    @Test
+    void anEmptyKeySetIsRejected() {
+        assertThatThrownBy(() -> new LongSet(new long[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A LongSet needs at least one key");
     }
 }

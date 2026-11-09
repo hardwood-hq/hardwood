@@ -76,9 +76,9 @@ record NaNStats(long nanCount) {
                     StatisticsFilterSupport.naNRowSatisfies(p.op(), Float.isNaN(p.value()));
             case ResolvedPredicate.DoublePredicate p ->
                     StatisticsFilterSupport.naNRowSatisfies(p.op(), Double.isNaN(p.value()));
-            case ResolvedPredicate.FloatInPredicate p -> StatisticsFilterSupport.containsNaN(p.values());
-            case ResolvedPredicate.Float16InPredicate p -> StatisticsFilterSupport.containsNaN(p.values());
-            case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.containsNaN(p.values());
+            case ResolvedPredicate.FloatInPredicate p -> NaNLiterals.containsNaN(p.values());
+            case ResolvedPredicate.Float16InPredicate p -> NaNLiterals.containsNaN(p.values());
+            case ResolvedPredicate.DoubleInPredicate p -> NaNLiterals.containsNaN(p.values());
             default -> throw new IllegalArgumentException(
                     "A NaN count cannot decide a " + leaf.getClass().getSimpleName());
         };

@@ -17,18 +17,21 @@ import java.util.Arrays;
 /// marker itself finds the marker and reports no key.
 final class LongSet {
 
-    private static final int MIN_SLOTS = 16;
-
     private final long[] slots;
     private final int shift;
     private final long empty;
 
     LongSet(long[] keys) {
-        int length = Math.max(MIN_SLOTS, Integer.highestOneBit(Math.multiplyExact(keys.length, 4) - 1) << 1);
+        if (keys.length == 0) {
+            throw new IllegalArgumentException("A LongSet needs at least one key");
+        }
+        int length = Integer.highestOneBit(Math.multiplyExact(keys.length, 4) - 1) << 1;
         slots = new long[length];
         shift = Long.SIZE - Integer.numberOfTrailingZeros(length);
         empty = freeValue(keys);
-        Arrays.fill(slots, empty);
+        if (empty != 0) {
+            Arrays.fill(slots, empty);
+        }
         int mask = length - 1;
         for (long key : keys) {
             int i = (int) (mix(key) >>> shift);
