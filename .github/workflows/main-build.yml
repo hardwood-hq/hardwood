@@ -117,7 +117,7 @@ jobs:
 
       - name: 'Build the dependencies'
         id: deps
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-cli,:hardwood-parquet-java-compat -am
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-cli,:hardwood-parquet-java-compat,:hardwood-avro -am
 
       - name: 'Build and install s3, aws-auth, cli and parquet-java-compat'
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
