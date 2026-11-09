@@ -204,7 +204,8 @@ throws `IllegalArgumentException`:
 - `FileSchema.getColumn(FieldPath)` and `FileSchema.getColumn(String)`, for a path that more than
   one column has.
 
-The by-index accessors and `FileSchema.getColumn(int)` reach each of the fields.
+The by-index accessors and `FileSchema.getColumn(int)` reach each of the fields. A projection by
+such a name selects all of them ([Column projection forms](query-controls.md#column-projection-forms)).
 
 ## Null handling
 

@@ -286,6 +286,8 @@ A name is a top-level field or the full path to a nested field. A nested field i
 
 A field name may contain dots: `columns("sepal.length")` selects a top-level column named `sepal.length`, and `columns("acme.info.x.y")` selects the field `x.y` of a struct named `acme.info`. Predicates and `FileSchema.getColumn(String)` resolve names the same way. A name that is the path of two fields, such as a top-level `a.b` beside a struct `a` with a field `b`, fails with an error; `buildColumnReader(int)` and the positions of `ColumnReaders` reach each of those columns by index.
 
+Sibling fields may share a name. A projection selects every field of such a name, in schema order: over two top-level columns named `id`, `columns("id")` projects both, read with `getLong(0)` and `getLong(1)`. Accessing them by name fails with an error, and so do a predicate on that name and `buildColumnReader("id")`, which resolve to one column.
+
 ### Index order
 
 By-index accessors follow the order `columns(...)` names the columns in. The columns one name selects, such as a group's children or every column under `all()`, follow schema order among themselves. The two reader types count positions differently:

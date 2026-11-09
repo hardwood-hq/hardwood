@@ -144,11 +144,13 @@ public final class ProjectedSchema {
         List<Integer> requested = new ArrayList<>();
         for (int request = 0; request < names.size() + columns.length; request++) {
             leaves.clear();
-            int field = request < names.size()
+            int[] fields = request < names.size()
                     ? resolveColumn(schema, names.get(request), leaves)
-                    : resolveLeaf(schema, columns[request - names.size()], leaves);
-            if (requestByField[field] < 0) {
-                requestByField[field] = request;
+                    : new int[] { resolveLeaf(schema, columns[request - names.size()], leaves) };
+            for (int field : fields) {
+                if (requestByField[field] < 0) {
+                    requestByField[field] = request;
+                }
             }
             for (int leaf : leaves) {
                 if (requestByOriginal[leaf] < 0) {
@@ -281,21 +283,24 @@ public final class ProjectedSchema {
 
     /// Resolves a top-level field name or the dot-separated path to a nested field into `leaves`.
     /// A nested field is reached by its full path only, so a name matching a nested field's own
-    /// name does not select it.
+    /// name does not select it. Sibling fields may share a name, and a name then selects every
+    /// field it names, in schema order.
     ///
-    /// @return the index of the top-level field the name selects from
-    private static int resolveColumn(FileSchema schema, String name, List<Integer> leaves) {
-        SchemaPathResolver.Resolution resolution = SchemaPathResolver.resolve(schema, name);
-        if (resolution.blockedByPrimitive()) {
-            throw new IllegalArgumentException("Cannot navigate into primitive column: " + name);
-        }
-        if (resolution.node() == null) {
+    /// @return the indices of the top-level fields the name selects from
+    private static int[] resolveColumn(FileSchema schema, String name, List<Integer> leaves) {
+        List<SchemaPathResolver.Resolution> resolutions = SchemaPathResolver.resolveAll(schema, name);
+        if (resolutions.isEmpty()) {
+            if (SchemaPathResolver.resolve(schema, name).blockedByPrimitive()) {
+                throw new IllegalArgumentException("Cannot navigate into primitive column: " + name);
+            }
             throw new IllegalArgumentException("Column not found: " + name);
         }
-
-        // Collect all columns under this node
-        collectColumnsFromNode(resolution.node(), leaves);
-        return resolution.topLevelChildIndex();
+        int[] fields = new int[resolutions.size()];
+        for (int i = 0; i < fields.length; i++) {
+            collectColumnsFromNode(resolutions.get(i).node(), leaves);
+            fields[i] = resolutions.get(i).topLevelChildIndex();
+        }
+        return fields;
     }
 
     /// Adds the leaf column at `column` to `leaves`.
