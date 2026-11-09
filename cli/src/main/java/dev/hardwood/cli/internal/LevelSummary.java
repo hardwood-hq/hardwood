@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
@@ -524,60 +525,21 @@ public record LevelSummary(
     /// an out-of-bounds read rather than a silently mislabelled histogram.
     private static List<LevelNode> levelNodes(FileSchema schema, ColumnSchema column) {
         List<LevelNode> nodes = new ArrayList<>();
-        SchemaNode current = schema.getRootNode();
         StringBuilder dotted = new StringBuilder();
         String parentName = null;
-        while (current instanceof SchemaNode.GroupNode group) {
-            SchemaNode child = childHolding(group, column.columnIndex());
-            String element = child.name();
+        // By the column's index rather than its path's names: two siblings may share a name
+        for (SchemaNode node : SchemaPathResolver.nodesOnPath(schema, column.columnIndex())) {
+            String element = node.name();
             if (!dotted.isEmpty()) {
                 dotted.append('.');
             }
             dotted.append(element);
-            RepetitionType repetition = child.repetitionType();
+            RepetitionType repetition = node.repetitionType();
             if (repetition == RepetitionType.OPTIONAL || repetition == RepetitionType.REPEATED) {
                 nodes.add(new LevelNode(element, dotted.toString(), repetition, parentName));
             }
             parentName = element;
-            current = child;
-        }
-        if (((SchemaNode.PrimitiveNode) current).columnIndex() != column.columnIndex()) {
-            throw new IllegalStateException("column " + column.columnIndex() + " is not a leaf of the schema");
         }
         return nodes;
-    }
-
-    /// The child of `group` whose subtree holds the leaf column `columnIndex`. Leaves are numbered
-    /// in schema order, so it is the last child whose first leaf is not beyond `columnIndex`. The
-    /// walk follows the column's index rather than its path, since two siblings may share a name.
-    private static SchemaNode childHolding(SchemaNode.GroupNode group, int columnIndex) {
-        SchemaNode holder = null;
-        for (SchemaNode child : group.children()) {
-            int firstLeaf = firstLeaf(child);
-            if (firstLeaf > columnIndex) {
-                break;
-            }
-            if (firstLeaf >= 0) {
-                holder = child;
-            }
-        }
-        if (holder == null) {
-            throw new IllegalStateException("no child of " + group.name() + " holds column " + columnIndex);
-        }
-        return holder;
-    }
-
-    /// The index of the first leaf column under `node`, or -1 when it holds none.
-    private static int firstLeaf(SchemaNode node) {
-        if (node instanceof SchemaNode.PrimitiveNode primitive) {
-            return primitive.columnIndex();
-        }
-        for (SchemaNode child : ((SchemaNode.GroupNode) node).children()) {
-            int firstLeaf = firstLeaf(child);
-            if (firstLeaf >= 0) {
-                return firstLeaf;
-            }
-        }
-        return -1;
     }
 }

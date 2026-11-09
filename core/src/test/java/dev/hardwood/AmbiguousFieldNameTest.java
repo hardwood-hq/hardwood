@@ -19,6 +19,8 @@ import org.junit.jupiter.api.io.TempDir;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.reader.SchemaIncompatibleException;
@@ -106,6 +108,69 @@ class AmbiguousFieldNameTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column path 's.v' is ambiguous: it is the path of more than one column in the schema");
         assertThat(fields.getColumn(FieldPath.of("s", "w")).columnIndex()).isEqualTo(2);
+    }
+
+    /// `t.g.b` lies under the second `t` only, so a filter on it reaches one field, in either reader.
+    @Test
+    void filterUnderOneOfTwoSiblingsOfOneNameApplies() throws Exception {
+        assertThat(rowIds(FilterPredicate.eq("t.g.b", 5))).containsExactly(1L);
+        assertThat(columnIds(FilterPredicate.eq("t.g.b", 5))).containsExactly(1L);
+        assertThat(rowIds(FilterPredicate.isNull("t.g"))).containsExactly(2L, 3L);
+        assertThat(columnIds(FilterPredicate.isNull("t.g"))).containsExactly(2L, 3L);
+    }
+
+    /// `t.a` and `t.g.b` lie under two siblings named `t`, which a walk by name cannot tell apart.
+    @Test
+    void filterUnderTwoSiblingsOfOneNameIsRefused() throws Exception {
+        FilterPredicate both = FilterPredicate.and(FilterPredicate.eq("t.a", 1), FilterPredicate.eq("t.g.b", 5));
+        String message = "Cannot filter on columns 't.a' and 't.g.b': they lie under two sibling fields named 't'";
+
+        assertThatThrownBy(() -> rowIds(both))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+        assertThatThrownBy(() -> columnIds(both))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+    }
+
+    private static List<Long> rowIds(FilterPredicate filter) throws Exception {
+        List<Long> ids = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TOP_LEVEL_STRUCTS));
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                ids.add(rows.getLong("id"));
+            }
+        }
+        return ids;
+    }
+
+    private static List<Long> columnIds(FilterPredicate filter) throws Exception {
+        List<Long> ids = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TOP_LEVEL_STRUCTS));
+             ColumnReader column = reader.buildColumnReader("id").filter(filter).build()) {
+            while (column.nextBatch()) {
+                long[] values = column.getLongs();
+                for (int i = 0; i < column.getRecordCount(); i++) {
+                    ids.add(values[i]);
+                }
+            }
+        }
+        return ids;
+    }
+
+    @Test
+    void filterOnAnotherTopLevelColumnApplies() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TOP_LEVEL_STRUCTS));
+             RowReader rows = reader.buildRowReader().filter(FilterPredicate.eq("id", 2L)).build()) {
+            List<Long> ids = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                ids.add(rows.getLong("id"));
+            }
+
+            assertThat(ids).containsExactly(2L);
+        }
     }
 
     /// Each file of a multi-file read is matched to the first by path; the `k`-th column of a

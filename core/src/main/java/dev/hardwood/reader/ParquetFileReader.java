@@ -536,7 +536,9 @@ public class ParquetFileReader implements Closeable {
             return null;
         }
         try {
-            return FilterPredicateResolver.resolve(filter, schema);
+            ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+            FilterPredicateResolver.requireDistinctlyNamedPaths(resolved, schema);
+            return resolved;
         }
         catch (SchemaIncompatibleException e) {
             throw ExceptionContext.addFileContext(inputFiles.get(0).name(), e);

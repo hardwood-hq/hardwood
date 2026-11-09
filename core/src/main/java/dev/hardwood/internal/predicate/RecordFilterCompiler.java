@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.function.IntUnaryOperator;
 
 import dev.hardwood.internal.reader.row.InPlaceBinaryAccessor;
+import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
@@ -725,24 +726,16 @@ public final class RecordFilterCompiler {
     /// about a required field below it, which is null only by way of the walk to it failing.
     private static NullFieldTarget nullFieldTarget(FileSchema schema, int columnIndex, int definitionLevel) {
         List<String> elements = schema.getColumn(columnIndex).fieldPath().elements();
-
-        SchemaNode current = schema.getRootNode();
+        // By the column's index rather than its path's names: two siblings may share a name
+        List<SchemaNode> nodes = SchemaPathResolver.nodesOnPath(schema, columnIndex);
         int targetIndex = -1;
 
-        for (int i = 0; i < elements.size() && targetIndex < 0; i++) {
-            if (!(current instanceof SchemaNode.GroupNode group)) {
-                break;
-            }
-
-            current = child(group, elements.get(i));
-            if (current == null) {
-                break;
-            }
-
-            if (current.maxDefinitionLevel() == definitionLevel) {
+        for (int i = 0; i < nodes.size() && targetIndex < 0; i++) {
+            int level = nodes.get(i).maxDefinitionLevel();
+            if (level == definitionLevel) {
                 targetIndex = i;
             }
-            else if (current.maxDefinitionLevel() > definitionLevel) {
+            else if (level > definitionLevel) {
                 break;
             }
         }
@@ -762,16 +755,6 @@ public final class RecordFilterCompiler {
         return new NullFieldTarget(path, elements.get(targetIndex));
     }
 
-    private static SchemaNode child(SchemaNode.GroupNode group, String name) {
-        for (SchemaNode child : group.children()) {
-            if (child.name().equals(name)) {
-                return child;
-            }
-        }
-
-        return null;
-    }
-
     /// Walks the row through the captured intermediate struct path.
     /// Returns null if any intermediate struct is null. For top-level
     /// columns `path` is empty and the row itself is returned.
@@ -787,6 +770,7 @@ public final class RecordFilterCompiler {
         return current;
     }
 
+    /// The names a matcher walks to reach the column's leaf by name, its own name excluded.
     static String[] pathSegments(FileSchema schema, int columnIndex) {
         List<String> elements = schema.getColumn(columnIndex).fieldPath().elements();
         if (elements.size() <= 1) {
