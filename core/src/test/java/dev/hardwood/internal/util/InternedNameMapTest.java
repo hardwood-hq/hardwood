@@ -102,22 +102,22 @@ class InternedNameMapTest {
     }
 
     @Test
-    void mapsANameGivenTwiceToItsLastIndex() {
+    void marksANameGivenTwiceAmbiguous() {
         InternedNameMap map = new InternedNameMap("id", "name", new String("id".toCharArray()));
 
-        assertThat(map.get("id")).isEqualTo(2);
-        assertThat(map.get(new String("id".toCharArray()))).isEqualTo(2);
+        assertThat(map.get("id")).isEqualTo(InternedNameMap.AMBIGUOUS);
+        assertThat(map.get(new String("id".toCharArray()))).isEqualTo(InternedNameMap.AMBIGUOUS);
         assertThat(map.get("name")).isEqualTo(1);
     }
 
     @Test
-    void mapsANameGivenTwiceToItsLastIndexBesideTwoNamesOfOneHashCode() {
-        // "Aa" and "BB" force the probing table, which keeps a repeated name's last index as well.
+    void marksANameGivenTwiceAmbiguousBesideTwoNamesOfOneHashCode() {
+        // "Aa" and "BB" force the probing table, which marks a repeated name ambiguous as well.
         // Each repeat is an instance of its own, as the names decoded from a footer are.
         InternedNameMap map = new InternedNameMap("Aa", new String("id".toCharArray()), "BB",
                 new String("id".toCharArray()), new String("id".toCharArray()));
 
-        assertThat(map.get("id")).isEqualTo(4);
+        assertThat(map.get("id")).isEqualTo(InternedNameMap.AMBIGUOUS);
         assertThat(map.get("Aa")).isEqualTo(0);
         assertThat(map.get("BB")).isEqualTo(2);
     }

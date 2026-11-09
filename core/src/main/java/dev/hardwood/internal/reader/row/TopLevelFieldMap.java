@@ -90,7 +90,7 @@ final class TopLevelFieldMap {
                 if (idx >= 0) {
                     return children[idx];
                 }
-                if (idx == StringToIntMap.AMBIGUOUS) {
+                if (idx == InternedNameMap.AMBIGUOUS) {
                     throw new IllegalArgumentException(StringToIntMap.ambiguousFieldMessage(name));
                 }
                 return null;
@@ -138,7 +138,7 @@ final class TopLevelFieldMap {
     FieldDesc getByName(String name) {
         int idx = nameToIndex.get(name);
         if (idx < 0) {
-            throw new IllegalArgumentException(idx == StringToIntMap.AMBIGUOUS
+            throw new IllegalArgumentException(idx == InternedNameMap.AMBIGUOUS
                     ? StringToIntMap.ambiguousFieldMessage(name)
                     : "Field '" + name + "' not in projection");
         }

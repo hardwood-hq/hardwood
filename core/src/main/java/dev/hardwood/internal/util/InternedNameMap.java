@@ -23,12 +23,17 @@ package dev.hardwood.internal.util;
 /// name moves on to the next free one, and a lookup probes on. Another instance than the
 /// interned one is found along the same probe sequence by equality.
 ///
-/// A name given more than once maps to its last index, so that of sibling fields of one name,
-/// which Parquet does not forbid, a lookup by name reaches the last.
+/// A name given more than once maps to [#AMBIGUOUS]: of sibling fields of one name, which
+/// Parquet does not forbid, none is reachable by that name. Both answers that are not an index
+/// are negative, so a caller tells them apart only on its miss branch.
 public final class InternedNameMap {
 
     /// What [#get] answers for a name that is not in the map.
     public static final int NOT_FOUND = -1;
+
+    /// What [#get] answers for a name given more than once, the same marker
+    /// [StringToIntMap#putOrMarkAmbiguous] leaves.
+    public static final int AMBIGUOUS = StringToIntMap.AMBIGUOUS;
 
     /// The table's size to start from, in slots a name. At this size four names in five or more
     /// already have a slot of their own.
@@ -46,7 +51,7 @@ public final class InternedNameMap {
     private final int[] values;
     private final int mask;
 
-    /// Maps each of `names` to its index in the array; a name given more than once to its last.
+    /// Maps each of `names` to its index in the array; a name given more than once to [#AMBIGUOUS].
     public InternedNameMap(String... names) {
         String[] interned = new String[names.length];
         for (int i = 0; i < names.length; i++) {
@@ -119,7 +124,7 @@ public final class InternedNameMap {
 
     /// `interned` placed in a table of `slots` slots, each name at the slot its hash selects, or
     /// `null` at the first two distinct names that select one slot. A name given more than once
-    /// maps to its last index.
+    /// maps to [#AMBIGUOUS].
     private static Table placedApart(String[] interned, int slots) {
         String[] keys = new String[slots];
         int[] values = new int[slots];
@@ -132,7 +137,7 @@ public final class InternedNameMap {
                 values[slot] = i;
             }
             else if (keys[slot] == name) {
-                values[slot] = i;
+                values[slot] = AMBIGUOUS;
             }
             else {
                 return null;
@@ -142,7 +147,7 @@ public final class InternedNameMap {
     }
 
     /// `interned` placed in a table of `slots` slots, a name whose slot is taken moving on to the
-    /// next free one. A name given more than once maps to its last index.
+    /// next free one. A name given more than once maps to [#AMBIGUOUS].
     private static Table probed(String[] interned, int slots) {
         String[] keys = new String[slots];
         int[] values = new int[slots];
@@ -153,8 +158,8 @@ public final class InternedNameMap {
             while (keys[slot] != null && keys[slot] != name) {
                 slot = (slot + 1) & mask;
             }
+            values[slot] = keys[slot] == name ? AMBIGUOUS : i;
             keys[slot] = name;
-            values[slot] = i;
         }
         return new Table(keys, values);
     }
