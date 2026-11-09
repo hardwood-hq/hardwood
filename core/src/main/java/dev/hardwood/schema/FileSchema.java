@@ -123,21 +123,33 @@ public class FileSchema {
 
     /// Returns the column with the given field path.
     ///
+    /// Sibling fields may share a name, so two columns may share a path; use
+    /// [#getColumn(int)] for such a column.
+    ///
     /// @param fieldPath path from schema root to leaf column
-    /// @throws IllegalArgumentException if no column with the given path exists
+    /// @throws IllegalArgumentException if no column with the given path exists, or more than one
+    ///         column has it
     public ColumnSchema getColumn(FieldPath fieldPath) {
         int index = columnPathToIndex.get(fieldPath.toString());
         if (index >= 0 && columns.get(index).fieldPath().equals(fieldPath)) {
             return columns.get(index);
         }
+        ColumnSchema match = null;
         if (index == AMBIGUOUS_PATH) {
             for (ColumnSchema column : columns) {
                 if (column.fieldPath().equals(fieldPath)) {
-                    return column;
+                    if (match != null) {
+                        throw new IllegalArgumentException("Column path '" + fieldPath
+                                + "' is ambiguous: it is the path of more than one column in the schema");
+                    }
+                    match = column;
                 }
             }
         }
-        throw new IllegalArgumentException("Column not found: " + fieldPath);
+        if (match == null) {
+            throw new IllegalArgumentException("Column not found: " + fieldPath);
+        }
+        return match;
     }
 
     /// Returns the total number of leaf columns in this schema.
@@ -151,13 +163,25 @@ public class FileSchema {
     }
 
     /// Finds a top-level field by name in the schema tree.
+    ///
+    /// Sibling fields may share a name; use [#getRootNode()] and its children for such a field.
+    ///
+    /// @throws IllegalArgumentException if no top-level field has the name, or more than one has it
     public SchemaNode getField(String name) {
+        SchemaNode match = null;
         for (SchemaNode child : rootNode.children()) {
             if (child.name().equals(name)) {
-                return child;
+                if (match != null) {
+                    throw new IllegalArgumentException("Field name '" + name
+                            + "' is ambiguous: more than one top-level field has it");
+                }
+                match = child;
             }
         }
-        throw new IllegalArgumentException("Field not found: " + name);
+        if (match == null) {
+            throw new IllegalArgumentException("Field not found: " + name);
+        }
+        return match;
     }
 
     /// Returns true if this schema supports direct columnar access.

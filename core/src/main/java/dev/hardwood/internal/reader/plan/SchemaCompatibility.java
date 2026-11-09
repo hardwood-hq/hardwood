@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader.plan;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
@@ -19,6 +20,7 @@ import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
@@ -41,10 +43,28 @@ final class SchemaCompatibility {
     /// pruning still indexes into each file's metadata for it. Exactly the set that
     /// is validated per file and that [FileColumnOrdinals] resolves an ordinal for.
     private final BitSet touchedColumns;
+    /// Reference schema leaf ordinals whose path another leaf shares, which sibling fields of one
+    /// name give rise to; such a column is matched in each file by its position among the path's.
+    private final BitSet sharedPaths;
 
     SchemaCompatibility(FileSchema referenceSchema, ProjectedSchema projected, ResolvedPredicate filter) {
         this.referenceSchema = referenceSchema;
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
+        this.sharedPaths = sharedPaths(referenceSchema);
+    }
+
+    private static BitSet sharedPaths(FileSchema schema) {
+        StringToIntMap byPath = new StringToIntMap(schema.getColumnCount());
+        for (ColumnSchema column : schema.getColumns()) {
+            byPath.putOrMarkAmbiguous(column.fieldPath().toString(), column.columnIndex());
+        }
+        BitSet shared = new BitSet(schema.getColumnCount());
+        for (ColumnSchema column : schema.getColumns()) {
+            if (byPath.get(column.fieldPath().toString()) == StringToIntMap.AMBIGUOUS) {
+                shared.set(column.columnIndex());
+            }
+        }
+        return shared;
     }
 
     /// Validates the reference schema's own statement of the columns this read touches,
@@ -106,6 +126,40 @@ final class SchemaCompatibility {
         return fileOrdinals;
     }
 
+    /// The counterpart of `refColumn` in `fileSchema` when sibling fields of one name give its path
+    /// to several columns: the `k`-th column of the path in the reference schema matches the `k`-th
+    /// in the file. `null` when the file holds no column at the path.
+    ///
+    /// @throws SchemaIncompatibleException if the file holds another number of columns at the path
+    private ColumnSchema counterpartOfShared(InputFile inputFile, FileSchema fileSchema, ColumnSchema refColumn) {
+        FieldPath path = refColumn.fieldPath();
+        int rank = -1;
+        int referenceCount = 0;
+        for (ColumnSchema column : referenceSchema.getColumns()) {
+            if (column.fieldPath().equals(path)) {
+                if (column.columnIndex() == refColumn.columnIndex()) {
+                    rank = referenceCount;
+                }
+                referenceCount++;
+            }
+        }
+        List<ColumnSchema> matches = new ArrayList<>();
+        for (ColumnSchema candidate : fileSchema.getColumns()) {
+            if (candidate.fieldPath().equals(path)) {
+                matches.add(candidate);
+            }
+        }
+        if (matches.isEmpty()) {
+            return null;
+        }
+        if (matches.size() != referenceCount) {
+            throw new SchemaIncompatibleException(ExceptionContext.filePrefix(inputFile.name())
+                    + "Columns at path '" + path + "': " + referenceCount + " in the first file, " + matches.size()
+                    + " in this file");
+        }
+        return matches.get(rank);
+    }
+
     /// Validates one reference column against its counterpart in `fileSchema`,
     /// resolved by field path.
     ///
@@ -113,11 +167,18 @@ final class SchemaCompatibility {
     private int validateColumn(InputFile inputFile, FileSchema fileSchema, int originalIndex) {
         ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
 
+        // A path unique in the reference schema but shared in the file reaches the count check
+        // through getColumn throwing for it
         ColumnSchema fileColumn;
         try {
-            fileColumn = fileSchema.getColumn(refColumn.fieldPath());
+            fileColumn = sharedPaths.get(originalIndex)
+                    ? counterpartOfShared(inputFile, fileSchema, refColumn)
+                    : fileSchema.getColumn(refColumn.fieldPath());
         }
         catch (IllegalArgumentException e) {
+            fileColumn = counterpartOfShared(inputFile, fileSchema, refColumn);
+        }
+        if (fileColumn == null) {
             throw new SchemaIncompatibleException(
                     ExceptionContext.filePrefix(inputFile.name())
                             + "Column '" + refColumn.fieldPath() + "' not found");

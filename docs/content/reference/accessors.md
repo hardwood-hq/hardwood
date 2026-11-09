@@ -193,6 +193,19 @@ whatever its column holds and the refusal comes on the first present value. `PqL
 and `ColumnReader.getStrings()` ask about the column once for a whole run of values, and refuse
 one that does not hold text whatever its values are.
 
+## Fields that share a name
+
+Parquet allows sibling fields to share a name. Such a name is ambiguous, and every lookup by it
+throws `IllegalArgumentException`:
+
+- the by-name accessors of `RowReader` and `PqStruct`, for a name that more than one of the row's or
+  the struct's fields has;
+- `FileSchema.getField(name)`, for a name that more than one top-level field has;
+- `FileSchema.getColumn(FieldPath)` and `FileSchema.getColumn(String)`, for a path that more than
+  one column has.
+
+The by-index accessors and `FileSchema.getColumn(int)` reach each of the fields.
+
 ## Null handling
 
 Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw

@@ -46,7 +46,9 @@ Cross-file prefetching is automatic: when pages from file N are running low, pag
 
 The schema of the first file is the reference schema. Each later file a data reader reaches is
 validated against it for that reader's projection and filter; inspecting a file's metadata does not
-validate it. Columns are matched by field path, in any order. Every projected or filtered column
+validate it. Columns are matched by field path, in any order. Where sibling fields share a name,
+several columns share a path: the n-th of them in the first file matches the n-th in a later file,
+and a later file holding another number of them fails the read. Every projected or filtered column
 must exist with a matching physical type, logical type, repetition type, and fixed byte length, and
 its enclosing groups must match in nullability and repeatedness, otherwise a
 `SchemaIncompatibleException` is thrown. The check runs as the read reaches a file, so a mismatch

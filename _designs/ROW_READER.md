@@ -41,7 +41,7 @@ Tests: `NestedSchemaTest`, `PqRowApiTest`, `BatchMatcherRowReaderTest`, `FlatStr
 
 ## Accessor addressing
 
-Every accessor exists by name and by index (`StructAccessor`). Both resolve against the payload projection only, so a column the filter added is not reachable at any depth; the prefix invariant that makes this hold is in [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection).
+Every accessor exists by name and by index (`StructAccessor`). Parquet allows sibling fields to share a name; each name map marks a name it receives twice as ambiguous (`StringToIntMap.putOrMarkAmbiguous`), and a by-name accessor throws `IllegalArgumentException` for it, while the index accessors reach each field. The check sits on the lookup's miss branch, so a unique name costs nothing extra. Both resolve against the payload projection only, so a column the filter added is not reachable at any depth; the prefix invariant that makes this hold is in [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection).
 
 ### Index space
 
