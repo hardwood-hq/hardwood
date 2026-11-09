@@ -23,7 +23,7 @@ see [Predicate Pushdown, Projection, Limits, and Splits](../how-to/query-control
 | Null operators | `isNull`, `isNotNull` (any type) |
 | Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column, by row-group bounding-box overlap (see [Geospatial](../how-to/geospatial.md#spatial-filter-pushdown)) |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions, and throw `IllegalArgumentException` when given none) |
-| Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected |
+| Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected, and so is a name that is the path of more than one field. A filter that tests columns under two sibling fields of one name throws `IllegalArgumentException` when the reader is built |
 
 All predicates, including those wrapped in `not`, are pushed down for row-group and page
 skipping. Filters work with all reader types — `RowReader`, `ColumnReader`,

@@ -228,16 +228,11 @@ public final class PredicateView implements InPlaceBinaryAccessor {
         int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
         List<SchemaNode> children = schema.getRootNode().children();
 
-        for (int col = 0; col < columnCount; col++) {
-            if (schema.getColumn(col).fieldPath().elements().size() != 1) {
-                continue;
-            }
-            String topLevelName = schema.getColumn(col).fieldPath().topLevelName();
-            for (int i = 0; i < projectedFieldIndices.length; i++) {
-                if (children.get(projectedFieldIndices[i]).name().equals(topLevelName)) {
-                    lookup[col] = i;
-                    break;
-                }
+        // A top-level primitive is its own column; matched by its column index, so that two
+        // top-level fields of one name each map to their own position
+        for (int i = 0; i < projectedFieldIndices.length; i++) {
+            if (children.get(projectedFieldIndices[i]) instanceof SchemaNode.PrimitiveNode primitive) {
+                lookup[primitive.columnIndex()] = i;
             }
         }
         return lookup;

@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.schema;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -27,6 +29,54 @@ import dev.hardwood.schema.SchemaNode;
 public final class SchemaPathResolver {
 
     private SchemaPathResolver() {
+    }
+
+    /// The nodes from the root's child down to the leaf of the column at `columnIndex`, in
+    /// root-to-leaf order. The walk follows the column's index rather than its path's names, since
+    /// two siblings may share a name: leaves are numbered in schema order, so at each level the
+    /// column sits under the last child whose first leaf is not beyond it.
+    ///
+    /// @throws IndexOutOfBoundsException if `columnIndex` is not a column of `schema`
+    public static List<SchemaNode> nodesOnPath(FileSchema schema, int columnIndex) {
+        Objects.checkIndex(columnIndex, schema.getColumnCount());
+        List<SchemaNode> nodes = new ArrayList<>();
+        SchemaNode current = schema.getRootNode();
+        while (current instanceof SchemaNode.GroupNode group) {
+            current = childHolding(group, columnIndex);
+            nodes.add(current);
+        }
+        return nodes;
+    }
+
+    private static SchemaNode childHolding(SchemaNode.GroupNode group, int columnIndex) {
+        SchemaNode holder = null;
+        for (SchemaNode child : group.children()) {
+            int firstLeaf = firstLeaf(child);
+            if (firstLeaf > columnIndex) {
+                break;
+            }
+            if (firstLeaf >= 0) {
+                holder = child;
+            }
+        }
+        if (holder == null) {
+            throw new IllegalStateException("No child of " + group.name() + " holds column " + columnIndex);
+        }
+        return holder;
+    }
+
+    /// The index of the first leaf column under `node`, or -1 when it holds none.
+    private static int firstLeaf(SchemaNode node) {
+        if (node instanceof SchemaNode.PrimitiveNode primitive) {
+            return primitive.columnIndex();
+        }
+        for (SchemaNode child : ((SchemaNode.GroupNode) node).children()) {
+            int firstLeaf = firstLeaf(child);
+            if (firstLeaf >= 0) {
+                return firstLeaf;
+            }
+        }
+        return -1;
     }
 
     /// The outcome of walking a dot-separated path over a schema tree.

@@ -18,8 +18,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.BitSet;
+import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
 import dev.hardwood.internal.conversion.FixedWidths;
@@ -104,6 +108,32 @@ public class FilterPredicateResolver {
     @FunctionalInterface
     private interface CarriedLeaf {
         ResolvedPredicate of(FilterPredicate.Operator op, BigInteger value);
+    }
+
+    /// Refuses a filter that tests columns under two sibling fields of one name. A matcher walks a
+    /// row to a nested column by name, and the walk could not tell the two fields apart; checked
+    /// once for the whole tree, so every reader refuses the same filters.
+    ///
+    /// @throws IllegalArgumentException if two of the filter's columns lie under two sibling fields
+    ///         of one name
+    public static void requireDistinctlyNamedPaths(ResolvedPredicate resolved, FileSchema schema) {
+        BitSet columns = new BitSet(schema.getColumnCount());
+        ResolvedPredicate.collectColumnIndices(resolved, columns);
+        // Per parent node: the child each name reached, and the column that reached it
+        Map<SchemaNode, Map<String, Integer>> reached = new IdentityHashMap<>();
+        for (int column = columns.nextSetBit(0); column >= 0; column = columns.nextSetBit(column + 1)) {
+            SchemaNode parent = schema.getRootNode();
+            for (SchemaNode node : SchemaPathResolver.nodesOnPath(schema, column)) {
+                Map<String, Integer> byName = reached.computeIfAbsent(parent, p -> new HashMap<>());
+                Integer other = byName.putIfAbsent(node.name(), column);
+                if (other != null && !SchemaPathResolver.nodesOnPath(schema, other).contains(node)) {
+                    throw new IllegalArgumentException("Cannot filter on columns '"
+                            + schema.getColumn(other).fieldPath() + "' and '" + schema.getColumn(column).fieldPath()
+                            + "': they lie under two sibling fields named '" + node.name() + "'");
+                }
+                parent = node;
+            }
+        }
     }
 
     /// Resolves a [FilterPredicate] tree into a [ResolvedPredicate] tree.
