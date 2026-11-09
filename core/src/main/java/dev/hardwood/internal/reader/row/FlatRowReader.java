@@ -242,7 +242,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         for (int field = 0; field < fieldCount; field++) {
             SchemaNode node = rootChildren.get(fieldIndices[field]);
             fieldNames[field] = node.name();
-            nameToIndex.put(node.name(), field);
+            nameToIndex.putOrMarkAmbiguous(node.name(), field);
             if (node instanceof SchemaNode.PrimitiveNode primitive) {
                 ColumnSchema col = fileSchema.getColumn(primitive.columnIndex());
                 fieldOfColumn[payload.toProjectedIndex(primitive.columnIndex())] = field;
@@ -1288,7 +1288,9 @@ public final class FlatRowReader implements FileAwareRowReader {
     private int resolveIndex(String name) {
         int index = nameToIndex.get(name);
         if (index < 0) {
-            throw new IllegalArgumentException(prefix() + "Field '" + name + "' not in projection");
+            throw new IllegalArgumentException(prefix() + (index == StringToIntMap.AMBIGUOUS
+                    ? StringToIntMap.ambiguousFieldMessage(name)
+                    : "Field '" + name + "' not in projection"));
         }
         return index;
     }

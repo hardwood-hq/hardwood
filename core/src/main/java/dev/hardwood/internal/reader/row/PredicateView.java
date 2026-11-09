@@ -131,7 +131,7 @@ public final class PredicateView implements InPlaceBinaryAccessor {
             // A flat column below a struct is reached by index only; under its leaf name it would
             // shadow a top-level column of the same name.
             if (schema.getColumn(columnIndex).fieldPath().elements().size() == 1) {
-                flatSlotByName.put(schema.getColumn(columnIndex).name(), slot);
+                flatSlotByName.putOrMarkAmbiguous(schema.getColumn(columnIndex).name(), slot);
             }
             indexByColumn[columnIndex] = slot;
         }
@@ -287,8 +287,20 @@ public final class PredicateView implements InPlaceBinaryAccessor {
 
     /// The flat slot `name` is held in, or `-1`. A view whose predicate columns are all nested,
     /// which is every view the nested row reader builds, answers without a lookup.
+    ///
+    /// @throws IllegalArgumentException if more than one flat column has the name
     private int flatSlot(String name) {
-        return flatProjected.length == 0 ? -1 : flatSlotByName.get(name);
+        if (flatProjected.length == 0) {
+            return -1;
+        }
+        int slot = flatSlotByName.get(name);
+        if (slot >= 0) {
+            return slot;
+        }
+        if (slot == StringToIntMap.AMBIGUOUS) {
+            throw new IllegalArgumentException(StringToIntMap.ambiguousFieldMessage(name));
+        }
+        return -1;
     }
 
     private boolean flatNull(int slot) {

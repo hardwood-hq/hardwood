@@ -58,7 +58,7 @@ Data arrives as `ColumnBatch` objects, an aligned slice carrying one typed array
 
 | Rule | Failure |
 |---|---|
-| A column is addressed by leaf-column index or by name / dotted path | unknown name: `IllegalArgumentException`; index outside `[0, columnCount)`: `IndexOutOfBoundsException` |
+| A column is addressed by leaf-column index or by name / dotted path | unknown name, or a name or path more than one field has: `IllegalArgumentException`; index outside `[0, columnCount)`: `IndexOutOfBoundsException` |
 | The setter fits the column's physical type | `IllegalArgumentException` naming both types |
 | Each column, struct, list or map is set at most once, by either index or name | `IllegalArgumentException` |
 | Every leaf column is set | `IllegalArgumentException` at submit (`completedSources`) |

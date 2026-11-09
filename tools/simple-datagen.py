@@ -7688,3 +7688,31 @@ pq.write_table(
 print("\nGenerated duplicate_struct_field_names.parquet:")
 print("  - a required struct 's' of a required INT32 'v' (3, 4), an optional STRING 'v' ('a', null)")
 print("    and a required DATE 'w' (2024-01-02, 2024-03-04)")
+
+# Two top-level columns of one name, read by the flat row reader.
+pq.write_table(
+    pa.Table.from_arrays([pa.array([1, 2], pa.int64()), pa.array([10, 20], pa.int64())],
+                         schema=pa.schema([pa.field('id', pa.int64(), False),
+                                           pa.field('id', pa.int64(), False)])),
+    'core/src/test/resources/duplicate_top_level_columns.parquet',
+)
+print("\nGenerated duplicate_top_level_columns.parquet:")
+print("  - two required INT64 columns both named 'id': 1, 2 and 10, 20")
+
+# Two top-level structs of one name, the second holding a nested struct 'g': the path 't.g.b'
+# names one column, but a walk to it by name passes the ambiguous 't'.
+_t_first = pa.struct([pa.field('a', pa.int32(), False)])
+_t_second = pa.struct([pa.field('g', pa.struct([pa.field('b', pa.int32(), True)]), True)])
+pq.write_table(
+    pa.Table.from_arrays(
+        [pa.array([1, 2, 3], pa.int64()),
+         pa.array([{'a': 1}, {'a': 2}, None], _t_first),
+         pa.array([{'g': {'b': 5}}, {'g': None}, None], _t_second)],
+        schema=pa.schema([pa.field('id', pa.int64(), False),
+                          pa.field('t', _t_first, True),
+                          pa.field('t', _t_second, True)])),
+    'core/src/test/resources/duplicate_top_level_structs.parquet',
+)
+print("\nGenerated duplicate_top_level_structs.parquet:")
+print("  - INT64 'id' (1, 2, 3), struct 't' {a} ({1}, {2}, null) and struct 't' {g {b}}")
+print("    ({g: {b: 5}}, {g: null}, null)")

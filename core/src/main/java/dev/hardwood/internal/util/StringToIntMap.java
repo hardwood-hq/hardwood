@@ -15,6 +15,9 @@ public final class StringToIntMap {
 
     private static final int EMPTY = -1;
 
+    /// The value [#putOrMarkAmbiguous] leaves for a key put more than once.
+    public static final int AMBIGUOUS = -2;
+
     private final String[] keys;
     private final int[] values;
     private final int mask;
@@ -61,6 +64,17 @@ public final class StringToIntMap {
         }
 
         return EMPTY;
+    }
+
+    /// Puts `key` with `value`, or marks it [#AMBIGUOUS] when the map already holds it: two fields
+    /// of one name, which Parquet allows, leave neither reachable by that name.
+    public void putOrMarkAmbiguous(String key, int value) {
+        put(key, containsKey(key) ? AMBIGUOUS : value);
+    }
+
+    /// The message of the exception a by-name accessor throws for a name [#AMBIGUOUS] in its map.
+    public static String ambiguousFieldMessage(String name) {
+        return "Field name '" + name + "' is ambiguous: more than one field has it; access the field by index";
     }
 
     /// Check if the map contains the given key.

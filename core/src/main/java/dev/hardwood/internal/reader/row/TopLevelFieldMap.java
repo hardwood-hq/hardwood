@@ -81,9 +81,18 @@ final class TopLevelFieldMap {
                 return schema;
             }
 
+            /// The child named `name`, or `null` when the struct has none.
+            ///
+            /// @throws IllegalArgumentException if more than one child has the name
             FieldDesc getChild(String name) {
                 int idx = nameToIndex.get(name);
-                return idx >= 0 ? children[idx] : null;
+                if (idx >= 0) {
+                    return children[idx];
+                }
+                if (idx == StringToIntMap.AMBIGUOUS) {
+                    throw new IllegalArgumentException(StringToIntMap.ambiguousFieldMessage(name));
+                }
+                return null;
             }
 
             FieldDesc getChild(int ordinal) {
@@ -128,7 +137,9 @@ final class TopLevelFieldMap {
     FieldDesc getByName(String name) {
         int idx = nameToIndex.get(name);
         if (idx < 0) {
-            throw new IllegalArgumentException("Field '" + name + "' not in projection");
+            throw new IllegalArgumentException(idx == StringToIntMap.AMBIGUOUS
+                    ? StringToIntMap.ambiguousFieldMessage(name)
+                    : "Field '" + name + "' not in projection");
         }
         return byIndex[idx];
     }
@@ -157,7 +168,7 @@ final class TopLevelFieldMap {
             FieldDesc desc = topLevelNode.repetitionType() == RepetitionType.REPEATED
                     ? buildBareRepeatedListDesc(topLevelNode, schema, projectedSchema)
                     : buildDesc(topLevelNode, schema, projectedSchema);
-            nameToIndex.put(topLevelNode.name(), i);
+            nameToIndex.putOrMarkAmbiguous(topLevelNode.name(), i);
             byIndex[i] = desc;
             byOriginalIndex[projFieldIdx] = desc;
         }
@@ -207,7 +218,7 @@ final class TopLevelFieldMap {
             children[idx] = child.repetitionType() == RepetitionType.REPEATED
                     ? buildBareRepeatedListDesc(child, schema, projectedSchema)
                     : buildDescForChild(child, schema, projectedSchema);
-            nameToIndex.put(child.name(), idx);
+            nameToIndex.putOrMarkAmbiguous(child.name(), idx);
         }
         // The first primitive child in schema order, independent of the request order
         int firstPrimitiveCol = -1;
