@@ -199,7 +199,9 @@ class S3CredentialResolutionCommandIT {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).isEqualTo(
-                "Unable to determine AWS region. Set AWS_REGION or configure a default region in ~/.aws/config.");
+                "Unable to determine AWS region. Set AWS_REGION, or region for profile 'default' in "
+                        + System.getProperty("aws.configFile")
+                        + ". For an S3-compatible service, set AWS_ENDPOINT_URL or endpoint_url in that profile instead.");
     }
 
     @Test

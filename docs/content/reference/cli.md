@@ -470,18 +470,40 @@ hardwood print -n 10 -f s3://my-bucket/data.parquet
 
 The CLI resolves credentials through the AWS SDK's default credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, profile files, container and instance metadata), which decides the order in which those sources are tried. SSO and web-identity profiles are not supported. See [Read from S3](../how-to/s3.md#credentials) for the credential options available to the library.
 
-When no credential source is configured, the CLI sends unsigned requests, which read buckets that allow public access. A source counts as configured when any of these is set: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_PROFILE`, or credentials in the `default` profile of `~/.aws/credentials` or `~/.aws/config`. Credentials from instance metadata are used when present; outside EC2, `AWS_EC2_METADATA_DISABLED=true` skips the instance metadata lookup. A configured source that yields no credentials makes the command fail with an error.
+When no credential source is configured, the CLI sends unsigned requests, which read buckets that allow public access. A source counts as configured when any of these is set: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_PROFILE` or the `aws.profile` system property, or credentials in the `default` profile of the config or credentials file (located as described below for the region). Credentials from instance metadata are used when present; outside EC2, `AWS_EC2_METADATA_DISABLED=true` skips the instance metadata lookup. A configured source that yields no credentials makes the command fail with an error.
 
 ```shell
 AWS_REGION=us-west-2 hardwood info -f s3://public-bucket/data.parquet
 ```
 
-The CLI additionally reads these environment variables:
+The region is the first of these that is set: the `aws.region` system property, `AWS_REGION`, `AWS_DEFAULT_REGION`, and the `region` of the selected profile. Instance metadata is not queried for it. The profile is the one named by `aws.profile`, else `AWS_PROFILE`, else `default`. Profiles are read from `~/.aws/config` and `~/.aws/credentials`, or from the files that `aws.configFile` / `AWS_CONFIG_FILE` and `aws.sharedCredentialsFile` / `AWS_SHARED_CREDENTIALS_FILE` name; each system property takes precedence over its environment variable. Where both files set a property of the profile, the credentials file's value is used.
+
+The endpoint is the first of these that is set:
+
+1. the `aws.endpointUrlS3` system property
+2. the `aws.endpointUrl` system property
+3. `AWS_ENDPOINT_URL_S3`
+4. `AWS_ENDPOINT_URL`
+5. `endpoint_url` under `s3` in the `[services <name>]` section that the selected profile names with `services = <name>`
+6. `endpoint_url` under `s3` in the selected profile
+7. `endpoint_url` in the selected profile
+
+None of these is used when `ignore_configured_endpoint_urls` is `true`. That setting is the first of the `aws.ignoreConfiguredEndpointUrls` system property, `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` and `ignore_configured_endpoint_urls` in the selected profile, and must be `true` or `false`.
+
+The endpoint must be an `http` or `https` URL with a valid host name. With an endpoint and no region, requests are signed for the region `auto`; with neither, the command fails.
+
+```ini
+[profile r2]
+region = auto
+endpoint_url = https://<account-id>.r2.cloudflarestorage.com
+```
+
+For region, endpoint and `ignore_configured_endpoint_urls`, a blank value counts as unset. A profile file that cannot be parsed makes the command fail with the parse error when the region or the endpoint is looked up in it.
+
+The CLI additionally reads this environment variable:
 
 | Environment Variable | Description |
 |----------------------|-------------|
-| `AWS_REGION` | AWS region (also read from `~/.aws/config` if not set) |
-| `AWS_ENDPOINT_URL` | Custom endpoint for S3-compatible services (MinIO, LocalStack, R2, etc.) |
 | `AWS_PATH_STYLE` | Set to `true` to use path-style access (required by some S3-compatible services) |
 
 ### TLS certificates
