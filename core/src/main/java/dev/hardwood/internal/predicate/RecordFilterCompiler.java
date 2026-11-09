@@ -772,7 +772,8 @@ public final class RecordFilterCompiler {
 
     /// The names a matcher walks to reach the column's leaf by name, its own name excluded. They are
     /// the schema's own names, which the schema holds interned, so a matcher resolving them per row
-    /// finds each in a row's accessors by one reference comparison.
+    /// finds each in a row's accessors by reference wherever the accessor's `InternedNameMap` gives
+    /// it a slot of its own.
     static String[] pathSegments(FileSchema schema, int columnIndex) {
         List<String> elements = schema.getColumn(columnIndex).fieldPath().elements();
         if (elements.size() <= 1) {

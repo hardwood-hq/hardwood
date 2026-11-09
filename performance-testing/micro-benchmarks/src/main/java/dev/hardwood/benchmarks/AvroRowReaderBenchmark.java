@@ -38,7 +38,8 @@ import dev.hardwood.reader.ParquetFileReader;
 ///
 /// Every invocation opens the file again and reads with a schema built from that footer. The
 /// schema holds its names interned, so the names the binding passes are the instances the
-/// reader's name maps hold, and each lookup is one reference comparison.
+/// reader's name maps hold, and a lookup is one reference comparison wherever the map gives
+/// the name a slot of its own.
 ///
 /// - `overture-maps-data/overture_places.zstd.parquet`: Overture Maps places, nested structs,
 ///   lists and maps.

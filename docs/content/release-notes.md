@@ -37,6 +37,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - A multi-file read holds the footers of the files it is reading rather than of every file it has read ([#1662](https://github.com/hardwood-hq/hardwood/issues/1662))
 - `AbstractOutputFile` is a base for implementing `OutputFile` that enforces its lifecycle; the bundled outputs extend it ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 - A row reader projecting structs that hold no list, map or variant reads them without decoding nested records, as it reads top-level columns ([#475](https://github.com/hardwood-hq/hardwood/issues/475))
+- Row readers resolve most field names passed as string literals, or taken from the file's schema, by comparing references rather than characters ([#681](https://github.com/hardwood-hq/hardwood/issues/681))
 
 **Bug fixes:**
 
