@@ -20,6 +20,7 @@ import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -87,6 +88,50 @@ class AmbiguousFieldNameTest {
             assertThatThrownBy(() -> s.getInt("v"))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Field name 'v' is ambiguous: more than one field has it; access the field by index");
+        }
+    }
+
+    /// A projection selects a set of fields, not one of them: a name more than one field has
+    /// selects all of them, in schema order, each reachable by index.
+    @Test
+    void projectionOfTheNameSelectsEveryField() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TOP_LEVEL_COLUMNS));
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).build()) {
+            rows.next();
+
+            assertThat(rows.getFieldCount()).isEqualTo(2);
+            assertThat(rows.getLong(0)).isEqualTo(1L);
+            assertThat(rows.getLong(1)).isEqualTo(10L);
+        }
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(STRUCT_FIELDS));
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("s.v")).build()) {
+            rows.next();
+            PqStruct s = rows.getStruct(0);
+
+            assertThat(s.getFieldCount()).isEqualTo(2);
+            assertThat(s.getInt(0)).isEqualTo(3);
+            assertThat(s.getString(1)).isEqualTo("a");
+        }
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TOP_LEVEL_COLUMNS));
+             ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id"))) {
+            columns.nextBatch();
+
+            assertThat(columns.getColumnCount()).isEqualTo(2);
+            assertThat(columns.getColumnReader(0).getLongs()[0]).isEqualTo(1L);
+            assertThat(columns.getColumnReader(1).getLongs()[0]).isEqualTo(10L);
+            assertThatThrownBy(() -> columns.getColumnReader("id"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Column name 'id' is ambiguous: it is the dot-separated path of more than one requested column");
+        }
+    }
+
+    /// A single column reader names one column, so the name stays ambiguous for it.
+    @Test
+    void columnReaderRefusesTheName() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TOP_LEVEL_COLUMNS))) {
+            assertThatThrownBy(() -> reader.buildColumnReader("id").build().close())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Column name 'id' is ambiguous: it is the dot-separated path of more than one field in the schema");
         }
     }
 
