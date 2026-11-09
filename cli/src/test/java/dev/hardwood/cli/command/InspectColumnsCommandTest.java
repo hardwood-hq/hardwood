@@ -190,6 +190,33 @@ class InspectColumnsCommandTest implements InspectColumnsCommandContract {
         return Cli.file("/dive_screenshots_fixture.parquet");
     }
 
+    /// Two sibling columns share the path `s.v`, an INT32 and a STRING: each is a row of its own.
+    @Test
+    void siblingColumnsOfOnePathRankAsSeparateRows() {
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", Cli.file("/duplicate_struct_field_names.parquet"));
+
+        assertThat(result.exitCode()).isZero();
+        List<String> rows = new ArrayList<>();
+        for (String line : result.output().lines().toList()) {
+            String[] cells = line.split("\\|");
+            if (cells.length > 3 && cells[1].trim().matches("\\d+")) {
+                rows.add(cells[2].trim() + " " + cells[3].trim());
+            }
+        }
+        assertThat(rows).containsExactlyInAnyOrder("s.v INT32", "s.v BYTE_ARRAY", "s.w INT32");
+    }
+
+    /// A chunk that names another column than the schema leaf at its index cannot be summed under
+    /// either, and the ranked table reports it.
+    @Test
+    void aChunkListedUnderAnotherColumnIsReported() {
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", Cli.file("/compat_chunk_path_swapped.parquet"));
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).isEqualTo("Error reading file: [compat_chunk_path_swapped.parquet] "
+                + "Row group 0 lists column 'b' where the schema declares 'a'");
+    }
+
     /// One cell of the ranked table, found by header name rather than by
     /// position: asserting on the whole output would pass on the border dashes
     /// alone, and a fixed index breaks every time a column is inserted.
