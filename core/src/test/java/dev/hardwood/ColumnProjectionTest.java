@@ -205,7 +205,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getLong("value"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("[plain_uncompressed.parquet] Column not in projection: value");
+                    .hasMessage("[plain_uncompressed.parquet] Field 'value' not in projection");
         }
     }
 
@@ -333,7 +333,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("id"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("[nested_struct_test.parquet] Column not in projection: id");
+                    .hasMessage("[nested_struct_test.parquet] Field 'id' not in projection");
         }
     }
 
@@ -694,7 +694,7 @@ public class ColumnProjectionTest {
             assertThat(rows.hasNext()).isFalse();
             assertThatThrownBy(() -> rows.getString("nums"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("[batch_array_identity_test.parquet] Column not in projection: nums");
+                    .hasMessage("[batch_array_identity_test.parquet] Field 'nums' not in projection");
         }
     }
 
@@ -718,7 +718,7 @@ public class ColumnProjectionTest {
             assertThat(rows.getString(0)).isEqualTo("delta");
             assertThatThrownBy(() -> rows.getInt("ints"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("[batch_array_identity_test.parquet] Column not in projection: ints");
+                    .hasMessage("[batch_array_identity_test.parquet] Field 'ints' not in projection");
             assertThatThrownBy(() -> rows.getInt(1))
                     .isInstanceOf(IndexOutOfBoundsException.class);
             assertThat(rows.hasNext()).isFalse();
@@ -782,7 +782,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("customer_id"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("[deep_nested_struct_test.parquet] Column not in projection: customer_id");
+                    .hasMessage("[deep_nested_struct_test.parquet] Field 'customer_id' not in projection");
         }
     }
 

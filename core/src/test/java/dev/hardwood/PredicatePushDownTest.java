@@ -231,14 +231,14 @@ class PredicatePushDownTest {
                 // or by index. See `_designs/RECORD_FILTERING.md`.
                 assertThatThrownBy(() -> rows.getLong("id"))
                         .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage("[filter_pushdown_int.parquet] Column not in projection: id");
+                        .hasMessage("[filter_pushdown_int.parquet] Field 'id' not in projection");
                 // The JVM's own bounds check raises it; its message is dropped once the
                 // throw site is compiled, so only the type is pinned.
                 assertThatThrownBy(() -> rows.getLong(1))
                         .isInstanceOf(IndexOutOfBoundsException.class);
                 assertThatThrownBy(() -> rows.getLong("value"))
                         .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage("[filter_pushdown_int.parquet] Column not in projection: value");
+                        .hasMessage("[filter_pushdown_int.parquet] Field 'value' not in projection");
             }
         }
     }
