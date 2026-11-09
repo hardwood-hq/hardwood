@@ -10,9 +10,7 @@ package dev.hardwood.cli.command;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -36,6 +34,7 @@ import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
@@ -291,10 +290,15 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
 
     private static List<ColumnSize> aggregateSizes(FileMetaData metadata, FileSchema schema,
                                                    InputFile inputFile) throws IOException {
-        Map<String, ColumnSize> byColumn = new LinkedHashMap<>();
+        // Keyed by column index, the chunk's position in its row group: two sibling columns may
+        // share a path
+        ColumnSize[] byColumn = new ColumnSize[schema.getColumnCount()];
 
         for (int rg = 0; rg < metadata.rowGroups().size(); rg++) {
-            for (ColumnChunk cc : metadata.rowGroups().get(rg).columns()) {
+            List<ColumnChunk> chunks = metadata.rowGroups().get(rg).columns();
+            for (int column = 0; column < chunks.size(); column++) {
+                ColumnChunk cc = chunks.get(column);
+                ColumnSchema columnSchema = columnOf(schema, chunks, column, rg, inputFile);
                 ColumnMetaData cmd = cc.metaData();
                 String path = Sizes.columnPath(cmd);
                 int pageCount = countPages(cc, inputFile, rg);
@@ -302,17 +306,17 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                 // dictionary's denominator. A column is reported as a whole
                 // only if every one of its chunks yields a figure: a partial
                 // sum reads as a real total and understates it.
-                LevelSummary summary = LevelSummary.of(schema, schema.getColumn(cmd.pathInSchema()), cmd);
+                LevelSummary summary = LevelSummary.of(schema, columnSchema, cmd);
                 long unencoded = summary.hasUnencoded() ? summary.unencodedBytes() : -1;
                 long entries = dictionaryEntries(cc, inputFile, rg);
                 long denominator = dictionaryDenominator(summary, cmd);
-                ColumnSize existing = byColumn.get(path);
+                ColumnSize existing = byColumn[column];
                 if (existing == null) {
-                    byColumn.put(path, new ColumnSize(path, cmd.type().name(), cmd.codec().name(),
+                    byColumn[column] = new ColumnSize(path, cmd.type().name(), cmd.codec().name(),
                             cmd.totalCompressedSize(), cmd.totalUncompressedSize(), pageCount, pageCount >= 0,
                             Math.max(unencoded, 0), unencoded >= 0,
                             new TreeSet<>(Encodings.dataPages(cmd)),
-                            Math.max(entries, 0), entries >= 0, denominator));
+                            Math.max(entries, 0), entries >= 0, denominator);
                 }
                 else {
                     int combinedPages = (existing.pageCountAvailable() && pageCount >= 0)
@@ -323,7 +327,7 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                     // the file stores it, and this is the table a reader scans
                     // to decide which column to look at more closely.
                     existing.encodings().addAll(Encodings.dataPages(cmd));
-                    byColumn.put(path, new ColumnSize(path, existing.type(), existing.codec(),
+                    byColumn[column] = new ColumnSize(path, existing.type(), existing.codec(),
                             existing.compressed() + cmd.totalCompressedSize(),
                             existing.uncompressed() + cmd.totalUncompressedSize(),
                             combinedPages,
@@ -338,12 +342,42 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                             // row group like a large one.
                             existing.dictionaryEntries() + Math.max(entries, 0),
                             existing.dictionaryEntriesAvailable() && entries >= 0,
-                            existing.dictionaryDenominator() + denominator));
+                            existing.dictionaryDenominator() + denominator);
                 }
             }
         }
 
-        return new ArrayList<>(byColumn.values());
+        // A file of no row groups has no chunk to report
+        List<ColumnSize> sizes = new ArrayList<>(byColumn.length);
+        for (ColumnSize size : byColumn) {
+            if (size != null) {
+                sizes.add(size);
+            }
+        }
+        return sizes;
+    }
+
+    /// The schema column the chunk at `index` of a row group holds. The footer lists a row
+    /// group's chunks in the order of the schema's leaves; a row group whose chunk count or chunk
+    /// path disagrees with that has metadata no column can be summed from, and is reported rather
+    /// than counted under another column. A chunk that omits its path leaves nothing to compare.
+    ///
+    /// @throws ParquetReadException if the row group's chunks do not line up with the schema
+    private static ColumnSchema columnOf(FileSchema schema, List<ColumnChunk> chunks, int index, int rowGroup,
+                                         InputFile inputFile) {
+        if (chunks.size() != schema.getColumnCount()) {
+            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
+                    + "Row group " + rowGroup + " lists " + chunks.size() + " column chunks, but the schema declares "
+                    + schema.getColumnCount() + " columns");
+        }
+        ColumnSchema column = schema.getColumn(index);
+        FieldPath chunkPath = chunks.get(index).metaData().pathInSchema();
+        if (!chunkPath.isEmpty() && !chunkPath.equals(column.fieldPath())) {
+            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
+                    + "Row group " + rowGroup + " lists column '" + chunkPath + "' where the schema declares '"
+                    + column.fieldPath() + "'");
+        }
+        return column;
     }
 
     /// What the dictionary could hold an entry for. Nulls never reach a
