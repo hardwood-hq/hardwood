@@ -7668,3 +7668,23 @@ pq.write_table(
 )
 print("\nGenerated empty_row_group.parquet:")
 print("  - one required INT64 column 'id', one row group of 0 rows")
+
+# ===== A struct whose sibling fields share a name =====
+# Parquet does not forbid two siblings of one name, and PyArrow writes them. The two `v` fields
+# differ in type and repetition, so a reader that resolves either by name shows the other's
+# value, type or levels; `w` sits behind them so a projection of it alone moves it to field 0.
+_dup_mixed = pa.struct([pa.field('v', pa.int32(), False),
+                        pa.field('v', pa.string(), True),
+                        pa.field('w', pa.date32(), False)])
+pq.write_table(
+    pa.Table.from_arrays(
+        [pa.StructArray.from_arrays([pa.array([3, 4], pa.int32()),
+                                     pa.array(['a', None], pa.string()),
+                                     pa.array([date(2024, 1, 2), date(2024, 3, 4)], pa.date32())],
+                                    fields=list(_dup_mixed))],
+        schema=pa.schema([pa.field('s', _dup_mixed, False)])),
+    'core/src/test/resources/duplicate_struct_field_names.parquet',
+)
+print("\nGenerated duplicate_struct_field_names.parquet:")
+print("  - a required struct 's' of a required INT32 'v' (3, 4), an optional STRING 'v' ('a', null)")
+print("    and a required DATE 'w' (2024-01-02, 2024-03-04)")

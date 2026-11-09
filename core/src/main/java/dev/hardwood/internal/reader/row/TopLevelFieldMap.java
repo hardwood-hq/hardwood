@@ -23,17 +23,20 @@ final class TopLevelFieldMap {
 
     sealed interface FieldDesc {
 
+        /// The schema node of the field this descriptor reads.
+        SchemaNode field();
+
         default String name() {
-            return switch (this) {
-                case Primitive p -> p.schema().name();
-                case Struct s -> s.schema().name();
-                case ListOf l -> l.schema().name();
-                case MapOf m -> m.schema().name();
-                case Variant v -> v.schema().name();
-            };
+            return field().name();
         }
 
-        record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
+        record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {
+
+            @Override
+            public SchemaNode field() {
+                return schema;
+            }
+        }
 
         /// Variant logical-type group. Holds the `metadata` column index plus
         /// a [ShredLevel] tree describing the shape of `value` / `typed_value`
@@ -49,6 +52,11 @@ final class TopLevelFieldMap {
         record Variant(SchemaNode.GroupNode schema,
                        int metadataCol, int nullDefLevel,
                        ShredLevel root) implements FieldDesc {
+
+            @Override
+            public SchemaNode field() {
+                return schema;
+            }
 
             /// Shorthand for the top-level `value` column index.
             int valueCol() {
@@ -68,6 +76,11 @@ final class TopLevelFieldMap {
                       int firstPrimitiveCol,
                       int firstLeafProjCol) implements FieldDesc {
 
+            @Override
+            public SchemaNode field() {
+                return schema;
+            }
+
             FieldDesc getChild(String name) {
                 int idx = nameToIndex.get(name);
                 return idx >= 0 ? children[idx] : null;
@@ -78,10 +91,12 @@ final class TopLevelFieldMap {
             }
         }
 
+        /// @param field            the field the list reads: `schema` itself, or the bare
+        ///                         `REPEATED` field that `schema` synthetically wraps
         /// @param nullDefLevel     def level below which the list itself is null
         /// @param elementDefLevel  def level at or above which an actual element exists
         /// @param elementDesc      pre-built descriptor for struct/list/map elements, null for primitives
-        record ListOf(SchemaNode.GroupNode schema, SchemaNode elementSchema,
+        record ListOf(SchemaNode field, SchemaNode.GroupNode schema, SchemaNode elementSchema,
                       int firstLeafProjCol, int leafColCount,
                       int nullDefLevel, int elementDefLevel,
                       FieldDesc elementDesc) implements FieldDesc {}
@@ -91,7 +106,13 @@ final class TopLevelFieldMap {
         /// @param valueDesc      pre-built descriptor for struct/list/map values, null for primitives
         record MapOf(SchemaNode.GroupNode schema, int keyProjCol, int valueProjCol,
                      int nullDefLevel, int entryDefLevel,
-                     FieldDesc valueDesc) implements FieldDesc {}
+                     FieldDesc valueDesc) implements FieldDesc {
+
+            @Override
+            public SchemaNode field() {
+                return schema;
+            }
+        }
     }
 
     private final StringToIntMap nameToIndex;
@@ -237,7 +258,7 @@ final class TopLevelFieldMap {
             elementDesc = buildDescForChild(elementSchema, schema, projectedSchema);
         }
 
-        return new FieldDesc.ListOf(listGroup, elementSchema, firstProjCol, leafCount,
+        return new FieldDesc.ListOf(listGroup, listGroup, elementSchema, firstProjCol, leafCount,
                 nullDefLevel, elementDefLevel, elementDesc);
     }
 
@@ -287,7 +308,7 @@ final class TopLevelFieldMap {
                     : buildStructDesc(group, schema, projectedSchema);
         }
 
-        return new FieldDesc.ListOf(listGroup, node, firstProjCol, leafCount,
+        return new FieldDesc.ListOf(node, listGroup, node, firstProjCol, leafCount,
                 nullDefLevel, elementDefLevel, elementDesc);
     }
 

@@ -101,6 +101,28 @@ class ConvertCommandTest implements ConvertCommandContract {
                 ]""");
     }
 
+    /// A struct whose sibling fields `v` share a name, an INT32 and a STRING: each converts with its
+    /// own value and type, in CSV and in JSON.
+    @Test
+    void convertsSiblingStructFieldsOfOneNameByPosition() {
+        String file = Cli.file("/duplicate_struct_field_names.parquet");
+
+        Cli.Result csv = Cli.launch("convert", "-f", file, "--format", "csv");
+        Cli.Result json = Cli.launch("convert", "-f", file, "--format", "json");
+
+        assertThat(csv.exitCode()).isZero();
+        assertThat(csv.output()).isEqualTo("""
+                s.v,s.v,s.w
+                3,a,2024-01-02
+                4,,2024-03-04""");
+        assertThat(json.exitCode()).isZero();
+        assertThat(json.output()).isEqualTo("""
+                [
+                  {"s":{"v": 3, "v": "a", "w": "2024-01-02"}},
+                  {"s":{"v": 4, "v": null, "w": "2024-03-04"}}
+                ]""");
+    }
+
     @Test
     void jsonRendersUnsignedIntegersAsNumbers() {
         Cli.Result result = Cli.launch("convert", "-f", Cli.file("/unsigned_int_test.parquet"),

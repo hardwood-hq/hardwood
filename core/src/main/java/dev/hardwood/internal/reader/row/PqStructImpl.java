@@ -25,6 +25,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
+import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqStruct] that navigates directly over column arrays.
 ///
@@ -34,7 +35,7 @@ import dev.hardwood.row.PqVariant;
 ///       Used for top-level structs.</li>
 /// - **Position mode**: uses a fixed value index directly.
 ///       Used for struct elements within lists/maps.</li>
-final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor {
+final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchemaAccessor {
 
     private final NestedBatchIndex batch;
     private final TopLevelFieldMap.FieldDesc.Struct desc;
@@ -345,6 +346,11 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor {
     @Override
     public String getFieldName(int index) {
         return childAt(index).name();
+    }
+
+    @Override
+    public SchemaNode getFieldSchema(int fieldIndex) {
+        return childAt(fieldIndex).field();
     }
 
     /// Resolves a field index against the struct's projected children.
