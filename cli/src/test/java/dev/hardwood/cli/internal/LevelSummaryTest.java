@@ -223,6 +223,18 @@ class LevelSummaryTest {
                 .containsExactly("bbox null", "xmin null", "xmin present");
     }
 
+    /// Two sibling columns share the path `s.v`: the first is required, the second optional.
+    /// Each is labelled from its own node, so only the second has a null bucket.
+    @Test
+    void siblingColumnsOfOneNameAreLabelledFromTheirOwnNodes() throws Exception {
+        FileSchema schema = fixtureSchema("/duplicate_struct_field_names.parquet");
+
+        assertThat(LevelSummary.definitionLabels(schema, schema.getColumn(0)))
+                .containsExactly("v present");
+        assertThat(LevelSummary.definitionLabels(schema, schema.getColumn(1)))
+                .containsExactly("v null", "v present");
+    }
+
     /// A repeated field with no LIST annotation has no wrapper group, so the
     /// empty-collection bucket has no enclosing field to borrow a name from
     /// and falls back to the repeated node's own.

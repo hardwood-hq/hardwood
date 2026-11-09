@@ -18,6 +18,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 **Breaking Changes:**
 
 - The native CLI is no longer published for macOS on Intel; on those machines the CLI runs from the Docker image ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
+- `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()`; `buffer().remaining()` gives the file's length ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 
 **Deprecations:**
 
@@ -34,12 +35,15 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - A multi-file read of files not in memory, such as files on S3, opens several files ahead, fetching their footers and first data while it reads earlier files ([#1665](https://github.com/hardwood-hq/hardwood/issues/1665))
 - An S3 object of up to 256 KiB is read in the one request that opens it, and the footer and page index of a larger file come with that request ([#1399](https://github.com/hardwood-hq/hardwood/issues/1399))
 - A multi-file read holds the footers of the files it is reading rather than of every file it has read ([#1662](https://github.com/hardwood-hq/hardwood/issues/1662))
+- `AbstractOutputFile` is a base for implementing `OutputFile` that enforces its lifecycle; the bundled outputs extend it ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
+- A row reader projecting structs that hold no list, map or variant reads them without decoding nested records, as it reads top-level columns ([#475](https://github.com/hardwood-hq/hardwood/issues/475))
 
 **Bug fixes:**
 
 - An S3 response body that sends no bytes for `requestTimeout` fails its request, which is retried, instead of blocking the read without bound ([#1393](https://github.com/hardwood-hq/hardwood/issues/1393))
 - An S3 read fails with `ParquetReadException` when the object was replaced since the file was opened, and opening an S3 file fails when the endpoint ignores the `Range` header of an object larger than the open-time tail ([#1686](https://github.com/hardwood-hq/hardwood/issues/1686))
 - An S3 range read whose connection fails midway re-requests only the bytes not yet received, within the retry budget ([#1666](https://github.com/hardwood-hq/hardwood/issues/1666))
+- Creating a writer on an `OutputFile` another writer has used fails, instead of a local `OutputFile` publishing over the first writer's file ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 
 ## 1.1.0.Beta3 (2026-10-21)
 

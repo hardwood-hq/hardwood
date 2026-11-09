@@ -8,7 +8,7 @@
 
 # The addon is baked into the image rather than bind-mounted: mitmproxy reloads a script when its
 # file changes, and the claude container can write to the repository.
-FROM mitmproxy/mitmproxy:12.2.3@sha256:00b77b5d8804c8ad18cb6caefbf9d5849e895e8986c5ce011f4ae30f4385962f
+FROM mitmproxy/mitmproxy:12.3.1@sha256:2711066c855659b5af8b1dbb84494ed3eff69b42ece439c60b4fe09a2db829d4
 
 COPY github_token.py /opt/github-proxy/github_token.py
 

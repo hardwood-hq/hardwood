@@ -13,6 +13,7 @@ import java.util.Map;
 
 import dev.hardwood.Experimental;
 import dev.hardwood.Validity;
+import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.internal.writer.BinaryArrayColumnSource;
 import dev.hardwood.internal.writer.BooleanArrayColumnSource;
 import dev.hardwood.internal.writer.ColumnSource;
@@ -120,21 +121,10 @@ public final class ColumnBatch {
     /// rejecting a missing path, a leaf, a `REQUIRED` group (no null bit to set), and a
     /// `LIST`/`MAP` group (set through their own verbs).
     private SchemaNode.GroupNode resolveStruct(String structPath) {
-        SchemaNode node = schema.getRootNode();
-        for (String segment : structPath.split("\\.", -1)) {
-            if (!(node instanceof SchemaNode.GroupNode group)) {
-                throw new IllegalArgumentException("No struct at path " + structPath);
-            }
-            node = null;
-            for (SchemaNode child : group.children()) {
-                if (child.name().equals(segment)) {
-                    node = child;
-                    break;
-                }
-            }
-            if (node == null) {
-                throw new IllegalArgumentException("No struct at path " + structPath);
-            }
+        // Throws for a path that names more than one field
+        SchemaNode node = SchemaPathResolver.resolve(schema, structPath).node();
+        if (node == null) {
+            throw new IllegalArgumentException("No struct at path " + structPath);
         }
         if (!(node instanceof SchemaNode.GroupNode group) || !group.isStruct()) {
             throw new IllegalArgumentException("Path " + structPath + " does not name a struct group");
@@ -245,21 +235,10 @@ public final class ColumnBatch {
     /// group it names, rejecting a missing path, a leaf, and a group of the other kind.
     private SchemaNode.GroupNode resolveRepeated(String path, boolean expectMap) {
         String kind = expectMap ? "map" : "list";
-        SchemaNode node = schema.getRootNode();
-        for (String segment : path.split("\\.", -1)) {
-            if (!(node instanceof SchemaNode.GroupNode group)) {
-                throw new IllegalArgumentException("No " + kind + " at path " + path);
-            }
-            node = null;
-            for (SchemaNode child : group.children()) {
-                if (child.name().equals(segment)) {
-                    node = child;
-                    break;
-                }
-            }
-            if (node == null) {
-                throw new IllegalArgumentException("No " + kind + " at path " + path);
-            }
+        // Throws for a path that names more than one field
+        SchemaNode node = SchemaPathResolver.resolve(schema, path).node();
+        if (node == null) {
+            throw new IllegalArgumentException("No " + kind + " at path " + path);
         }
         if (!(node instanceof SchemaNode.GroupNode group) || (expectMap ? !group.isMap() : !group.isList())) {
             throw new IllegalArgumentException("Path " + path + " does not name a " + kind + " group");

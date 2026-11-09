@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.Arrays;
 
@@ -126,6 +127,37 @@ class ChannelOutputFileTest {
         // The channel is released: neither call has anything left to do.
         out.close();
         out.discard();
+    }
+
+    /// An output handed to a second writer: reopening it would truncate the temporary file and
+    /// publish over the file the first writer published.
+    @Test
+    void rejectsACreateAfterCloseAndKeepsThePublishedFile(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("out.bin");
+        ChannelOutputFile out = new ChannelOutputFile(file);
+        out.create();
+        out.write(ByteBuffer.wrap(filled(100, (byte) 7)));
+        out.close();
+
+        assertThatThrownBy(out::create)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Output for " + file + " cannot be created; it is closed");
+        assertThat(Files.readAllBytes(file)).isEqualTo(filled(100, (byte) 7));
+        assertThat(Files.exists(dir.resolve("out.bin.hardwood-tmp"))).isFalse();
+    }
+
+    /// A create whose channel cannot be opened leaves no output open without a channel behind.
+    @Test
+    void failedCreateEndsTheOutput(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("missing").resolve("out.bin");
+        ChannelOutputFile out = new ChannelOutputFile(file);
+
+        assertThatThrownBy(out::create)
+                .isInstanceOf(NoSuchFileException.class)
+                .hasMessage(dir.resolve("missing").resolve("out.bin.hardwood-tmp").toString());
+        assertThatThrownBy(() -> out.write(ByteBuffer.wrap(filled(1, (byte) 1))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Output for " + file + " is not open; it was discarded");
     }
 
     private static byte[] filled(int size, byte value) {

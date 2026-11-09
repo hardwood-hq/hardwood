@@ -18,8 +18,8 @@ import dev.hardwood.metadata.PhysicalType;
 /// The facts parquet-format states about each annotation, one constant per member of
 /// [LogicalType]: its `LogicalType` union field, whether it annotates a group, whether its bytes
 /// are text, the order its values sort in, the physical types and widths it is defined over, the
-/// `FIXED_LEN_BYTE_ARRAY` width a column declared without one takes, the legacy `converted_type` a writer writes beside it, and the literal a filter predicate takes on
-/// its column.
+/// `FIXED_LEN_BYTE_ARRAY` width a column declared without one takes, the legacy `converted_type` a writer writes beside it, the literal a filter predicate takes on
+/// its column, and the accessor that reads its column's values.
 ///
 /// Each fact is a constructor argument, so a member added to [LogicalType] states all of them in
 /// its constant, and [#of] is the one switch that maps a member to its constant. The facts that
@@ -35,23 +35,27 @@ public enum AnnotationKind {
             // "may only be used to annotate the BYTE_ARRAY primitive type"
             (type, typeLength, annotation) -> AnnotationPairings.byteArray(type),
             annotation -> ConvertedType.UTF8,
-            annotation -> "String"),
+            annotation -> "String",
+            annotation -> "getString"),
 
     MAP(2, Target.GROUP, Content.OTHER, ByteColumnOrder.NONE,
             (type, typeLength, annotation) -> AnnotationPairings.groupAnnotation(),
             annotation -> ConvertedType.MAP,
+            annotation -> null,
             annotation -> null),
 
     LIST(3, Target.GROUP, Content.OTHER, ByteColumnOrder.NONE,
             (type, typeLength, annotation) -> AnnotationPairings.groupAnnotation(),
             annotation -> ConvertedType.LIST,
+            annotation -> null,
             annotation -> null),
 
     ENUM(4, Target.PRIMITIVE, Content.TEXT, ByteColumnOrder.BYTES,
             // "annotates the BYTE_ARRAY primitive type"
             (type, typeLength, annotation) -> AnnotationPairings.byteArray(type),
             annotation -> ConvertedType.ENUM,
-            annotation -> "String"),
+            annotation -> "String",
+            annotation -> "getString"),
 
     /// "DECIMAL - signed comparison of the represented value", its bytes big-endian.
     DECIMAL(5, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.SIGNED_BIG_ENDIAN,
@@ -60,13 +64,15 @@ public enum AnnotationKind {
             (type, typeLength, annotation) ->
                     AnnotationPairings.decimalPairing(type, typeLength, (LogicalType.DecimalType) annotation),
             annotation -> ConvertedType.DECIMAL,
-            annotation -> "BigDecimal"),
+            annotation -> "BigDecimal",
+            annotation -> "getDecimal"),
 
     DATE(6, Target.PRIMITIVE, Content.OTHER, null,
             // "must annotate an int32 that stores the number of days from the Unix epoch"
             (type, typeLength, annotation) -> AnnotationPairings.only(type, PhysicalType.INT32),
             annotation -> ConvertedType.DATE,
-            annotation -> "LocalDate"),
+            annotation -> "LocalDate",
+            annotation -> "getDate"),
 
     TIME(7, Target.PRIMITIVE, Content.OTHER, null,
             // MILLIS "must annotate an int32"; MICROS and NANOS "must annotate an int64".
@@ -79,7 +85,8 @@ public enum AnnotationKind {
                 case MICROS -> ConvertedType.TIME_MICROS;
                 case NANOS -> null;
             },
-            annotation -> "LocalTime"),
+            annotation -> "LocalTime",
+            annotation -> "getTime"),
 
     /// "signed two's-complement comparison of the represented value", which over a
     /// `FIXED_LEN_BYTE_ARRAY(12)` is a little-endian count.
@@ -90,7 +97,8 @@ public enum AnnotationKind {
                 case MICROS -> ConvertedType.TIMESTAMP_MICROS;
                 case NANOS -> null;
             },
-            annotation -> ((LogicalType.TimestampType) annotation).isAdjustedToUTC() ? "Instant" : "LocalDateTime"),
+            annotation -> ((LogicalType.TimestampType) annotation).isAdjustedToUTC() ? "Instant" : "LocalDateTime",
+            annotation -> ((LogicalType.TimestampType) annotation).isAdjustedToUTC() ? "getTimestamp" : "getLocalTimestamp"),
 
     /// parquet.thrift reserves union field 9 for `INTERVAL` without ever defining the member
     /// struct, so the annotation is written as the legacy `converted_type` alone, and field 9 reads
@@ -100,12 +108,14 @@ public enum AnnotationKind {
             // "must annotate a FIXED_LEN_BYTE_ARRAY of length 12"
             FixedWidths.INTERVAL,
             annotation -> ConvertedType.INTERVAL,
-            annotation -> "PqInterval"),
+            annotation -> "PqInterval",
+            annotation -> "getInterval"),
 
     INT(10, Target.PRIMITIVE, Content.OTHER, null,
             (type, typeLength, annotation) ->
                     AnnotationPairings.integerPairing(type, (LogicalType.IntType) annotation),
             annotation -> intConvertedType((LogicalType.IntType) annotation),
+            annotation -> null,
             annotation -> null),
 
     /// The format's `UNKNOWN`, which names no order over a column holding only nulls.
@@ -114,18 +124,21 @@ public enum AnnotationKind {
             // contradicts it, and the schema alone cannot disprove the claim.
             (type, typeLength, annotation) -> AnnotationPairings.LEGAL,
             annotation -> null,
+            annotation -> null,
             annotation -> null),
 
     JSON(12, Target.PRIMITIVE, Content.TEXT, ByteColumnOrder.BYTES,
             // "must annotate a BYTE_ARRAY primitive type"
             (type, typeLength, annotation) -> AnnotationPairings.byteArray(type),
             annotation -> ConvertedType.JSON,
-            annotation -> "String"),
+            annotation -> "String",
+            annotation -> "getString"),
 
     BSON(13, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.BYTES,
             // "must annotate a BYTE_ARRAY primitive type"
             (type, typeLength, annotation) -> AnnotationPairings.byteArray(type),
             annotation -> ConvertedType.BSON,
+            annotation -> null,
             annotation -> null),
 
     /// Not in `ColumnOrder`'s list, so the `FIXED_LEN_BYTE_ARRAY`'s own unsigned byte order.
@@ -133,18 +146,21 @@ public enum AnnotationKind {
             // "annotates a 16-byte FIXED_LEN_BYTE_ARRAY primitive type"
             FixedWidths.UUID,
             annotation -> null,
-            annotation -> "UUID"),
+            annotation -> "UUID",
+            annotation -> "getUuid"),
 
     /// "FLOAT16 - signed comparison of the represented value", compared as the half float.
     FLOAT16(15, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.HALF_FLOAT,
             // "The primitive type is a 2-byte FIXED_LEN_BYTE_ARRAY."
             FixedWidths.FLOAT16,
             annotation -> null,
-            annotation -> "float"),
+            annotation -> "float",
+            annotation -> "getFloat"),
 
     /// "must annotate a group".
     VARIANT(16, Target.GROUP, Content.OTHER, ByteColumnOrder.NONE,
             (type, typeLength, annotation) -> AnnotationPairings.groupAnnotation(),
+            annotation -> null,
             annotation -> null,
             annotation -> null),
 
@@ -152,17 +168,20 @@ public enum AnnotationKind {
             // "Allowed for physical type: BYTE_ARRAY.", the payload being WKB.
             (type, typeLength, annotation) -> AnnotationPairings.byteArray(type),
             annotation -> null,
+            annotation -> null,
             annotation -> null),
 
     GEOGRAPHY(18, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.NONE,
             // "Allowed for physical type: BYTE_ARRAY.", the payload being WKB.
             (type, typeLength, annotation) -> AnnotationPairings.byteArray(type),
             annotation -> null,
+            annotation -> null,
             annotation -> null),
 
     /// "`FILE` annotates a group"; its children carry the statistics their own types define.
     FILE(19, Target.GROUP, Content.OTHER, ByteColumnOrder.NONE,
             (type, typeLength, annotation) -> AnnotationPairings.groupAnnotation(),
+            annotation -> null,
             annotation -> null,
             annotation -> null);
 
@@ -200,6 +219,7 @@ public enum AnnotationKind {
     private final PairingRule pairing;
     private final Function<LogicalType, ConvertedType> convertedType;
     private final Function<LogicalType, String> literal;
+    private final Function<LogicalType, String> accessor;
 
     /// @param unionField the `LogicalType` union field id, [#NO_UNION_FIELD] where it has none
     /// @param target what the annotation is defined over
@@ -211,11 +231,13 @@ public enum AnnotationKind {
     /// @param convertedType the legacy annotation written beside it, `null` where none is
     /// @param literal the Java type of its column's logical accessor, as a refusal names it,
     ///        `null` where only the physical accessor reads the column
+    /// @param accessor the name of the accessor that reads its column's values as that type,
+    ///        `null` where only the physical accessor reads the column
     AnnotationKind(int unionField, Target target, Content content, ByteColumnOrder byteOrder,
             PairingRule pairing, Function<LogicalType, ConvertedType> convertedType,
-            Function<LogicalType, String> literal) {
+            Function<LogicalType, String> literal, Function<LogicalType, String> accessor) {
         this(unionField, target, content, byteOrder, annotation -> NO_IMPLIED_WIDTH, pairing, convertedType,
-                literal);
+                literal, accessor);
     }
 
     /// An annotation parquet-format defines over a `FIXED_LEN_BYTE_ARRAY` of `pinnedWidth` bytes
@@ -225,17 +247,18 @@ public enum AnnotationKind {
     /// @param pinnedWidth the one `FIXED_LEN_BYTE_ARRAY` width the annotation is defined over
     AnnotationKind(int unionField, Target target, Content content, ByteColumnOrder byteOrder,
             int pinnedWidth, Function<LogicalType, ConvertedType> convertedType,
-            Function<LogicalType, String> literal) {
+            Function<LogicalType, String> literal, Function<LogicalType, String> accessor) {
         this(unionField, target, content, byteOrder, annotation -> pinnedWidth,
                 (type, typeLength, annotation) -> AnnotationPairings.fixedWidth(type, typeLength, pinnedWidth),
-                convertedType, literal);
+                convertedType, literal, accessor);
     }
 
     /// @param impliedWidth the `FIXED_LEN_BYTE_ARRAY` width a column declared without one takes,
     ///        [#NO_IMPLIED_WIDTH] where the annotation implies none; [#pairing] must call it legal
     AnnotationKind(int unionField, Target target, Content content, ByteColumnOrder byteOrder,
             ToIntFunction<LogicalType> impliedWidth, PairingRule pairing,
-            Function<LogicalType, ConvertedType> convertedType, Function<LogicalType, String> literal) {
+            Function<LogicalType, ConvertedType> convertedType, Function<LogicalType, String> literal,
+            Function<LogicalType, String> accessor) {
         this.unionField = unionField;
         this.target = target;
         this.content = content;
@@ -244,6 +267,7 @@ public enum AnnotationKind {
         this.pairing = pairing;
         this.convertedType = convertedType;
         this.literal = literal;
+        this.accessor = accessor;
     }
 
     /// The constant of `annotation`'s member.
@@ -387,6 +411,15 @@ public enum AnnotationKind {
     /// @throws IllegalArgumentException if `annotation` is not of this kind
     public String literal(LogicalType annotation) {
         return literal.apply(requireOwn(annotation));
+    }
+
+    /// The name of the accessor that reads the values of a column carrying `annotation`, of this
+    /// kind, as the Java type [#literal] names; `null` where only the physical accessor reads the
+    /// column.
+    ///
+    /// @throws IllegalArgumentException if `annotation` is not of this kind
+    public String accessor(LogicalType annotation) {
+        return accessor.apply(requireOwn(annotation));
     }
 
     /// `annotation`, checked to be of this kind, so that a fact of one kind is never read off

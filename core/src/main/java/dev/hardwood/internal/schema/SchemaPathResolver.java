@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.schema;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -21,12 +23,61 @@ import dev.hardwood.schema.SchemaNode;
 /// A field name may itself contain dots, as in a flat column named `sepal.length`, so a dot in
 /// the path does not necessarily separate two levels. The walk follows every field whose name
 /// matches the path up to a dot or its end. Should two fields' paths join to the same name, the
-/// name is ambiguous and resolving it fails.
+/// name is ambiguous and resolving it fails. Sibling fields may also share a name, giving several
+/// nodes one identical path: [#resolve] fails for such a path, and [#resolveAll] returns them all.
 ///
 /// Path segments are compared in place, so no array is materialized for the path.
 public final class SchemaPathResolver {
 
     private SchemaPathResolver() {
+    }
+
+    /// The nodes from the root's child down to the leaf of the column at `columnIndex`, in
+    /// root-to-leaf order. The walk follows the column's index rather than its path's names, since
+    /// two siblings may share a name: leaves are numbered in schema order, so at each level the
+    /// column sits under the last child whose first leaf is not beyond it.
+    ///
+    /// @throws IndexOutOfBoundsException if `columnIndex` is not a column of `schema`
+    public static List<SchemaNode> nodesOnPath(FileSchema schema, int columnIndex) {
+        Objects.checkIndex(columnIndex, schema.getColumnCount());
+        List<SchemaNode> nodes = new ArrayList<>();
+        SchemaNode current = schema.getRootNode();
+        while (current instanceof SchemaNode.GroupNode group) {
+            current = childHolding(group, columnIndex);
+            nodes.add(current);
+        }
+        return nodes;
+    }
+
+    private static SchemaNode childHolding(SchemaNode.GroupNode group, int columnIndex) {
+        SchemaNode holder = null;
+        for (SchemaNode child : group.children()) {
+            int firstLeaf = firstLeaf(child);
+            if (firstLeaf > columnIndex) {
+                break;
+            }
+            if (firstLeaf >= 0) {
+                holder = child;
+            }
+        }
+        if (holder == null) {
+            throw new IllegalStateException("No child of " + group.name() + " holds column " + columnIndex);
+        }
+        return holder;
+    }
+
+    /// The index of the first leaf column under `node`, or -1 when it holds none.
+    private static int firstLeaf(SchemaNode node) {
+        if (node instanceof SchemaNode.PrimitiveNode primitive) {
+            return primitive.columnIndex();
+        }
+        for (SchemaNode child : ((SchemaNode.GroupNode) node).children()) {
+            int firstLeaf = firstLeaf(child);
+            if (firstLeaf >= 0) {
+                return firstLeaf;
+            }
+        }
+        return -1;
     }
 
     /// The outcome of walking a dot-separated path over a schema tree.
@@ -55,18 +106,45 @@ public final class SchemaPathResolver {
     /// @throws IllegalArgumentException if `path` names more than one node
     public static Resolution resolve(SchemaNode.GroupNode root, String path) {
         Walk walk = new Walk(path);
-        walk.descend(root, 0, -1, null);
-        if (walk.match != null) {
-            return walk.match;
+        walk.descend(root, 0, -1, null, "");
+        if (walk.matches.size() > 1) {
+            throw ambiguous(path);
+        }
+        if (walk.matches.size() == 1) {
+            return walk.matches.getFirst();
         }
         return new Resolution(null, walk.topLevelChildIndex, walk.blockedByPrimitive, null);
+    }
+
+    /// Resolves `path` against the root node of `schema` to every node it names, in schema order.
+    /// Sibling fields may share a name, so one path may name several nodes; a selection takes all
+    /// of them. A path that reaches no node yields an empty list, and [#resolve] tells why.
+    ///
+    /// @throws IllegalArgumentException if `path` names nodes whose paths differ, as field names
+    ///         containing dots allow: a flat `a.b` and a `b` nested in `a`
+    public static List<Resolution> resolveAll(FileSchema schema, String path) {
+        Walk walk = new Walk(path);
+        walk.descend(schema.getRootNode(), 0, -1, null, "");
+        for (String split : walk.splits) {
+            if (!split.equals(walk.splits.getFirst())) {
+                throw ambiguous(path);
+            }
+        }
+        return walk.matches;
+    }
+
+    private static IllegalArgumentException ambiguous(String path) {
+        return new IllegalArgumentException("Column name '" + path
+                + "' is ambiguous: it is the dot-separated path of more than one field in the schema");
     }
 
     /// The state of one walk: the node reached so far, and why the walk failed if it reaches none.
     private static final class Walk {
 
         private final String path;
-        private Resolution match;
+        private final List<Resolution> matches = new ArrayList<>();
+        /// Per match, the positions in `path` at which the walk took a dot as a level boundary
+        private final List<String> splits = new ArrayList<>();
         private int topLevelChildIndex = -1;
         private boolean blockedByPrimitive;
 
@@ -76,7 +154,8 @@ public final class SchemaPathResolver {
 
         /// Follows every child of `group` whose name matches `path` from `start` up to a dot or
         /// the end of the path.
-        private void descend(SchemaNode.GroupNode group, int start, int topLevel, String variantAncestor) {
+        private void descend(SchemaNode.GroupNode group, int start, int topLevel, String variantAncestor,
+                             String split) {
             List<SchemaNode> children = group.children();
             for (int i = 0; i < children.size(); i++) {
                 SchemaNode child = children.get(i);
@@ -89,11 +168,12 @@ public final class SchemaPathResolver {
                     topLevelChildIndex = childTopLevel;
                 }
                 if (end == path.length()) {
-                    found(new Resolution(child, childTopLevel, false, variantAncestor));
+                    matches.add(new Resolution(child, childTopLevel, false, variantAncestor));
+                    splits.add(split);
                 }
                 else if (child instanceof SchemaNode.GroupNode childGroup) {
                     descend(childGroup, end + 1, childTopLevel,
-                            childGroup.isVariant() ? path.substring(0, end) : variantAncestor);
+                            childGroup.isVariant() ? path.substring(0, end) : variantAncestor, split + end + ",");
                 }
                 else {
                     blockedByPrimitive = true;
@@ -109,14 +189,6 @@ public final class SchemaPathResolver {
             }
             int end = start + name.length();
             return end == path.length() || path.charAt(end) == '.' ? end : -1;
-        }
-
-        private void found(Resolution resolution) {
-            if (match != null) {
-                throw new IllegalArgumentException("Column name '" + path
-                        + "' is ambiguous: it is the dot-separated path of more than one field in the schema");
-            }
-            match = resolution;
         }
     }
 }

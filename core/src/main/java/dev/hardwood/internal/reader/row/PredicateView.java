@@ -131,7 +131,7 @@ public final class PredicateView implements InPlaceBinaryAccessor {
             // A flat column below a struct is reached by index only; under its leaf name it would
             // shadow a top-level column of the same name.
             if (schema.getColumn(columnIndex).fieldPath().elements().size() == 1) {
-                flatSlotByName.put(schema.getColumn(columnIndex).name(), slot);
+                flatSlotByName.putOrMarkAmbiguous(schema.getColumn(columnIndex).name(), slot);
             }
             indexByColumn[columnIndex] = slot;
         }
@@ -228,16 +228,11 @@ public final class PredicateView implements InPlaceBinaryAccessor {
         int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
         List<SchemaNode> children = schema.getRootNode().children();
 
-        for (int col = 0; col < columnCount; col++) {
-            if (schema.getColumn(col).fieldPath().elements().size() != 1) {
-                continue;
-            }
-            String topLevelName = schema.getColumn(col).fieldPath().topLevelName();
-            for (int i = 0; i < projectedFieldIndices.length; i++) {
-                if (children.get(projectedFieldIndices[i]).name().equals(topLevelName)) {
-                    lookup[col] = i;
-                    break;
-                }
+        // A top-level primitive is its own column; matched by its column index, so that two
+        // top-level fields of one name each map to their own position
+        for (int i = 0; i < projectedFieldIndices.length; i++) {
+            if (children.get(projectedFieldIndices[i]) instanceof SchemaNode.PrimitiveNode primitive) {
+                lookup[primitive.columnIndex()] = i;
             }
         }
         return lookup;
@@ -287,8 +282,20 @@ public final class PredicateView implements InPlaceBinaryAccessor {
 
     /// The flat slot `name` is held in, or `-1`. A view whose predicate columns are all nested,
     /// which is every view the nested row reader builds, answers without a lookup.
+    ///
+    /// @throws IllegalArgumentException if more than one flat column has the name
     private int flatSlot(String name) {
-        return flatProjected.length == 0 ? -1 : flatSlotByName.get(name);
+        if (flatProjected.length == 0) {
+            return -1;
+        }
+        int slot = flatSlotByName.get(name);
+        if (slot >= 0) {
+            return slot;
+        }
+        if (slot == StringToIntMap.AMBIGUOUS) {
+            throw new IllegalArgumentException(StringToIntMap.ambiguousFieldMessage(name));
+        }
+        return -1;
     }
 
     private boolean flatNull(int slot) {

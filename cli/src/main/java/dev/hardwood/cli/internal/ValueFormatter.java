@@ -20,6 +20,7 @@ import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
+import dev.hardwood.internal.reader.row.FieldSchemaAccessor;
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -221,7 +222,7 @@ public final class ValueFormatter {
             case PqVariant variant -> style == Style.EXPORT
                     ? variantJson(variant)
                     : renderVariant(variant, style, depth, budget);
-            case PqStruct struct -> renderStruct(struct, asGroup(schema), useLogicalType, style, depth, budget);
+            case PqStruct struct -> renderStruct(struct, useLogicalType, style, depth, budget);
             case PqList list -> renderList(list, listElementSchema(schema), useLogicalType, style, depth, budget);
             case PqMap map -> renderMap(map, asGroup(schema), useLogicalType, style, depth, budget);
             default -> style == Style.EXPORT && depth > 0
@@ -237,11 +238,6 @@ public final class ValueFormatter {
         return isFile(field) ? accessor.getRawValue(fieldIndex) : accessor.getValue(fieldIndex);
     }
 
-    /// The value of the field named `name`, as [#valueOf(StructAccessor, int, SchemaNode)] reads it.
-    public static Object valueOf(StructAccessor accessor, String name, SchemaNode field) {
-        return isFile(field) ? accessor.getRawValue(name) : accessor.getValue(name);
-    }
-
     /// Whether a value is read through the raw accessors: every value when `useLogicalType` is
     /// off, and a `FILE` group always, which renders as its stored fields so that a file holding
     /// an invalid reference still prints.
@@ -253,16 +249,19 @@ public final class ValueFormatter {
         return schema instanceof SchemaNode.GroupNode group && group.isFile();
     }
 
-    private static String renderStruct(PqStruct struct, SchemaNode.GroupNode schema, boolean useLogicalType,
+    /// Reads every field by position: two sibling fields may share a name, and a projected
+    /// struct's positions follow the projection rather than the file's group, so only the struct
+    /// knows which schema node each position holds.
+    private static String renderStruct(PqStruct struct, boolean useLogicalType,
                                        Style style, int depth, int budget) {
         int count = struct.getFieldCount();
         int shown = shownEntries(count, style);
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
             String name = struct.getFieldName(i);
-            SchemaNode childSchema = findChildSchema(schema, name);
-            Object fieldValue = struct.isNull(name) ? null
-                    : readsRaw(childSchema, useLogicalType) ? struct.getRawValue(name) : struct.getValue(name);
+            SchemaNode childSchema = fieldSchema(struct, i);
+            Object fieldValue = struct.isNull(i) ? null
+                    : readsRaw(childSchema, useLogicalType) ? struct.getRawValue(i) : struct.getValue(i);
             entries.add(entry(style == Style.EXPORT ? jsonString(name) : text(name, style),
                     render(fieldValue, childSchema, useLogicalType, style, depth + 1, budget),
                     style));
@@ -484,16 +483,10 @@ public final class ValueFormatter {
         return field instanceof SchemaNode.GroupNode group ? group : null;
     }
 
-    private static SchemaNode findChildSchema(SchemaNode.GroupNode groupNode, String name) {
-        if (groupNode == null) {
-            return null;
-        }
-        for (SchemaNode child : groupNode.children()) {
-            if (child.name().equals(name)) {
-                return child;
-            }
-        }
-        return null;
+    /// The schema node of the struct's field at `fieldIndex`, or `null` for a struct the reader
+    /// did not produce, which renders like any value formatted without a schema.
+    private static SchemaNode fieldSchema(PqStruct struct, int fieldIndex) {
+        return struct instanceof FieldSchemaAccessor accessor ? accessor.getFieldSchema(fieldIndex) : null;
     }
 
     private static boolean isUnsigned(SchemaNode schema) {

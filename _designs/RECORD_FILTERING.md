@@ -19,7 +19,7 @@ For a reader built with projection `p` and filter `pred`:
 | Exactness | The reader returns exactly the rows satisfying `pred`, in file order. No client-side residual is needed; an aggregate over the output is correct. |
 | Agreement across readers | The row reader, a `ColumnReaders` group and independently built single `ColumnReader`s over the same file and predicate return the same rows and values. |
 | Row alignment | Within one `ColumnReaders` group every column exposes the same matching records per batch; `getRecordCount()` is the matching count. |
-| Projection bound | Accessors resolve the leaves of `p` and nothing else, at every depth. A predicate column outside `p` raises as any unprojected column does: `IllegalArgumentException` by name, `IndexOutOfBoundsException` by index. `getFieldCount()` counts the leaves of `p` on `FlatRowReader` and its top-level fields on `NestedRowReader`; a `PqStruct` reports only the children `p` reaches. |
+| Projection bound | Accessors resolve the leaves of `p` and nothing else, at every depth. A predicate column outside `p` raises as any unprojected column does: `IllegalArgumentException` by name, `IndexOutOfBoundsException` by index. `getFieldCount()` counts the top-level fields of `p` on both row readers; a `PqStruct` reports only the children `p` reaches. |
 | Null semantics | A null value satisfies no comparison or membership test; `AND`/`OR` follow SQL three-valued logic, and a row is returned only when `pred` is definitely true. |
 
 `FilterPredicate.intersects` is the one exception to exactness: it decides whole row groups by bounding box, and the record-level matcher passes every row of a surviving unit (`RecordFilterCompiler` compiles it to `row -> true`). The user documentation states this.
@@ -62,7 +62,9 @@ Tests: `ReadProjectionTest`, `RequiredStructPredicateTest`.
 
 **Indexed leaves.** `compile(predicate, schema, leafIndex)` takes a callback mapping a file leaf column to the accessor's index. Where it returns a non-negative index the leaf reads through the indexed accessors (`isNull(int)`, `getLong(int)`, …); where it returns `-1` the leaf falls back to name-keyed access through the intermediate struct path. Those names are the schema's own, which the schema holds interned, so the nested view's name maps find them by one reference comparison (see [ROW_READER.md](ROW_READER.md)). Both readers and `SelectionEngine` pass `PredicateView::indexOf`.
 
-**Missing intermediate structs.** A name-keyed leaf walks the intermediate struct path; if any struct on it is null the walk yields no accessor. A value leaf then does not match, `IS NULL` matches and `IS NOT NULL` does not. A group null predicate (`IsNullPredicate.group()`) tests the first field on the path at the predicate's definition level, which separates a null group from a present group with a null child. A null predicate on a node required from the root, whose maximum definition level is 0, compiles to a constant, `false` for `IS NULL` and `true` for `IS NOT NULL`: no row lacks the node. The matcher reads no field for it: the leaves of such a struct can decode as flat columns, and the column reader's view then offers them by index only, with no struct to look up by name.
+**Fields that share a name.** A name-keyed leaf walks its path by name, and the view it walks holds the filter's columns only, so the walk is ambiguous exactly when two of the filter's columns lie under two sibling fields of one name. `FilterPredicateResolver.requireDistinctlyNamedPaths` refuses such a filter once, when the reader is built, so every reader refuses the same filters whichever of its leaves it matches by index. The compiler finds the nodes on a column's path by its column index (`SchemaPathResolver.nodesOnPath`), and top-level columns map to the view by position (`PredicateView`).
+
+**Missing intermediate structs.** A name-keyed leaf walks the intermediate struct path; if any struct on it is null the walk yields no accessor. A value leaf then does not match, `IS NULL` matches and `IS NOT NULL` does not. A group null predicate (`IsNullPredicate.group()`) tests the first field on the path at the predicate's definition level, which separates a null group from a present group with a null child. A null predicate on a node required from the root, whose maximum definition level is 0, compiles to a constant, `false` for `IS NULL` and `true` for `IS NOT NULL`: no row lacks the node. The matcher reads no field for it: the leaves of such a struct can decode as flat columns, and a view over flat batches, the flat row reader's or a column reader's, offers them by index only, with no struct to look up by name.
 
 Tests: `RecordFilterCompilerTest`, `RecordFilterIndexedTest`, `ColumnReaderExactFilterTest`, `RequiredGroupNullPruningTest`.
 
@@ -74,14 +76,17 @@ For an eligible predicate the flat row reader evaluates it on each column's batc
 
 A predicate is eligible when every leaf is:
 
-- on a top-level column (field path of length one) present in `decoded()`, and
-- a supported `(type, op)`: `int`, `long`, `float`, `double`, unsigned `int`/`long`, and binary × the six comparison operators; `boolean` × `EQ`/`NOT_EQ`; the `IN` forms of those types; `IS NULL`/`IS NOT NULL`; and the constant leaves `EveryNonNullRow`/`NoRow` that negation produces,
+- on a column present in `decoded()` that is top-level (field path of length one), or, on the flat row reader, any column, and
+- a supported `(type, op)`: `int`, `long`, `float`, `double`, unsigned `int`/`long`, and binary × the six comparison operators; `boolean` × `EQ`/`NOT_EQ`; the `IN` forms of those types; `IS NULL`/`IS NOT NULL` on a leaf; and the constant leaves `EveryNonNullRow`/`NoRow` that negation produces,
 
 and no column appears in two independent subtrees. `Not` never reaches the compiler, since resolution lowers it to operator inversion.
 
+A leaf below a struct is eligible on the flat row reader because no column it decodes repeats, and a flat batch's validity is clear wherever the leaf or a group above it is absent. A value test then fails and a leaf's `IS NULL` holds on exactly the rows where the per-row matcher's walk finds no accessor ([Missing intermediate structs](#per-row-matcher)). The caller states which applies (`tryCompile`'s `structLeaves`), since the compiler sees the schema and not how the reader decodes it.
+
 | Falls back to the per-row matcher | Reason |
 |---|---|
-| A leaf below a struct or list | Batch matchers read a flat typed array per column |
+| A leaf below a struct, on a column reader | The column path decodes a leaf below an optional group as nested, and batch matchers read a flat typed array per column |
+| A null test on a group (`IsNullPredicate.group()`) | A leaf's validity is clear below a present group as well as below an absent one; only the definition level at the group's threshold tells them apart |
 | `FLOAT16` comparison or `IN` | No batch matcher |
 | `intersects` | Row-group decision only |
 | A column in two independent subtrees, e.g. `(a > 5 AND b > 5) OR (a < 0 AND b < 0)` | One column holds one bitmap per batch |
@@ -91,7 +96,7 @@ and no column appears in two independent subtrees. `Not` never reaches the compi
 
 **Compilation.** The compiler walks the tree bottom up. A subtree living on one column collapses into one matcher slot: same-column siblings under an `And` chain through `AndBatchMatcher`, under an `Or` through `OrBatchMatcher`. A subtree spanning columns becomes a `MergePlan.And`/`Or` whose children are `MergePlan.Column(decodedIndex)` references or nested plans. Each column appears in at most one `Column` node.
 
-Tests: `BatchFilterCompilerTest`.
+Tests: `BatchFilterCompilerTest`, `FlatStructRowReaderTest`.
 
 ### Bitmap semantics
 

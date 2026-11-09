@@ -85,6 +85,38 @@ class DottedColumnNameTest {
     }
 
     @Test
+    void rejectsAProjectionIntoAPrimitive() throws Exception {
+        try (ParquetFileReader reader = open()) {
+            assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.columns("id.x")).build().close())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Cannot navigate into primitive column: id.x");
+        }
+    }
+
+    /// The walk for `a.b` passes the primitive `a`, which it cannot descend into, and also reaches
+    /// the flat column named `a.b`, which the projection selects.
+    @Test
+    void projectsADottedColumnBesideAPrimitiveOfItsPrefix() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .addColumn("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.rowWriter().writeRow(row -> row.setLong("a", 1).setLong("a.b", 2));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(InMemoryFiles.toByteArray(out))));
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("a.b")).build()) {
+            rows.next();
+
+            assertThat(rows.getFieldCount()).isEqualTo(1);
+            assertThat(rows.getFieldName(0)).isEqualTo("a.b");
+            assertThat(rows.getLong(0)).isEqualTo(2L);
+        }
+    }
+
+    @Test
     void readsAFlatDottedColumnByName() throws Exception {
         try (ParquetFileReader reader = open();
              ColumnReader column = reader.buildColumnReader("sepal.length").build()) {

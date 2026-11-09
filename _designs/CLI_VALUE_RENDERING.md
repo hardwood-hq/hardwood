@@ -70,7 +70,7 @@ The `LogicalType` switch in `formatReader` is exhaustive over the sealed hierarc
 
 ### Nested values
 
-`formatReader` and `formatValue` hand `PqStruct`, `PqList`, `PqMap` and `PqVariant` values to one walker, so a nested value reads the same from both. A `FILE` group is read through the raw route at every level (`ValueFormatter.valueOf`), so it renders as the struct of its stored children and a file holding an invalid reference still renders. The walker resolves each child's schema node from its parent (struct fields by name, the list element, a repeated primitive as its own element, the map's key and value) and renders leaves against that node: annotated byte arrays decode as strings, UUIDs, decimals, intervals and timestamps, and unsigned `INT` annotations render unsigned. A value whose schema node does not resolve walks schema-less. A group schema paired with a scalar value throws.
+`formatReader` and `formatValue` hand `PqStruct`, `PqList`, `PqMap` and `PqVariant` values to one walker, so a nested value reads the same from both. A `FILE` group is read through the raw route at every level (`ValueFormatter.valueOf`), so it renders as the struct of its stored children and a file holding an invalid reference still renders. The walker resolves each child's schema node from its parent (a struct field from the struct itself, the list element, a repeated primitive as its own element, the map's key and value) and renders leaves against that node: annotated byte arrays decode as strings, UUIDs, decimals, intervals and timestamps, and unsigned `INT` annotations render unsigned. A struct's fields are read and resolved by position: two sibling fields may share a name, and a projected struct's positions follow the projection, which can differ from the file's group, so the struct (`FieldSchemaAccessor`) supplies the node at each position. A value whose schema node does not resolve walks schema-less. A group schema paired with a scalar value throws.
 
 The display styles use the display grammar: `{ a : 1 }` for structs, maps and Variant objects, `[1, 2]` for lists and Variant arrays, unquoted Variant keys and strings, `{}` and `[]` when empty. `EXPANDED` writes `name: value` entries one per line.
 
@@ -151,7 +151,7 @@ Tests: `SizesTest` (cli), `EncodingsTest` (cli), `FmtTest` (cli), `PluralsTest` 
 
 ## Size statistics
 
-`SizeStatistics` is the only metadata that separates an absent field from an empty list: `null_count` lumps both together. A raw definition-level histogram says nothing without the schema to name its buckets, and those names follow from the column's path alone. The CLI presents the chunk-level statistics in `ColumnMetaData` on two surfaces: the dive column chunk detail screen and `hardwood inspect columns`. The per-page copies in `ColumnIndex` and `OffsetIndex` are read only to report whether they exist.
+`SizeStatistics` is the only metadata that separates an absent field from an empty list: `null_count` lumps both together. A raw definition-level histogram says nothing without the schema to name its buckets, and those names follow from the column's place in the schema alone. The CLI presents the chunk-level statistics in `ColumnMetaData` on two surfaces: the dive column chunk detail screen and `hardwood inspect columns`. The per-page copies in `ColumnIndex` and `OffsetIndex` are read only to report whether they exist.
 
 ### `LevelSummary`
 
@@ -163,7 +163,7 @@ The factory always returns a summary. A chunk with no `SizeStatistics` has a sha
 
 ### Level labels
 
-Walk the column's path from the schema root and collect the nodes whose repetition is `OPTIONAL` or `REPEATED`; there are exactly `maxDefinitionLevel` of them, `d₁…d_maxDef`. Definition level `i` names the node the value failed to reach:
+Walk from the schema root to the column's leaf by its column index (two siblings may share a name) and collect the nodes whose repetition is `OPTIONAL` or `REPEATED`; there are exactly `maxDefinitionLevel` of them, `d₁…d_maxDef`. Definition level `i` names the node the value failed to reach:
 
 | Condition | Label |
 |---|---|
@@ -223,7 +223,7 @@ The column-across-row-groups screen is the interactive twin of `inspect columns 
 
 ### `hardwood inspect columns`
 
-The ranked table has a fixed column set: `Rank`, `Column`, `Type`, `Codec`, `Compressed`, `Share`, `Compression`, `Encoding`, `Unencoded`, `# Pages`. `Unencoded` and the dictionary cardinality sum per column path across row groups; a column reports `—` for `Unencoded` unless every chunk yields a figure, since a partial sum reads as a total. The `Encoding` cell is the union across row groups, so a fallback in any one of them shows. `# Pages` comes from the offset index: `—` for a chunk without one, and an offset index that fails to read fails the command, as a damaged dictionary header does.
+The ranked table has a fixed column set: `Rank`, `Column`, `Type`, `Codec`, `Compressed`, `Share`, `Compression`, `Encoding`, `Unencoded`, `# Pages`. Each leaf column is one row, its figures summed across row groups by column index, so two sibling columns of one path stay two rows; `Unencoded` and the dictionary cardinality sum likewise; a column reports `—` for `Unencoded` unless every chunk yields a figure, since a partial sum reads as a total. The `Encoding` cell is the union across row groups, so a fallback in any one of them shows. `# Pages` comes from the offset index: `—` for a chunk without one, and an offset index that fails to read fails the command, as a damaged dictionary header does.
 
 `--column <path>` prints one row per row group (`RG`, `Values`, `Nulls`, `Records`, `Present`, `Fan-out`, `Codec`, `Compressed`, `Compression`, `Encoding`, `Unencoded`), then the mismatches, then the definition and repetition blocks. The column set is fixed whatever the column's shape, so runs compare and parse. Unlike dive, the table prints `Records`, `Present` and `Fan-out` wherever they are known, including where they restate `Values`. Level histograms sum element-wise across row groups (`LevelSummary.combineLevels`), so the file-wide block is exact; `--row-group <n>` narrows table and blocks to one row group. A block with no histogram is omitted. The blocks render at a fixed width, independent of the terminal, so output diffs cleanly.
 

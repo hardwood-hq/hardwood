@@ -57,9 +57,22 @@ Tests: `WriterLayoutTest`, `RowWriterEquivalenceTest`, `WriterNestedRoundTripTes
 | `write(ByteBuffer)` | Appends the buffer's remaining bytes and consumes it (position advances to limit). |
 | `position()` | The number of bytes written so far, which is the offset of the next `write`. |
 | `close()` | Finalizes (publishes) the file. The file is valid at the destination only after this returns. A `close()` that fails before publishing releases its resources and discards what was written, then throws. |
-| `discard()` | Throws everything written away and releases resources without publishing; the destination is left as if nothing was written, and a later `close()` does nothing. |
+| `discard()` | Throws everything written away and releases resources without publishing; the destination is left as if nothing was written. |
 
 `close()` and `discard()` are the commit and the rollback of one output. The writer calls exactly one of them per output, so an implementation can hold its output out of sight until `close()` (a temporary file, an uncompleted multipart upload) and throw it away on `discard()`.
+
+An output is used for one file, through four states:
+
+| Call | `NEW` | `OPEN` | `CLOSED` | `DISCARDED` |
+|---|---|---|---|---|
+| `create()` | `OPEN` | throws | throws | throws |
+| `write`, `position` | throws | allowed | throws | throws |
+| `close()` | `DISCARDED` | publishes: `CLOSED`, or `DISCARDED` and throws | nothing | nothing |
+| `discard()` | `DISCARDED` | `DISCARDED` | nothing | nothing |
+
+The end states are final because an output handed to a second writer must not reopen: a local file would publish over the first. `close()` on a `DISCARDED` output does nothing because, when a failed `close()` discarded it, that failure was already thrown; and `close()` on a `NEW` output is what try-with-resources does when the writer fails validation before calling `create()`.
+
+`AbstractOutputFile` implements the table as a public skeletal implementation: its public methods are final and call protected hooks (`doCreate`, `doWrite`, `doClose`, `doDiscard`), of which only `doWrite` is abstract, and it counts `position()` itself. All bundled outputs extend it; a user's `OutputFile` that implements the interface directly is expected to honour the table. Tests: `AbstractOutputFileTest`.
 
 | Backend | Where | Behaviour |
 |---|---|---|

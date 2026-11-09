@@ -70,9 +70,11 @@ class InMemoryOutputFileTest {
         InMemoryOutputFile out = writeThreeRows();
         ByteBuffer buffer = out.buffer();
 
+        byte[] magic = { 'P', 'A', 'R', '1' };
         assertThat(buffer.position()).isZero();
-        assertThat(buffer.remaining()).isEqualTo(out.position());
-        assertThat(InputFile.of(buffer).length()).isEqualTo(out.position());
+        assertThat(buffer.slice(0, 4)).isEqualTo(ByteBuffer.wrap(magic));
+        assertThat(buffer.slice(buffer.limit() - 4, 4)).isEqualTo(ByteBuffer.wrap(magic));
+        assertThat(InputFile.of(buffer).length()).isEqualTo(buffer.remaining());
     }
 
     /// Reading a returned buffer does not consume anything, so a second caller still gets the
@@ -99,7 +101,7 @@ class InMemoryOutputFileTest {
 
             assertThatThrownBy(out::buffer)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("OutputFile not closed");
+                    .hasMessage("Output for an in-memory file is not closed; it is open");
         }
     }
 
@@ -114,7 +116,7 @@ class InMemoryOutputFileTest {
 
         assertThatThrownBy(out::buffer)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile was discarded");
+                .hasMessage("Output for an in-memory file is not closed; it was discarded");
     }
 
     /// Bytes appended after the file was finished would land behind its footer, so the
@@ -122,11 +124,24 @@ class InMemoryOutputFileTest {
     @Test
     void refusesToWriteAfterTheFileIsFinished() throws Exception {
         InMemoryOutputFile out = writeThreeRows();
+        int length = out.buffer().remaining();
 
         assertThatThrownBy(() -> out.write(ByteBuffer.wrap(new byte[] { 1 })))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile already closed");
-        assertThat(out.buffer().remaining()).isEqualTo(out.position());
+                .hasMessage("Output for an in-memory file is not open; it is closed");
+        assertThat(out.buffer().remaining()).isEqualTo(length);
+    }
+
+    /// A close of a destination never created, as try-with-resources around it does when the
+    /// writer rejected its schema, finishes no file, so there is none to hand out.
+    @Test
+    void refusesToHandOutAFileThatWasNeverCreated() throws IOException {
+        InMemoryOutputFile out = OutputFile.inMemory();
+        out.close();
+
+        assertThatThrownBy(out::buffer)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Output for an in-memory file is not closed; it was discarded");
     }
 
     /// The size ceiling is checked on the counts alone, so that no test has to allocate a 2 GB

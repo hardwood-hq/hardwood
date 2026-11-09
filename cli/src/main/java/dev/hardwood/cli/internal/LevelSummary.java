@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
@@ -524,35 +525,21 @@ public record LevelSummary(
     /// an out-of-bounds read rather than a silently mislabelled histogram.
     private static List<LevelNode> levelNodes(FileSchema schema, ColumnSchema column) {
         List<LevelNode> nodes = new ArrayList<>();
-        SchemaNode current = schema.getRootNode();
         StringBuilder dotted = new StringBuilder();
         String parentName = null;
-        for (String element : column.fieldPath().elements()) {
-            SchemaNode child = childNamed(current, element);
+        // By the column's index rather than its path's names: two siblings may share a name
+        for (SchemaNode node : SchemaPathResolver.nodesOnPath(schema, column.columnIndex())) {
+            String element = node.name();
             if (!dotted.isEmpty()) {
                 dotted.append('.');
             }
             dotted.append(element);
-            RepetitionType repetition = child.repetitionType();
+            RepetitionType repetition = node.repetitionType();
             if (repetition == RepetitionType.OPTIONAL || repetition == RepetitionType.REPEATED) {
                 nodes.add(new LevelNode(element, dotted.toString(), repetition, parentName));
             }
             parentName = element;
-            current = child;
         }
         return nodes;
-    }
-
-    private static SchemaNode childNamed(SchemaNode parent, String name) {
-        if (!(parent instanceof SchemaNode.GroupNode group)) {
-            throw new IllegalStateException("expected a group while walking to " + name
-                    + ", found leaf " + parent.name());
-        }
-        for (SchemaNode child : group.children()) {
-            if (child.name().equals(name)) {
-                return child;
-            }
-        }
-        throw new IllegalStateException("no child named " + name + " under " + group.name());
     }
 }

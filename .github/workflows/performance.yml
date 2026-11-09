@@ -93,11 +93,13 @@ jobs:
         # Defaults match push-to-main: Flat + Nested over the full cached
         # taxi-data window. workflow_dispatch can override `perf_runs` and
         # the `-Dtest` filter (use "*" to run everything in the perf module).
+        # Run benchmark classes sequentially, each in a fresh JVM. Otherwise
+        # their reader pools compete for the same CPUs and bias the timings.
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
           PERF_RUNS: ${{ inputs.perf_runs || '5' }}
           TESTS: ${{ inputs.tests || 'FlatPerformanceTest,NestedPerformanceTest' }}
-        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false
+        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false -DforkCount=1 -DreuseForks=false
 
       # Persist the taxi data only on success, and only when we actually had to
       # download it (a restore hit needs no re-save). This prevents a partial

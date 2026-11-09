@@ -34,7 +34,7 @@ import java.nio.ByteBuffer;
 ///
 /// **This API is [Experimental]:** the shape may change in future releases.
 @Experimental
-public final class InMemoryOutputFile implements OutputFile {
+public final class InMemoryOutputFile extends AbstractOutputFile {
 
     /// The largest array `ByteArrayOutputStream` can grow to, which bounds the file.
     static final int MAX_SIZE = Integer.MAX_VALUE - 8;
@@ -50,24 +50,13 @@ public final class InMemoryOutputFile implements OutputFile {
     }
 
     private final Sink sink = new Sink();
-    private boolean created;
-    private boolean closed;
-    private boolean discarded;
 
     InMemoryOutputFile() {
+        super("an in-memory file");
     }
 
     @Override
-    public void create() {
-        if (created) {
-            throw new IllegalStateException("OutputFile already created");
-        }
-        created = true;
-    }
-
-    @Override
-    public void write(ByteBuffer data) throws IOException {
-        requireWritable();
+    protected void doWrite(ByteBuffer data) throws IOException {
         int length = data.remaining();
         requireCapacity(sink.size(), length);
         if (data.hasArray()) {
@@ -85,22 +74,7 @@ public final class InMemoryOutputFile implements OutputFile {
     }
 
     @Override
-    public long position() {
-        requireCreated();
-        return sink.size();
-    }
-
-    @Override
-    public void close() {
-        if (discarded) {
-            return;
-        }
-        closed = true;
-    }
-
-    @Override
-    public void discard() {
-        discarded = true;
+    protected void doDiscard() {
         sink.reset();
     }
 
@@ -115,12 +89,7 @@ public final class InMemoryOutputFile implements OutputFile {
     /// @return the bytes of the finished file
     /// @throws IllegalStateException if the file has not been closed, or was discarded
     public ByteBuffer buffer() {
-        if (discarded) {
-            throw new IllegalStateException("OutputFile was discarded");
-        }
-        if (!closed) {
-            throw new IllegalStateException("OutputFile not closed");
-        }
+        requireClosed();
         return sink.view();
     }
 
@@ -129,22 +98,6 @@ public final class InMemoryOutputFile implements OutputFile {
         if (length > MAX_SIZE - size) {
             throw new IOException("In-memory OutputFile cannot hold more than " + MAX_SIZE + " bytes; it holds "
                     + size + " and was given " + length + " more");
-        }
-    }
-
-    private void requireWritable() {
-        requireCreated();
-        if (discarded) {
-            throw new IllegalStateException("OutputFile was discarded");
-        }
-        if (closed) {
-            throw new IllegalStateException("OutputFile already closed");
-        }
-    }
-
-    private void requireCreated() {
-        if (!created) {
-            throw new IllegalStateException("OutputFile not created");
         }
     }
 }

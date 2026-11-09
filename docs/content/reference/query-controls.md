@@ -23,7 +23,7 @@ see [Predicate Pushdown, Projection, Limits, and Splits](../how-to/query-control
 | Null operators | `isNull`, `isNotNull` (any type) |
 | Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column, by row-group bounding-box overlap (see [Geospatial](../how-to/geospatial.md#spatial-filter-pushdown)) |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions, and throw `IllegalArgumentException` when given none) |
-| Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected |
+| Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected, and so is a name that is the path of more than one field. A filter that tests columns under two sibling fields of one name throws `IllegalArgumentException` when the reader is built |
 
 All predicates, including those wrapped in `not`, are pushed down for row-group and page
 skipping. Filters work with all reader types — `RowReader`, `ColumnReader`,
@@ -285,6 +285,8 @@ An `INT96` comparison with an `Instant` therefore skips a row group or page only
 A name is a top-level field or the full path to a nested field. A nested field is not selected by its own name alone: over `id, address STRUCT<city>`, `columns("city")` fails with `Column not found: city`. Names may repeat or overlap.
 
 A field name may contain dots: `columns("sepal.length")` selects a top-level column named `sepal.length`, and `columns("acme.info.x.y")` selects the field `x.y` of a struct named `acme.info`. Predicates and `FileSchema.getColumn(String)` resolve names the same way. A name that is the path of two fields, such as a top-level `a.b` beside a struct `a` with a field `b`, fails with an error; `buildColumnReader(int)` and the positions of `ColumnReaders` reach each of those columns by index.
+
+Sibling fields may share a name. A projection selects every field of such a name, in schema order: over two top-level columns named `id`, `columns("id")` projects both, read with `getLong(0)` and `getLong(1)`. Accessing them by name fails with an error, and so do a predicate on that name and `buildColumnReader("id")`, which resolve to one column.
 
 ### Index order
 

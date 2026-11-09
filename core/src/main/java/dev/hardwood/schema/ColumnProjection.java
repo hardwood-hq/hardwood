@@ -51,7 +51,8 @@ public final class ColumnProjection {
     /// - `"address.city"` - selects only a specific nested field
     ///
     /// A nested field is reached by its full path only; `"city"` does not select `address.city`.
-    /// Names may repeat or overlap, such as `"address"` and `"address.city"`. For the order in
+    /// Sibling fields may share a name; a name then selects every field that has it, in schema
+    /// order, and they are read by index. Names may repeat or overlap, such as `"address"` and `"address.city"`. For the order in
     /// which readers expose the projected columns by index, see the column projection reference.
     ///
     /// @param names the column names to project

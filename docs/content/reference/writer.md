@@ -21,6 +21,8 @@ The `OutputFile` a writer is created with decides where the file is written.
 | `OutputFile.inMemory()` | The heap, up to `Integer.MAX_VALUE - 8` bytes. Returns an `InMemoryOutputFile`, whose `buffer()` returns the finished file |
 | `S3Source.outputFile(...)` | An S3 object, uploaded as the file is written and published when the writer closes (`hardwood-s3`; see [S3 Reference](s3.md#writing)) |
 
+An `OutputFile` writes one file. `ParquetFileWriter.create` throws `IllegalStateException` for an `OutputFile` another writer has already used.
+
 An in-memory file can be written and read back without a filesystem: `buffer()` returns the whole file as a `ByteBuffer` positioned at its first byte, which is what `InputFile.of(ByteBuffer)` expects.
 
 ```java
@@ -39,7 +41,16 @@ The buffer grows with the file, so no size has to be given up front; the length 
 
 The file is complete only after the writer is closed, and `buffer()` throws `IllegalStateException` before that, or if the destination was discarded.
 
-To write anywhere else, implement `OutputFile`.
+To write anywhere else, extend `AbstractOutputFile` (`@Experimental`). Its public methods are final: each rejects a call the file's state does not allow with `IllegalStateException`, then calls the protected method that does the work. `position()` counts the bytes `doWrite` accepted. A subclass implements `doWrite` and overrides the other methods it needs; they do nothing by default.
+
+| Method | Called by, while the file is open | Does |
+|---|---|---|
+| `doCreate()` | `create()` | Acquires the destination's resources. When it throws, the file is discarded without a call to `doDiscard()`, so it must leave nothing held |
+| `doWrite(ByteBuffer)` | `write` | Appends all of the buffer's remaining bytes; `write` throws `IllegalStateException` if any are left. Required |
+| `doClose()` | `close()` | Publishes the file. When it throws, `doDiscard()` runs, its failure is attached as suppressed, and the file is discarded |
+| `doDiscard()` | `discard()`, or `close()` when `doClose()` throws | Releases the resources and throws away what was written. It is not called again after it throws, so it releases what it can first |
+
+`close()` and `discard()` on a published or discarded file, and `close()` on an uncreated one, call nothing. A subclass that hands out the finished file checks for it with `requireClosed()`.
 
 ## Schema
 
@@ -386,7 +397,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
 | `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `FILE` value that is not valid, or that sets a field its group has no child for; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1) |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
-| `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded; flushing a row group after the `HardwoodContext` passed to `create` has been closed |
+| `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; creating a writer on an `OutputFile` another writer has already used; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded; flushing a row group after the `HardwoodContext` passed to `create` has been closed |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |
 | `ParquetWriteException` | The file could not be produced for a reason that is neither the caller's input nor the destination: a compression codec that rejects a page body. Unchecked |
 

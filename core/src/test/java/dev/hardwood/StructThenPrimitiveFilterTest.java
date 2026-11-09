@@ -14,9 +14,15 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.reader.row.FlatRowReader;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,11 +40,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// A reader that addresses columns by index has two index spaces: the public
 /// accessors (`getInt(int)`, `isNull(int)`) take a top-level FIELD index, while
 /// value arrays are addressed by projected LEAF-column index. They coincide for
-/// pure-flat schemas but diverge for a top-level primitive after a struct. This
-/// test pins the behaviour of filtering on such a primitive through the
-/// record-side path, so that if struct-of-primitives reading is ever moved to a
-/// reader that confuses the two spaces, it fails loudly here instead of
-/// returning wrong rows.
+/// pure-flat schemas but diverge for a top-level primitive after a struct. `point`
+/// repeats nothing, so the file is read by `FlatRowReader`, which addresses the
+/// fields and the batch matchers the columns. This test pins filtering on such a
+/// primitive through both filter paths, so that a reader that confuses the two
+/// spaces fails loudly here instead of returning wrong rows.
 class StructThenPrimitiveFilterTest {
 
     private static final Path FILE =
@@ -65,13 +71,7 @@ class StructThenPrimitiveFilterTest {
     /// The guard: filter on the top-level primitive `score`, which sits after
     /// the `point` struct (so its field index 3 differs from leaf index 4).
     ///
-    /// The predicate is evaluated on the record-side path (`RecordFilterCompiler` →
-    /// the row reader's record matcher), where columns are addressed through the
-    /// reader's indexed accessors. The `point` struct is what puts it there: a file
-    /// with a struct column is read by the nested row reader, which has no batch-matcher
-    /// filter, whichever leaves the predicate holds. The `tag` conjunct does not force
-    /// the path — a string comparison compiles to a batch matcher on a flat file.
-    ///
+    /// Both leaves compile to batch matchers, which address the decoded columns.
     /// `tag` is "keep" for every row, so the result is exactly `score > 55` →
     /// ids 2, 3, 4. A reader that read `score` at leaf index 4 instead of field
     /// index 3 would throw or return the wrong rows.
@@ -81,15 +81,39 @@ class StructThenPrimitiveFilterTest {
                 FilterPredicate.eq("tag", "keep"),
                 FilterPredicate.gt("score", 55));
 
+        assertThat(matchedIds(filter)).containsExactly(2, 3, 4);
+    }
+
+    /// The same rows through the record-side path (`RecordFilterCompiler` → the
+    /// row reader's record matcher): `score` and `tag` each appear in both arms of
+    /// the `OR`, which no batch matcher can hold, and the second arm matches nothing.
+    @Test
+    void filterOnPrimitiveAfterStructOnTheRecordPath() throws Exception {
+        FilterPredicate filter = FilterPredicate.or(
+                FilterPredicate.and(FilterPredicate.eq("tag", "keep"), FilterPredicate.gt("score", 55)),
+                FilterPredicate.and(FilterPredicate.eq("tag", "never"), FilterPredicate.lt("score", 0)));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
+            FileSchema schema = reader.getFileSchema();
+            ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+            assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
+                    projected::toProjectedIndex, true))
+                    .as("filter %s must take the record path", filter)
+                    .isNull();
+        }
+
+        assertThat(matchedIds(filter)).containsExactly(2, 3, 4);
+    }
+
+    private static List<Integer> matchedIds(FilterPredicate filter) throws Exception {
         List<Integer> matchedIds = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE));
              RowReader rows = reader.buildRowReader().filter(filter).build()) {
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
             while (rows.hasNext()) {
                 rows.next();
                 matchedIds.add(rows.getInt("id"));
             }
         }
-
-        assertThat(matchedIds).containsExactly(2, 3, 4);
+        return matchedIds;
     }
 }

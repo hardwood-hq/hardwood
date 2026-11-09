@@ -200,7 +200,7 @@ class WriterRowGroupBoundaryTest {
 
         assertThatThrownBy(out::buffer)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile was discarded");
+                .hasMessage("Output for an in-memory file is not closed; it was discarded");
     }
 
     @Test
@@ -222,7 +222,7 @@ class WriterRowGroupBoundaryTest {
 
         assertThatThrownBy(out::buffer)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile was discarded");
+                .hasMessage("Output for an in-memory file is not closed; it was discarded");
     }
 
     @Test
@@ -243,7 +243,7 @@ class WriterRowGroupBoundaryTest {
 
         assertThatThrownBy(out::buffer)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("OutputFile was discarded");
+                .hasMessage("Output for an in-memory file is not closed; it was discarded");
     }
 
     @Test

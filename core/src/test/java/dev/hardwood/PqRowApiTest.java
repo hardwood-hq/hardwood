@@ -448,10 +448,11 @@ public class PqRowApiTest {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            // name is a STRING field, not INT32 — surfaces as a ClassCastException
-            // from the underlying value-array cast.
+            // name is a STRING field, not INT32
             assertThatThrownBy(() -> rowReader.getInt("name"))
-                    .isInstanceOf(ClassCastException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("[logical_types_test.parquet] Column 'name' is BYTE_ARRAY annotated STRING,"
+                            + " which cannot be read as an int; read it with getString");
         }
     }
 
@@ -462,10 +463,10 @@ public class PqRowApiTest {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            // address is a struct, not a list — surfaces as a ClassCastException
-            // from the underlying FieldDesc cast.
+            // address is a struct, not a list
             assertThatThrownBy(() -> rowReader.getList("address"))
-                    .isInstanceOf(ClassCastException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("[nested_struct_test.parquet] Field 'address' is not a list");
         }
     }
 

@@ -7669,6 +7669,54 @@ pq.write_table(
 print("\nGenerated empty_row_group.parquet:")
 print("  - one required INT64 column 'id', one row group of 0 rows")
 
+# ===== A struct whose sibling fields share a name =====
+# Parquet does not forbid two siblings of one name, and PyArrow writes them. The two `v` fields
+# differ in type and repetition, so a reader that resolves either by name shows the other's
+# value, type or levels; `w` sits behind them so a projection of it alone moves it to field 0.
+_dup_mixed = pa.struct([pa.field('v', pa.int32(), False),
+                        pa.field('v', pa.string(), True),
+                        pa.field('w', pa.date32(), False)])
+pq.write_table(
+    pa.Table.from_arrays(
+        [pa.StructArray.from_arrays([pa.array([3, 4], pa.int32()),
+                                     pa.array(['a', None], pa.string()),
+                                     pa.array([date(2024, 1, 2), date(2024, 3, 4)], pa.date32())],
+                                    fields=list(_dup_mixed))],
+        schema=pa.schema([pa.field('s', _dup_mixed, False)])),
+    'core/src/test/resources/duplicate_struct_field_names.parquet',
+)
+print("\nGenerated duplicate_struct_field_names.parquet:")
+print("  - a required struct 's' of a required INT32 'v' (3, 4), an optional STRING 'v' ('a', null)")
+print("    and a required DATE 'w' (2024-01-02, 2024-03-04)")
+
+# Two top-level columns of one name, read by the flat row reader.
+pq.write_table(
+    pa.Table.from_arrays([pa.array([1, 2], pa.int64()), pa.array([10, 20], pa.int64())],
+                         schema=pa.schema([pa.field('id', pa.int64(), False),
+                                           pa.field('id', pa.int64(), False)])),
+    'core/src/test/resources/duplicate_top_level_columns.parquet',
+)
+print("\nGenerated duplicate_top_level_columns.parquet:")
+print("  - two required INT64 columns both named 'id': 1, 2 and 10, 20")
+
+# Two top-level structs of one name, the second holding a nested struct 'g': the path 't.g.b'
+# names one column, but a walk to it by name passes the ambiguous 't'.
+_t_first = pa.struct([pa.field('a', pa.int32(), False)])
+_t_second = pa.struct([pa.field('g', pa.struct([pa.field('b', pa.int32(), True)]), True)])
+pq.write_table(
+    pa.Table.from_arrays(
+        [pa.array([1, 2, 3], pa.int64()),
+         pa.array([{'a': 1}, {'a': 2}, None], _t_first),
+         pa.array([{'g': {'b': 5}}, {'g': None}, None], _t_second)],
+        schema=pa.schema([pa.field('id', pa.int64(), False),
+                          pa.field('t', _t_first, True),
+                          pa.field('t', _t_second, True)])),
+    'core/src/test/resources/duplicate_top_level_structs.parquet',
+)
+print("\nGenerated duplicate_top_level_structs.parquet:")
+print("  - INT64 'id' (1, 2, 3), struct 't' {a} ({1}, {2}, null) and struct 't' {g {b}}")
+print("    ({g: {b: 5}}, {g: null}, null)")
+
 # ===== Sibling fields of one name =====
 # Parquet does not forbid two siblings of one name, and PyArrow writes them. By name a row reader
 # reaches the last of them, by index each of them; the values differ so a test can tell which.

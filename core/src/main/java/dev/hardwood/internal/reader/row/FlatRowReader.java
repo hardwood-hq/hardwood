@@ -35,10 +35,13 @@ import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.internal.reader.plan.BatchSizing;
 import dev.hardwood.internal.reader.step.CloseClaim;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.internal.util.InternedNameMap;
+import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqFile;
@@ -49,13 +52,21 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
-/// High-performance row reader for flat schemas.
+/// High-performance row reader for projections in which no column repeats.
 ///
 /// This is a `final` class with all hot-path methods defined directly (not inherited),
 /// giving the JIT a single concrete class with monomorphic call sites. Supports all
 /// primitive types, logical type conversions (date, time, timestamp, decimal, UUID,
 /// string), and both name-based and index-based access.
+///
+/// Accessors address the projection's top-level fields. A top-level primitive is read from
+/// its column's batch arrays at the row index. A top-level struct is read through a
+/// [PqStructImpl] over the batches of the leaves below it: every one of them holds one value
+/// per row, so the row index addresses each leaf as well. A struct's own nullness is a bitmap
+/// of its own in the same slot a primitive's validity takes, so [#isNull(int)] reads both the
+/// same way.
 public final class FlatRowReader implements FileAwareRowReader {
 
     /// Sentinel for "every leaf in the batch is present" — replaces the
@@ -63,7 +74,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// stays a single word load + mask. Sized for the largest batch
     /// [BatchSizing] will produce, so any in-range row index reads as
     /// present. Set-bit-= -present polarity, matching [BatchExchange.Batch#validity].
-    private static final long[] ALL_PRESENT = allOnes();
+    static final long[] ALL_PRESENT = allOnes();
 
     /// The survivor bitmap of a batch statistics proved to match in full, sized like
     /// [#ALL_PRESENT] so that every in-range row reads as a match.
@@ -81,30 +92,45 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final BatchExchange<BatchExchange.Batch>[] exchanges;
     private final int columnCount;
 
-    /// The caller's projection (see [ReadProjection#payload()]). Its columns lead the decoded
-    /// ones, and the accessor state below spans them alone, so no accessor reaches a column a
-    /// predicate added.
-    private final ProjectedSchema payload;
+    /// The field position of each column of the caller's projection (see
+    /// [ReadProjection#payload()]) that is a top-level primitive, by decoded index; `-1` for a
+    /// column below a struct. The payload's columns lead the decoded ones, and the accessor state
+    /// below spans them alone, so no accessor reaches a column a predicate added.
+    private final int[] fieldOfColumn;
     private final InternedNameMap nameToIndex;
+    private final String[] fieldNames;
+    /// The leaf of each top-level primitive field, `null` for a struct field.
     private final PhysicalType[] physicalTypes;
     private final ColumnSchema[] columnSchemas;
-    /// Per-column decode strategy for [#getValue(int)], precomputed once from each
+    /// Per-field decode strategy for [#getValue(int)], precomputed once from each
     /// column's fixed `(physicalType, logicalType)` so the hot path is a single
-    /// table lookup instead of re-deriving the branch on every value.
+    /// table lookup instead of re-deriving the branch on every value. [LeafKind#GROUP]
+    /// for a struct field.
     private final LeafKind[] kinds;
-    /// Whether [#getString(int)] reads each column, precomputed on the same terms as
+    /// Whether [#getString(int)] reads each field, precomputed on the same terms as
     /// [#kinds]: the answer is the column's alone, and [TextColumns] derives it from a
     /// switch too wide to run per value on the accessor the read path leans on most.
     private final boolean[] textColumns;
 
-    // Hot fields — directly owned, no inheritance.
-    // `flatValidity[col]` is a packed bitmap (set bit = leaf is present); the
-    // per-row check is `(flatValidity[col][row >>> 6] & (1L << row)) != 0L`.
-    // When every leaf for this column in the current batch is present, the
+    // Hot fields — directly owned, no inheritance, indexed by field position.
+    // `flatValidity[field]` is a packed bitmap (set bit = present); the
+    // per-row check is `(flatValidity[field][row >>> 6] & (1L << row)) != 0L`.
+    // When every value of the field in the current batch is present, the
     // slot points to [#ALL_PRESENT] so the per-row check needs no null guard.
-    private Object[] flatValueArrays;
-    private long[][] flatValidity;
-    private BatchExchange.Batch[] previousBatches;
+    private final long[][] flatValidity;
+    // Each primitive field's batch values sit in the slot of their own type, and the other slots
+    // are `null`; a struct field leaves every slot `null`. The primitive accessors read through
+    // these without a cast, and fail on the `null`; the rest reach them through [#valuesOf].
+    private final int[][] intValues;
+    private final long[][] longValues;
+    private final float[][] floatValues;
+    private final double[][] doubleValues;
+    private final boolean[][] booleanValues;
+    private final BinaryBatchValues[] binaryValues;
+    private final BatchExchange.Batch[] previousBatches;
+
+    /// The struct state, or `null` when every top-level field is a primitive.
+    private final FlatStructs structs;
     /// Whether statistics proved every row of the batch being served matches the filter,
     /// so [#recordMatcher] need not be run over it.
     private boolean currentRowsAlwaysMatch;
@@ -180,7 +206,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final RowGroupIterator read;
 
     private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges,
-                         FileSchema fileSchema, ProjectedSchema payload,
+                         FileSchema fileSchema, ProjectedSchema payload, FlatStructs structs,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
                          RowMatcher recordMatcher, PredicateView predicateView, RecordFilterTally tally,
                          RowGroupIterator read) {
@@ -191,29 +217,45 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.tally = tally;
         this.exchanges = exchanges;
         this.columnCount = exchanges.length;
-        this.payload = payload;
-        int payloadColumnCount = payload.getProjectedColumnCount();
-        this.flatValueArrays = new Object[payloadColumnCount];
-        this.flatValidity = new long[payloadColumnCount][];
+        this.structs = structs;
         this.previousBatches = new BatchExchange.Batch[columnCount];
         this.matchMerger = matchMerger;
 
-        // Build name-to-index map and cache column metadata, for the exposed columns only
-        this.physicalTypes = new PhysicalType[payloadColumnCount];
-        this.columnSchemas = new ColumnSchema[payloadColumnCount];
-        this.kinds = new LeafKind[payloadColumnCount];
-        this.textColumns = new boolean[payloadColumnCount];
-        String[] names = new String[payloadColumnCount];
-        for (int position = 0; position < payloadColumnCount; position++) {
-            int originalIndex = payload.toOriginalIndex(payload.exposedColumn(position));
-            ColumnSchema col = fileSchema.getColumn(originalIndex);
-            names[position] = col.name();
-            physicalTypes[position] = col.type();
-            columnSchemas[position] = col;
-            kinds[position] = LeafKind.of(col.type(), col.logicalType());
-            textColumns[position] = TextColumns.holdsText(col.type(), col.logicalType());
+        // Cache each field's name and metadata, for the exposed fields only
+        int[] fieldIndices = payload.getProjectedFieldIndices();
+        List<SchemaNode> rootChildren = fileSchema.getRootNode().children();
+        int fieldCount = fieldIndices.length;
+        this.intValues = new int[fieldCount][];
+        this.longValues = new long[fieldCount][];
+        this.floatValues = new float[fieldCount][];
+        this.doubleValues = new double[fieldCount][];
+        this.booleanValues = new boolean[fieldCount][];
+        this.binaryValues = new BinaryBatchValues[fieldCount];
+        this.flatValidity = new long[fieldCount][];
+        this.fieldOfColumn = new int[payload.getProjectedColumnCount()];
+        Arrays.fill(fieldOfColumn, -1);
+        this.fieldNames = new String[fieldCount];
+        this.physicalTypes = new PhysicalType[fieldCount];
+        this.columnSchemas = new ColumnSchema[fieldCount];
+        this.kinds = new LeafKind[fieldCount];
+        this.textColumns = new boolean[fieldCount];
+        for (int field = 0; field < fieldCount; field++) {
+            SchemaNode node = rootChildren.get(fieldIndices[field]);
+            fieldNames[field] = node.name();
+            if (node instanceof SchemaNode.PrimitiveNode primitive) {
+                ColumnSchema col = fileSchema.getColumn(primitive.columnIndex());
+                fieldOfColumn[payload.toProjectedIndex(primitive.columnIndex())] = field;
+                physicalTypes[field] = col.type();
+                columnSchemas[field] = col;
+                kinds[field] = LeafKind.of(col.type(), col.logicalType());
+                textColumns[field] = TextColumns.holdsText(col.type(), col.logicalType());
+            }
+            else {
+                kinds[field] = LeafKind.GROUP;
+                flatValidity[field] = ALL_PRESENT;
+            }
         }
-        this.nameToIndex = new InternedNameMap(names);
+        this.nameToIndex = new InternedNameMap(fieldNames);
     }
 
     /// Eagerly loads the first batch. Must be called after construction.
@@ -257,6 +299,7 @@ public final class FlatRowReader implements FileAwareRowReader {
                                    long budgetRows) throws IOException {
         ProjectedSchema decoded = projection.decoded();
         int projectedColumnCount = decoded.getProjectedColumnCount();
+        FlatStructs structs = FlatStructs.create(schema, projection.payload());
 
         // A row-level filter changes what `maxRows` counts: under SQL LIMIT semantics
         // the cap is on *matching* rows, not scanned rows. The batch plan still takes it —
@@ -272,7 +315,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // predicate; null falls through to the record-matcher path below.
         CompiledBatchFilter compiledFilter = null;
         if (filter != null) {
-            compiledFilter = BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex);
+            compiledFilter = BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex, true);
         }
         ColumnBatchMatcher[] columnBatchMatchers = compiledFilter != null ? compiledFilter.columnMatchers() : null;
         final boolean batchMatchers = compiledFilter != null;
@@ -299,7 +342,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             @SuppressWarnings("unchecked")
             BatchExchange<BatchExchange.Batch>[] none = new BatchExchange[0];
             FlatRowReader reader = new FlatRowReader(none, schema, projection.payload(),
-                    null, readerMatchLimit, recordMatcher, predicateView, tally, iterator);
+                    structs, null, readerMatchLimit, recordMatcher, predicateView, tally, iterator);
             reader.exhausted = true;
             return reader;
         }
@@ -319,6 +362,8 @@ public final class FlatRowReader implements FileAwareRowReader {
             // Other columns leave Batch.matches null; the merger reads only the columns its plan references.
             final boolean allocateMatches =
                     batchMatchers && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
+            // A leaf whose definition levels tell whether a struct above it is null keeps them.
+            final boolean keepsLevels = structs != null && structs.keepsLevels(i);
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recyclingEveryHolder(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
@@ -329,6 +374,9 @@ public final class FlatRowReader implements FileAwareRowReader {
                         b.capacity = batchSize;
                         if (allocateMatches) {
                             b.matches = new long[wordsLen];
+                        }
+                        if (keepsLevels) {
+                            b.definitionLevels = new int[batchSize];
                         }
                         return b;
                     });
@@ -345,7 +393,7 @@ public final class FlatRowReader implements FileAwareRowReader {
                 ? BatchMatchMerger.aliasing(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
                 : null;
 
-        FlatRowReader reader = new FlatRowReader(buffers, schema, projection.payload(),
+        FlatRowReader reader = new FlatRowReader(buffers, schema, projection.payload(), structs,
                 matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, iterator);
         reader.initialize();
         return reader;
@@ -554,8 +602,8 @@ public final class FlatRowReader implements FileAwareRowReader {
     // ==================== Null Check ====================
 
     @Override
-    public boolean isNull(int columnIndex) {
-        return (flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L;
+    public boolean isNull(int fieldIndex) {
+        return (flatValidity[fieldIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L;
     }
 
     @Override
@@ -566,35 +614,47 @@ public final class FlatRowReader implements FileAwareRowReader {
     // ==================== Primitive Accessors by Index ====================
 
     @Override
-    public int getInt(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public int getInt(int fieldIndex) {
+        int[] values = intValues[fieldIndex];
+        if (values == null) {
+            throw typeMismatch(fieldIndex, "an int");
         }
-        return ((int[]) flatValueArrays[columnIndex])[rowIndex];
+        if ((flatValidity[fieldIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
+            throwNull(fieldIndex);
+        }
+        return values[rowIndex];
     }
 
     @Override
-    public long getLong(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public long getLong(int fieldIndex) {
+        long[] values = longValues[fieldIndex];
+        if (values == null) {
+            throw typeMismatch(fieldIndex, "a long");
         }
-        return ((long[]) flatValueArrays[columnIndex])[rowIndex];
+        if ((flatValidity[fieldIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
+            throwNull(fieldIndex);
+        }
+        return values[rowIndex];
     }
 
     @Override
-    public float getFloat(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
-        }
-        if (physicalTypes[columnIndex] == PhysicalType.FLOAT) {
-            return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+    public float getFloat(int fieldIndex) {
+        float[] values = floatValues[fieldIndex];
+        if (values != null) {
+            if ((flatValidity[fieldIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
+                throwNull(fieldIndex);
+            }
+            return values[rowIndex];
         }
         // FLOAT16 surfaces as FIXED_LEN_BYTE_ARRAY(2) annotated Float16Type; any other
         // column is one the caller has asked for a float it does not hold.
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "a float");
         LogicalAccessorKind.requireFloat16(currentFileName, col.name(), col.type(), col.logicalType());
+        if (isNull(fieldIndex)) {
+            throwNull(fieldIndex);
+        }
         try {
-            return LeafDecoder.float16At(flatValueArrays[columnIndex], rowIndex);
+            return binaryValues[fieldIndex].float16At(rowIndex);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -602,19 +662,27 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public double getDouble(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public double getDouble(int fieldIndex) {
+        double[] values = doubleValues[fieldIndex];
+        if (values == null) {
+            throw typeMismatch(fieldIndex, "a double");
         }
-        return ((double[]) flatValueArrays[columnIndex])[rowIndex];
+        if ((flatValidity[fieldIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
+            throwNull(fieldIndex);
+        }
+        return values[rowIndex];
     }
 
     @Override
-    public boolean getBoolean(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public boolean getBoolean(int fieldIndex) {
+        boolean[] values = booleanValues[fieldIndex];
+        if (values == null) {
+            throw typeMismatch(fieldIndex, "a boolean");
         }
-        return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+        if ((flatValidity[fieldIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
+            throwNull(fieldIndex);
+        }
+        return values[rowIndex];
     }
 
     // ==================== Primitive Accessors by Name ====================
@@ -647,15 +715,15 @@ public final class FlatRowReader implements FileAwareRowReader {
     // ==================== String / Binary ====================
 
     @Override
-    public String getString(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public String getString(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        if (!textColumns[columnIndex]) {
-            ColumnSchema col = columnSchemas[columnIndex];
+        if (!textColumns[fieldIndex]) {
+            ColumnSchema col = leaf(fieldIndex, "a string");
             throw LogicalAccessorKind.notText(currentFileName, col.name(), col.type(), col.logicalType());
         }
-        return ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
+        return binaryValues[fieldIndex].stringAt(rowIndex);
     }
 
     @Override
@@ -664,11 +732,15 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public byte[] getBinary(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public byte[] getBinary(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        return ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
+        BinaryBatchValues values = binaryValues[fieldIndex];
+        if (values == null) {
+            throw typeMismatch(fieldIndex, "bytes");
+        }
+        return values.byteArrayAt(rowIndex);
     }
 
     @Override
@@ -679,13 +751,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     // ==================== Logical Type Accessors ====================
 
     @Override
-    public LocalDate getDate(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public LocalDate getDate(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "a date");
         LogicalAccessorKind.requireDate(currentFileName, col.name(), col.type(), col.logicalType());
-        return LeafDecoder.dateAt(flatValueArrays[columnIndex], rowIndex);
+        return LeafDecoder.dateAt(intValues[fieldIndex], rowIndex);
     }
 
     @Override
@@ -694,13 +766,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public LocalTime getTime(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public LocalTime getTime(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "a time");
         try {
-            return LeafDecoder.timeAt(flatValueArrays[columnIndex], rowIndex, col.type(), col.logicalType());
+            return LeafDecoder.timeAt(valuesOf(fieldIndex), rowIndex, col.type(), col.logicalType());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -713,14 +785,14 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public Instant getTimestamp(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public Instant getTimestamp(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "a timestamp");
         try {
             TimestampAccessorKind.require(col.name(), col.type(), col.logicalType(), true);
-            return LeafDecoder.timestampAt(flatValueArrays[columnIndex], rowIndex, col.type(), col.logicalType());
+            return LeafDecoder.timestampAt(valuesOf(fieldIndex), rowIndex, col.type(), col.logicalType());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -733,15 +805,15 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public LocalDateTime getLocalTimestamp(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public LocalDateTime getLocalTimestamp(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "a local timestamp");
         try {
             TimestampAccessorKind.require(col.name(), col.type(), col.logicalType(), false);
             return LeafDecoder.localTimestampAt(
-                    flatValueArrays[columnIndex], rowIndex, col.type(), col.logicalType());
+                    valuesOf(fieldIndex), rowIndex, col.type(), col.logicalType());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -754,13 +826,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public BigDecimal getDecimal(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public BigDecimal getDecimal(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "a decimal");
         try {
-            return LeafDecoder.decimalAt(flatValueArrays[columnIndex], rowIndex, col.type(), col.logicalType());
+            return LeafDecoder.decimalAt(valuesOf(fieldIndex), rowIndex, col.type(), col.logicalType());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -773,14 +845,14 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public UUID getUuid(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public UUID getUuid(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "a UUID");
         LogicalAccessorKind.requireUuid(currentFileName, col.name(), col.type(), col.logicalType());
         try {
-            return LeafDecoder.uuidAt(flatValueArrays[columnIndex], rowIndex);
+            return binaryValues[fieldIndex].uuidAt(rowIndex);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -798,14 +870,14 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public PqInterval getInterval(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public PqInterval getInterval(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = leaf(fieldIndex, "an interval");
         LogicalAccessorKind.requireInterval(currentFileName, col.name(), col.type(), col.logicalType());
         try {
-            return LeafDecoder.intervalAt(flatValueArrays[columnIndex], rowIndex);
+            return binaryValues[fieldIndex].intervalAt(rowIndex);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -820,24 +892,21 @@ public final class FlatRowReader implements FileAwareRowReader {
     // ==================== Generic Value ====================
 
     @Override
-    public Object getValue(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public Object getValue(int fieldIndex) {
+        if (isNull(fieldIndex)) {
             return null;
         }
-        return switch (kinds[columnIndex]) {
+        return switch (kinds[fieldIndex]) {
             // Dictionary-encoded UTF8/ENUM/JSON: return the interned String (one per chunk).
-            case STRING -> ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
-            case INT96_TIMESTAMP -> LeafDecoder.int96TimestampAt(flatValueArrays[columnIndex], rowIndex);
-            case RAW -> rawValueUnchecked(columnIndex);
-            case CONVERT -> flatValueArrays[columnIndex] instanceof BinaryBatchValues binary
-                    ? LeafDecoder.convertAt(binary, rowIndex, physicalTypes[columnIndex],
-                            columnSchemas[columnIndex].logicalType())
-                    : LeafDecoder.decode(rawValueUnchecked(columnIndex), LeafKind.CONVERT,
-                            physicalTypes[columnIndex], columnSchemas[columnIndex].logicalType());
-            // A flat column is a leaf by construction: kinds[] is filled from the
-            // physical-type overload, which never answers GROUP.
-            case GROUP -> throw new IllegalStateException(prefix()
-                    + "Column '" + columnSchemas[columnIndex].name() + "' is not a leaf");
+            case STRING -> binaryValues[fieldIndex].stringAt(rowIndex);
+            case INT96_TIMESTAMP -> binaryValues[fieldIndex].int96InstantAt(rowIndex);
+            case RAW -> rawValueUnchecked(fieldIndex);
+            case CONVERT -> binaryValues[fieldIndex] != null
+                    ? LeafDecoder.convertAt(binaryValues[fieldIndex], rowIndex, physicalTypes[fieldIndex],
+                            columnSchemas[fieldIndex].logicalType())
+                    : LeafDecoder.decode(rawValueUnchecked(fieldIndex), LeafKind.CONVERT,
+                            physicalTypes[fieldIndex], columnSchemas[fieldIndex].logicalType());
+            case GROUP -> structAt(fieldIndex);
         };
     }
 
@@ -847,22 +916,24 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     @Override
-    public Object getRawValue(int columnIndex) {
-        return isNull(columnIndex) ? null : rawValueUnchecked(columnIndex);
+    public Object getRawValue(int fieldIndex) {
+        if (isNull(fieldIndex)) {
+            return null;
+        }
+        return kinds[fieldIndex] == LeafKind.GROUP ? structAt(fieldIndex) : rawValueUnchecked(fieldIndex);
     }
 
     /// Reads the raw column value at the current row, assuming the caller has
-    /// already established the value is present (`!isNull(columnIndex)`); the
+    /// already established the value is present (`!isNull(fieldIndex)`); the
     /// returned value is never `null`.
-    private Object rawValueUnchecked(int columnIndex) {
-        return switch (physicalTypes[columnIndex]) {
-            case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
-            case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            case FLOAT -> ((float[]) flatValueArrays[columnIndex])[rowIndex];
-            case DOUBLE -> ((double[]) flatValueArrays[columnIndex])[rowIndex];
-            case BOOLEAN -> ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
+    private Object rawValueUnchecked(int fieldIndex) {
+        return switch (physicalTypes[fieldIndex]) {
+            case INT32 -> intValues[fieldIndex][rowIndex];
+            case INT64 -> longValues[fieldIndex][rowIndex];
+            case FLOAT -> floatValues[fieldIndex][rowIndex];
+            case DOUBLE -> doubleValues[fieldIndex][rowIndex];
+            case BOOLEAN -> booleanValues[fieldIndex][rowIndex];
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> binaryValues[fieldIndex].byteArrayAt(rowIndex);
         };
     }
 
@@ -871,34 +942,90 @@ public final class FlatRowReader implements FileAwareRowReader {
         return getRawValue(resolveIndex(name));
     }
 
-    // ==================== Nested (not supported for flat) ====================
+    // ==================== Nested ====================
 
-    @Override public PqStruct getStruct(String name) { throw nestedUnsupported(); }
-    @Override public PqStruct getStruct(int i) { throw nestedUnsupported(); }
-    @Override public PqList getList(String name) { throw nestedUnsupported(); }
-    @Override public PqList getList(int i) { throw nestedUnsupported(); }
-    @Override public PqMap getMap(String name) { throw nestedUnsupported(); }
-    @Override public PqMap getMap(int i) { throw nestedUnsupported(); }
-    @Override public PqVariant getVariant(String name) { throw nestedUnsupported(); }
-    @Override public PqVariant getVariant(int i) { throw nestedUnsupported(); }
-    @Override public PqFile getFile(String name) { throw nestedUnsupported(); }
-    @Override public PqFile getFile(int i) { throw nestedUnsupported(); }
+    @Override
+    public PqStruct getStruct(String name) {
+        return getStruct(resolveIndex(name));
+    }
+
+    @Override
+    public PqStruct getStruct(int fieldIndex) {
+        if (kinds[checkedField(fieldIndex)] != LeafKind.GROUP) {
+            throw notA(fieldIndex, "struct");
+        }
+        return isNull(fieldIndex) ? null : structAt(fieldIndex);
+    }
+
+    /// The flyweight over the struct field at `fieldIndex` in the current row, which the
+    /// caller has established is present.
+    private PqStruct structAt(int fieldIndex) {
+        return structs.at(fieldIndex, rowIndex);
+    }
+
+    // No column of a flat read repeats, and a variant or a file is read on the nested path,
+    // so every field is a primitive or a struct and none of these accessors applies.
+
+    @Override public PqList getList(String name) { throw notA(resolveIndex(name), "list"); }
+    @Override public PqList getList(int i) { throw notA(checkedField(i), "list"); }
+    @Override public PqMap getMap(String name) { throw notA(resolveIndex(name), "map"); }
+    @Override public PqMap getMap(int i) { throw notA(checkedField(i), "map"); }
+    @Override public PqVariant getVariant(String name) { throw notA(resolveIndex(name), "variant"); }
+    @Override public PqVariant getVariant(int i) { throw notA(checkedField(i), "variant"); }
+    @Override public PqFile getFile(String name) { throw notFile(resolveIndex(name)); }
+    @Override public PqFile getFile(int i) { throw notFile(checkedField(i)); }
+
+    /// The failure of an accessor for a kind of field that `fieldIndex` is not, which fails as
+    /// the accessor of another primitive type does.
+    private IllegalArgumentException notA(int fieldIndex, String kind) {
+        return new IllegalArgumentException(prefix() + "Field '" + fieldNames[fieldIndex] + "' is not a " + kind);
+    }
+
+    private IllegalArgumentException notFile(int fieldIndex) {
+        return new IllegalArgumentException(prefix() + "Field '" + fieldNames[fieldIndex]
+                + "' is not annotated as FILE");
+    }
+
+    /// The leaf column of the primitive field at `fieldIndex`, for an accessor about to decode
+    /// its value as `wanted`.
+    ///
+    /// @throws IllegalArgumentException if the field is a struct
+    private ColumnSchema leaf(int fieldIndex, String wanted) {
+        ColumnSchema col = columnSchemas[fieldIndex];
+        if (col == null) {
+            throw structMismatch(fieldIndex, wanted);
+        }
+        return col;
+    }
+
+    /// The failure of an accessor that reads a primitive, called on the struct field at
+    /// `fieldIndex`.
+    private IllegalArgumentException structMismatch(int fieldIndex, String wanted) {
+        return new IllegalArgumentException(prefix() + "Field '" + fieldNames[fieldIndex]
+                + "' is a struct, which cannot be read as " + wanted + "; read it with getStruct");
+    }
 
     // ==================== Metadata ====================
 
     @Override
     public int getFieldCount() {
-        return payload.getProjectedColumnCount();
+        return fieldNames.length;
     }
 
     @Override
     public String getFieldName(int index) {
-        int payloadColumnCount = payload.getProjectedColumnCount();
-        if (index < 0 || index >= payloadColumnCount) {
+        return fieldNames[checkedField(index)];
+    }
+
+    /// Returns `index` once it is known to address a field of the projection.
+    ///
+    /// @throws IndexOutOfBoundsException if it does not
+    private int checkedField(int index) {
+        if (index < 0 || index >= fieldNames.length) {
             throw new IndexOutOfBoundsException(prefix() + "Field index " + index
-                    + " is out of bounds for a projection of " + payloadColumnCount + " columns");
+                    + " is out of bounds for a projection of " + fieldNames.length + " fields");
         }
-        return columnSchemas[index].name();
+        return index;
     }
 
     // ==================== Batch Loading ====================
@@ -917,11 +1044,14 @@ public final class FlatRowReader implements FileAwareRowReader {
             return false;
         }
         recyclePreviousBatches();
-        int payloadColumnCount = flatValueArrays.length;
+        int payloadColumnCount = fieldOfColumn.length;
         if (!pollColumns(0, payloadColumnCount)) {
             return false;
         }
         currentFileName = previousBatches[0].fileName;
+        if (structs != null) {
+            structs.load(previousBatches, batchSize, currentFileName, flatValidity);
+        }
         // Uniform across columns: the flag comes from the work item, and the batch plan
         // closes a batch on its transitions, so no batch mixes the two.
         currentRowsAlwaysMatch = previousBatches[0].filterAlwaysMatches;
@@ -976,6 +1106,9 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// Hands every batch of the previous step back to its exchange. A filter-only column's
     /// slot is empty after a step statistics proved, which did not take a batch of it.
     private void recyclePreviousBatches() {
+        if (structs != null) {
+            structs.detach(previousBatches);
+        }
         for (int i = 0; i < columnCount; i++) {
             if (previousBatches[i] != null) {
                 exchanges[i].recycle(previousBatches[i]);
@@ -1024,12 +1157,15 @@ public final class FlatRowReader implements FileAwareRowReader {
                         + "Batch size mismatch: column " + i + " has " + batch.recordCount
                         + " records while column 0 has " + batchSize);
             }
-            // The payload columns lead the decoded ones and are all the accessors reach,
-            // at the position the projection requested them in.
-            if (i < flatValueArrays.length) {
-                int position = payload.exposedPosition(i);
-                flatValueArrays[position] = batch.values;
-                flatValidity[position] = batch.validity != null ? batch.validity : ALL_PRESENT;
+            // The payload columns lead the decoded ones and are all the accessors reach: a
+            // top-level primitive at the position the projection requested it in, a leaf below
+            // a struct through the struct's flyweight.
+            if (i < fieldOfColumn.length) {
+                int field = fieldOfColumn[i];
+                if (field >= 0) {
+                    installValues(field, batch.values);
+                    flatValidity[field] = batch.validity != null ? batch.validity : ALL_PRESENT;
+                }
             }
             previousBatches[i] = batch;
         }
@@ -1088,20 +1224,80 @@ public final class FlatRowReader implements FileAwareRowReader {
         return ExceptionContext.filePrefix(currentFileName);
     }
 
+    /// Points the typed slot of the field's type at `values`, leaving the others `null`.
+    private void installValues(int fieldIndex, Object values) {
+        intValues[fieldIndex] = values instanceof int[] ints ? ints : null;
+        longValues[fieldIndex] = values instanceof long[] longs ? longs : null;
+        floatValues[fieldIndex] = values instanceof float[] floats ? floats : null;
+        doubleValues[fieldIndex] = values instanceof double[] doubles ? doubles : null;
+        booleanValues[fieldIndex] = values instanceof boolean[] booleans ? booleans : null;
+        binaryValues[fieldIndex] = values instanceof BinaryBatchValues binary ? binary : null;
+    }
+
+    /// The primitive field's batch values, from the typed slot of its physical type, for the
+    /// decodes in [LeafDecoder] that take the array of whichever type the column holds.
+    private Object valuesOf(int fieldIndex) {
+        return switch (physicalTypes[fieldIndex]) {
+            case INT32 -> intValues[fieldIndex];
+            case INT64 -> longValues[fieldIndex];
+            case FLOAT -> floatValues[fieldIndex];
+            case DOUBLE -> doubleValues[fieldIndex];
+            case BOOLEAN -> booleanValues[fieldIndex];
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> binaryValues[fieldIndex];
+        };
+    }
+
+    /// The failure of a primitive accessor for a type the field at `fieldIndex` does not hold,
+    /// worded as [LogicalAccessorKind] words its rejections, and naming the accessor that reads
+    /// the field. Before the first batch every typed slot of a primitive is `null`, so a call made
+    /// then is reported as one made with no current row instead.
+    private RuntimeException typeMismatch(int fieldIndex, String wanted) {
+        ColumnSchema col = columnSchemas[fieldIndex];
+        if (col == null) {
+            return structMismatch(fieldIndex, wanted);
+        }
+        if (flatValidity[fieldIndex] == null) {
+            return new IllegalStateException(prefix() + "No current row; call next() before reading column '"
+                    + col.name() + "'");
+        }
+        return new IllegalArgumentException(prefix() + "Column '" + col.name() + "' is " + col.type()
+                + (col.logicalType() == null ? "" : " annotated " + col.logicalType())
+                + ", which cannot be read as " + wanted + "; read it with " + fittingAccessor(fieldIndex));
+    }
+
+    /// The accessor that reads the primitive field at `fieldIndex` as what it holds: the one its
+    /// annotation names, else the one its physical type names.
+    private String fittingAccessor(int fieldIndex) {
+        ColumnSchema col = columnSchemas[fieldIndex];
+        LogicalType logicalType = col.logicalType();
+        String annotated = logicalType == null ? null : AnnotationKind.of(logicalType).accessor(logicalType);
+        if (annotated != null) {
+            return annotated;
+        }
+        return switch (col.type()) {
+            case BOOLEAN -> "getBoolean";
+            case INT32 -> "getInt";
+            case INT64 -> "getLong";
+            case INT96 -> "getTimestamp";
+            case FLOAT -> "getFloat";
+            case DOUBLE -> "getDouble";
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> "getBinary";
+        };
+    }
+
     private int resolveIndex(String name) {
         int index = nameToIndex.get(name);
         if (index < 0) {
-            throw new IllegalArgumentException(prefix() + "Column not in projection: " + name);
+            throw new IllegalArgumentException(prefix() + (index == StringToIntMap.AMBIGUOUS
+                    ? StringToIntMap.ambiguousFieldMessage(name)
+                    : "Field '" + name + "' not in projection"));
         }
         return index;
     }
 
-    private void throwNull(int columnIndex) {
-        String name = getFieldName(columnIndex);
+    private void throwNull(int fieldIndex) {
+        String name = getFieldName(fieldIndex);
         throw new NullPointerException(prefix() + "Column '" + name + "' is null at row " + rowIndex);
     }
 
-    private static UnsupportedOperationException nestedUnsupported() {
-        return new UnsupportedOperationException("Nested type access not supported for flat schemas");
-    }
 }
