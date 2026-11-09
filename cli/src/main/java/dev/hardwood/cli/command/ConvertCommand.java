@@ -195,8 +195,12 @@ public class ConvertCommand implements Command<CommandInvocation> {
                 flattenNulls(group, path, childrenOf, values, nullString);
             }
             else if (value instanceof PqStruct struct) {
-                for (SchemaNode child : childrenOf.apply(group)) {
-                    flattenValues(ValueFormatter.valueOf(struct, child.name(), child), child,
+                // The struct's fields sit in the projection's order, as the children do; read by
+                // position, since two sibling fields may share a name
+                List<SchemaNode> children = childrenOf.apply(group);
+                for (int i = 0; i < children.size(); i++) {
+                    SchemaNode child = children.get(i);
+                    flattenValues(ValueFormatter.valueOf(struct, i, child), child,
                             path + "." + child.name(), childrenOf, values, nullString);
                 }
             }

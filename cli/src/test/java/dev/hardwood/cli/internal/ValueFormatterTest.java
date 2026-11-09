@@ -44,6 +44,7 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.row.VariantType;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -1430,6 +1431,52 @@ class ValueFormatterTest {
 
         assertThat(display(struct, null)).isEqualTo("{ a·b : 1 }");
         assertThat(export(struct)).isEqualTo("{\"a\\nb\": 1}");
+    }
+
+    // ==================== sibling fields of one name ====================
+
+    /// `duplicate_struct_field_names.parquet` holds a struct `s` of a required INT32 `v`, an
+    /// optional STRING `v` and a DATE `w`. Each field renders its own value with its own type.
+    @Test
+    void siblingFieldsOfOneNameRenderTheirOwnValuesAndTypes() throws IOException {
+        withDuplicateFieldNamesReader(ColumnProjection.all(), (rowReader, field) -> {
+            rowReader.next();
+            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
+                    .isEqualTo("{ v : 3, v : a, w : 2024-01-02 }");
+            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
+                    .isEqualTo("{\"v\": 3, \"v\": \"a\", \"w\": \"2024-01-02\"}");
+            rowReader.next();
+            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
+                    .isEqualTo("{ v : 4, v : null, w : 2024-03-04 }");
+            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
+                    .isEqualTo("{\"v\": 4, \"v\": null, \"w\": \"2024-03-04\"}");
+        });
+    }
+
+    /// A projection of `s.w` alone makes `w` the struct's field 0, while field 0 of the file's
+    /// group `s` is the INT32 `v`: `w` still renders as a DATE.
+    @Test
+    void projectedStructFieldRendersWithItsOwnType() throws IOException {
+        withDuplicateFieldNamesReader(ColumnProjection.columns("s.w"), (rowReader, field) -> {
+            rowReader.next();
+            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
+                    .isEqualTo("{ w : 2024-01-02 }");
+            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
+                    .isEqualTo("{\"w\": \"2024-01-02\"}");
+        });
+    }
+
+    private interface DuplicateFieldNamesCase {
+        void run(RowReader rowReader, SchemaNode field) throws IOException;
+    }
+
+    private void withDuplicateFieldNamesReader(ColumnProjection projection, DuplicateFieldNamesCase testCase)
+            throws IOException {
+        Path file = TestResources.path("/duplicate_struct_field_names.parquet");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rowReader = fileReader.buildRowReader().projection(projection).build()) {
+            testCase.run(rowReader, fileReader.getFileSchema().getField("s"));
+        }
     }
 
     /// A `convert` rendering of a materialised value.
