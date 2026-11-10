@@ -12,6 +12,7 @@ Related documents:
 - [RECORD_FILTERING.md](RECORD_FILTERING.md): filter evaluation over the published batches
 - [THREADING.md](THREADING.md): which thread runs each of the read's jobs, and a context of zero threads
 - [TESTING.md](../TESTING.md#task-orders): the harness that runs a read's jobs in seeded random orders
+- [PicoEngine](../core/src/test/java/dev/hardwood/internal/reader/engine/pico/README.md): the scheduling below as a runnable simulation without Parquet, and what it leaves out
 - [docs/content/concepts/concurrency-model.md](../docs/content/concepts/concurrency-model.md): the user-facing model
 
 ## Components
