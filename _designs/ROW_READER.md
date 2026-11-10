@@ -41,7 +41,7 @@ Tests: `NestedSchemaTest`, `PqRowApiTest`, `BatchMatcherRowReaderTest`, `FlatStr
 
 ## Accessor addressing
 
-Every accessor exists by name and by index (`StructAccessor`). Parquet allows sibling fields to share a name; each name map marks a name it receives twice as ambiguous (`StringToIntMap.putOrMarkAmbiguous`), and a by-name accessor throws `IllegalArgumentException` for it, while the index accessors reach each field. The check sits on the lookup's miss branch, so a unique name costs nothing extra. Both resolve against the payload projection only, so a column the filter added is not reachable at any depth; the prefix invariant that makes this hold is in [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection).
+Every accessor exists by name and by index (`StructAccessor`). Parquet allows sibling fields to share a name; each name map marks a name it receives twice as ambiguous (`InternedNameMap.AMBIGUOUS`, the marker `StringToIntMap.putOrMarkAmbiguous` leaves), and a by-name accessor throws `IllegalArgumentException` for it, while the index accessors reach each field. The check sits on the lookup's miss branch, so a unique name costs nothing extra. Both resolve against the payload projection only, so a column the filter added is not reachable at any depth; the prefix invariant that makes this hold is in [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection).
 
 ### Index space
 
@@ -55,9 +55,11 @@ A projected name resolves to exactly one schema node, the node at that path from
 
 | Accessor | Index counts | Name resolves |
 |---|---|---|
-| `FlatRowReader` | Projected top-level fields | Top-level field name, through a `StringToIntMap` built at construction |
+| `FlatRowReader` | Projected top-level fields | Top-level field name, through an `InternedNameMap` built at construction |
 | `NestedRowReader` | Projected top-level fields | Top-level field name, through `TopLevelFieldMap` |
 | `PqStruct` | Projected children of that struct | Child name, through the `Struct` descriptor's own map |
+
+All three name maps are `InternedNameMap`s, built once from the projected names. They hold the names interned, so a name the caller passes as a string literal is the instance the map holds. Where the table gives each name the slot its hash selects, such a name is found by one reference comparison. Past a few dozen names no table size the map may grow to usually separates them all; it then probes, and a name whose slot another name took is found by equality along the probe sequence, as is any instance of a name other than the interned one. `FileSchema` interns every name of the schema as it builds the tree from the footer, so a name taken from the schema (`SchemaNode.name()`, a column's `FieldPath`, `PqStruct.getFieldName(int)`) is that same instance and is found as a literal is. The record filter's name-keyed leaves and the Avro binding resolve fields by such names. The map interns the names it is given regardless, so it does not depend on its callers for its fast path.
 
 The index is not `ColumnSchema.columnIndex()`, the leaf's position in the file schema. The two agree only for a flat file read with `ColumnProjection.all()`; under a projection or on a nested file they differ, and a leaf index passed to an accessor reads another field or fails.
 

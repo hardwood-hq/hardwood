@@ -39,6 +39,7 @@ import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.schema.TextColumns;
+import dev.hardwood.internal.util.InternedNameMap;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -96,7 +97,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// column below a struct. The payload's columns lead the decoded ones, and the accessor state
     /// below spans them alone, so no accessor reaches a column a predicate added.
     private final int[] fieldOfColumn;
-    private final StringToIntMap nameToIndex;
+    private final InternedNameMap nameToIndex;
     private final String[] fieldNames;
     /// The leaf of each top-level primitive field, `null` for a struct field.
     private final PhysicalType[] physicalTypes;
@@ -220,7 +221,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.previousBatches = new BatchExchange.Batch[columnCount];
         this.matchMerger = matchMerger;
 
-        // Build the name-to-field map and cache each field's metadata, for the exposed fields only
+        // Cache each field's name and metadata, for the exposed fields only
         int[] fieldIndices = payload.getProjectedFieldIndices();
         List<SchemaNode> rootChildren = fileSchema.getRootNode().children();
         int fieldCount = fieldIndices.length;
@@ -233,7 +234,6 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.flatValidity = new long[fieldCount][];
         this.fieldOfColumn = new int[payload.getProjectedColumnCount()];
         Arrays.fill(fieldOfColumn, -1);
-        this.nameToIndex = new StringToIntMap(fieldCount);
         this.fieldNames = new String[fieldCount];
         this.physicalTypes = new PhysicalType[fieldCount];
         this.columnSchemas = new ColumnSchema[fieldCount];
@@ -242,7 +242,6 @@ public final class FlatRowReader implements FileAwareRowReader {
         for (int field = 0; field < fieldCount; field++) {
             SchemaNode node = rootChildren.get(fieldIndices[field]);
             fieldNames[field] = node.name();
-            nameToIndex.putOrMarkAmbiguous(node.name(), field);
             if (node instanceof SchemaNode.PrimitiveNode primitive) {
                 ColumnSchema col = fileSchema.getColumn(primitive.columnIndex());
                 fieldOfColumn[payload.toProjectedIndex(primitive.columnIndex())] = field;
@@ -256,6 +255,7 @@ public final class FlatRowReader implements FileAwareRowReader {
                 flatValidity[field] = ALL_PRESENT;
             }
         }
+        this.nameToIndex = new InternedNameMap(fieldNames);
     }
 
     /// Eagerly loads the first batch. Must be called after construction.
@@ -1288,7 +1288,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     private int resolveIndex(String name) {
         int index = nameToIndex.get(name);
         if (index < 0) {
-            throw new IllegalArgumentException(prefix() + (index == StringToIntMap.AMBIGUOUS
+            throw new IllegalArgumentException(prefix() + (index == InternedNameMap.AMBIGUOUS
                     ? StringToIntMap.ambiguousFieldMessage(name)
                     : "Field '" + name + "' not in projection"));
         }

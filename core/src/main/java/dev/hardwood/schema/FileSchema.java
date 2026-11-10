@@ -273,8 +273,9 @@ public class FileSchema {
                     dropped.size(), String.join("; ", dropped));
         }
 
+        String rootName = root.name().intern();
         SchemaNode.GroupNode rootNode = new SchemaNode.GroupNode(
-                root.name(),
+                rootName,
                 root.repetitionType() != null ? root.repetitionType() : RepetitionType.REQUIRED,
                 root.convertedType(),
                 root.logicalType(),
@@ -283,7 +284,7 @@ public class FileSchema {
                 0 // Root has rep level 0
         );
 
-        return new FileSchema(root.name(), columns, rootNode);
+        return new FileSchema(rootName, columns, rootNode);
     }
 
     /// Build children nodes from schema elements.
@@ -302,6 +303,9 @@ public class FileSchema {
 
         for (int i = 0; i < numChildren; i++) {
             SchemaElement element = elements.get(cursor[0]);
+            // Interned, as every name of the schema is: a reader resolves a name per row through
+            // a map of interned names, which a name taken from the schema then hits by reference.
+            String name = element.name().intern();
             RepetitionType repType = element.repetitionType() != null ? element.repetitionType() : RepetitionType.OPTIONAL;
 
             // Calculate levels for this node
@@ -311,7 +315,7 @@ public class FileSchema {
             // Build path for this node
             List<String> currentPath = new ArrayList<>(parentPath.size() + 1);
             currentPath.addAll(parentPath);
-            currentPath.add(element.name());
+            currentPath.add(name);
 
             if (element.isPrimitive()) {
                 // Primitive node - represents an actual column
@@ -328,7 +332,7 @@ public class FileSchema {
                         effectiveLogicalType));
 
                 children.add(new SchemaNode.PrimitiveNode(
-                        element.name(),
+                        name,
                         element.type(),
                         repType,
                         effectiveLogicalType,
@@ -356,7 +360,7 @@ public class FileSchema {
 
                 LogicalType groupAnnotation = readableGroupAnnotation(element, currentPath, dropped);
                 SchemaNode.GroupNode groupNode = new SchemaNode.GroupNode(
-                        element.name(),
+                        name,
                         repType,
                         readableGroupConvertedType(element, groupAnnotation, currentPath, dropped),
                         effectiveGroupLogicalType(groupAnnotation, groupChildren),

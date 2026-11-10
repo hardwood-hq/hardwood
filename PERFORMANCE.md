@@ -286,13 +286,15 @@ The logging setting matters for any benchmark that writes through parquet-java's
 
 ### Data
 
-A benchmark gets its data in one of three ways:
+A benchmark gets its data in one of five ways:
 
 | Source | Used by | Location |
 |--------|---------|----------|
 | Downloaded taxi corpus | `PageHandlingBenchmark`, `MemoryMapBenchmark` | `performance-testing/test-data-setup/target/tlc-trip-record-data`, passed with `-p dataDir=...` |
+| Downloaded taxi and Overture files | `AvroRowReaderBenchmark` | below `performance-testing/test-data-setup/target`, overridable with `-p dataRoot=...` |
 | Generated corpus files | the nested, mixed and wide benchmarks; some single-class benchmarks through the `performance-testing/generate_*.py` scripts | `performance-testing/test-data-setup/target/benchmark-data`, overridable with `-Dperf.dataDir` |
-| In-memory fixture | `FlatWriteBenchmark`, `WriteEncodingBenchmark` | built per trial by `FlatWriteFixture` |
+| Files the benchmark writes on first use | `NamedWideReadBenchmark` | `performance-testing/test-data-setup/target/benchmark-data`, overridable with `-p dataDir=...` |
+| In-memory fixture | `FlatWriteBenchmark`, `WriteEncodingBenchmark`, `InternedNameMapBenchmark` | built per trial, by `FlatWriteFixture` for the write benchmarks and from `FieldNames` for `InternedNameMapBenchmark` |
 
 Generated data is deterministic: every generator draws from a `java.util.Random` with a fixed seed, so every machine measures the same bytes and a number from one month is comparable with one from the next.
 
