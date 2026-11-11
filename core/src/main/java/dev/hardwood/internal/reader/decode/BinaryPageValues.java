@@ -204,54 +204,71 @@ public final class BinaryPageValues {
         prefixDecoder.readInts(prefixLengths, 0, nonNull);
         DeltaBinaryPackedDecoder suffixDecoder = new DeltaBinaryPackedDecoder(data, prefixDecoder.getPos(), limit);
         suffixDecoder.readInts(suffixLengths, 0, nonNull);
-        int suffixPos = suffixDecoder.getPos();
-        long total = 0;
-        for (int i = 0; i < nonNull; i++) {
-            if (prefixLengths[i] < 0 || suffixLengths[i] < 0) {
-                throw new ParquetReadException("Invalid DELTA_BYTE_ARRAY length: prefix " + prefixLengths[i]
-                        + ", suffix " + suffixLengths[i]);
-            }
-            total += (long) prefixLengths[i] + suffixLengths[i];
-        }
-        if (total > Integer.MAX_VALUE) {
-            throw new ParquetReadException("DELTA_BYTE_ARRAY values of a page take " + total
-                    + " bytes, more than one array holds");
-        }
+        int suffixStart = suffixDecoder.getPos();
+        long total = checkDeltaByteArrayLengths(width, prefixLengths, suffixLengths, nonNull, limit - suffixStart);
         chargeValues.accept(total);
         byte[] values = scratch.valueBytes((int) total);
+        int suffixPos = suffixStart;
         int pos = 0;
         int previousStart = 0;
-        int previousLength = 0;
         for (int i = 0; i < nonNull; i++) {
             int prefixLength = prefixLengths[i];
             int suffixLength = suffixLengths[i];
-            if (prefixLength > previousLength) {
-                throw new ParquetReadException("DELTA_BYTE_ARRAY value " + i + " takes a prefix of " + prefixLength
-                        + " bytes from a previous value of " + previousLength);
-            }
-            if (suffixLength > limit - suffixPos) {
-                throw new ParquetReadException("Unexpected EOF reading byte array: expected " + suffixLength
-                        + ", got " + (limit - suffixPos));
-            }
             System.arraycopy(values, previousStart, values, pos, prefixLength);
             System.arraycopy(data, suffixPos, values, pos + prefixLength, suffixLength);
             suffixPos += suffixLength;
             previousStart = pos;
+            pos += prefixLength + suffixLength;
+            suffixLengths[i] = prefixLength + suffixLength;
+        }
+        int[] prefix = prefixOf(definitionLevels, maxDefinitionLevel, numValues, suffixLengths, scratch);
+        return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, nonNull == numValues,
+                prefix, values, 0, 0, false, 0, null, null);
+    }
+
+    /// Checks a `DELTA_BYTE_ARRAY` page's lengths before its values are charged and allocated:
+    /// each prefix within the value before it, the suffixes exactly the bytes left, each value of
+    /// a fixed-length column of its width.
+    ///
+    /// @return the bytes the values take once reconstructed, at most what one array holds
+    private static long checkDeltaByteArrayLengths(int width, int[] prefixLengths, int[] suffixLengths, int nonNull,
+                                                   int suffixBytes) {
+        long total = 0;
+        int remaining = suffixBytes;
+        int previousLength = 0;
+        for (int i = 0; i < nonNull; i++) {
+            int prefixLength = prefixLengths[i];
+            int suffixLength = suffixLengths[i];
+            if (prefixLength < 0 || suffixLength < 0) {
+                throw new ParquetReadException("Invalid DELTA_BYTE_ARRAY length: prefix " + prefixLength
+                        + ", suffix " + suffixLength);
+            }
+            if (prefixLength > previousLength) {
+                throw new ParquetReadException("DELTA_BYTE_ARRAY value " + i + " takes a prefix of " + prefixLength
+                        + " bytes from a previous value of " + previousLength);
+            }
+            if (suffixLength > remaining) {
+                throw new ParquetReadException("Unexpected EOF reading byte array: expected " + suffixLength
+                        + ", got " + remaining);
+            }
+            remaining -= suffixLength;
+            // At most the bytes of the suffixes so far, so within an int
             previousLength = prefixLength + suffixLength;
             if (width > 0 && previousLength != width) {
                 throw new ParquetReadException("DELTA_BYTE_ARRAY value " + i + " is " + previousLength
                         + " bytes long, not the " + width + " of its FIXED_LEN_BYTE_ARRAY column");
             }
-            pos += previousLength;
-            suffixLengths[i] = previousLength;
+            total += previousLength;
         }
-        if (suffixPos != limit) {
+        if (remaining != 0) {
             throw new ParquetReadException("DELTA_BYTE_ARRAY value section does not end with its " + nonNull
-                    + " values; leftover bytes: " + (limit - suffixPos));
+                    + " values; leftover bytes: " + remaining);
         }
-        int[] prefix = prefixOf(definitionLevels, maxDefinitionLevel, numValues, suffixLengths, scratch);
-        return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, nonNull == numValues,
-                prefix, values, 0, 0, false, 0, null, null);
+        if (total > Integer.MAX_VALUE) {
+            throw new ParquetReadException("DELTA_BYTE_ARRAY values of a page take " + total
+                    + " bytes, more than one array holds");
+        }
+        return total;
     }
 
     /// The byte prefix of a page's rows from the lengths of its non-null values, into `scratch`.

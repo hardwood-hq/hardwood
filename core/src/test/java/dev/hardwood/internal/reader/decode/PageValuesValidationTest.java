@@ -187,6 +187,22 @@ class PageValuesValidationTest {
                 .hasMessage("DELTA_BYTE_ARRAY value 1 takes a prefix of 5 bytes from a previous value of 3");
     }
 
+    /// A prefix is checked against the value before it before the values' bytes are charged and
+    /// allocated: the prefix alone would take the working set past its limit.
+    @Test
+    void rejectsAPrefixOfTheFirstValueBeforeChargingTheValues() {
+        ColumnSchema column = DataPages.required(PhysicalType.BYTE_ARRAY, null);
+        byte[] body = DataPages.concat(DeltaBinaryPackedEncoder.encodeInts(new int[]{ 2_000_000_000 }, 0, 1),
+                DeltaBinaryPackedEncoder.encodeInts(new int[]{ 0 }, 0, 1));
+        PageDecoder decoder = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED,
+                new WorkingSet(1, 1024 * 1024).column(0, column));
+
+        assertThatThrownBy(() -> DataPages.read(decoder, column, DataPages.page(Encoding.DELTA_BYTE_ARRAY, 1, body),
+                null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("DELTA_BYTE_ARRAY value 0 takes a prefix of 2000000000 bytes from a previous value of 0");
+    }
+
     @Test
     void rejectsANegativeSuffixLength() {
         assertThatThrownBy(() -> readDeltaByteArray(PhysicalType.BYTE_ARRAY, null, new int[]{ 0 }, new int[]{ -1 },
