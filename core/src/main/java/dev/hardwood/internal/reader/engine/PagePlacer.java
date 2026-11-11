@@ -47,6 +47,7 @@ import dev.hardwood.internal.reader.pipeline.SegmentFillException;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -554,7 +555,19 @@ final class PagePlacer {
         @Override
         public void add(NestedCell cell, PageTask page, int recordStart, int recordEnd, int valueStart,
                         int valueEnd) {
-            cell.add((NestedPageTask) page, recordStart, recordEnd, valueStart, valueEnd);
+            WorkingSet.Column workingSet = workingSet(column);
+            cell.add((NestedPageTask) page, recordStart, recordEnd, valueStart, valueEnd, keptPage(workingSet, page.info()));
+            // before the cell's fill allocates its batch: the column keeps every page it has values of
+            workingSet.openBatch(cell.keptBytes(), cell.pages());
+        }
+
+        /// What the column keeps of the page `info` describes until the cells it is placed into fill.
+        private static long keptPage(WorkingSet.Column workingSet, PageInfo info) {
+            if (info.isNullPlaceholder()) {
+                return workingSet.keptPage(info.placeholderNumValues(), 0, Encoding.PLAIN);
+            }
+            DataPage page = info.dataPage();
+            return workingSet.keptPage(page.numValues(), page.header().uncompressedPageSize(), page.encoding());
         }
 
         @Override

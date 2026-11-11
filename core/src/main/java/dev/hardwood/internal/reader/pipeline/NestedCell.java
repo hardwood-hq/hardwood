@@ -18,6 +18,7 @@ import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.decode.PageDecoder;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// The work of one column decoded through levels for one planned batch: the [NestedSegment]s of the
@@ -46,6 +47,9 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     private final List<NestedSegment> segments = new ArrayList<>(2);
     private int records;
     private int values;
+    /// What the column keeps of the pages the cell has values of, and how many they are.
+    private long keptBytes;
+    private int pages;
     /// The page of the last segment placed, which a failure while filling the cell is placed with.
     private PageTask lastPage;
 
@@ -59,17 +63,41 @@ public final class NestedCell implements BatchCell<NestedBatch> {
         this.firstRow = firstRow;
     }
 
-    /// Places the page's records `[recordStart, recordEnd)`, which hold its values
-    /// `[valueStart, valueEnd)`, into this cell after every segment placed so far.
     /// Places the page's records `[recordStart, recordEnd)`, holding its values `[valueStart,
     /// valueEnd)`, after every segment placed so far; the page counts the segment until it is
     /// filled.
-    public void add(NestedPageTask page, int recordStart, int recordEnd, int valueStart, int valueEnd) {
+    ///
+    /// @param keptBytes what the column keeps of the page until the cell fills, counted once per page
+    /// @throws ParquetReadException if the cell's values would exceed an array's reach
+    public void add(NestedPageTask page, int recordStart, int recordEnd, int valueStart, int valueEnd,
+                    long keptBytes) {
+        int cellValues;
+        try {
+            cellValues = Math.addExact(values, valueEnd - valueStart);
+        }
+        catch (ArithmeticException e) {
+            throw new ParquetReadException("A batch holds more than " + Integer.MAX_VALUE
+                    + " values of the column, more than an array can hold", e);
+        }
+        if (page != lastPage) {
+            this.keptBytes += keptBytes;
+            pages++;
+        }
         page.unfilledSegments.incrementAndGet();
         segments.add(new NestedSegment(page, recordStart, recordEnd, valueStart, valueEnd, records, values));
         records += recordEnd - recordStart;
-        values += valueEnd - valueStart;
+        values = cellValues;
         lastPage = page;
+    }
+
+    /// What the column keeps of the pages the cell has values of, the sum of their `keptBytes`.
+    public long keptBytes() {
+        return keptBytes;
+    }
+
+    /// The pages the cell has values of.
+    public int pages() {
+        return pages;
     }
 
     List<NestedSegment> segments() {
