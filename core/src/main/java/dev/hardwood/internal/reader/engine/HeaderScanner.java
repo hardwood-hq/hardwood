@@ -326,12 +326,13 @@ final class HeaderScanner {
                 return new Step(found, position);
             }
             PageHeader header = read.value().header();
-            int length = read.value().length() + header.compressedPageSize();
-            if (position + length > held) {
+            long pageEnd = PageFormatProbe.pageEnd(read.value(), position, end);
+            if (pageEnd > held) {
                 return new Step(found, position);
             }
-            found.add(new Found(header, position, length));
-            position += length;
+            // a page whose header and body together pass an int fails the read
+            found.add(new Found(header, position, Math.toIntExact(pageEnd - position)));
+            position = pageEnd;
             values -= switch (header.type()) {
                 case DATA_PAGE -> header.dataPageHeader().numValues();
                 case DATA_PAGE_V2 -> header.dataPageHeaderV2().numValues();

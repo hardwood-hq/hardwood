@@ -54,17 +54,26 @@ public final class PageFormatProbe {
                 return read.asNeed();
             }
             HeaderAt parsed = read.value();
-            long pageEnd = offset + parsed.length() + parsed.header().compressedPageSize();
-            if (pageEnd > chunkEnd) {
-                throw new ParquetReadException("Page at offset " + offset + " ends at offset " + pageEnd
-                        + ", past the end of the column chunk at offset " + chunkEnd);
-            }
+            long pageEnd = pageEnd(parsed, offset, chunkEnd);
             if (!visitor.test(parsed.header())) {
                 return Parsed.of(true);
             }
             offset = pageEnd;
         }
         return Parsed.of(false);
+    }
+
+    /// The offset at which the page whose header `parsed` starts at `offset` ends: past its header and
+    /// the body its `compressed_page_size` declares.
+    ///
+    /// @throws ParquetReadException if the page ends past `chunkEnd`, the end of its column chunk
+    public static long pageEnd(HeaderAt parsed, long offset, long chunkEnd) {
+        long pageEnd = offset + parsed.length() + parsed.header().compressedPageSize();
+        if (pageEnd > chunkEnd) {
+            throw new ParquetReadException("Page at offset " + offset + " ends at offset " + pageEnd
+                    + ", past the end of the column chunk at offset " + chunkEnd);
+        }
+        return pageEnd;
     }
 
     /// The page header at `offset`, starting from a peek of `fromPeek` bytes and doubling it while the
