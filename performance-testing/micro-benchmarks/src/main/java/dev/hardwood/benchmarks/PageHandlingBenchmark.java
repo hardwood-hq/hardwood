@@ -30,18 +30,16 @@ import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
-import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.reader.decode.ChunkPages;
 import dev.hardwood.internal.reader.decode.InPlacePageReads;
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
-import dev.hardwood.internal.reader.fetch.PageWalk;
-import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -102,21 +100,7 @@ public class PageHandlingBenchmark {
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
-                    ColumnMetaData meta = columnChunk.metaData();
-                    Long dictOffset = meta.dictionaryPageOffset();
-                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : meta.dataPageOffset();
-                    int chunkLen = Math.toIntExact(meta.totalCompressedSize());
-                    ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
-
-                    SequentialFetchPlan plan = SequentialFetchPlan.build(
-                            inputFile, columnSchema, columnChunk,
-                            context, rgIdx, inputFile.name(), 0);
-                    // A file in memory: the walk never stops for bytes
-                    PageWalk walk = plan.walk();
-                    PageInfo page;
-                    while ((page = walk.advance()) != null) {
-                        allPages.add(page);
-                    }
+                    allPages.addAll(ChunkPages.of(inputFile, columnSchema, columnChunk, context));
                 }
             }
         }

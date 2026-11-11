@@ -8,30 +8,22 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.fetch.InPlaceSections;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Window formation, fetching and release, on the row groups of page_index_windows.parquet
+/// Window formation and requests, on the row groups of page_index_windows.parquet
 /// (twelve row groups, twenty columns, a page index).
 class IndexWindowTest {
 
@@ -77,115 +69,19 @@ class IndexWindowTest {
     }
 
     @Test
-    void theFirstRequestFetchesTheWholeWindowOncePerStructure() throws Exception {
-        CountingInputFile file = countingFile(InputFile.of(FIXTURE));
-        IndexWindow window = window(file, 3, column(0), column(0));
+    void aWindowRequestsEachStructureOnceForEveryMember() throws Exception {
+        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, countingFile(InputFile.of(FIXTURE)),
+                members(rowGroups().subList(0, 3), column(0), column(0))).getFirst();
 
-        RowGroupIndexBuffers second = buffers(window, 1);
-        RowGroupIndexBuffers first = buffers(window, 0);
-
-        assertThat(file.readCount()).isEqualTo(2);
-        assertThat(first.forColumn(0).offsetIndex()).isNotNull();
-        assertThat(first.forColumn(0).columnIndex()).isNotNull();
-        assertThat(second.forColumn(0).offsetIndex()).isNotNull();
-        assertThat(file.reads()).extracting(CountingInputFile.Read::reason)
-                .containsOnly("rg=0-2 indexes");
+        assertThat(window.indexSpans()).hasSize(2).allSatisfy(span -> {
+            assertThat(span.reason()).isEqualTo("rg=0-2 indexes");
+            assertThat(span.holders()).isEqualTo(3);
+        });
     }
-
-    @Test
-    void aFailedReadFailsEveryMember() throws Exception {
-        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE)) {
-            @Override
-            public ByteBuffer readRange(long offset, int length) throws IOException {
-                throw new IOException("injected");
-            }
-        };
-        file.open();
-        IndexWindow window = window(file, 2, column(0), new BitSet());
-
-        awaitMet(window.indexNeed());
-
-        assertThatThrownBy(() -> window.buffersFor(0)).isInstanceOf(IOException.class)
-                .rootCause().hasMessage("injected");
-        assertThatThrownBy(() -> window.buffersFor(1)).isInstanceOf(IOException.class)
-                .rootCause().hasMessage("injected");
-    }
-
-    @Test
-    void aWindowIsDroppedOnceEveryMemberIsReleased() throws Exception {
-        IndexWindow window = window(countingFile(InputFile.of(FIXTURE)), 2, column(0), new BitSet());
-        buffers(window, 0);
-
-        window.release(0);
-
-        assertThat(window.buffersFor(1).forColumn(0).offsetIndex()).isNotNull();
-
-        window.release(1);
-
-        assertThatThrownBy(() -> window.buffersFor(1))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Page index of work item 1 is not present: the window was not read, or was released");
-    }
-
-    @Test
-    void closingTheReadDropsTheWindow() throws Exception {
-        IndexWindow window = window(countingFile(InputFile.of(FIXTURE)), 2, column(0), new BitSet());
-        buffers(window, 0);
-
-        window.releaseAll();
-
-        assertThatThrownBy(() -> window.buffersFor(0))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Page index of work item 0 is not present: the window was not read, or was released");
-    }
-
-    @Test
-    void aWorkItemOutsideTheWindowIsRejected() throws Exception {
-        IndexWindow window = window(countingFile(InputFile.of(FIXTURE)), 2, column(0), new BitSet());
-
-        assertThatThrownBy(() -> window.buffersFor(2))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Work item 2 is not in the index window of work items 0 to 1");
-    }
-
-    /// One window over the first `count` row groups of the fixture, its sections read in place as
-    /// they are polled.
-    private IndexWindow window(InputFile file, int count, BitSet offsetIndexColumns,
-            BitSet columnIndexColumns) throws Exception {
-        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
-                members(rowGroups().subList(0, count), offsetIndexColumns, columnIndexColumns)).getFirst();
-        window.insertSections(new InPlaceSections());
-        return window;
-    }
-
-    /// The index buffers of `workItem`, once the window's page index has arrived: each need names
-    /// one request not present, so it is asked again until none is, as the read's planning does.
-    private static RowGroupIndexBuffers buffers(IndexWindow window, int workItem) throws Exception {
-        for (Need need = window.indexNeed(); need != null; need = window.indexNeed()) {
-            awaitMet(need);
-        }
-        return window.buffersFor(workItem);
-    }
-
-    /// Waits until `need` is met; `null` is met already.
-    static void awaitMet(Need need) throws InterruptedException {
-        if (need != null) {
-            CountDownLatch met = new CountDownLatch(1);
-            need.whenMet(met::countDown);
-            assertThat(met.await(10, TimeUnit.SECONDS)).as("need met").isTrue();
-        }
-    }
-
-    @AfterEach
-    void closeContext() {
-        context.close();
-    }
-
-    private final HardwoodContextImpl context = HardwoodContextImpl.create(0);
 
     private static List<IndexWindow> plan(long budget, List<RowGroup> rowGroups,
             BitSet offsetIndexColumns, BitSet columnIndexColumns) throws Exception {
-        return IndexWindow.plan(budget, countingFile(InputFile.of(FIXTURE)), 0,
+        return IndexWindow.plan(budget, countingFile(InputFile.of(FIXTURE)),
                 members(rowGroups, offsetIndexColumns, columnIndexColumns));
     }
 

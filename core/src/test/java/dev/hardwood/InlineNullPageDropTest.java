@@ -8,34 +8,45 @@
 package dev.hardwood;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.LongStream;
 
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.fetch.PageWalks;
-import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
-import dev.hardwood.internal.reader.select.RowRanges;
+import dev.hardwood.internal.reader.decode.ChunkPages;
+import dev.hardwood.internal.reader.decode.PageInfo;
+import dev.hardwood.internal.thrift.PageHeaderReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Pages null on every row, in a file carrying no page index, are dropped from their inline
 /// statistics for a predicate a null row fails, and read for `IS NULL`, which a null row
@@ -48,10 +59,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// Each case asserts two things. The rows come from a read through the row reader and a read
 /// through the column readers, which must agree with each other and with the predicate. The
-/// pages come from walking the column's [SequentialFetchPlan] directly and counting what it
-/// reads, so a page kept where it could be dropped fails the test even though the per-row
-/// filter would still return the right rows. Neither fixture carries a page index, so the plan
-/// walked here is the one both readers use.
+/// pages come from deciding each of the column's pages by its inline statistics
+/// ([PageDropPredicates#canDropPage(List, dev.hardwood.internal.metadata.PageHeader, ColumnSchema,
+/// dev.hardwood.internal.predicate.BoundsReadability, dev.hardwood.internal.predicate.LogContext)])
+/// and counting those kept, so a page kept where it could be dropped fails the test even though
+/// the per-row filter would still return the right rows.
 class InlineNullPageDropTest {
 
     @ParameterizedTest
@@ -111,7 +123,59 @@ class InlineNullPageDropTest {
         assertThat(pagesRead(file, "address.city", filter)).isEqualTo(10);
     }
 
+    /// The bodies of the pages the filter's inline statistics drop are overwritten, which no
+    /// decode survives: the filtered read returns its rows from the pages it decodes, reading the
+    /// dropped ones as nulls, while a read without the filter, which decodes every page, fails.
+    @ParameterizedTest
+    @ValueSource(strings = { "v1", "v2" })
+    void aPageItsInlineStatisticsDropIsNeverDecoded(String pageVersion, @TempDir Path dir) throws Exception {
+        FilterPredicate filter = FilterPredicate.eq("value", 650L);
+        Path corrupted = dir.resolve("dropped-pages-corrupted.parquet");
+        Files.write(corrupted, withDroppedPagesCorrupted(fixture(pageVersion), "value", filter));
+
+        assertReads(corrupted, filter, "value", ids(650, 651));
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted));
+                 RowReader rows = reader.rowReader()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class);
+    }
+
     // ==================== Fixtures ====================
+
+    /// `file`'s bytes with the body of every page of `column` that `filter`'s inline statistics
+    /// drop overwritten with `0xFF`, its header left intact.
+    private static byte[] withDroppedPagesCorrupted(Path file, String column, FilterPredicate filter)
+            throws IOException {
+        byte[] bytes = Files.readAllBytes(file);
+        FileSchema schema;
+        ColumnChunk chunk;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            schema = reader.getFileSchema();
+            chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(schema.getColumn(column).columnIndex());
+        }
+        ColumnSchema columnSchema = schema.getColumn(column);
+        List<ResolvedPredicate> leaves = PageDropPredicates.byColumn(FilterPredicateResolver.resolve(filter, schema))
+                .getOrDefault(columnSchema.columnIndex(), List.of());
+        int position = Math.toIntExact(chunk.chunkStartOffset());
+        int end = Math.toIntExact(chunk.chunkStartOffset() + chunk.metaData().totalCompressedSize());
+        for (int page = 0; position < end; ) {
+            ThriftCompactReader reader = new ThriftCompactReader(ByteBuffer.wrap(bytes, position, end - position).slice(), 0);
+            PageHeader header = PageHeaderReader.read(reader);
+            int headerSize = reader.getBytesRead();
+            if ((header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2)
+                    && PageDropPredicates.canDropPage(leaves, header, columnSchema, BoundsReadability.ALL,
+                            new LogContext(file.toString(), 0).withColumn(columnSchema.fieldPath()).withPageIndex(page++))) {
+                Arrays.fill(bytes, position + headerSize, position + headerSize + header.compressedPageSize(), (byte) 0xFF);
+            }
+            position += headerSize + header.compressedPageSize();
+        }
+        return bytes;
+    }
 
     private static Path fixture(String pageVersion) {
         return Paths.get("src/test/resources/inline_null_pages_" + pageVersion + ".parquet");
@@ -149,9 +213,8 @@ class InlineNullPageDropTest {
         assertThat(columnIds).as("column readers").containsExactlyElementsOf(expectedIds);
     }
 
-    /// Walks the fetch plan for `column` under `filter` and returns the number of pages it
-    /// reads. A page the inline statistics drop is emitted as a null placeholder carrying no
-    /// data, and is not counted.
+    /// The pages of `column` its inline statistics do not drop under `filter`: a page they drop is
+    /// read as a null placeholder carrying no data, and is not counted.
     private static int pagesRead(Path file, String column, FilterPredicate filter) throws IOException {
         FileMetaData fileMetaData;
         FileSchema schema;
@@ -173,11 +236,12 @@ class InlineNullPageDropTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              InputFile inputFile = InputFile.of(file)) {
             inputFile.open();
-            SequentialFetchPlan plan = SequentialFetchPlan.build(inputFile, columnSchema, columnChunk,
-                    context, 0, inputFile.name(), 0L, dropLeaves, RowRanges.ALL, 0L);
-            PageWalks.Pages pages = PageWalks.of(plan);
-            while (pages.hasNext()) {
-                if (!pages.next().isNullPlaceholder()) {
+            List<PageInfo> pages = ChunkPages.of(inputFile, columnSchema, columnChunk, context);
+            for (int i = 0; i < pages.size(); i++) {
+                LogContext page = new LogContext(inputFile.name(), 0).withColumn(columnSchema.fieldPath())
+                        .withPageIndex(i);
+                if (!PageDropPredicates.canDropPage(dropLeaves, pages.get(i).dataPage().header(), columnSchema,
+                        BoundsReadability.ALL, page)) {
                     pagesRead++;
                 }
             }

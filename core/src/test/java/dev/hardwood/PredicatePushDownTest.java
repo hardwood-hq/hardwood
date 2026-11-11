@@ -1317,9 +1317,9 @@ class PredicatePushDownTest {
     @Test
     void inlineStatsSkipProducesCorrectRowsForLeafFilter() throws Exception {
         // Files without a ColumnIndex still carry inline DataPageHeader.statistics.
-        // SequentialFetchPlan consults those stats per-page, and where a page
-        // cannot match, a null-placeholder is emitted instead of decoding. The
-        // record-level filter drops synthetic nulls via three-valued logic.
+        // Where a page's stats prove it cannot match, a null-placeholder may stand
+        // for it instead of decoding. The record-level filter drops synthetic nulls
+        // via three-valued logic.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
             // value column is nullable (optional), so its pages can be skipped.
             FilterPredicate filter = FilterPredicate.lt("value", 2000L);

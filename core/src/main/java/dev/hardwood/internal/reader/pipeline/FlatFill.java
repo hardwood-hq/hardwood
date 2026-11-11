@@ -11,8 +11,10 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.reader.batch.BitmapWords;
 import dev.hardwood.internal.reader.decode.FlatPageValues;
+import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.select.PageRowMask;
 
 /// Fills a [Segment] of a flat fixed-width column's cell from its page's values in place
@@ -34,17 +36,28 @@ import dev.hardwood.internal.reader.select.PageRowMask;
 /// cell's completion sets the bits of every such segment once the bitmap exists
 /// ([#backfillValidity]). A cell that meets no null publishes `null`, the representation of
 /// "every value present".
-final class FlatFill {
+public final class FlatFill {
 
     private static final VarHandle WORDS = MethodHandles.arrayElementVarHandle(long[].class);
+    private static final DecodeBuffers.Slot<PageDecoder.LevelScratch> SCRATCH = DecodeBuffers.slot();
 
     private FlatFill() {
+    }
+
+    /// The level scratch a flat page's decode uses in `buffers`.
+    public static PageDecoder.LevelScratch scratch(DecodeBuffers buffers) {
+        PageDecoder.LevelScratch scratch = buffers.get(SCRATCH);
+        if (scratch == null) {
+            scratch = new PageDecoder.LevelScratch();
+            buffers.set(SCRATCH, scratch);
+        }
+        return scratch;
     }
 
     /// Fills `segment` from its page's `values`, read in place, into the cell's array `out`.
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
-    static void fill(Segment segment, FlatPageValues values, Object out, int maxDefinitionLevel) {
+    public static void fill(Segment segment, FlatPageValues values, Object out, int maxDefinitionLevel) {
         ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel);
         forEachRun(segment, (pageRow, destPos, length) -> {
             values.copy(pageRow, out, destPos, length);
@@ -58,7 +71,7 @@ final class FlatFill {
     /// @param levels the page's definition levels, or `null` for a page without any, every
     ///        value of which is at `maxDefinitionLevel`
     /// @param out the cell's levels, or `null` for a column that keeps none, which copies nothing
-    static void copyDefinitionLevels(Segment segment, int[] levels, int[] out, int maxDefinitionLevel) {
+    public static void copyDefinitionLevels(Segment segment, int[] levels, int[] out, int maxDefinitionLevel) {
         if (out == null) {
             return;
         }
@@ -106,7 +119,7 @@ final class FlatFill {
     /// Sets the validity bits of every segment of `cell` that wrote none, as it held no null, once
     /// a segment installed the cell's bitmap. Runs on the task that completes the cell, after every
     /// fill of it.
-    static void backfillValidity(Cell cell) {
+    public static void backfillValidity(Cell cell) {
         long[] validity = cell.validity();
         if (validity == null) {
             return;

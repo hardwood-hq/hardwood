@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
@@ -19,27 +18,20 @@ import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.reader.fetch.CoalescedRanges;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
-import dev.hardwood.internal.reader.fetch.Sections;
-import dev.hardwood.internal.reader.step.ByteSource;
-import dev.hardwood.internal.reader.step.Need;
+import dev.hardwood.internal.reader.fetch.Span;
+import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetReadException;
 
-/// The page-index and bloom-filter slices of a run of consecutive work items of one file, read
+/// The page-index and bloom-filter slices of a run of consecutive row groups of one file, read
 /// together: the ColumnIndex slices of all members merged into requests of their own
 /// ([CoalescedRanges]), the OffsetIndex slices into others, the bloom-filter slices into a third
-/// set.
-///
-/// Formed while the file is planned, the page index's requests and the bloom filters' each held
-/// by every member in a [PlanningReads]. No request starts until the planning of a member needs it:
-/// the bloom filters' for the first member that probes them ([#bloomFiltersNeed]), the page
-/// index's for the first member its Bloom filters and dictionaries keep ([#indexNeed]). Either
-/// starts every request it holds and returns the first one not present, which the planning waits
-/// on before it slices the member's bytes. The requests are released once every member has been released
-/// ([#release]), or when the read closes ([#releaseAll]).
-final class IndexWindow {
+/// set. A window takes as many row groups as fit its budget, so a file whose page index fits it is
+/// one window; the read fetches each window's requests ([#indexSpans], [#bloomFilterSpans]) as its
+/// members' planning needs them.
+public final class IndexWindow {
 
     /// A work item as its window sees it: its row group and the columns whose index structures
     /// it needs.
@@ -48,25 +40,16 @@ final class IndexWindow {
     /// @param offsetIndexColumns the columns whose OffsetIndex it needs
     /// @param columnIndexColumns the columns whose ColumnIndex it needs
     /// @param bloomFilterColumns the columns whose bloom filter it may probe
-    record Member(RowGroup rowGroup, int rowGroupIndex, BitSet offsetIndexColumns, BitSet columnIndexColumns,
+    public record Member(RowGroup rowGroup, int rowGroupIndex, BitSet offsetIndexColumns, BitSet columnIndexColumns,
                   BitSet bloomFilterColumns) {
     }
 
-    private final InputFile inputFile;
-    private final int firstWorkItemIndex;
     private final List<Member> members;
     private final String rowGroupLabel;
     private final CoalescedRanges offsetIndexes;
     private final CoalescedRanges columnIndexes;
     private final CoalescedRanges bloomFilters;
-    /// The page index's requests, OffsetIndex and ColumnIndex; `null` until [#insertSections].
-    private PlanningReads indexReads;
-    /// The bloom filters' requests; `null` until [#insertSections].
-    private PlanningReads bloomFilterReads;
-
-    private IndexWindow(InputFile inputFile, int firstWorkItemIndex, List<Member> members) {
-        this.inputFile = inputFile;
-        this.firstWorkItemIndex = firstWorkItemIndex;
+    private IndexWindow(InputFile inputFile, List<Member> members) {
         this.members = members;
         int first = members.getFirst().rowGroupIndex();
         int last = members.getLast().rowGroupIndex();
@@ -87,23 +70,22 @@ final class IndexWindow {
         this.bloomFilters = bloomFilterBuilder.build(cut, maxSpan);
     }
 
-    /// Splits one file's work items into consecutive windows. Each window takes as many of the
-    /// following work items as fit its fetched bytes within `budgetBytes`, and at least one, so a
+    /// Splits one file's row groups into consecutive windows. Each window takes as many of the
+    /// following row groups as fit its fetched bytes within `budgetBytes`, and at least one, so a
     /// file whose page index fits the budget is one window.
     ///
     /// @param budgetBytes the most bytes one window fetches, gaps included, unless a single row
     ///        group needs more
-    /// @param firstWorkItemIndex the work-list index of the first work item
-    /// @param members the work items, in work-list order
+    /// @param members the row groups, in read order
     /// @throws ParquetReadException if a page index or bloom filter a member reads lies outside the
     ///         file
-    static List<IndexWindow> plan(long budgetBytes, InputFile inputFile, int firstWorkItemIndex,
-            List<Member> members) throws IOException {
+    public static List<IndexWindow> plan(long budgetBytes, InputFile inputFile, List<Member> members)
+            throws IOException {
         requireInFile(inputFile, members);
         List<IndexWindow> windows = new ArrayList<>();
         int from = 0;
         while (from < members.size()) {
-            IndexWindow window = largest(budgetBytes, inputFile, firstWorkItemIndex, members, from);
+            IndexWindow window = largest(budgetBytes, inputFile, members, from);
             windows.add(window);
             from += window.memberCount();
         }
@@ -142,20 +124,19 @@ final class IndexWindow {
         }
     }
 
-    /// The window over the most work items from `from` on that fits the budget, and at least one.
+    /// The window over the most row groups from `from` on that fits the budget, and at least one.
     /// Fetched bytes grow with every member added, so the count is found by galloping: counts of
     /// 1, 2, 4, … until one exceeds the budget or reaches the file's end, then bisection between
     /// the last that fit and the first that did not. Every candidate is at most twice the size of
     /// the window it finds, so planning a file costs time linear in its row groups.
-    private static IndexWindow largest(long budgetBytes, InputFile inputFile, int firstWorkItemIndex,
-            List<Member> members, int from) {
+    private static IndexWindow largest(long budgetBytes, InputFile inputFile, List<Member> members, int from) {
         int remaining = members.size() - from;
-        IndexWindow best = window(inputFile, firstWorkItemIndex, members, from, 1);
+        IndexWindow best = window(inputFile, members, from, 1);
         int fits = 1;
         int exceeds = remaining + 1;
         while (fits < remaining) {
             int count = (int) Math.min((long) fits * 2, remaining);
-            IndexWindow candidate = window(inputFile, firstWorkItemIndex, members, from, count);
+            IndexWindow candidate = window(inputFile, members, from, count);
             if (candidate.fetchedBytes() > budgetBytes) {
                 exceeds = count;
                 break;
@@ -165,7 +146,7 @@ final class IndexWindow {
         }
         while (exceeds - fits > 1) {
             int mid = (fits + exceeds) >>> 1;
-            IndexWindow candidate = window(inputFile, firstWorkItemIndex, members, from, mid);
+            IndexWindow candidate = window(inputFile, members, from, mid);
             if (candidate.fetchedBytes() <= budgetBytes) {
                 best = candidate;
                 fits = mid;
@@ -177,9 +158,8 @@ final class IndexWindow {
         return best;
     }
 
-    private static IndexWindow window(InputFile inputFile, int firstWorkItemIndex, List<Member> members,
-            int from, int count) {
-        return new IndexWindow(inputFile, firstWorkItemIndex + from, members.subList(from, from + count));
+    private static IndexWindow window(InputFile inputFile, List<Member> members, int from, int count) {
+        return new IndexWindow(inputFile, members.subList(from, from + count));
     }
 
     /// Adds the bloom-filter slices of `columns` whose extent the footer gives. A filter without
@@ -202,86 +182,35 @@ final class IndexWindow {
                 + bloomFilters.fetchedBytes();
     }
 
-    int memberCount() {
+    public int memberCount() {
         return members.size();
     }
 
-    /// Inserts the window's requests into the read's sections, each held by every member. Called once, as
-    /// the file is planned.
-    void insertSections(Sections sections) {
-        indexReads = new PlanningReads(sections, inputFile, rowGroupLabel, members.size());
-        indexReads.insert(offsetIndexes, PlanningReads.INDEXES);
-        indexReads.insert(columnIndexes, PlanningReads.INDEXES);
-        bloomFilterReads = new PlanningReads(sections, inputFile, rowGroupLabel, members.size());
-        bloomFilterReads.insert(bloomFilters, PlanningReads.PRUNING);
+    /// The most bytes one window fetches, gaps included, unless a single row group needs more.
+    public static long budgetBytes() {
+        return InternalProperty.longValue("hardwood.internal.indexWindowBytes", 16L * 1024 * 1024, 1,
+                "a positive byte count");
     }
 
-    /// What reading the window's page index waits for: the first of its requests not present,
-    /// after starting every one not started; `null` once all are present.
-    Need indexNeed() throws IOException {
-        return indexReads.start();
+    /// The window's page-index requests, OffsetIndex and ColumnIndex, each held by every member.
+    public List<Span> indexSpans() {
+        return spans("indexes", offsetIndexes, columnIndexes);
     }
 
-    /// What reading the window's bloom filters waits for, as [#indexNeed].
-    Need bloomFiltersNeed() throws IOException {
-        return bloomFilterReads.start();
+    /// The window's bloom-filter requests, each held by every member.
+    public List<Span> bloomFilterSpans() {
+        return spans("pruning", bloomFilters);
     }
 
-    /// The index buffers of the work item at `workItemIndex`, once [#indexNeed] has none.
-    ///
-    /// @throws IllegalStateException if the work item is not a member, or a request is not
-    ///                               present
-    RowGroupIndexBuffers buffersFor(int workItemIndex) throws IOException {
-        Member member = members.get(member(workItemIndex));
-        if (!indexReads.present()) {
-            throw new IllegalStateException("Page index of work item " + workItemIndex
-                    + " is not present: the window was not read, or was released");
-        }
-        return RowGroupIndexBuffers.slice(member.rowGroup(), member.offsetIndexColumns(),
-                member.columnIndexColumns(), indexReads);
-    }
-
-    /// The bytes the bloom filters of the work item at `workItemIndex` are read from, once
-    /// [#bloomFiltersNeed] has none: a filter this window reads from the window, which fails with
-    /// an `IllegalStateException` if the window's bytes are not present, any other from `rest`.
-    ///
-    /// @throws IllegalStateException if the work item is not a member
-    ByteSource bloomFilters(int workItemIndex, ByteSource rest) {
-        member(workItemIndex);
-        return (offset, length) -> {
-            if (!bloomFilterReads.holds(offset, length)) {
-                return rest.read(offset, length);
+    private List<Span> spans(String reason, CoalescedRanges... structures) {
+        List<Span> spans = new ArrayList<>();
+        for (CoalescedRanges ranges : structures) {
+            for (int r = 0; r < ranges.requestCount(); r++) {
+                long start = ranges.requestStart(r);
+                spans.add(new Span(start, Math.toIntExact(ranges.requestEnd(r) - start),
+                        rowGroupLabel + " " + reason, members.size()));
             }
-            ByteBuffer bytes = bloomFilterReads.read(offset, length);
-            if (bytes == null) {
-                throw new IllegalStateException("Bloom filters of work item " + workItemIndex
-                        + " are not present: the window was not read, or was released");
-            }
-            return bytes;
-        };
-    }
-
-    /// Releases the window's requests for one member, which drops them once every member is
-    /// released.
-    void release(int workItemIndex) {
-        member(workItemIndex);
-        indexReads.release();
-        bloomFilterReads.release();
-    }
-
-    /// Releases every request, as the read closes.
-    void releaseAll() {
-        indexReads.discard();
-        bloomFilterReads.discard();
-    }
-
-    private int member(int workItemIndex) {
-        int member = workItemIndex - firstWorkItemIndex;
-        if (member < 0 || member >= members.size()) {
-            throw new IllegalStateException("Work item " + workItemIndex
-                    + " is not in the index window of work items " + firstWorkItemIndex + " to "
-                    + (firstWorkItemIndex + members.size() - 1));
         }
-        return member;
+        return spans;
     }
 }

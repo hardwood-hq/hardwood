@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.reader.pipeline;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,17 +26,22 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Reads columns whose cells span several pages with their jobs run one at a time in seeded random
 /// orders ([TaskOrderExecutor#shuffling]), and checks every read against the values written, or,
@@ -44,10 +51,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///   bytes into chunks of its own ([BinaryFill]), and the page that fills the cell's last segment,
 ///   not necessarily the cell's last page, completes it;
 /// - a page of a column decoded through levels measured before the page ahead of it waits, and is
-///   placed behind it ([NestedColumn]), including pages that begin inside a record, whose leading
-///   values go into the cell of the record before.
+///   placed behind it, including pages that begin inside a record, whose leading
+///   values go into the cell of the record before;
+/// - of two pages that fail at one row, the lower column's failure is the one the read reports,
+///   whichever decode fails first.
 ///
-/// The walk advances run on the executor's thread too, among the decodes. A failure names the
+/// The scans and plans run on the executor's thread too, among the decodes. A failure names the
 /// seed; the order a seed gives also depends on when the executor's wait for more jobs times out,
 /// so a seed reproduces an order only most of the time.
 class ShuffledTaskOrderTest {
@@ -99,6 +108,35 @@ class ShuffledTaskOrderTest {
             }
             assertThat(readList(seed, Path.of(LONG_RECORDS), 3))
                     .as("long records, seed %d", seed).isEqualTo(longRecords);
+        }
+    }
+
+    /// Both columns' only pages fail their checksum at row 0, so the read's failure is the first
+    /// column's, however late its decode runs.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void theLowerColumnsFailureAtOneRowWinsInEveryTaskOrder() throws Exception {
+        byte[] bytes = Files.readAllBytes(Path.of("src/test/resources/plain_with_crc.parquet"));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            for (ColumnChunk chunk : reader.getFileMetaData().rowGroups().get(0).columns()) {
+                ColumnMetaData meta = chunk.metaData();
+                bytes[Math.toIntExact(meta.dataPageOffset() + meta.totalCompressedSize() - 1)] ^= (byte) 0xFF;
+            }
+        }
+        for (long seed = 0; seed < 5 * SEEDS; seed++) {
+            TaskOrderExecutor executor = TaskOrderExecutor.shuffling(seed, IN_FLIGHT);
+            assertThatThrownBy(() -> {
+                try (HardwoodContextImpl context = executor.context(THREADS);
+                        ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)), context);
+                        RowReader rows = reader.rowReader()) {
+                    while (rows.hasNext()) {
+                        rows.next();
+                    }
+                }
+            }).as("seed %d", seed)
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("[<memory>: row group 0, column 'id', page 0] CRC mismatch: expected 2bcb8d87 but "
+                            + "computed 6c9620a");
         }
     }
 

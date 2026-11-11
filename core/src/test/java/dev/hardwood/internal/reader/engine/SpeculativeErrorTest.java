@@ -27,7 +27,6 @@ import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.plan.RowGroupIterators;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -35,72 +34,73 @@ import dev.hardwood.schema.FileSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// An `Error` a request read ahead of the read fails with fails the read only where the read
-/// reaches the request: a read that never reaches it reads on, and its close throws the `Error`; a
-/// read that reaches it fails there, after the batches before it. An `Error` a footer read ahead
-/// fails with is thrown by the close of a read that never lists its file.
+/// An `Error` a request or a footer read ahead of the read fails with is the JVM's and no row's: the
+/// read throws it at once, before the row it was met at, and its close throws nothing.
 ///
 /// Uses diff_order_multi.parquet: four row groups of 50 rows, whose data are requests of their own.
 class SpeculativeErrorTest {
 
     private static final Path FILE = Path.of("src/test/resources/differential/diff_order_multi.parquet");
+    private static final ColumnProjection ROW = ColumnProjection.columns("__row__");
 
-    /// A read-ahead of a few rows keeps the column's walk in the first row groups, while the
-    /// request of the last one is read ahead.
     @ParameterizedTest(name = "threads: {0}")
     @ValueSource(ints = {0, 2})
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void anErrorReadAheadThatTheReadNeverReachesIsThrownByTheClose(int threads) throws Exception {
+    void anErrorReadAheadFailsTheReadAtOnce(int threads) throws Exception {
         LastRowGroupErrorFile file = new LastRowGroupErrorFile(InputFile.of(FILE));
-        ColumnProjection projection = ColumnProjection.columns("__row__");
-        FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
-            schema = reader.getFileSchema();
-        }
-        ProjectedSchema decoded = ProjectedSchema.create(schema, projection);
-        List<Integer> batches = new ArrayList<>();
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
-            RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context, projection, null, 0);
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("__row__", 10);
-            List<NestedLevelComputer.Layers> flat = new ArrayList<>();
-            flat.add(null);
-            iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 1, 0, List.of(exchange), null);
-            batches.add(takeBatch(exchange));
+            RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context, ROW, null, 0);
+            BatchExchange<BatchExchange.Batch> exchange = start(iterator);
             iterator.awaitQuiescent();
             assertThat(file.failed.getCount()).as("the last row group's request failed").isZero();
-            batches.add(takeBatch(exchange));
 
-            assertThatThrownBy(iterator::close).isSameAs(file.error);
+            // fewer than the 150 rows before the last row group
+            assertThat(rowsUntilThrown(exchange, file.error)).isLessThan(150);
+            iterator.close();
         }
-        assertThat(batches).containsExactly(10, 10);
     }
 
-    /// The footer of a file ahead is read ahead of the read; an `Error` its read fails with is
-    /// thrown by the close of a read that never lists the file.
     @ParameterizedTest(name = "threads: {0}")
     @ValueSource(ints = {0, 2})
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void anErrorOfAFooterReadAheadThatTheReadNeverListsIsThrownByTheClose(int threads) throws Exception {
+    void anErrorOfAFooterReadAheadFailsTheReadAtOnce(int threads) throws Exception {
         FooterErrorFile third = new FooterErrorFile(InputFile.of(FILE));
-        ColumnProjection projection = ColumnProjection.columns("__row__");
-        FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
-            schema = reader.getFileSchema();
-        }
-        ProjectedSchema decoded = ProjectedSchema.create(schema, projection);
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
             RowGroupIterator iterator = RowGroupIterators.initialized(
-                    List.of(InputFile.of(FILE), InputFile.of(FILE), third), context, projection, null, 0);
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("__row__", 10);
-            List<NestedLevelComputer.Layers> flat = new ArrayList<>();
-            flat.add(null);
-            iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 1, 0, List.of(exchange), null);
-            assertThat(takeBatch(exchange)).isEqualTo(10);
+                    List.of(InputFile.of(FILE), InputFile.of(FILE), third), context, ROW, null, 0);
+            BatchExchange<BatchExchange.Batch> exchange = start(iterator);
             iterator.awaitQuiescent();
             assertThat(third.failed.getCount()).as("the third file's footer read failed").isZero();
 
-            assertThatThrownBy(iterator::close).isSameAs(third.error);
+            // fewer than the 400 rows of the files before the third
+            assertThat(rowsUntilThrown(exchange, third.error)).isLessThan(400);
+            iterator.close();
         }
+    }
+
+    /// Starts a read of the row number in batches of 10 rows, a read-ahead of one row.
+    private static BatchExchange<BatchExchange.Batch> start(RowGroupIterator iterator) throws IOException {
+        FileSchema schema;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
+            schema = reader.getFileSchema();
+        }
+        BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("__row__", 10);
+        List<NestedLevelComputer.Layers> flat = new ArrayList<>();
+        flat.add(null);
+        iterator.start(ProjectedSchema.create(schema, ROW), flat, NestedIndexMode.ALL_ITEMS, false, 10, 1,
+                List.of(exchange), null);
+        return exchange;
+    }
+
+    /// The rows taken from `exchange` before it throws `error`.
+    private static long rowsUntilThrown(BatchExchange<BatchExchange.Batch> exchange, Error error) {
+        long[] rows = new long[1];
+        assertThatThrownBy(() -> {
+            while (true) {
+                rows[0] += takeBatch(exchange);
+            }
+        }).isSameAs(error);
+        return rows[0];
     }
 
     private static int takeBatch(BatchExchange<BatchExchange.Batch> exchange) throws Exception {
@@ -110,24 +110,6 @@ class SpeculativeErrorTest {
             return 0;
         }
         return batch.recordCount;
-    }
-
-    @ParameterizedTest(name = "threads: {0}")
-    @ValueSource(ints = {0, 2})
-    @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void anErrorReadAheadFailsTheReadWhereItReachesTheRequest(int threads) throws Exception {
-        LastRowGroupErrorFile file = new LastRowGroupErrorFile(InputFile.of(FILE));
-        List<Integer> batches = new ArrayList<>();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(threads);
-             ParquetFileReader reader = ParquetFileReader.open(file, context);
-             ColumnReader column = reader.buildColumnReader("__row__").batchSize(50).build()) {
-            assertThatThrownBy(() -> {
-                while (column.nextBatch()) {
-                    batches.add(column.getRecordCount());
-                }
-            }).isSameAs(file.error);
-        }
-        assertThat(batches).containsExactly(50, 50, 50);
     }
 
     /// Fails every read of the last row group's data with an `Error`. Not a file whose bytes are

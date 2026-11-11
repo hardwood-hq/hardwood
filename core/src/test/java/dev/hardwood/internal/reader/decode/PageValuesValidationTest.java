@@ -321,7 +321,7 @@ class PageValuesValidationTest {
     void nullPlaceholderIsChargedBeforeItsLevelsAreAllocated() {
         ColumnSchema column = DataPages.optional(PhysicalType.INT64, null);
         PageDecoder decoder = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED,
-                new WorkingSet(1, 1024 * 1024, null).column(0, column));
+                new WorkingSet(1, 1024 * 1024).column(0, column));
 
         // A placeholder of the most values a page may declare, from a page its statistics dropped
         assertThatThrownBy(() -> decoder.nullsInPlace(Integer.MAX_VALUE - 9, new PageDecoder.LevelScratch(), false))

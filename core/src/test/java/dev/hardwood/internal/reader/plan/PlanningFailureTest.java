@@ -24,7 +24,8 @@ import dev.hardwood.schema.ColumnProjection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A file whose planning fails fails the read at that file, and every later step of it.
+/// A file whose planning fails fails the read at that file, and every later step of it; one that
+/// fails with an `Error` fails it at once.
 ///
 /// Every column of a read reaches the failed file on its own. A column that reaches it after
 /// another column has failed there must see that failure too: were it handed the end of its stream
@@ -40,6 +41,7 @@ class PlanningFailureTest {
                     + " where the schema declares 'a'";
     private static final Path THREE_ROW_GROUPS = Paths.get("src/test/resources/filter_pushdown_int.parquet");
     private static final String ERROR_MESSAGE = "open failed";
+    private static final String OPEN_FAILED_MESSAGE = "[error_on_open.parquet] Failed to open file";
 
     @Test
     void aLaterReadOfTheFailedFileFailsTheSameWay() throws Exception {
@@ -71,11 +73,10 @@ class PlanningFailureTest {
     @Test
     void anErrorInPlanningFailsEveryLaterStep() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.openAll(
-                List.of(InputFile.of(ORDER_AB), new ErrorOnOpenInputFile()));
+                List.of(InputFile.of(ORDER_AB), new FailingOnOpenInputFile(true)));
              ColumnReaders columns = reader.columnReaders(ColumnProjection.all())) {
-            long rows = rowsUntilFailure(columns, AssertionError.class, ERROR_MESSAGE);
+            rowsUntilFailure(columns, AssertionError.class, ERROR_MESSAGE);
 
-            assertThat(rows).isEqualTo(rows(ORDER_AB));
             // Not the end of the stream, which would end the read cleanly
             assertThatThrownBy(columns::nextBatch)
                     .isInstanceOf(AssertionError.class)
@@ -88,9 +89,9 @@ class PlanningFailureTest {
     @Test
     void everyRowGroupBeforeTheFailedFileIsRead() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.openAll(
-                List.of(InputFile.of(THREE_ROW_GROUPS), new ErrorOnOpenInputFile()));
+                List.of(InputFile.of(THREE_ROW_GROUPS), new FailingOnOpenInputFile(false)));
              ColumnReaders columns = reader.columnReaders(ColumnProjection.all())) {
-            long rows = rowsUntilFailure(columns, AssertionError.class, ERROR_MESSAGE);
+            long rows = rowsUntilFailure(columns, IOException.class, OPEN_FAILED_MESSAGE);
 
             assertThat(rows).isEqualTo(rows(THREE_ROW_GROUPS));
         }
@@ -115,12 +116,21 @@ class PlanningFailureTest {
         }
     }
 
-    /// Raises an `Error`, not an exception, when the read opens it.
-    private static final class ErrorOnOpenInputFile implements InputFile {
+    /// Raises an `Error`, or an `IOException`, when the read opens it.
+    private static final class FailingOnOpenInputFile implements InputFile {
+
+        private final boolean error;
+
+        FailingOnOpenInputFile(boolean error) {
+            this.error = error;
+        }
 
         @Override
-        public void open() {
-            throw new AssertionError(ERROR_MESSAGE);
+        public void open() throws IOException {
+            if (error) {
+                throw new AssertionError(ERROR_MESSAGE);
+            }
+            throw new IOException(ERROR_MESSAGE);
         }
 
         @Override

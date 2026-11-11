@@ -14,7 +14,7 @@ package dev.hardwood.internal.reader.pipeline;
 /// running sum over the cell's segments in page order, assigned when the segment is placed. Every
 /// segment of a cell writes a disjoint range of the cell's values, and only the words at the
 /// edges of its validity bits are shared with a neighbour.
-final class Segment {
+public final class Segment {
 
     final Cell cell;
     final PageTask page;
@@ -42,5 +42,9 @@ final class Segment {
 
     int records() {
         return recordEnd - recordStart;
+    }
+
+    public Cell cell() {
+        return cell;
     }
 }

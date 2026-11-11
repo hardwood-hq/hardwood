@@ -23,7 +23,7 @@ import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Without an OffsetIndex, [SequentialFetchPlan] reads a column chunk in pieces. A page header
+/// Without an OffsetIndex, a read fetches a column chunk in pieces. A page header
 /// or page that starts in one piece and ends in the next is read from the piece it starts in,
 /// so no byte of the column chunk is fetched twice (#1364).
 ///

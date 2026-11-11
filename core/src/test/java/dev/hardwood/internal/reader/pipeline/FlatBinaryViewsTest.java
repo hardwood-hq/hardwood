@@ -38,11 +38,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The views of a flat binary column's dictionary values are built when a reader first needs
 /// them: a reader of entry ids alone never gets them, nor their arrays; a filter that decides by
 /// entry ids leaves them deferred, and one that reads every value's view has them built as each
-/// cell completes. The first reader that builds deferred views switches the column to building
-/// them as its cells complete.
+/// cell completes. The first reader that builds deferred views raises the column's demand for them.
 ///
 /// The fixture has two row groups of 100 dictionary-encoded strings, read in batches of 10.
-class FlatColumnBinaryViewsTest {
+class FlatBinaryViewsTest {
+
 
     private static final Path FILE = Path.of("src/test/resources/dict_cross_chunk.parquet");
 
@@ -76,8 +76,8 @@ class FlatColumnBinaryViewsTest {
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void aReaderOfViewsSwitchesTheColumnToBuildingThem() throws Exception {
-        BinaryBatchValues.ViewDemand demand = new BinaryBatchValues.ViewDemand();
-        List<BinaryBatchValues> batches = read(true, null, false, demand);
+        List<BinaryBatchValues> batches = read(true, null);
+        BinaryBatchValues.ViewDemand demand = batches.getFirst().viewDemand();
 
         assertThat(batches).hasSize(20);
         assertThat(demand.requested).as("the reader's views raised the column's demand").isTrue();
@@ -92,28 +92,10 @@ class FlatColumnBinaryViewsTest {
         }
     }
 
-    /// A column whose views a reader asked for builds them as each cell completes. The demand is
-    /// raised before the read starts: which cells complete before a reader's first demand mid-read
-    /// is up to the decode threads.
-    @Test
-    @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void aColumnAskedForViewsBuildsThemAsItsCellsComplete() throws Exception {
-        List<BinaryBatchValues> batches = read(false, null, true, new BinaryBatchValues.ViewDemand());
-
-        assertThat(batches).hasSize(20);
-        assertThat(batches).allSatisfy(values -> assertThat(values.hasPendingViews()).isFalse());
-    }
-
+    /// Reads the fixture's column in batches of 10, building the views of the first batch if
+    /// `readViews`. On a context of zero threads, so that no job of the read runs before the
+    /// consumer polls.
     private static List<BinaryBatchValues> read(boolean readViews, ColumnBatchMatcher filter) throws Exception {
-        return read(readViews, filter, false, new BinaryBatchValues.ViewDemand());
-    }
-
-    /// Reads the fixture's column through a [FlatColumn] in batches of 10, building the views of the
-    /// first batch if `readViews`, with the column's view demand raised before the read if
-    /// `requestViews`. `demand` receives the column's demand as the read ends. On a context of zero
-    /// threads, so that no job of the read runs before the consumer polls.
-    private static List<BinaryBatchValues> read(boolean readViews, ColumnBatchMatcher filter, boolean requestViews,
-                                                BinaryBatchValues.ViewDemand demand) throws Exception {
         FileSchema schema;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
             schema = reader.getFileSchema();
@@ -132,12 +114,8 @@ class FlatColumnBinaryViewsTest {
                 ProjectedSchema decoded = ProjectedSchema.create(schema, ColumnProjection.all());
                 List<NestedLevelComputer.Layers> flat = new ArrayList<>();
                 flat.add(null);
-                FlatColumn column = (FlatColumn) iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10,
-                        10, 0, List.of(exchange), new ColumnBatchMatcher[]{ filter }).getFirst();
-                if (requestViews) {
-                    column.viewDemand().requested = true;
-                }
-
+                iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 10, List.of(exchange),
+                        new ColumnBatchMatcher[]{ filter });
                 List<BinaryBatchValues> batches = new ArrayList<>();
                 BatchExchange.Batch batch;
                 while ((batch = exchange.poll()) != null) {
@@ -148,7 +126,6 @@ class FlatColumnBinaryViewsTest {
                     batches.add(values);
                 }
                 exchange.checkError();
-                demand.requested = column.viewDemand().requested;
                 return batches;
             }
         }

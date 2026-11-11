@@ -17,20 +17,13 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.reader.engine.RowGroupIterator;
-import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
-import dev.hardwood.internal.reader.fetch.FetchPlan;
-import dev.hardwood.internal.reader.fetch.InPlaceSections;
-import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
-import dev.hardwood.internal.reader.memory.WorkingSet;
-import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
-/// Builds the reads of tests that drive a [RowGroupIterator] without a reader, and plans the work
-/// items of a read outside one ([#planning]).
+/// Builds the reads of tests that drive a [RowGroupIterator] without a reader.
 public final class RowGroupIterators {
 
     private RowGroupIterators() {
@@ -86,37 +79,19 @@ public final class RowGroupIterators {
         }
     }
 
-    /// The planning of a read of `projection` over the files of `metadata`, without a filter, row
-    /// limit or batch plan, whose bytes are read in place on the calling thread
-    /// ([InPlaceSections]); its first file is listed. The caller closes `metadata`.
-    public static ReadPlanning planning(FileMetadataCache metadata, HardwoodContextImpl context,
-                                        ColumnProjection projection) throws IOException {
-        return planning(metadata, context, projection, 16L * 1024 * 1024);
-    }
-
-    /// As [#planning(FileMetadataCache, HardwoodContextImpl, ColumnProjection)], whose page-index
-    /// windows read at most `indexWindowBytes` each, unless a single row group needs more.
-    public static ReadPlanning planning(FileMetadataCache metadata, HardwoodContextImpl context,
-                                        ColumnProjection projection, long indexWindowBytes) throws IOException {
-        FileMetadataCache.PreparedFile first = metadata.getFile(0);
-        FileSchema schema = first.schema();
-        ReadProjection read = ReadProjection.of(ProjectedSchema.create(schema, projection));
-        int columns = read.decoded().getProjectedColumnCount();
-        ReadPlanning planning = new ReadPlanning(metadata, new InPlaceSections(), context, schema,
-                first.rowGroups(), read, null, true, 0, 0, CoalescingPolicy.maxSpanBytes(), indexWindowBytes,
-                new WorkingSet(columns, new ReadAheadBuffer(0)));
-        planning.append(planning.listFile(0, 0));
-        return planning;
-    }
-
-    /// The fetch plans of work item `index` of `planning`, planned on the calling thread.
-    public static FetchPlan[] plans(ReadPlanning planning, int index) throws IOException {
-        for (int attempt = 0; attempt < 100; attempt++) {
-            Need need = planning.plan(index);
-            if (need == null) {
-                return planning.plans(index);
+    /// Whether a read of `file` under `projection` that skips its first row masks that row out of
+    /// the first row group's plan, rather than returning it for the reader to drop
+    /// ([RowGroupIterator#leadingRows]): the row group takes a page mask.
+    public static boolean masksLeadingRows(InputFile file, ColumnProjection projection) throws IOException {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
+            FileMetadataCache metadata = new FileMetadataCache(List.of(file), context);
+            try (RowGroupIterator iterator = standalone(metadata, context)) {
+                FileMetadataCache.PreparedFile first = metadata.getFile(0);
+                FileSchema schema = first.schema();
+                iterator.initialize(schema, first.rowGroups(), ReadProjection.of(ProjectedSchema.create(schema, projection)),
+                        null, true, 0, 1);
+                return iterator.leadingRows() == 0;
             }
         }
-        throw new IllegalStateException("Work item " + index + " was not planned");
     }
 }

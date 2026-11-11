@@ -31,9 +31,8 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// Parses dictionary pages from column chunk data.
 ///
-/// Shared by [dev.hardwood.internal.reader.fetch.IndexedFetchPlan],
-/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan], the dictionary filter's
-/// `RowGroupDictionaryFilterSource` and the CLI's `dive` and `inspect dictionary`.
+/// Shared by the read, the dictionary filter's `RowGroupDictionaryFilterSource` and the CLI's
+/// `dive` and `inspect dictionary`.
 public final class DictionaryParser {
 
     /// Bytes read speculatively when the offsets give no gap to size the dictionary read — an
@@ -240,9 +239,12 @@ public final class DictionaryParser {
                 workingSet, buffers));
     }
 
-    private static Dictionary parsePage(PageHeader header, ByteBuffer compressedData, ColumnSchema columnSchema,
-                                        ColumnMetaData metaData, HardwoodContextImpl context,
-                                        WorkingSet.Column workingSet, DecodeBuffers buffers) {
+    /// As [#parsePage(PageHeader, ByteBuffer, ColumnSchema, ColumnMetaData, HardwoodContextImpl, WorkingSet.Column)],
+    /// on the calling task with its `buffers`: for a task of the context's pool, which holds a set
+    /// of buffers already.
+    public static Dictionary parsePage(PageHeader header, ByteBuffer compressedData, ColumnSchema columnSchema,
+                                       ColumnMetaData metaData, HardwoodContextImpl context,
+                                       WorkingSet.Column workingSet, DecodeBuffers buffers) {
         // A read has checked this already; the metadata tools parse dictionaries without a read
         FixedWidthValidator.validate(null, columnSchema);
         if (header.type() != PageType.DICTIONARY_PAGE) {

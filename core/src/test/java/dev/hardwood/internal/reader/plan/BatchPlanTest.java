@@ -173,8 +173,7 @@ class BatchPlanTest {
                 .hasMessage("Batch plan expects work item 1 next, got 0");
     }
 
-    /// A filter-only column is not read in a proven row group, and stands in for it with a
-    /// boundary marker. The plan closes every batch of undecided rows before a proven row group,
+    /// A filter-only column is not read in a proven row group, and has no page in it. The plan closes every batch of undecided rows before a proven row group,
     /// so no batch mixes rows such a column holds with rows it does not.
     @Test
     void provenRowGroupsNeverShareABatchWithUndecidedOnes() {

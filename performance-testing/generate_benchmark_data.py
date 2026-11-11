@@ -7,7 +7,7 @@
 #
 
 """
-Generates two ~1GB Parquet files for PageScanBenchmark:
+Generates two ~1GB Parquet files for PageScanPerformanceTest:
 
   - page_scan_no_index.parquet  — without page index (sequential scan path)
   - page_scan_with_index.parquet — with page index   (offset-index scan path)

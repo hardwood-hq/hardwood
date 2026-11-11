@@ -13,9 +13,6 @@ import java.io.InterruptedIOException;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.pipeline.DecodedColumn;
-import dev.hardwood.internal.reader.pipeline.FlatColumn;
-import dev.hardwood.internal.reader.pipeline.NestedColumn;
 import dev.hardwood.schema.ColumnSchema;
 
 /// One column in a [ColumnScan]: the [BatchExchange] its column of the read publishes into, and the
@@ -46,17 +43,16 @@ final class ColumnCursor {
     /// Whether a column with `layers` decodes through the nested pipeline: any
     /// column whose schema chain contributes a `STRUCT` or `REPEATED` layer, or
     /// that repeats, needs its definition levels to derive per-layer validity.
-    /// Only the no-layers case is read as a flat column ([FlatColumn]).
+    /// Only the no-layers case is read as a flat column.
     static boolean isNested(NestedLevelComputer.Layers layers, ColumnSchema column) {
         return layers.count() > 0 || column.maxRepetitionLevel() > 0;
     }
 
     /// The cursor of a column the read drives, over its exchange.
-    static ColumnCursor of(ColumnSchema column, DecodedColumn side) {
-        return switch (side) {
-            case FlatColumn flat -> new ColumnCursor(column, flat.exchange(), null);
-            case NestedColumn nested -> new ColumnCursor(column, null, nested.exchange());
-        };
+    @SuppressWarnings("unchecked")
+    static ColumnCursor of(ColumnSchema column, BatchExchange<?> exchange, boolean nested) {
+        return nested ? new ColumnCursor(column, null, (BatchExchange<NestedBatch>) exchange)
+                : new ColumnCursor(column, (BatchExchange<BatchExchange.Batch>) exchange, null);
     }
 
     /// Takes the next batch from the exchange.

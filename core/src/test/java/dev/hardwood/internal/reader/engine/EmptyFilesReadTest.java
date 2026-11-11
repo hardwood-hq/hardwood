@@ -22,7 +22,6 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.reader.plan.RowGroupIterators;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReaders;
@@ -47,17 +46,6 @@ class EmptyFilesReadTest {
         NO_ROW_GROUPS,
         /// One row group of 0 rows (`empty_row_group.parquet`, written by PyArrow).
         ZERO_ROWS
-    }
-
-    @ParameterizedTest
-    @EnumSource(Kind.class)
-    @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void aReadOfEmptyFilesHasNoLiveWorkItem(Kind kind) throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(2);
-             RowGroupIterator iterator = RowGroupIterators.initialized(files(kind), context, ColumnProjection.all(),
-                     null, 0)) {
-            assertThat(iterator.hasLiveWorkItem()).isFalse();
-        }
     }
 
     @ParameterizedTest

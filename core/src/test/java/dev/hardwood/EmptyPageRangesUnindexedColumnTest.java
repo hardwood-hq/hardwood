@@ -14,15 +14,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
-import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.internal.reader.plan.FetchPlanBuilder;
-import dev.hardwood.internal.reader.step.ByteSource;
-import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.reader.plan.RowGroupIterators;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.FileMetaData;
-import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
@@ -30,7 +23,6 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,20 +39,8 @@ class EmptyPageRangesUnindexedColumnTest {
 
     @Test
     void theNestedV1ColumnClosesTheMaskGate() throws Exception {
-        try (InputFile file = InputFile.of(FIXTURE)) {
-            file.open();
-            FileMetaData meta = ParquetMetadataReader.readMetadata(file);
-            FileSchema schema = FileSchema.fromSchemaElements(meta.schema());
-            FileColumnOrdinals ordinals = FileColumnOrdinals.identity(
-                    schema.getColumnCount(), null, BoundsReadability.ALL);
-            RowGroup rowGroup = meta.rowGroups().get(0);
-
-            assertThat(FetchPlanBuilder.masksApplicableForRowGroup(
-                    ProjectedSchema.create(schema, FLAT), rowGroup, schema, ordinals, ByteSource.of(file)).get()).isTrue();
-            assertThat(FetchPlanBuilder.masksApplicableForRowGroup(
-                    ProjectedSchema.create(schema, ColumnProjection.all()), rowGroup, schema, ordinals, ByteSource.of(file)).get())
-                    .isFalse();
-        }
+        assertThat(RowGroupIterators.masksLeadingRows(InputFile.of(FIXTURE), FLAT)).isTrue();
+        assertThat(RowGroupIterators.masksLeadingRows(InputFile.of(FIXTURE), ColumnProjection.all())).isFalse();
     }
 
     @Test
@@ -141,6 +121,26 @@ class EmptyPageRangesUnindexedColumnTest {
             PqList tags = rows.getList("tags");
             assertThat(tags.ints().toArray()).containsExactly(70, 70);
             assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    /// The filter keeps the first page of `id` only, so the scan of `value` passes the last row
+    /// it keeps with the second page's header already read: that page's values still count
+    /// toward the chunk's.
+    @Test
+    void aFilterKeepingTheFirstPageOnlyReadsTheUnindexedColumnToItsEnd() throws Exception {
+        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rows = file.buildRowReader()
+                     .projection(FLAT)
+                     .filter(FilterPredicate.lt("id", 50))
+                     .build()) {
+            int count = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                assertThat(rows.getInt("id")).isEqualTo(count);
+                count++;
+            }
+            assertThat(count).isEqualTo(50);
         }
     }
 

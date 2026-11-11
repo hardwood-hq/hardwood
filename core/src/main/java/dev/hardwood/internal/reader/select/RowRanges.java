@@ -22,6 +22,9 @@ public class RowRanges {
     /// Sentinel representing all rows — used when no page-level filtering is active.
     public static final RowRanges ALL = new RowRanges(new long[0], true);
 
+    /// No row.
+    public static final RowRanges NONE = new RowRanges(new long[0], false);
+
     private final long[] ranges; // [start0, end0, start1, end1, ...]
     private final boolean all;
 

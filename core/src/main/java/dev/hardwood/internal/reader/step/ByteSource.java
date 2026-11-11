@@ -16,11 +16,7 @@ import dev.hardwood.internal.io.ReadRanges;
 /// The bytes of a file a parse reads, as far as they have arrived. A parse asks for a range and
 /// gets it, or `null` where the source does not hold it, which the parse then returns as the range
 /// it needs ([Parsed]). Outside a read the source reads the file and holds every range ([#of]);
-/// within one it holds what the read's sections ([dev.hardwood.internal.reader.fetch.Section])
-/// have delivered: the sections planned for a column's walk
-/// ([dev.hardwood.internal.reader.fetch.SectionCursor]), or those the read's planning inserts as it
-/// finds the ranges it needs ([dev.hardwood.internal.reader.plan.PlanningReads]). One parser serves
-/// all three.
+/// within one it holds what the read's fetches have delivered. One parser serves both.
 @FunctionalInterface
 public interface ByteSource {
 

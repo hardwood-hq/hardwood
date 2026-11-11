@@ -59,12 +59,14 @@ class ReadRetentionTest {
                     exchanges.add(BatchExchange.detachingFlat(first.schema().getColumn(column).name(), BATCH_SIZE));
                     flat.add(null);
                 }
-                iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, 0, exchanges,
+                iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, exchanges,
                         null);
                 int read = 0;
                 while (takeBatch(exchanges)) {
                     // One batch per file: every column has published the batch of file `read`, so it
-                    // has passed every file before it
+                    // has passed every file before it. The read drops a file's footer under the lock
+                    // it publishes in, after the publish, so the check waits for the read to be idle
+                    iterator.awaitQuiescent();
                     for (int passed = 1; passed < read; passed++) {
                         assertThat(cache.holdsFooter(passed)).as("footer %d after file %d", passed, read).isFalse();
                     }

@@ -17,22 +17,12 @@ import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
-import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetReadException;
 
-/// Reads just enough of a column chunk to identify its first data page's format (v1 vs v2). Used by
-/// the per-page mask gate in [dev.hardwood.internal.reader.engine.RowGroupIterator] to distinguish
-/// nested-v1 columns — whose repetition levels live inside the compressed area and would require
-/// decompression to count records — from nested-v2 columns, whose repetition levels live in an
-/// uncompressed prefix and can be walked without invoking the codec.
-///
-/// All data pages in a single column chunk share the same format in practice
-/// (Parquet writers don't mix v1 and v2 within one chunk), so a single peek
-/// at the first data page is authoritative.
-///
-/// Also reads the page headers of [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] and
-/// [DictionaryParser#readPageHeader] ([#readHeader]).
+/// Reads a page header from the bytes a read holds, widening its peek while the header does not
+/// fit ([#readHeader]): for the scan of a column chunk without an OffsetIndex, for
+/// [DictionaryParser#readPageHeader], and for walking a chunk header to header ([#walk]), as the
+/// CLI does.
 public final class PageFormatProbe {
 
     /// Initial peek size for a page header. One KiB covers a typical header
@@ -45,75 +35,6 @@ public final class PageFormatProbe {
     public static final int MAX_PEEK_SIZE = 1024 * 1024;
 
     private PageFormatProbe() {
-    }
-
-    /// Returns the page type of the first data page in `columnChunk`.
-    ///
-    /// Reads one [#INITIAL_PEEK_SIZE] range at the chunk's `data_page_offset` and takes its
-    /// answer when the bytes there parse as a data page header whose page ends within the
-    /// chunk. Writers have misstated that offset: DuckDB before duckdb/duckdb#10829 understated
-    /// it, pointing into the dictionary page, and a chunk without `dictionary_page_offset` names
-    /// its dictionary page there. When the header does not parse, is a dictionary or index page,
-    /// or overruns the chunk, the probe walks the chunk from its start instead, stepping over
-    /// each dictionary or index page by the length its own header states, the way
-    /// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] walks the chunk.
-    ///
-    /// Parses the bytes `bytes` holds, and returns the range it needs where it does not hold one:
-    /// a peek, or a wider one for a header that does not fit.
-    public static Parsed<PageType> firstDataPageType(ByteSource bytes, ColumnChunk columnChunk) throws IOException {
-        long chunkStart = columnChunk.chunkStartOffset();
-        long chunkEnd = chunkStart + columnChunk.metaData().totalCompressedSize();
-        Parsed<PageType> declared = dataPageAt(bytes, columnChunk.metaData().dataPageOffset(), chunkStart, chunkEnd);
-        return declared.needsBytes() || declared.value() != null
-                ? declared
-                : walkToFirstDataPage(bytes, chunkStart, chunkEnd);
-    }
-
-    /// The type of the data page whose header is at `offset`, read in a single peek, or `null`
-    /// when the bytes there are not a data page header whose page lies within the chunk.
-    private static Parsed<PageType> dataPageAt(ByteSource bytes, long offset, long chunkStart, long chunkEnd)
-            throws IOException {
-        if (offset < chunkStart || offset >= chunkEnd) {
-            return Parsed.of(null);
-        }
-        int peek = Math.toIntExact(Math.min(INITIAL_PEEK_SIZE, chunkEnd - offset));
-        ByteBuffer peeked = bytes.read(offset, peek);
-        if (peeked == null) {
-            return Parsed.need(offset, peek);
-        }
-        ThriftCompactReader reader = new ThriftCompactReader(peeked);
-        PageHeader header;
-        try {
-            header = PageHeaderReader.read(reader);
-        }
-        catch (ParquetReadException notAHeader) {
-            return Parsed.of(null);
-        }
-        boolean dataPage = (header.type() == PageType.DATA_PAGE && header.dataPageHeader() != null)
-                || (header.type() == PageType.DATA_PAGE_V2 && header.dataPageHeaderV2() != null);
-        long pageEnd = offset + reader.getBytesRead() + header.compressedPageSize();
-        return Parsed.of(dataPage && pageEnd <= chunkEnd ? header.type() : null);
-    }
-
-    /// Walks the chunk's pages from `chunkStart` to the first data page.
-    private static Parsed<PageType> walkToFirstDataPage(ByteSource bytes, long chunkStart, long chunkEnd)
-            throws IOException {
-        PageType[] first = new PageType[1];
-        Parsed<Boolean> walked = walk(bytes, chunkStart, chunkEnd, header -> {
-            PageType type = header.type();
-            if (type == PageType.DICTIONARY_PAGE || type == PageType.INDEX_PAGE) {
-                return true;
-            }
-            first[0] = type;
-            return false;
-        });
-        if (walked.needsBytes()) {
-            return walked.asNeed();
-        }
-        if (!walked.value()) {
-            throw new ParquetReadException("Column chunk at offset " + chunkStart + " has no data page");
-        }
-        return Parsed.of(first[0]);
     }
 
     /// Walks the pages of `[chunkStart, chunkEnd)` header to header, handing each header to

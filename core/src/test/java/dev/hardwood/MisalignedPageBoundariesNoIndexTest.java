@@ -23,10 +23,9 @@ import dev.hardwood.reader.RowReader;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Mirrors [MisalignedPageBoundariesTest] against a fixture written without
-/// a Page Index. Both columns are flat, so the per-page row mask machinery
-/// in [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] is responsible for
-/// keeping rows aligned across columns under filter pushdown and tail-mode
-/// reads — there is no `IndexedFetchPlan` to fall back on.
+/// a Page Index. Both columns are flat, so the pages their headers locate
+/// carry the per-page row masks that keep rows aligned across columns under
+/// filter pushdown and tail-mode reads, with no OffsetIndex to locate them.
 class MisalignedPageBoundariesNoIndexTest {
 
     private static final Path FIXTURE =
@@ -36,8 +35,8 @@ class MisalignedPageBoundariesNoIndexTest {
     private static final int ROW_PREFIX_LEN = 10;
 
     /// Sanity check: the fixture must not carry a Page Index, otherwise this
-    /// test is silently exercising the `IndexedFetchPlan` path and would say
-    /// nothing about `SequentialFetchPlan`.
+    /// test is silently exercising pages the OffsetIndex locates and would say
+    /// nothing about the header scan.
     @Test
     void testFixtureLacksOffsetIndex() throws Exception {
         try (InputFile file = InputFile.of(FIXTURE)) {

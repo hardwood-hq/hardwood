@@ -30,14 +30,13 @@ import org.openjdk.jmh.annotations.Warmup;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.decode.ChunkPages;
 import dev.hardwood.internal.reader.decode.FixedSizeListDetector;
 import dev.hardwood.internal.reader.decode.FixedSizeListShape;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.decode.PageInfo;
-import dev.hardwood.internal.reader.fetch.PageWalk;
-import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
@@ -201,16 +200,8 @@ public class FixedSizeListDecodeBenchmark {
                 for (int col = 0; col < rowGroup.columns().size(); col++) {
                     ColumnChunk chunk = rowGroup.columns().get(col);
                     ColumnSchema columnSchema = schema.getColumn(col);
-                    SequentialFetchPlan plan = SequentialFetchPlan.build(
-                            inputFile, columnSchema, chunk, context, rg, inputFile.name(), 0);
-                    // A file in memory: the walk never stops for bytes
-                    PageWalk pages = plan.walk();
-                    PageInfo pageInfo;
-                    while ((pageInfo = pages.advance()) != null) {
+                    for (PageInfo pageInfo : ChunkPages.of(inputFile, columnSchema, chunk, context)) {
                         ByteBuffer pageBuffer = pageInfo.pageData();
-                        if (pageBuffer == null) {
-                            continue;
-                        }
                         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
                         PageHeader header = PageHeaderReader.read(headerReader);
                         if (header.type() != PageType.DATA_PAGE_V2) {

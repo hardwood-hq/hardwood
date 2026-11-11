@@ -59,6 +59,19 @@ class WorkingSetLimitTest {
     }
 
     @Test
+    void readOneBytePastTheLimitFails() {
+        System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet(1) - 1));
+        byte[] file = RleExpansionFile.buildWide(1, 1, DICTIONARY_BYTES, PAGE_VALUES);
+
+        // one column: its dictionary and then its data page are the only charges, in that order
+        assertThatThrownBy(() -> countRows(file, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes to decode, "
+                        + "which takes the read's working set to 2105344 bytes, more than its limit of 2105343 "
+                        + "(hardwood.internal.maxWorkingSetBytes)");
+    }
+
+    @Test
     void rowGroupsInBatchesOfTheirOwnCountOneDictionary() throws IOException {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet(1)));
         byte[] file = RleExpansionFile.buildWide(1, 3, DICTIONARY_BYTES, PAGE_VALUES);
@@ -113,19 +126,6 @@ class WorkingSetLimitTest {
     }
 
     @Test
-    void readOneBytePastTheLimitFails() {
-        System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet(4) - 1));
-        byte[] file = RleExpansionFile.buildWide(4, 1, DICTIONARY_BYTES, PAGE_VALUES);
-
-        // Without a pool the read's steps and tasks run in one order, so the same charge crosses
-        assertThatThrownBy(() -> countRows(file, 0))
-                .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'c1', page 0] Data page needs 12292 bytes to decode, "
-                        + "which takes the read's working set to 5275648 bytes, more than its limit of 5275647 "
-                        + "(hardwood.internal.maxWorkingSetBytes)");
-    }
-
-    @Test
     void dictionaryLargerThanTheLimitFailsBeforeItIsDecompressed() {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(2L * DICTIONARY_BYTES - 1));
         byte[] file = RleExpansionFile.buildWide(1, 1, DICTIONARY_BYTES, PAGE_VALUES);
@@ -154,10 +154,10 @@ class WorkingSetLimitTest {
     @ParameterizedTest
     @CsvSource(delimiter = '|', textBlock = """
             compat_maxrep_list.parquet         | [compat_maxrep_list.parquet: row group 0, column 'g.list.element', page 0] Data page needs 96 bytes to decode, which takes the read's working set to 96 bytes, %1$s
-            misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 5122 bytes, %1$s
-            dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1682 bytes, %1$s
-            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 17568 bytes, %1$s
-            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 800 bytes to decode, which takes the read's working set to 4806 bytes, %1$s
+            misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 2128 bytes, %1$s
+            dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1600 bytes, %1$s
+            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 9376 bytes, %1$s
+            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 800 bytes to decode, which takes the read's working set to 800 bytes, %1$s
             """)
     void everyPathChargesBeforeDecompressing(String file, String message) {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, "1");

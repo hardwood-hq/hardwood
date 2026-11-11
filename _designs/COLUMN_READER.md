@@ -102,7 +102,7 @@ A view is `int`, which bounds one buffer, not the batch: a batch's bytes are spr
 
 `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf, `null` at null positions, and cache the result per batch. `getStrings()` requires a text column (`BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or unannotated) and throws `IllegalArgumentException` otherwise; on a dictionary-encoded `STRING`, `ENUM` or `JSON` column it returns one interned `String` per dictionary entry through the batch's dictionary indices (see [VALUE_DECODE.md](VALUE_DECODE.md)), and on an unannotated column one `String` per value. Both arrays have length `getValueCount()`, not `getRecordCount()`.
 
-Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`, `BinaryBatchValuesTest`, `FlatColumnBinaryViewsTest`, `BinaryFillChunksTest`.
+Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`, `BinaryBatchValuesTest`, `FlatBinaryViewsTest`, `BinaryFillChunksTest`.
 
 ### Dictionary ids
 
@@ -147,9 +147,9 @@ Tests: `ProjectionOrderTest`.
 
 `ColumnScan.advance()` polls every payload cursor once, then every filter-only cursor unless the first cursor's batch is proven by statistics (see [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)). It checks that the polled cursors agree: every one produced a batch, all with the same record count. A cursor exhausted early or a differing record count throws `IllegalStateException`. When the first cursor reaches the end, `advance()` drains every other cursor, and one that still produces a batch throws `IllegalStateException`. With a filter, it then computes the selection and compacts each payload cursor's batch to the matching records.
 
-A read with no row group left gets a scan with no cursors (`ColumnScan.empty`), whose first `advance()` returns `false` and starts no column. Before it builds its cursors, the read probes the bloom filters and dictionaries of its leading row groups (`RowGroupIterator.hasLiveWorkItem`, which the row readers ask as well), on planning jobs of the read while the calling thread waits, up to the first one they do not drop, so a read that every probe drops, such as a point lookup of an absent key, starts no column and allocates no batch. The decisions are kept per work item, and the read's planning reuses them; the surviving row group's page index is read by its planning once the columns start.
+A read with no row group left, because statistics, Bloom filters or dictionaries drop every one, such as a point lookup of an absent key, ends every column at once, and the scan's first `advance()` returns `false`.
 
-Tests: `LiveWorkItemTest`, `EmptyOffsetIndexTest`.
+Tests: `EmptyFilesReadTest`, `EmptyOffsetIndexTest`.
 
 **View advance.** Only the owner advances a scan. `ColumnReaders.nextBatch()` advances it and has every member take up the new step; a single `ColumnReader`'s `nextBatch()` does the same for itself. A member's `nextBatch()` throws `IllegalStateException`. A member therefore always shows the group's current step, and no member can pair rows from a different step or drop one.
 

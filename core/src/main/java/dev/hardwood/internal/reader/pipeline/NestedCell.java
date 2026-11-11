@@ -9,10 +9,18 @@ package dev.hardwood.internal.reader.pipeline;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 
+import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.NestedBatch;
+import dev.hardwood.internal.reader.batch.NestedIndexMode;
+import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.decode.PageDecoder;
+import dev.hardwood.schema.ColumnSchema;
 
-/// The work of one [NestedColumn] for one planned batch: the [NestedSegment]s of the
+/// The work of one column decoded through levels for one planned batch: the [NestedSegment]s of the
 /// measured pages placed into it, in page order.
 ///
 /// A cell goes through these steps, each once:
@@ -29,7 +37,7 @@ import dev.hardwood.internal.reader.batch.NestedBatch;
 ///
 /// The segments and totals are guarded by the column lock until the cell is sealed; the thread
 /// that takes it off the sealed cells then owns it until it is completed.
-final class NestedCell implements BatchCell<NestedBatch> {
+public final class NestedCell implements BatchCell<NestedBatch> {
 
     final String fileName;
     final boolean alwaysMatches;
@@ -45,7 +53,7 @@ final class NestedCell implements BatchCell<NestedBatch> {
     /// Guarded by the column lock: whether the cell is completed and waits to be published.
     private boolean completed;
 
-    NestedCell(String fileName, boolean alwaysMatches, long firstRow) {
+    public NestedCell(String fileName, boolean alwaysMatches, long firstRow) {
         this.fileName = fileName;
         this.alwaysMatches = alwaysMatches;
         this.firstRow = firstRow;
@@ -53,7 +61,11 @@ final class NestedCell implements BatchCell<NestedBatch> {
 
     /// Places the page's records `[recordStart, recordEnd)`, which hold its values
     /// `[valueStart, valueEnd)`, into this cell after every segment placed so far.
-    void add(NestedPageTask page, int recordStart, int recordEnd, int valueStart, int valueEnd) {
+    /// Places the page's records `[recordStart, recordEnd)`, holding its values `[valueStart,
+    /// valueEnd)`, after every segment placed so far; the page counts the segment until it is
+    /// filled.
+    public void add(NestedPageTask page, int recordStart, int recordEnd, int valueStart, int valueEnd) {
+        page.unfilledSegments.incrementAndGet();
         segments.add(new NestedSegment(page, recordStart, recordEnd, valueStart, valueEnd, records, values));
         records += recordEnd - recordStart;
         values += valueEnd - valueStart;
@@ -72,7 +84,7 @@ final class NestedCell implements BatchCell<NestedBatch> {
         return values;
     }
 
-    PageTask lastPage() {
+    public PageTask lastPage() {
         return lastPage;
     }
 
@@ -83,6 +95,22 @@ final class NestedCell implements BatchCell<NestedBatch> {
     }
 
     /// Sets the batch the cell's fill produced.
+    /// Fills the sealed cell ([NestedFill]) and drops its segments, returning the scratch of each
+    /// page whose cells are then all filled to `pool`.
+    public void fill(BatchExchange<NestedBatch> exchange, ColumnSchema column, NestedLevelComputer.Layers layers,
+                     NestedIndexMode indexMode, BinaryBatchValues.ViewDemand viewDemand, DecodeBuffers buffers,
+                     ArrayBlockingQueue<PageDecoder.LevelScratch> pool) {
+        filled(NestedFill.fill(this, exchange, column, layers, indexMode, viewDemand, buffers));
+        for (NestedSegment segment : segments()) {
+            if (segment.page.unfilledSegments.decrementAndGet() == 0) {
+                segment.page.releaseScratch(pool);
+            }
+        }
+        // The cell holds what it was filled from no longer: a cell waiting for room in the
+        // exchange would otherwise keep its pages' arrays alive
+        dropSegments();
+    }
+
     void filled(NestedBatch batch) {
         this.batch = batch;
     }

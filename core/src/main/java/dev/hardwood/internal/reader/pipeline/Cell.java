@@ -39,7 +39,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// the cell's values without a lock; the validity words at the edges of a segment's bits are
 /// merged atomically ([FlatFill]). A binary column's segments copy their plain bytes into chunks
 /// of their own ([BinaryFill]), so no fill waits for another.
-final class Cell implements BatchCell<BatchExchange.Batch> {
+public final class Cell implements BatchCell<BatchExchange.Batch> {
 
     /// [#plannedRecords] of a cell whose batch the plan leaves open past the row group it opens in.
     static final int UNKNOWN_RECORDS = -1;
@@ -90,7 +90,7 @@ final class Cell implements BatchCell<BatchExchange.Batch> {
     @SuppressWarnings("unused")
     private volatile long[] validity;
 
-    Cell(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow) {
+    public Cell(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow) {
         this.fileName = fileName;
         this.alwaysMatches = alwaysMatches;
         this.plannedRecords = plannedRecords;
@@ -103,7 +103,7 @@ final class Cell implements BatchCell<BatchExchange.Batch> {
     /// segment placed so far.
     ///
     /// @throws IllegalStateException if the batch cannot take them
-    Segment add(PageTask page, int recordStart, int recordEnd) {
+    public Segment add(PageTask page, int recordStart, int recordEnd) {
         int count = recordEnd - recordStart;
         if (count > capacity - records) {
             throw new IllegalStateException("Batch plan mismatch: a batch of " + capacity
@@ -122,7 +122,7 @@ final class Cell implements BatchCell<BatchExchange.Batch> {
     /// one otherwise. Runs on the first task that reaches the cell; another that reaches it
     /// meanwhile parks on the cell's lock until the array exists, rather than spinning while it is
     /// zeroed, and the lock orders the array's creation before its writes into it.
-    BatchExchange.Batch allocate(BatchExchange<BatchExchange.Batch> exchange, ColumnSchema column) {
+    public BatchExchange.Batch allocate(BatchExchange<BatchExchange.Batch> exchange, ColumnSchema column) {
         if (!allocated) {
             allocation.lock();
             try {
@@ -183,8 +183,21 @@ final class Cell implements BatchCell<BatchExchange.Batch> {
         return segments;
     }
 
-    int records() {
+    public int records() {
         return records;
+    }
+
+    public String fileName() {
+        return fileName;
+    }
+
+    public boolean alwaysMatches() {
+        return alwaysMatches;
+    }
+
+    /// The tokens the cell waits for before it completes: one per segment's fill, and its seal.
+    public AtomicInteger pending() {
+        return pending;
     }
 
     PageTask lastPage() {
@@ -192,7 +205,7 @@ final class Cell implements BatchCell<BatchExchange.Batch> {
     }
 
     /// The cell's validity bits, `null` while no segment met a null.
-    long[] validity() {
+    public long[] validity() {
         return (long[]) VALIDITY.getVolatile(this);
     }
 

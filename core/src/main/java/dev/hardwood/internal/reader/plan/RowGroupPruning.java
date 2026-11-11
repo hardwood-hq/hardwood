@@ -33,29 +33,29 @@ import jdk.jfr.Event;
 /// ([#filterRowGroups]), by Bloom filters and dictionaries once the read reaches a row group
 /// ([#probeOnArrival]), and whether the read narrows a row group's rows by the ColumnIndex
 /// ([#pageFiltering]).
-final class RowGroupPruning {
+public final class RowGroupPruning {
 
     private final HardwoodContextImpl context;
     private final ResolvedPredicate filterPredicate;
     private final boolean metadataFilteringEnabled;
 
-    RowGroupPruning(HardwoodContextImpl context, ResolvedPredicate filterPredicate, boolean metadataFilteringEnabled) {
+    public RowGroupPruning(HardwoodContextImpl context, ResolvedPredicate filterPredicate, boolean metadataFilteringEnabled) {
         this.context = context;
         this.filterPredicate = filterPredicate;
         this.metadataFilteringEnabled = metadataFilteringEnabled;
     }
 
     /// Whether the read prunes by metadata: under a filter, with metadata filtering on.
-    boolean prunesByMetadata() {
+    public boolean prunesByMetadata() {
         return filterPredicate != null && metadataFilteringEnabled;
     }
 
-    /// Whether `workItem`'s bloom filters and dictionaries may still drop it once the read reaches
+    /// Whether `unit`'s bloom filters and dictionaries may still drop it once the read reaches
     /// it: under a filter, in a row group statistics left undecided. One they proved to match in
     /// full is not probed, since neither a bloom filter nor a dictionary can contradict them, and a
     /// filter-only column is not read there at all.
-    static boolean droppableOnArrival(WorkItem workItem) {
-        return workItem.leafDecisions() != null && !workItem.filterAlwaysMatches();
+    public static boolean droppableOnArrival(UnitListing unit) {
+        return unit.leafDecisions() != null && !unit.alwaysMatches();
     }
 
     /// Sharpens the decisions planning recorded with the row group's bloom filters, then with its
@@ -63,80 +63,84 @@ final class RowGroupPruning {
     /// `bloomFilters` holds of the filters, and what `bytes` holds of dictionary pages. A filter or
     /// dictionary not held counts as absent; the caller sees from `bytes` whether any was, and only
     /// a drop then stands. `probe` keeps the dictionaries read and the leaves decided across evaluations.
-    Arrival probeOnArrival(WorkItem workItem, ByteSource bloomFilters, ByteSource bytes, Probe probe)
+    public Arrival probeOnArrival(UnitListing unit, ByteSource bloomFilters, ByteSource bytes, Probe probe)
             throws IOException {
-        RowGroupFilterEvaluator.LeafDecisions leafDecisions = workItem.leafDecisions();
-        if (!workItem.bloomFilterColumns().isEmpty()) {
+        RowGroupFilterEvaluator.LeafDecisions leafDecisions = unit.leafDecisions();
+        if (!unit.bloomFilterColumns().isEmpty()) {
             RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
-            RowGroupBloomFilterSource filters = new RowGroupBloomFilterSource(workItem.inputFile(), bloomFilters,
-                    workItem.rowGroup());
-            if (RowGroupFilterEvaluator.refineWithBloomFilters(workItem.columnOrdinals().filter(),
-                    workItem.rowGroup(), workItem.leafDecisions(), filters, refined) == FilterDecision.CANNOT_MATCH) {
-                return new Arrival(true, null, bloomFilterDropEvent(workItem));
+            RowGroupBloomFilterSource filters = new RowGroupBloomFilterSource(unit.file(), bloomFilters,
+                    unit.metaData());
+            if (RowGroupFilterEvaluator.refineWithBloomFilters(unit.columnOrdinals().filter(),
+                    unit.metaData(), unit.leafDecisions(), filters, refined) == FilterDecision.CANNOT_MATCH) {
+                return new Arrival(true, bloomFilterDropEvent(unit));
             }
             leafDecisions = refined;
         }
         if (probe.dictionaries == null) {
-            probe.dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(), bytes,
-                    workItem.rowGroup(), workItem.fileSchema(), context);
+            probe.dictionaries = new RowGroupDictionaryFilterSource(unit.file(), bytes,
+                    unit.metaData(), unit.fileSchema(), context);
         }
-        if (RowGroupFilterEvaluator.refineWithDictionaries(workItem.columnOrdinals().filter(), workItem.rowGroup(),
+        if (RowGroupFilterEvaluator.refineWithDictionaries(unit.columnOrdinals().filter(), unit.metaData(),
                 leafDecisions, probe.dictionaries, probe.decided) == FilterDecision.CANNOT_MATCH) {
-            return new Arrival(true, null, dictionaryDropEvent(workItem));
+            return new Arrival(true, dictionaryDropEvent(unit));
         }
-        return new Arrival(false, probe.dictionaries, null);
+        return Arrival.KEPT;
     }
 
     /// What the passes of one row group's probe on arrival keep between them: the dictionaries
     /// read, and each leaf's decision once a dictionary has made it.
-    static final class Probe {
+    public static final class Probe {
 
         private RowGroupDictionaryFilterSource dictionaries;
         private final RowGroupFilterEvaluator.LeafDecisions decided = new RowGroupFilterEvaluator.LeafDecisions();
+
+        /// The dictionaries the probe read, for the row group's plan to decode with; `null` when it
+        /// read none.
+        public RowGroupDictionaryFilterSource dictionaries() {
+            return dictionaries;
+        }
     }
 
     /// What a row group's bloom filters and dictionaries decided once the read reached it.
     ///
     /// @param dropped whether they proved the row group holds no match
-    /// @param dictionaries the dictionaries the probe read, for the fetch plans to decode with, or
-    ///        `null` when it read none
     /// @param dropEvent the event reporting the drop, for the read to commit once it reaches the
     ///        row group; `null` when they kept it
-    record Arrival(boolean dropped, RowGroupDictionaryFilterSource dictionaries, Event dropEvent) {
+    public record Arrival(boolean dropped, Event dropEvent) {
 
-        static final Arrival KEPT = new Arrival(false, null, null);
+        public static final Arrival KEPT = new Arrival(false, null);
     }
 
-    /// Whether the read narrows `workItem`'s rows by the ColumnIndex: under a filter with metadata
+    /// Whether the read narrows `unit`'s rows by the ColumnIndex: under a filter with metadata
     /// filtering on, in a row group statistics left undecided. In one they proved to match in full,
     /// no page bound can rule a page out, since every value of it matches.
-    boolean pageFiltering(WorkItem workItem) {
-        return filterPredicate != null && metadataFilteringEnabled && !workItem.filterAlwaysMatches();
+    public boolean pageFiltering(UnitListing unit) {
+        return filterPredicate != null && metadataFilteringEnabled && !unit.alwaysMatches();
     }
 
-    /// The file ordinals of the columns whose ColumnIndex the read of `workItem` needs: the filter
+    /// The file ordinals of the columns whose ColumnIndex the read of `unit` needs: the filter
     /// columns under page filtering, none otherwise.
-    static BitSet columnIndexColumns(WorkItem workItem, boolean pageFiltering) {
+    public static BitSet columnIndexColumns(UnitListing unit, boolean pageFiltering) {
         BitSet columns = new BitSet();
         if (pageFiltering) {
-            ResolvedPredicate.collectColumnIndices(workItem.columnOrdinals().filter(), columns);
+            ResolvedPredicate.collectColumnIndices(unit.columnOrdinals().filter(), columns);
         }
         return columns;
     }
 
     /// The report of a row group its bloom filters dropped.
-    private static Event bloomFilterDropEvent(WorkItem workItem) {
+    private static Event bloomFilterDropEvent(UnitListing unit) {
         RowGroupBloomFilterEvent event = new RowGroupBloomFilterEvent();
-        event.file = workItem.inputFile().name();
-        event.rowGroupIndex = workItem.rowGroupIndex();
+        event.file = unit.file().name();
+        event.rowGroupIndex = unit.rowGroup();
         return event;
     }
 
     /// The report of a row group its dictionaries dropped.
-    private static Event dictionaryDropEvent(WorkItem workItem) {
+    private static Event dictionaryDropEvent(UnitListing unit) {
         RowGroupDictionaryFilterEvent event = new RowGroupDictionaryFilterEvent();
-        event.file = workItem.inputFile().name();
-        event.rowGroupIndex = workItem.rowGroupIndex();
+        event.file = unit.file().name();
+        event.rowGroupIndex = unit.rowGroup();
         return event;
     }
 
@@ -145,17 +149,17 @@ final class RowGroupPruning {
     /// A row group that survived pruning, with the index it has **in the file** — not its
     /// position in this list, which pruning makes a different number. Every consumer means
     /// the file's: the fetch log, the JFR events, the row group a failure names.
-    record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches,
+    public record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches,
             int fileRowGroupIndex, RowGroupFilterEvaluator.LeafDecisions leafDecisions,
             BitSet bloomFilterColumns) {}
 
     /// The row groups of a file that pruning by statistics keeps, and the [RowGroupFilterEvent]
     /// reporting it, for the read to commit once it reaches the file; `null` when the read does not
     /// prune by metadata.
-    record FilteredRowGroups(List<FilteredRowGroup> rowGroups, Event event) {
+    public record FilteredRowGroups(List<FilteredRowGroup> rowGroups, Event event) {
     }
 
-    FilteredRowGroups filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
+    public FilteredRowGroups filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
                                       FileColumnOrdinals columnOrdinals) throws IOException {
         // The metadata-filtering opt-out (#797) disables every metadata-driven prune,
         // dictionary membership included — with it off, no row group is dropped without

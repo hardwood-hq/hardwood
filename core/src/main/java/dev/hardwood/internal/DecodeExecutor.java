@@ -31,10 +31,9 @@ import java.util.function.Function;
 /// new set, dropped when it is given back. A context without a pool keeps a set per processor,
 /// for the threads driving its reads at once.
 ///
-/// A decode a thread waits for ([#decode]) and a read's walk job ([#executeFirst]) run ahead
-/// of the tasks already queued on a pool built on [#newWorkQueue()]: the waiting thread is a read
-/// that cannot go on without the decode, and the read waits for the pages a walk job finds,
-/// while the queued tasks are read-ahead. Every other task runs in the order it arrived.
+/// A decode a thread waits for ([#decode]) runs ahead of the tasks already queued on a pool built
+/// on [#newWorkQueue()]: the waiting thread is a read that cannot go on without the decode, while
+/// the queued tasks are read-ahead. Every other task runs in the order it arrived.
 ///
 /// A task of the pool decodes in place ([#decodeInPlace]): it holds a thread of the pool already,
 /// and the pool may have no other thread to run the decode on.
@@ -57,22 +56,6 @@ public final class DecodeExecutor {
     /// @throws RejectedExecutionException if the pool is shut down
     public void execute(Consumer<DecodeBuffers> task) {
         pool().execute(() -> withBuffers(task));
-    }
-
-    /// Runs `task` on the pool without a set of buffers, at the head of the queue: a column's
-    /// walk job, which the read waits for.
-    ///
-    /// @throws RejectedExecutionException if the pool is shut down
-    public void executeFirst(Runnable task) {
-        pool().execute(new First(task));
-    }
-
-    /// Runs `task` on the pool without a set of buffers, at the tail of the queue: speculative
-    /// work no thread waits for.
-    ///
-    /// @throws RejectedExecutionException if the pool is shut down
-    public void executeLast(Runnable task) {
-        pool().execute(task);
     }
 
     /// Runs `task` on the calling thread with a set of buffers: a page task of a read on a context

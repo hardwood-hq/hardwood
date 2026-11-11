@@ -11,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Timeout;
@@ -46,14 +47,20 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A failure of one column's page, met by its walk, its decode or its placement, ends that column
-/// only: the read's other column is read to its end, past the work items the failed column never
-/// reaches (READ_PIPELINE.md, Error propagation).
+/// A failure of one column's page, met by its walk, its decode or its placement, ends the read at
+/// its row: a read that takes its columns in lockstep, as every column and row read does, takes
+/// every batch before the failure and then meets it, placed at its file, row group, column and
+/// page (READ_PIPELINE.md, Error propagation).
 class ColumnFailureTest {
 
     private static final int ROW_GROUPS = 6;
     private static final int ROWS_PER_ROW_GROUP = 100;
     private static final int BATCH_SIZE = 32;
+    /// The rows a lockstep read takes before each failure: none before column `a`'s first page, and
+    /// the seven whole batches before the last row group's partial one.
+    private static final long ROWS_CORRUPT = 0;
+    private static final long ROWS_OVERLONG = 224;
+    private static final long ROWS_SHORT = 224;
     private static final FileSchema SCHEMA = FileSchema.builder("longs")
             .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
             .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
@@ -87,9 +94,8 @@ class ColumnFailureTest {
     @ParameterizedTest(name = "{0}, threads: {1}")
     @MethodSource("cases")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void theOtherColumnIsReadToItsEnd(Corruption corruption, int threads) throws Exception {
-        assertOtherColumnReadToItsEnd(corrupted(corruption), threads, false, ROW_GROUPS * ROWS_PER_ROW_GROUP,
-                corruption.message);
+    void aCorruptPageEndsTheReadAtItsRow(Corruption corruption, int threads) throws Exception {
+        assertReadEndsAt(corrupted(corruption), threads, false, ROWS_CORRUPT, corruption.message);
     }
 
     static Stream<Arguments> cases() {
@@ -103,35 +109,31 @@ class ColumnFailureTest {
     @ParameterizedTest(name = "decoded through levels: {0}, threads: {1}")
     @CsvSource({ "false, 0", "false, 4", "true, 0", "true, 4" })
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void aPlacementFailureEndsItsColumnOnly(boolean throughLevels, int threads) throws Exception {
-        assertOtherColumnReadToItsEnd(withOverlongChunk(), threads, throughLevels, 250,
+    void aPlacementFailureEndsTheReadAtItsRow(boolean throughLevels, int threads) throws Exception {
+        assertReadEndsAt(withOverlongChunk(), threads, throughLevels, ROWS_OVERLONG,
                 "[<memory>: row group 2, column 'a', page 0] Batch plan mismatch: the column holds more than the "
                         + "50 rows the plan takes from the row group");
     }
 
-    /// The last row group declares 60 rows and its chunks hold 50: each column is short of the
-    /// plan at the read's end, and ends with the shortfall placed at its last page.
+    /// The last row group declares 60 rows and its chunks hold 50: the columns are short of the
+    /// plan at the read's end, and the read ends with the shortfall placed at the last page of the
+    /// first column.
     @ParameterizedTest(name = "decoded through levels: {0}, threads: {1}")
     @CsvSource({ "false, 0", "false, 4", "true, 0", "true, 4" })
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void aShortfallAtTheReadsEndEndsEachColumnAtItsLastPage(boolean throughLevels, int threads) throws Exception {
-        try (Read read = Read.start(withShortLastRowGroup(), threads, throughLevels)) {
-            for (int column = 0; column < SCHEMA.getColumnCount(); column++) {
-                BatchExchange<?> exchange = read.exchanges().get(column);
-                assertThatThrownBy(() -> drain(exchange)).hasMessage("[<memory>: row group 2, column '"
-                        + SCHEMA.getColumn(column).name() + "', page 0] Batch plan mismatch: the column holds 50 "
-                        + "of the 60 rows the plan takes from the row group");
-            }
-        }
+    void aShortfallAtTheReadsEndEndsTheReadAtItsLastPage(boolean throughLevels, int threads) throws Exception {
+        assertReadEndsAt(withShortLastRowGroup(), threads, throughLevels, ROWS_SHORT,
+                "[<memory>: row group 2, column 'a', page 0] Batch plan mismatch: the column holds 50 of the 60 "
+                        + "rows the plan takes from the row group");
     }
 
-    /// Reads column `b` of `file` to its end, `rows` rows, and then column `a` to its failure,
-    /// `message`.
-    private static void assertOtherColumnReadToItsEnd(ByteBuffer file, int threads, boolean throughLevels, long rows,
-                                                      String message) throws Exception {
+    /// Reads `file` in lockstep: `rows` rows, then the failure, `message`.
+    private static void assertReadEndsAt(ByteBuffer file, int threads, boolean throughLevels, long rows,
+                                         String message) throws Exception {
         try (Read read = Read.start(file, threads, throughLevels)) {
-            assertThat(drain(read.exchanges().get(1))).isEqualTo(rows);
-            assertThatThrownBy(() -> drain(read.exchanges().get(0))).hasMessage(message);
+            AtomicLong taken = new AtomicLong();
+            assertThatThrownBy(() -> drainInLockstep(read.exchanges(), taken)).hasMessage(message);
+            assertThat(taken).hasValue(rows);
         }
     }
 
@@ -155,7 +157,7 @@ class ColumnFailureTest {
                         : BatchExchange.detachingFlat(name, BATCH_SIZE));
                 layers.add(throughLevels ? allLayers[column] : null);
             }
-            iterator.start(decoded, layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, 0,
+            iterator.start(decoded, layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE,
                     exchanges, null);
             return new Read(context, iterator, exchanges);
         }
@@ -168,18 +170,22 @@ class ColumnFailureTest {
         }
     }
 
-    /// Takes every batch of `exchange`, returning the rows it held, and raises its failure.
-    private static long drain(BatchExchange<?> exchange) throws Exception {
-        long rows = 0;
+    /// Takes the batches of `exchanges` in lockstep, a batch of every column in column order at a
+    /// time, as a column read does; adds the rows of each step to `rows`, and raises the first
+    /// failure it meets.
+    private static void drainInLockstep(List<BatchExchange<?>> exchanges, AtomicLong rows) throws Exception {
         while (true) {
-            Object batch = exchange.poll();
-            int records = batch instanceof NestedBatch nested ? nested.recordCount
-                    : batch == null ? 0 : ((BatchExchange.Batch) batch).recordCount;
-            if (records == 0) {
-                exchange.checkError();
-                return rows;
+            int records = 0;
+            for (BatchExchange<?> exchange : exchanges) {
+                Object batch = exchange.poll();
+                records = batch instanceof NestedBatch nested ? nested.recordCount
+                        : batch == null ? 0 : ((BatchExchange.Batch) batch).recordCount;
+                if (records == 0) {
+                    exchange.checkError();
+                    return;
+                }
             }
-            rows += records;
+            rows.addAndGet(records);
         }
     }
 

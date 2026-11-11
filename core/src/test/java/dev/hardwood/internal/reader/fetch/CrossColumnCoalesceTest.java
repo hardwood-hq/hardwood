@@ -46,13 +46,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// what a per-column-per-chunk fetch path would produce.
 class CrossColumnCoalesceTest {
 
-    /// 20-column flat schema, single row group, no OffsetIndex →
-    /// SequentialFetchPlan path. 20 leaf columns are stored back-to-back
+    /// 20-column flat schema, single row group, no OffsetIndex: the pages
+    /// are found by scanning headers. 20 leaf columns are stored back-to-back
     /// (zero gaps), all within ~2 KB.
     private static final Path SEQ_FILE = Path.of("src/test/resources/yellow_tripdata_sample.parquet");
 
-    /// 3-column flat schema, single row group, OffsetIndex present →
-    /// IndexedFetchPlan path. Columns are stored back-to-back.
+    /// 3-column flat schema, single row group, OffsetIndex present: the
+    /// OffsetIndex locates the pages. Columns are stored back-to-back.
     private static final Path INDEXED_FILE = Path.of("src/test/resources/page_index_test.parquet");
 
     @Test
@@ -189,7 +189,7 @@ class CrossColumnCoalesceTest {
 
     @Test
     void filteredColumnIsNotOverCoalesced() throws Exception {
-        // With a selective filter, the IndexedFetchPlan for `id` has page drops. Sweeping its
+        // With a selective filter, the pages of `id` its OffsetIndex locates have drops. Sweeping its
         // dropped pages into a shared region would fetch bytes no page needs, and fetch the
         // column's later page groups a second time; the budget rejects both. `id` runs from 1, so
         // `id < 1000` is the rows [0, 999).

@@ -53,7 +53,7 @@ class PlacerTest {
 
         assertThat(sink.sealed).containsExactly("cell 0: 4 records, 4 values", "cell 1: 4 records, 4 values",
                 "cell 2: 2 records, 2 values");
-        assertThat(sink.endRead).isTrue();
+        assertThat(placer.stopped()).isTrue();
     }
 
     @Test
@@ -100,7 +100,7 @@ class PlacerTest {
         assertThat(placer.place(flatPage(rowGroup, 10))).isFalse();
 
         assertThat(sink.sealed).containsExactly("cell 0: 4 records, 4 values", "cell 1: 2 records, 2 values");
-        assertThat(sink.endRead).isTrue();
+        assertThat(placer.stopped()).isTrue();
         assertThat(placer.place(flatPage(rowGroup, 10))).as("nothing is placed past the end").isFalse();
         assertThat(sink.segments).hasSize(2);
     }
@@ -216,12 +216,12 @@ class PlacerTest {
         Placer<TestCell> placer = new Placer<>(sink, 4);
 
         assertThat(placer.place(nestedPage(rowGroup), measure(0, 1), true)).isTrue();
-        assertThat(sink.endRead).isFalse();
+        assertThat(placer.stopped()).isFalse();
 
         assertThat(placer.place(nestedPage(rowGroup), measure(1, 0, 1), true)).isFalse();
 
         assertThat(sink.sealed).containsExactly("cell 0: 1 records, 3 values");
-        assertThat(sink.endRead).isTrue();
+        assertThat(placer.stopped()).isTrue();
     }
 
     @Test
@@ -274,35 +274,6 @@ class PlacerTest {
         assertThat(sink.sealed).containsExactly("cell 0: 3 records, 3 values");
         assertThat(sink.cells.get(0).fileName).isEqualTo(FILE_A);
         assertThat(sink.cells.get(1).fileName).isEqualTo(FILE_B);
-    }
-
-    @Test
-    void aSkippedRowGroupPlacesNothingAndClosesTheOpenBatch() {
-        BatchPlan plan = new BatchPlan(4, false, false, 0);
-        BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, false, 3);
-        BatchPlan.RowGroupBatches skipped = plan.plan(1, 1, FILE_B, false, 2);
-        RecordingSink sink = new RecordingSink();
-        Placer<TestCell> placer = new Placer<>(sink, 4);
-
-        placer.place(flatPage(first, 3));
-        assertThat(placer.place(marker(skipped))).isTrue();
-
-        assertThat(sink.sealed).containsExactly("cell 0: 3 records, 3 values");
-        assertThat(sink.opened).hasSize(1);
-        assertThat(placer.nextRow()).as("the skipped row group's rows count").isEqualTo(5);
-    }
-
-    @Test
-    void aBatchMayNotSpanARowGroupTheColumnIsNotReadIn() {
-        BatchPlan plan = new BatchPlan(4, false, false, 0);
-        BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, false, 3);
-        BatchPlan.RowGroupBatches skipped = plan.plan(1, 0, FILE_A, false, 2);
-        Placer<TestCell> placer = new Placer<>(new RecordingSink(), 4);
-        placer.place(flatPage(first, 3));
-
-        assertThatThrownBy(() -> placer.place(marker(skipped)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Batch plan mismatch: a batch spans a row group the column is not read in and one it is");
     }
 
     @Test
@@ -407,10 +378,6 @@ class PlacerTest {
         return new PageTask(info, batches.fileName(), batches.workItemIndex(), 0, batches, null, 0);
     }
 
-    private static PageTask marker(BatchPlan.RowGroupBatches batches) {
-        return new PageTask(PageInfo.BOUNDARY_MARKER, batches.fileName(), batches.workItemIndex(), 0, batches, null, 0);
-    }
-
     /// A cell as the placer builds it, named by the order it was opened in.
     private static final class TestCell {
 
@@ -432,7 +399,6 @@ class PlacerTest {
         final List<String> opened = new ArrayList<>();
         final List<String> segments = new ArrayList<>();
         final List<String> sealed = new ArrayList<>();
-        boolean endRead;
 
         @Override
         public TestCell open(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow) {
@@ -456,9 +422,5 @@ class PlacerTest {
             sealed.add(cell.name + ": " + cell.records + " records, " + cell.values + " values");
         }
 
-        @Override
-        public void endRead() {
-            endRead = true;
-        }
     }
 }
