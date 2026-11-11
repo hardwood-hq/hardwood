@@ -102,9 +102,18 @@ public final class RleExpansionFile {
     /// `indexed`, so that a read walks its pages from the index.
     public static byte[] buildWide(int columns, int rowGroups, int dictionaryBytes, int pageValues,
                                    boolean indexed) {
+        return buildWide(columns, rowGroups, dictionaryBytes, pageValues, indexed, 0);
+    }
+
+    /// The file [#buildWide(int, int, int, int, boolean)] builds, whose data pages each follow
+    /// their values with `pagePadding` zero bytes, which their headers declare and the GZIP stream
+    /// holds in a few KiB: each page's decode decompresses that many bytes more.
+    public static byte[] buildWide(int columns, int rowGroups, int dictionaryBytes, int pageValues,
+                                   boolean indexed, int pagePadding) {
         byte[] dictionary = gzipZeros(dictionaryBytes);
-        byte[] body = dataPageBody(pageValues);
-        byte[] compressedBody = gzip(body);
+        byte[] values = dataPageBody(pageValues);
+        int bodyLength = Math.addExact(values.length, pagePadding);
+        byte[] compressedBody = gzipPadded(values, pagePadding);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.writeBytes(MAGIC);
@@ -122,7 +131,7 @@ public final class RleExpansionFile {
 
                 long dataOffset = out.size();
                 ThriftCompactWriter dataHeader = new ThriftCompactWriter();
-                PageHeaderWriter.writeDataPageV1(dataHeader, pageValues, body.length, compressedBody.length,
+                PageHeaderWriter.writeDataPageV1(dataHeader, pageValues, bodyLength, compressedBody.length,
                         crc(compressedBody), Encoding.RLE_DICTIONARY);
                 out.writeBytes(dataHeader.toByteArray());
                 out.writeBytes(compressedBody);
@@ -167,23 +176,18 @@ public final class RleExpansionFile {
     }
 
     private static byte[] gzipZeros(int size) {
+        return gzipPadded(new byte[0], size);
+    }
+
+    /// `bytes` followed by `padding` zero bytes, GZIP-compressed.
+    private static byte[] gzipPadded(byte[] bytes, int padding) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] zeros = new byte[1 << 20];
         try (GZIPOutputStream gzip = new GZIPOutputStream(out)) {
-            for (int written = 0; written < size; written += zeros.length) {
-                gzip.write(zeros, 0, Math.min(zeros.length, size - written));
-            }
-        }
-        catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-        return out.toByteArray();
-    }
-
-    private static byte[] gzip(byte[] bytes) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (GZIPOutputStream gzip = new GZIPOutputStream(out)) {
             gzip.write(bytes);
+            for (int written = 0; written < padding; written += zeros.length) {
+                gzip.write(zeros, 0, Math.min(zeros.length, padding - written));
+            }
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);

@@ -15,8 +15,10 @@ import java.util.Comparator;
 import java.util.List;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.io.HeldBytes;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.plan.BatchPlan;
@@ -284,12 +286,14 @@ final class RowGroupPlanner {
     }
 
     /// Probes `p`'s Bloom filters and dictionaries on a job: the dictionary bytes a pass lacks are
-    /// fetched and it is probed again, until it is decided.
+    /// fetched and it is probed again, until it is decided. A pass is charged the buffers of the
+    /// dictionary parses it may run ([#parseBytes]).
     private void probe(Unit.Probing p) {
         set(p);
         UnitListing u = p.listing();
         p.missing().clear();
-        scheduler.add(new JobScheduler.Job<>(u.base(), 0, planKind(u), null, buffers -> {
+        long cost = parseBytes(p);
+        scheduler.add(new JobScheduler.Job<>(u.base(), cost, planKind(u), cost > 0 ? new Charge() : null, buffers -> {
             // its chunks lie in the file before a dictionary of them is read
             pages.extents(u);
             return pruning.probeOnArrival(u, p.bytes(), p.bytes(), p.probe());
@@ -302,6 +306,20 @@ final class RowGroupPlanner {
             p.fetching(more);
             fetch(u, more, () -> probe(p));
         }, t -> publisher.failAt(u.base(), t)));
+    }
+
+    /// The buffers of the dictionary parses `p`'s next pass may run, from the headers of the
+    /// dictionary pages it holds and has not parsed ([DataPage#taskBytes]), each where it exceeds
+    /// [DecodeBuffers#RETAINED_BYTES]: R holds them while the pass runs, unless need forces it, so
+    /// that the probes of several row groups parse such dictionaries at once only within R. A
+    /// smaller parse is not charged, as a context keeps that much per thread anyway.
+    private long parseBytes(Unit.Probing p) {
+        long bytes = 0;
+        for (RowGroupPruning.HeldDictionary d : RowGroupPruning.dictionariesToParse(p.listing(), p.held(), p.probe())) {
+            long task = DataPage.taskBytes(d.header(), d.schema());
+            bytes += task > DecodeBuffers.RETAINED_BYTES ? task : 0;
+        }
+        return bytes;
     }
 
     /// `p`'s Bloom filters and dictionaries decided: a unit they dropped is planned with no row,

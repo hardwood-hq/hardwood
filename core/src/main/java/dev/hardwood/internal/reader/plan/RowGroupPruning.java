@@ -14,6 +14,7 @@ import java.util.List;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.predicate.BloomFilterColumnRecorder;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.LogContext;
@@ -21,12 +22,16 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
+import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.step.ByteSource;
+import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.jfr.RowGroupBloomFilterEvent;
 import dev.hardwood.jfr.RowGroupDictionaryFilterEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.schema.ColumnSchema;
 import jdk.jfr.Event;
 
 /// The pruning of a read's row groups by metadata: by statistics when a file is planned
@@ -85,6 +90,39 @@ public final class RowGroupPruning {
             return new Arrival(true, dictionaryDropEvent(unit));
         }
         return Arrival.KEPT;
+    }
+
+    /// The dictionary pages the next pass of `unit`'s probe may parse: those of the filter's
+    /// columns whose header `held` holds and whose dictionary `probe` has not read. A header that
+    /// does not parse is left out: the pass fails on it.
+    public static List<HeldDictionary> dictionariesToParse(UnitListing unit, ByteSource held, Probe probe) {
+        BitSet columns = new BitSet();
+        ResolvedPredicate.collectColumnIndices(unit.columnOrdinals().filter(), columns);
+        List<HeldDictionary> dictionaries = new ArrayList<>();
+        for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
+            if (probe.dictionaries == null || !probe.dictionaries.decided(c)) {
+                PageHeader header = heldHeader(unit.metaData().columns().get(c), held);
+                if (header != null) {
+                    dictionaries.add(new HeldDictionary(unit.fileSchema().getColumn(c), header));
+                }
+            }
+        }
+        return dictionaries;
+    }
+
+    /// A dictionary page a probe holds: its column's schema and the page's header.
+    public record HeldDictionary(ColumnSchema schema, PageHeader header) {
+    }
+
+    /// The header of `chunk`'s dictionary page where `held` holds it, else `null`.
+    private static PageHeader heldHeader(ColumnChunk chunk, ByteSource held) {
+        try {
+            Parsed<PageHeader> header = DictionaryParser.readPageHeader(held, chunk, "");
+            return header.needsBytes() ? null : header.value();
+        }
+        catch (IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     /// What the passes of one row group's probe on arrival keep between them: the dictionaries

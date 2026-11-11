@@ -153,6 +153,73 @@ class JobSchedulerTest {
         assertThat(keys(s.start(at))).containsExactly(20L);
     }
 
+    /// A decode beside the one need forces is charged its buffers to R while it runs, and returns
+    /// them as it ends, whether it succeeds or fails.
+    @Test
+    void decodeHoldsItsChargeUntilItEnds() {
+        ReadAheadBuffer r = new ReadAheadBuffer(100);
+        JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 0);
+        JobScheduler.Job<?> forced = job("d1", 10, 80, JobScheduler.Kind.DECODE, new Charge());
+        JobScheduler.Job<?> beside = job("d2", 20, 80, JobScheduler.Kind.DECODE, new Charge());
+        JobScheduler.Job<?> failing = job("d3 ", 30, 80, JobScheduler.Kind.DECODE, new Charge(), buffers -> {
+            throw new IOException("broken");
+        });
+        s.add(forced);
+        s.add(beside);
+        s.add(failing);
+        JobScheduler.Position at = new JobScheduler.Position(50, NONE, NONE);
+
+        assertThat(keys(s.start(at))).containsExactly(10L, 20L);
+        assertThat(r.held()).isEqualTo(80);
+
+        s.run(beside, null).run();
+        r.release(s.takeReleased());
+        assertThat(r.held()).isZero();
+        assertThat(keys(s.start(at))).containsExactly(30L);
+        assertThat(r.held()).isEqualTo(80);
+
+        s.run(failing, null).run();
+        r.release(s.takeReleased());
+        assertThat(r.held()).isZero();
+        assertThat(applied).containsExactly("d2", "d3 failed: broken");
+    }
+
+    /// A probe charged its dictionary parses that R refuses waits, holding back the plans after it
+    /// but not the other CPU work, and starts once the probe before it has returned its charge.
+    @Test
+    void probeRefusedByTheBufferWaitsForItsRelease() {
+        ReadAheadBuffer r = new ReadAheadBuffer(100);
+        JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 0);
+        JobScheduler.Job<?> first = job("p1", 50, 80, JobScheduler.Kind.PLAN, new Charge());
+        s.add(first);
+        s.add(job("p2", 60, 80, JobScheduler.Kind.PLAN, new Charge()));
+        s.add(job("p3", 65, 0, JobScheduler.Kind.PLAN, null));
+        s.add(job("c", 70, 0, JobScheduler.Kind.CPU, null));
+        JobScheduler.Position at = new JobScheduler.Position(10, NONE, NONE);
+
+        assertThat(keys(s.start(at))).containsExactly(50L, 70L);
+        assertThat(r.held()).isEqualTo(80);
+
+        s.run(first, null).run();
+        r.release(s.takeReleased());
+        assertThat(keys(s.start(at))).containsExactly(60L, 65L);
+        assertThat(r.held()).isEqualTo(80);
+    }
+
+    /// A probe R refuses holds back only the plans after it: planning starts first whatever its
+    /// key, so a refused probe ahead of need must not keep the fetch the consumer's next batch
+    /// waits on from starting, even one that never fits R.
+    @Test
+    void probeRefusedByTheBufferHoldsBackNoNeededFetch() {
+        ReadAheadBuffer r = new ReadAheadBuffer(100);
+        JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 1000);
+        s.add(job("p", 50, 200, JobScheduler.Kind.PLAN, new Charge()));
+        s.add(job("f", 5, 30, JobScheduler.Kind.FETCH, new Charge()));
+        s.add(job("d", 8, 0, JobScheduler.Kind.DECODE, null));
+
+        assertThat(keys(s.start(new JobScheduler.Position(10, NONE, NONE)))).containsExactly(5L, 8L);
+    }
+
     /// The progress guarantee whatever the bounds: jobs of every kind at random rows and costs,
     /// some larger than R, under R, F and CPU slots smaller than what is ready and a look-ahead
     /// that may lie behind the consumer's next batch. The consumer's next batch starts at the
@@ -173,8 +240,7 @@ class JobSchedulerTest {
         List<JobScheduler.Job<?>> left = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
             JobScheduler.Kind kind = kinds[random.nextInt(kinds.length)];
-            boolean fetch = kind == JobScheduler.Kind.FETCH || kind == JobScheduler.Kind.FOOTER;
-            long cost = fetch ? random.nextInt(300) : 0;
+            long cost = kind == JobScheduler.Kind.CPU ? 0 : random.nextInt(300);
             JobScheduler.Job<?> job = new JobScheduler.Job<>(random.nextInt(1000), cost, kind,
                     cost > 0 ? new Charge() : null, buffers -> null, value -> {
                     }, t -> {
@@ -202,10 +268,17 @@ class JobSchedulerTest {
             JobScheduler.Job<?> ended = running.remove(random.nextInt(running.size()));
             s.run(ended, null).run();
             left.remove(ended);
-            if (ended.charge() != null) {
+            // a CPU job returns its charge as it ends; a fetch's is held until the consumer passes it
+            if (ended.charge() != null && !ended.cpu()) {
                 holding.add(ended);
             }
         }
+        // the consumer passes the last rows: every charge is returned, once
+        for (JobScheduler.Job<?> held : holding) {
+            s.release(held.charge());
+        }
+        r.release(s.takeReleased());
+        assertThat(r.held()).as("seed " + seed + ": R holds bytes after every job ended").isZero();
     }
 
     @Test

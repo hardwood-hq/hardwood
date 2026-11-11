@@ -42,9 +42,11 @@ final class JobScheduler {
         FETCH,
         /// a footer's read: a fetch whose key, the end of the rows listed, is no row the data reached
         FOOTER,
-        /// CPU work that leads to a fetch: a footer's parse, a row group's probe and plan
+        /// CPU work that leads to a fetch: a footer's parse, a row group's probe and plan; a probe
+        /// held back by R where it is charged the dictionary parses it runs
         PLAN,
-        /// CPU work that holds values for the consumer: held back by the look-ahead
+        /// CPU work that holds values for the consumer: held back by the look-ahead, and by R where it
+        /// is charged the buffers it holds while it runs
         DECODE,
         /// other CPU work: planning, scans, assembly
         CPU
@@ -159,9 +161,11 @@ final class JobScheduler {
     private static final Comparator<Job<?>> ORDER = (a, b) -> a.key() != b.key() ? Long.compare(a.key(), b.key())
             : Long.compare(a.seq(), b.seq());
     private static final Kind[] KINDS = Kind.values();
-    /// the kinds a refusal holds back: a bound's own kind, and for R every kind that charges
+    /// the kinds a refusal holds back: a bound's own kind, and for R the fetches and the decodes,
+    /// or for a refused plan the plans
     private static final int FETCHES = 1 << Kind.FETCH.ordinal() | 1 << Kind.FOOTER.ordinal();
     private static final int DECODES = 1 << Kind.DECODE.ordinal();
+    private static final int PLANS = 1 << Kind.PLAN.ordinal();
 
     private final ReadAheadBuffer budget;
     private final AtomicBoolean waitingForRoom = new AtomicBoolean();
@@ -257,7 +261,9 @@ final class JobScheduler {
         // the job need forces holds what it reads uncharged: R holds what the read chose to start
         long charged = forced ? 0 : job.cost();
         if (!charge(charged)) {
-            return FETCHES | DECODES;
+            // a plan starts first whatever its key, so a refused one holds back only the plans after
+            // it: work keyed below it, need's among it, is still tried
+            return job.kind() == Kind.PLAN ? PLANS : FETCHES | DECODES;
         }
         if (needed) {
             job.startedNeeded();
@@ -282,8 +288,10 @@ final class JobScheduler {
     }
 
     /// Runs a started job's work outside the lock; returns what to apply under it once the job has
-    /// ended: its `onValue` takes the value its work produced, or its `onFailure` the failure. A fetch
-    /// that fails with an exception is run once more: the one place a transient fault is retried.
+    /// ended: its `onValue` takes the value its work produced, or its `onFailure` the failure. A CPU
+    /// job's charge, the buffers its work holds, is returned as it ends; a fetch's stays with what it
+    /// fetched. A fetch that fails with an exception is run once more: the one place a transient
+    /// fault is retried.
     <T> Runnable run(Job<T> job, DecodeBuffers buffers) {
         T value;
         try {
@@ -294,6 +302,9 @@ final class JobScheduler {
         }
         return () -> {
             ended(job);
+            if (job.cpu() && job.charge() != null) {
+                release(job.charge());
+            }
             job.onValue().accept(value);
         };
     }
