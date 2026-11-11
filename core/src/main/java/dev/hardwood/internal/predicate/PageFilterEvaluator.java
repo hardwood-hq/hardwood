@@ -9,6 +9,7 @@ package dev.hardwood.internal.predicate;
 
 import java.util.List;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.plan.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
 import dev.hardwood.internal.reader.select.RowRanges;
@@ -16,7 +17,7 @@ import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnIndex;
-import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.RowGroup;
@@ -37,6 +38,10 @@ import dev.hardwood.reader.ParquetReadException;
 /// When the `ColumnIndex` is absent, this evaluator returns `RowRanges.all()`: a page can then be
 /// decided only by its inline header statistics ([PageDropPredicates]).
 public class PageFilterEvaluator {
+
+    /// Says that the chunk's page index was being read, for the message of every failure
+    /// [#readIndexPair] reports.
+    private static final String PARSE_FAILURE = "Failed to parse the page index: ";
 
     /// Computes the row ranges within a row group that might match the given predicate,
     /// based on per-page statistics from the Column Index.
@@ -96,10 +101,19 @@ public class PageFilterEvaluator {
             return RowRanges.all(rowCount);
         }
 
-        ColumnMetaData metaData = rowGroup.columns().get(columnIndex).metaData();
-        IndexPair indexPair = readIndexPair(colBuffers, columnIndex, rowGroup);
+        FieldPath path = rowGroup.columns().get(columnIndex).metaData().pathInSchema();
+        IndexPair indexPair;
+        try {
+            indexPair = readIndexPair(colBuffers, columnIndex, rowGroup);
+        }
+        catch (ParquetReadException e) {
+            // the column's own, which the pipeline cannot name: it plans the row group, not the
+            // column whose index failed
+            throw new ParquetReadException(ExceptionContext.readPrefix(logContext.fileName(),
+                    logContext.rowGroupIndex(), path.toString()) + e.getMessage(), e);
+        }
 
-        LogContext columnContext = metaData == null ? logContext : logContext.withColumn(metaData.pathInSchema());
+        LogContext columnContext = logContext.withColumn(path);
 
         return evaluatePages(indexPair.columnIndex, indexPair.offsetIndex, rowCount, leaf, columnContext,
                 readability);
@@ -267,9 +281,8 @@ public class PageFilterEvaluator {
     /// indexing one with the other's length further down.
     ///
     /// The page index is read per column chunk, outside the footer parse that
-    /// [dev.hardwood.internal.reader.footer.ParquetMetadataReader] attributes, so failures are
-    /// named here by the read pipeline, which names the file, row group and column on the way out;
-    /// what this frame adds is which of the chunk's two indexes was being read.
+    /// [dev.hardwood.internal.reader.footer.ParquetMetadataReader] attributes. A failure says the
+    /// page index was being read; the caller names the file, row group and column.
     static IndexPair readIndexPair(ColumnIndexBuffers colBuffers, int columnIndex, RowGroup rowGroup) {
         ColumnIndex columnIdx;
         OffsetIndex offsetIdx;
@@ -279,33 +292,21 @@ public class PageFilterEvaluator {
                     rowGroup.columns().get(columnIndex), rowGroup.numRows());
         }
         catch (ParquetReadException e) {
-            // The reader already says the failure is the file's; what it cannot
-            // say is which column's index it was parsing.
-            throw new ParquetReadException(prefix(columnIndex) + e.getMessage(), e);
+            // the reader says the failure is the file's; this frame says it was the page index,
+            // and evaluateLeafPages names the column whose index it was
+            throw new ParquetReadException(PARSE_FAILURE + e.getMessage(), e);
         }
         // Outside the catch, and prefixed once: both structs parsed, so this is the
         // pair disagreeing rather than either of them failing to read.
         int columnIndexPages = columnIdx.getPageCount();
         int offsetIndexPages = offsetIdx.pageLocations().size();
         if (columnIndexPages != offsetIndexPages) {
-            throw new ParquetReadException(prefix(columnIndex)
+            throw new ParquetReadException(PARSE_FAILURE
                     + "Malformed Parquet metadata: ColumnIndex describes "
                     + columnIndexPages + " pages but OffsetIndex locates " + offsetIndexPages);
         }
         return new IndexPair(columnIdx, offsetIdx);
     }
-
-    /// Says which of the chunk's indexes was being read, for the message of every failure
-    /// [#readIndexPair] reports.
-    ///
-    /// The file and row group are not repeated: a page index is read only while a column's
-    /// pages are planned, so the pipeline names both on the way out. The column's ordinal
-    /// stays, because the pipeline names the path and a chunk deferring to another file has
-    /// none to take.
-    private static String prefix(int columnIndex) {
-        return "Failed to parse the page index of column " + columnIndex + ": ";
-    }
-
 
     record IndexPair(ColumnIndex columnIndex, OffsetIndex offsetIndex) {}
 }

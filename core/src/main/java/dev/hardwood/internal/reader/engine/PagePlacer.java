@@ -415,6 +415,16 @@ final class PagePlacer {
     /// also says so ([ExceptionContext#addSuppliedFooterHint]): the checks a supplied footer passes
     /// on open do not catch every file rewritten since the footer was read.
     Exception placed(int column, Exception e, String fileName, int rowGroup, int page) {
+        return placed(schemas[column].fieldPath().toString(), e, fileName, rowGroup, page);
+    }
+
+    /// `e` met planning a row group, which belongs to no column: placed as [#placed(int, Exception,
+    /// String, int, int)] places it, with the file and row group alone.
+    Exception placed(Exception e, String fileName, int rowGroup) {
+        return placed(null, e, fileName, rowGroup, ExceptionContext.UNKNOWN_PAGE);
+    }
+
+    private Exception placed(String columnPath, Exception e, String fileName, int rowGroup, int page) {
         if (HardwoodContextImpl.isContextClosed(e)) {
             // the context's, not the file's, whichever thread of the read met the refusal first
             return e;
@@ -423,7 +433,6 @@ final class PagePlacer {
         if (fileName == null || fileName.isEmpty()) {
             return typed;
         }
-        String columnPath = schemas[column].fieldPath().toString();
         if (typed instanceof RuntimeException re) {
             RuntimeException placed = ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, re);
             return footersSupplied ? ExceptionContext.addSuppliedFooterHint(placed) : placed;

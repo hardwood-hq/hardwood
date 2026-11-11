@@ -188,7 +188,7 @@ The checks against the chunk bound the index by the chunk's bytes: pages that ho
 
 The CLI and dive parse an offset index without these checks and run them separately, to list its pages and flag the contradiction rather than fail ([CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md#contradicted-offset-index)).
 
-A failure is a `ParquetReadException`. `readIndexPair` prefixes it with the chunk's column ordinal ("Failed to parse the page index of column N: …"), and the read pipeline adds the file, row group and column on the way out. The column ordinal stays in the message because a chunk may have no path the pipeline can name.
+A failure is a `ParquetReadException` that names the file, row group and column whose index failed (`PageFilterEvaluator.evaluateLeafPages`), not a column of the read, since the row group's planning that meets it serves every column.
 
 `RowGroupIterator` also parses a column's `OffsetIndex` on its own to build the column's indexed fetch plan ([FETCH_PLANNING.md](FETCH_PLANNING.md)); the cross-check against `ColumnIndex` runs where page filtering parses the pair. The null-page placeholders in `min_values` / `max_values` are carried as read and not decoded.
 
