@@ -11,12 +11,11 @@ import dev.hardwood.internal.reader.batch.Dictionary;
 
 /// A column chunk's dictionary in a read: its values, the [Output] of its dictionary page's decode
 /// or ended from the start where the unit's probe decoded them, which the chunk's data pages wait
-/// on; and its readers, the last of which lets go of the values. The working set charges the
-/// values, so a dictionary holds no charge of R. Used under the read's lock.
+/// on. The working set charges the values, so a dictionary holds no charge of R; the values go
+/// once the chunk's pages and its scan no longer hold the dictionary. Used under the read's lock.
 final class ChunkDictionary {
 
     private final Output<Dictionary> values;
-    private int readers;
 
     ChunkDictionary() {
         this(new Output<>());
@@ -36,7 +35,7 @@ final class ChunkDictionary {
         return values;
     }
 
-    /// Its values, `null` until they have arrived and once the last reader is done.
+    /// Its values, `null` until they have arrived.
     Dictionary values() {
         return values.value();
     }
@@ -46,14 +45,4 @@ final class ChunkDictionary {
         return values.hasValue();
     }
 
-    void addReader() {
-        readers++;
-    }
-
-    /// A reader is done; the last lets go of the values.
-    void readerDone() {
-        if (--readers == 0) {
-            values.drop();
-        }
-    }
 }

@@ -181,13 +181,10 @@ final class PageTracker {
         return found;
     }
 
-    /// `tracked` will read its ranges, and a data page its dictionary, until done.
+    /// `tracked` will read its ranges until done.
     private void hold(TrackedPage tracked) {
         for (RangeFetch r : tracked.ranges()) {
             r.addReader();
-        }
-        if (tracked.data() && tracked.dictionary() != null) {
-            tracked.dictionary().addReader();
         }
     }
 
@@ -246,9 +243,6 @@ final class PageTracker {
             publisher.hold(tracked.column(), tracked.task().segments().getLast().cell(), tracked.ranges());
             for (Cell cell : completed) {
                 publisher.completed(tracked.column(), cell);
-            }
-            if (tracked.dictionary() != null) {
-                tracked.dictionary().readerDone();
             }
         }, t -> failed(tracked, t)));
     }
@@ -316,12 +310,9 @@ final class PageTracker {
                 placer.workingSet(tracked.column()), buffers));
     }
 
-    /// A page is done with its ranges and its dictionary; the last reader of each returns it.
+    /// A page is done with its ranges; the last reader of each returns it.
     private void done(TrackedPage tracked) {
         fetcher.readersDone(tracked.ranges());
-        if (tracked.data() && tracked.dictionary() != null) {
-            tracked.dictionary().readerDone();
-        }
     }
 
     /// Reports that the pages of `column` in row group `rowGroupIndex` of `file` are located:
