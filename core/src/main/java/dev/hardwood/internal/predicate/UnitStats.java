@@ -156,7 +156,7 @@ sealed interface UnitStats {
 
     /// A column chunk, sourced from its [ColumnMetaData].
     ///
-    /// @param metaData the chunk's metadata, or `null` where there is none to source from
+    /// @param metaData the chunk's metadata, or `null` where the file does not carry the column
     /// @param rowCount the row group's row count
     record ChunkStats(ColumnMetaData metaData, long rowCount, BoundsReadability readability)
             implements UnitStats {

@@ -219,9 +219,37 @@ class ReadFailurePositionTest {
                 }
             }
         }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 2, column 'id'] "
-                                                            + "Failed to parse the page index of column "
-                                                            + "0: ColumnIndex field 15 \u2014 Unknown "
-                                                            + "field type: 15");
+                                                            + "Failed to parse the page index: ColumnIndex "
+                                                            + "field 15 \u2014 Unknown field type: 15");
+    }
+
+    /// A page index that fails to parse is named by its own column, `id`, a filter-only column
+    /// of a read of `value`, not by a column of the read.
+    @Test
+    void aPageIndexFailureNamesItsOwnColumn() throws Exception {
+        Path source = Path.of("src/test/resources/multi_row_group_page_index.parquet");
+        byte[] bytes = Files.readAllBytes(source);
+        long columnIndexOffset;
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                InputFile.of(ByteBuffer.wrap(bytes)))) {
+            columnIndexOffset = reader.getFileMetaData().rowGroups().get(2).columns().get(0)
+                    .columnIndexOffset();
+        }
+        bytes[Math.toIntExact(columnIndexOffset)] = (byte) 0xFF;
+        bytes[Math.toIntExact(columnIndexOffset) + 1] = (byte) 0xFF;
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)));
+                 ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("value"))
+                         .filter(FilterPredicate.in("id", 500L, 1500L, 2500L))
+                         .build()) {
+                while (columns.nextBatch()) {
+                    // read as far as the row group whose page index is corrupt
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 2, column 'id'] "
+                                                            + "Failed to parse the page index: ColumnIndex "
+                                                            + "field 15 \u2014 Unknown field type: 15");
     }
 
     /// A column's path, not its leaf name: two leaves in one file can share a name, and

@@ -1050,20 +1050,18 @@ class PageFilterEvaluatorTest {
 
         ByteBuffer file = ByteBuffer.allocate(offsetIndex.length + columnIndex.length);
         file.put(offsetIndex).put(columnIndex).flip();
-        ColumnChunk chunk = new ColumnChunk(null, 0L, offsetIndex.length,
-                (long) offsetIndex.length, columnIndex.length, "");
+        ColumnChunk chunk = indexedChunk(offsetIndex.length, columnIndex.length);
         RowGroup rowGroup = new RowGroup(List.of(chunk), 1000, 60);
 
         try (InputFile inputFile = InputFile.of(file)) {
             RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-            // Called directly here; in the reader this runs while a column's pages are
-            // planned, and the pipeline puts the file and row group in front of it.
             assertThatThrownBy(() -> PageFilterEvaluator.computeMatchingRows(
                     new ResolvedPredicate.IsNotNullPredicate(0, 1, 1), rowGroup, buffers,
                     new LogContext(inputFile.name(), 0), BoundsReadability.ALL))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("Failed to parse the page index of column 0: Malformed Parquet"
-                            + " metadata: ColumnIndex describes 3 pages but OffsetIndex locates 2");
+                    .hasMessage("[<memory>: row group 0, column 'order.price'] Failed to parse the page index:"
+                            + " Malformed Parquet metadata: ColumnIndex describes 3 pages but OffsetIndex"
+                            + " locates 2");
         }
     }
 
@@ -1146,8 +1144,7 @@ class PageFilterEvaluatorTest {
         ByteBuffer file = ByteBuffer.allocate(offsetIndex.length + columnIndex.length);
         file.put(offsetIndex).put(columnIndex).flip();
 
-        ColumnChunk chunk = new ColumnChunk(
-                null, 0L, offsetIndex.length, (long) offsetIndex.length, columnIndex.length, "");
+        ColumnChunk chunk = indexedChunk(offsetIndex.length, columnIndex.length);
 
         RowGroup rowGroup = new RowGroup(List.of(chunk), 1000, 60);
 
@@ -1200,13 +1197,7 @@ class PageFilterEvaluatorTest {
                 .put(columnIndex)
                 .flip();
 
-        ColumnChunk chunk = new ColumnChunk(
-                null,
-                0L,
-                offsetIndex.length,
-                (long) offsetIndex.length,
-                columnIndex.length,
-                "");
+        ColumnChunk chunk = indexedChunk(offsetIndex.length, columnIndex.length);
 
         RowGroup rowGroup =
                 new RowGroup(List.of(chunk), 1000, 60);
@@ -1269,13 +1260,7 @@ class PageFilterEvaluatorTest {
                 .put(columnIndex)
                 .flip();
 
-        ColumnChunk chunk = new ColumnChunk(
-                null,
-                0L,
-                offsetIndex.length,
-                (long) offsetIndex.length,
-                columnIndex.length,
-                "");
+        ColumnChunk chunk = indexedChunk(offsetIndex.length, columnIndex.length);
 
         RowGroup rowGroup =
                 new RowGroup(List.of(chunk), 1000, 60);

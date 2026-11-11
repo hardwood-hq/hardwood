@@ -405,8 +405,8 @@ final class RowGroupPlanner {
                 return pages.plan(a, index, events);
             }
             catch (Exception e) {
-                // met first by the first column, at no page
-                throw placer.placed(0, e, u.file().name(), u.rowGroup(), ExceptionContext.UNKNOWN_PAGE);
+                // the row group's, at no column and no page
+                throw placer.placed(e, u.file().name(), u.rowGroup());
             }
         }, plan -> {
             set(a.planned(plan, events));

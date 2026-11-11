@@ -111,8 +111,8 @@ class EmptyOffsetIndexTest {
                 }
             }
         }).isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'id'] Failed to parse the page index of"
-                        + " column 0: Malformed Parquet metadata: OffsetIndex.page_locations is empty"
+                .hasMessage("[<memory>: row group 0, column 'id'] Failed to parse the page index:"
+                        + " Malformed Parquet metadata: OffsetIndex.page_locations is empty"
                         + " but the column chunk has 1000 values");
     }
 
@@ -130,8 +130,8 @@ class EmptyOffsetIndexTest {
                 }
             }
         }).isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'id'] Failed to parse the page index of"
-                        + " column 0: Malformed Parquet metadata: OffsetIndex.page_locations is empty"
+                .hasMessage("[<memory>: row group 0, column 'id'] Failed to parse the page index:"
+                        + " Malformed Parquet metadata: OffsetIndex.page_locations is empty"
                         + " but the column chunk has 1000 values");
     }
 }
