@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.PhysicalType;
 
+import static dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport.BINARY_PASS_LIMIT;
 import static dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport.PASS_LIMIT;
 import static dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport.SPARSE_PASS_LIMIT;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -514,17 +515,20 @@ class DictionaryFilterSupportTest {
 
         @Test
         void shortListsRunOnePassPerLiteral() {
-            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(PASS_LIMIT, "dog_"))).isTrue();
-            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(PASS_LIMIT, "cat_"))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(BINARY_PASS_LIMIT, "dog_"))).isTrue();
+            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(BINARY_PASS_LIMIT, "cat_"))).isFalse();
         }
+
+        /// One more literal than a byte-string list runs passes for.
+        private static final int BINARY_INDEXED = BINARY_PASS_LIMIT + 1;
 
         @Test
         void longListsAreIndexedAsAHashSet() {
-            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(INDEXED, "dog_"))).isTrue();
+            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(BINARY_INDEXED, "dog_"))).isTrue();
             // Found at the dictionary's first entry, and at its last.
-            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(INDEXED, "cat_"))).isFalse();
-            byte[][] withLast = literals(INDEXED, "dog_");
-            withLast[INDEXED - 1] = "a much longer category name than the others".getBytes(StandardCharsets.UTF_8);
+            assertThat(DictionaryFilterSupport.absentAll(dictionary, literals(BINARY_INDEXED, "cat_"))).isFalse();
+            byte[][] withLast = literals(BINARY_INDEXED, "dog_");
+            withLast[BINARY_INDEXED - 1] = "a much longer category name than the others".getBytes(StandardCharsets.UTF_8);
             assertThat(DictionaryFilterSupport.absentAll(dictionary, withLast)).isFalse();
         }
 
@@ -532,7 +536,7 @@ class DictionaryFilterSupportTest {
         void entriesOfALengthNoLiteralHasAreNeverHashed() {
             // Every literal is 5 bytes; the empty entry and the long one fail the length check and
             // the 5-byte entries miss in the set.
-            byte[][] fiveBytes = literals(INDEXED, "dog_");
+            byte[][] fiveBytes = literals(BINARY_INDEXED, "dog_");
             assertThat(Arrays.stream(fiveBytes).allMatch(value -> value.length == 5)).isTrue();
             assertThat(DictionaryFilterSupport.absentAll(dictionary, fiveBytes)).isTrue();
             // The empty entry is found once an empty literal is in the list.
@@ -542,20 +546,20 @@ class DictionaryFilterSupportTest {
 
         @Test
         void literalsSharingALengthAndAPrefixAreToldApart() {
-            // dog_0..dog_8 and cat_0..cat_3 are all 5 bytes with a common suffix shape; only an
+            // The dog_ and cat_ literals are all 5 bytes with a common suffix shape; only an
             // exact byte match counts.
-            byte[][] values = literals(INDEXED, "dog_");
-            values[INDEXED - 1] = "cat_9".getBytes(StandardCharsets.UTF_8);
+            byte[][] values = literals(BINARY_INDEXED, "dog_");
+            values[BINARY_INDEXED - 1] = "cat_9".getBytes(StandardCharsets.UTF_8);
             assertThat(DictionaryFilterSupport.absentAll(dictionary, values)).isTrue();
-            values[INDEXED - 1] = "cat_3".getBytes(StandardCharsets.UTF_8);
+            values[BINARY_INDEXED - 1] = "cat_3".getBytes(StandardCharsets.UTF_8);
             assertThat(DictionaryFilterSupport.absentAll(dictionary, values)).isFalse();
         }
 
         @Test
         void wrongArmOrNoDictionaryProvesNothing() {
-            assertThat(DictionaryFilterSupport.absentAll(null, literals(INDEXED, "dog_"))).isFalse();
+            assertThat(DictionaryFilterSupport.absentAll(null, literals(BINARY_INDEXED, "dog_"))).isFalse();
             assertThat(DictionaryFilterSupport.absentAll(new Dictionary.IntDictionary(new int[]{ 1 }),
-                    literals(INDEXED, "dog_"))).isFalse();
+                    literals(BINARY_INDEXED, "dog_"))).isFalse();
         }
     }
 
