@@ -67,26 +67,11 @@ final class RangeFetch {
         return bytes;
     }
 
-    /// Its bytes, `null` until they have arrived and once the last reader is done.
-    ByteBuffer bytes() {
-        return bytes.value();
-    }
-
-    /// Whether its bytes have arrived.
-    boolean hasArrived() {
-        return bytes.hasValue();
-    }
-
-    /// Its fetch's failure, `null` where none.
-    Throwable failure() {
-        return bytes.failure();
-    }
-
     /// The first of `ranges` whose bytes have not arrived, failed ones included; `null` where all
     /// have.
     static RangeFetch firstMissing(List<RangeFetch> ranges) {
         for (RangeFetch r : ranges) {
-            if (!r.hasArrived()) {
+            if (!r.bytes.hasValue()) {
                 return r;
             }
         }
@@ -107,18 +92,18 @@ final class RangeFetch {
             if (start >= end || r.range.end() <= offset) {
                 continue;
             }
-            if (r.bytes() == null) {
+            if (r.bytes.value() == null) {
                 return null;
             }
             if (start <= offset && r.range.end() >= end) {
-                return r.bytes().slice(Math.toIntExact(offset - start), length);
+                return r.bytes.value().slice(Math.toIntExact(offset - start), length);
             }
             if (copy == null) {
                 copy = ByteBuffer.allocate(length);
             }
             long s = Math.max(offset, start);
             long e = Math.min(end, r.range.end());
-            copy.put(Math.toIntExact(s - offset), r.bytes(), Math.toIntExact(s - start), Math.toIntExact(e - s));
+            copy.put(Math.toIntExact(s - offset), r.bytes.value(), Math.toIntExact(s - start), Math.toIntExact(e - s));
         }
         return copy;
     }

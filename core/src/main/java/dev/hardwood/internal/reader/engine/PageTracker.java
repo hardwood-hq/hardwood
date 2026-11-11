@@ -105,7 +105,7 @@ final class PageTracker {
             }
         }
         for (int i = 0; i < ranges.size(); i++) {
-            if (!ranges.get(i).hasArrived()) {
+            if (!ranges.get(i).output().hasValue()) {
                 fetcher.fetch(u.listing().file(), ranges.get(i), key(u, ranges.get(i), keys[i]));
             }
         }
@@ -220,7 +220,7 @@ final class PageTracker {
 
     /// Whether `tracked` reads no dictionary, or its dictionary's values have arrived.
     private static boolean dictionaryThere(TrackedPage tracked) {
-        return !tracked.data() || tracked.dictionary() == null || tracked.dictionary().hasArrived();
+        return !tracked.data() || tracked.dictionary() == null || tracked.dictionary().output().hasValue();
     }
 
     private void addDecode(TrackedPage tracked) {
@@ -234,7 +234,7 @@ final class PageTracker {
         }
         // its values are the read's working set's, which the decode charges, not R's
         scheduler.add(new JobScheduler.Job<>(tracked.key(), 0, JobScheduler.Kind.DECODE, null, buffers -> {
-            Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().values();
+            Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().output().value();
             return placer.decode(tracked.column(), tracked.task(),
                     tracked.placeholder() > 0 ? null : tracked.bytes(), dictionary, buffers);
         }, completed -> {
@@ -252,7 +252,7 @@ final class PageTracker {
         scheduler.add(new JobScheduler.Job<>(tracked.key(), 0, JobScheduler.Kind.DECODE, null, buffers -> {
             NestedPageTask task = placer.nestedTask(tracked,
                     tracked.placeholder() > 0 ? null : DataPage.parse(tracked.bytes()),
-                    tracked.dictionary() == null ? null : tracked.dictionary().values());
+                    tracked.dictionary() == null ? null : tracked.dictionary().output().value());
             try {
                 task.decodeAndMeasure(buffers);
             }

@@ -283,11 +283,11 @@ final class HeaderScanner {
         }
         List<RangeFetch> arrived = new ArrayList<>();
         for (RangeFetch r : s.held()) {
-            if (r.failure() != null) {
-                failed(s, r.failure());
+            if (r.output().failure() != null) {
+                failed(s, r.output().failure());
                 return;
             }
-            if (r.bytes() == null) {
+            if (r.output().value() == null) {
                 break;
             }
             arrived.add(r);
@@ -438,7 +438,7 @@ final class HeaderScanner {
                 "rg=" + s.unit().listing().rowGroup() + " col=" + placer.schema(s.column()).name()));
         r.addReader();
         s.add(r);
-        if (!r.hasArrived()) {
+        if (!r.output().hasValue()) {
             fetcher.fetch(s.unit().listing().file(), r, key(s));
         }
         r.output().whenEnded(() -> next(s));
