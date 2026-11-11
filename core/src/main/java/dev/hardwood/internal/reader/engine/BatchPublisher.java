@@ -88,25 +88,36 @@ final class BatchPublisher {
 
     /// The batch holding the column's `cell`: one of the last it opened.
     Batch of(int column, BatchCell<?> cell) {
-        for (int i = opened[column] - 1; ; i--) {
-            Batch b = batches.get(i);
-            if (b != null && b.cell(column) == cell) {
-                return b;
-            }
+        Batch b = find(column, cell);
+        if (b == null) {
+            throw new IllegalStateException("Column " + column + " holds no open batch with cell at row "
+                    + cell.firstRow());
         }
+        return b;
     }
 
     /// The batch holding the column's `cell` holds `ranges` until every column has published it;
     /// they are returned at once where it has been.
     void hold(int column, BatchCell<?> cell, List<RangeFetch> ranges) {
+        Batch b = find(column, cell);
+        if (b != null) {
+            b.hold(ranges);
+        }
+        else {
+            fetcher.readersDone(ranges);
+        }
+    }
+
+    /// The batch holding the column's `cell`, searched back from the last the column opened;
+    /// `null` where every column has published it.
+    private Batch find(int column, BatchCell<?> cell) {
         for (int i = opened[column] - 1; i >= head; i--) {
             Batch b = batches.get(i);
             if (b != null && b.cell(column) == cell) {
-                b.hold(ranges);
-                return;
+                return b;
             }
         }
-        fetcher.readersDone(ranges);
+        return null;
     }
 
     /// The column's `cell` is complete: its batch can be published.

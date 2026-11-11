@@ -225,7 +225,7 @@ public final class RowGroupIterator implements Closeable {
                     ? BatchExchange.detachingNested(name, batchSize) : BatchExchange.detachingFlat(name, batchSize));
         }
         driver = new ReadDriver(context, readQueue, defaultFetchAheadBytes(CoalescingPolicy.maxSpanBytes()),
-                this::poll, t -> publisher.failAt(0, t));
+                this::settle, t -> publisher.failAt(0, t));
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, started, batchSize, CAP_BUDGETS * budgetRows);
@@ -254,7 +254,7 @@ public final class RowGroupIterator implements Closeable {
 
     /// Ends or seals the columns' placement where the read has reached its end or a failure
     /// between units, publishes what can be, and says where the consumer stands; under the lock.
-    private JobScheduler.Position poll() {
+    private JobScheduler.Position settle() {
         long batchedTo = planner.batchedKey();
         if (planner.allBatched() && !publisher.failed()) {
             placer.end(planner.endKey());

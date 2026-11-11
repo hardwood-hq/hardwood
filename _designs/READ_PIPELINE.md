@@ -54,7 +54,7 @@ Tests: `MultiFileRowReaderTest`, `IteratorTrackingTest`, `ParentCloseTest`, `Par
 
 ## Scheduling
 
-A read's work leaves its lock as jobs. A job runs outside the lock and returns a closure, which is applied under it; the scheduler is then asked what the result made possible. Which thread runs each kind of job is in [THREADING.md](THREADING.md#thread-inventory).
+A read's work leaves its lock as jobs. A job's work runs outside the lock, and its end is applied under it through its callbacks (see Job ends and outputs below); the scheduler is then asked what the end made possible. Which thread runs each kind of job is in [THREADING.md](THREADING.md#thread-inventory).
 
 | Kind | Does | Bounded by |
 |---|---|---|
