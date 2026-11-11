@@ -70,7 +70,7 @@ Tests: `RecordFilterCompilerTest`, `RecordFilterIndexedTest`, `ColumnReaderExact
 
 ## Batch matchers
 
-For an eligible predicate the flat row reader evaluates it on each column's batches as they complete, on the job that completes the batch, usually the decode that fills it last ([READ_PIPELINE.md](READ_PIPELINE.md#decoded-columns)). On one thread the batch matchers are slower per row than the per-row matcher; they pay off because each column's fragment runs in parallel with the other columns and while the values just assembled are still in that core's cache. Evaluating them on the consumer thread keeps the answer and forfeits the gain. `BatchFilterCompiler.tryCompile` decides once, at reader construction, and returns either a `CompiledBatchFilter` (per-column `ColumnBatchMatcher` fragments plus a `MergePlan`) or `null`, in which case the reader falls back to the per-row matcher. There is no configuration switch.
+For an eligible predicate the flat row reader and the column readers evaluate it on each column's batches as they complete, on the job that completes the batch, usually the decode that fills it last ([READ_PIPELINE.md](READ_PIPELINE.md#decoded-columns)). On one thread the batch matchers are slower per row than the per-row matcher; they pay off because each column's fragment runs in parallel with the other columns and while the values just assembled are still in that core's cache. Evaluating them on the consumer thread keeps the answer and forfeits the gain. `BatchFilterCompiler.tryCompile` decides once, at reader construction, and returns either a `CompiledBatchFilter` (per-column `ColumnBatchMatcher` fragments plus a `MergePlan`) or `null`, in which case the reader falls back to the per-row matcher. There is no configuration switch.
 
 ### Eligibility
 
@@ -121,10 +121,7 @@ Tests: `BatchMatcherOracleTest`.
 
 ### Merge
 
-`BatchMatchMerger` (`internal.reader.row`) combines the per-column bitmaps into one survivor bitmap per batch, once per batch. It has two modes, fixed at construction:
-
-- **Aliasing** (`FlatRowReader`): each flat column runs its fragment into the batch's own `matches` array as the batch's cell completes, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
-- **Owning** (`SelectionEngine`): the column readers' columns carry no fragment, so the merger runs the fragments itself into buffers it owns, on the consumer thread.
+`BatchMatchMerger` (`internal.reader.row`) combines the per-column bitmaps into one survivor bitmap per batch, once per batch, for `FlatRowReader` and `SelectionEngine` alike. Each flat column with a fragment runs it into the batch's own `matches` array as the batch's cell completes, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays and runs no matcher itself.
 
 A plan that is a single `MergePlan.Column` yields that column's bitmap directly; any other plan goes through `MergePlanEvaluator` into a combined buffer. The merger dereferences only the columns its plan references (`referencedColumns()`), so a caller that stages the batch array need keep only those entries current.
 
@@ -138,9 +135,9 @@ A filtered `ColumnReaders` is a grouped read over `decoded()` plus a per-batch *
 
 **Selection, once per batch.** On each advance `ColumnScan` polls the cursors, checks lockstep (every column produced a batch of the same record count, or `IllegalStateException`), and asks `SelectionEngine.computeSelection` for the ascending indices of the matching records. It returns `-1` when every record matches, and compaction is skipped. The selection is computed from the pre-compaction batches and applied to every payload cursor before the next advance; a payload column that is also a predicate column is read before it is compacted.
 
-`SelectionEngine` picks its backend once at construction:
+`SelectionEngine` has one of two backends, fixed before the read starts:
 
-- `BatchFilterCompiler.tryCompile` accepts the predicate: a `BatchMatchMerger` in owning mode.
+- `BatchFilterCompiler.tryCompile` accepts the predicate: a `BatchMatchMerger` over the bitmaps the predicate columns' fragments wrote. `ColumnScan` compiles the filter before it starts the read and hands each fragment to its column, whose exchange gives every batch a `matches` array, so the fragments run on the jobs that complete the cells. Only top-level leaves are accepted: a column reader decodes a leaf below a struct through its levels, into a batch with no `matches` array.
 - Otherwise: the `RowMatcher` compiled against a `PredicateView` over the cursors' batches, evaluated per record. Nested predicate columns arrive without element validity on this path, and the view derives it from the definition levels.
 
 Both backends produce the same selection representation, so compaction does not depend on the backend.
@@ -223,7 +220,7 @@ Tests: `RowGroupFilterTest`, `PredicatePushDownTest`, `BuilderCombinationTest`.
 
 ## Boundaries
 
-- **Nested and remaining leaf shapes as batch matchers (#485).** Nested-path leaves, `FLOAT16`, `intersects` and every predicate on `NestedRowReader` are evaluated a row at a time on the consumer thread. Moving them to batch matchers would let `RecordFilterCompiler` go.
+- **Nested and remaining leaf shapes as batch matchers (#485).** Nested-path leaves, leaves below a struct on the column readers, `FLOAT16`, `intersects` and every predicate on `NestedRowReader` are evaluated a row at a time on the consumer thread. Moving them to batch matchers would let `RecordFilterCompiler` go.
 - **Late materialization (#500).** Payload columns are decoded in full for every undecided row group and then compacted; decoding them only for matching rows is a different pipeline shape.
 - **Fixed-width dictionary-space evaluation (#1447).** Binary matchers decide referenced dictionary entries once; fixed-width primitive matchers still evaluate dictionary-encoded columns per row.
 - **Fused same-column range matchers (#454)** and **Vector API matchers (#456).** `id >= a AND id < b` runs two passes over the column and one word-wise AND.

@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// End-to-end coverage for the batch-matcher path in `FlatRowReader`: reads a real
 /// Parquet file via the public API with a batch-eligible predicate and asserts
 /// the surviving rows match what the predicate semantically demands. Exercises
-/// `BatchMatchMerger` in its aliasing mode (compound merge and single-column
+/// `BatchMatchMerger` (compound merge and single-column
 /// alias), the `nextSetBit` / `scanRunEnd` helpers, and the `combinedWords`
 /// lifecycle across `loadNextBatch` — none of which the in-memory
 /// `BatchMatcherOracleTest` touches, since it merges the bitmaps itself.

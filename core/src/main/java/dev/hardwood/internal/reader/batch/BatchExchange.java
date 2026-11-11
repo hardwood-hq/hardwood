@@ -202,7 +202,25 @@ public class BatchExchange<B> {
     /// @param batchCapacity the most rows a batch holds
     /// @return a detaching [BatchExchange] of [Batch]es
     public static BatchExchange<Batch> detachingFlat(String columnName, int batchCapacity) {
-        return detaching(columnName, Batch::new, batch -> batch.capacity, batchCapacity);
+        return detachingFlat(columnName, batchCapacity, false);
+    }
+
+    /// Creates a detaching exchange for flat batches, as [#detachingFlat(String, int)] does,
+    /// whose batches carry a [Batch#matches] array for the column's filter fragment when
+    /// `matches` is set.
+    ///
+    /// @param columnName column name for error messages
+    /// @param batchCapacity the most rows a batch holds
+    /// @param matches whether each batch carries a [Batch#matches] array of `batchCapacity` bits
+    /// @return a detaching [BatchExchange] of [Batch]es
+    public static BatchExchange<Batch> detachingFlat(String columnName, int batchCapacity, boolean matches) {
+        int matchWords = (batchCapacity + 63) >>> 6;
+        Supplier<Batch> factory = matches ? () -> {
+            Batch batch = new Batch();
+            batch.matches = new long[matchWords];
+            return batch;
+        } : Batch::new;
+        return detaching(columnName, factory, batch -> batch.capacity, batchCapacity);
     }
 
     /// Creates a detaching exchange for nested batches. A nested batch counts its records, since

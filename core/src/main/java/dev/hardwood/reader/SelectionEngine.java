@@ -25,14 +25,13 @@ import dev.hardwood.schema.FileSchema;
 /// ascending indices of the records that satisfy the predicate, which the
 /// [ColumnScan] then uses to compact each payload column.
 ///
-/// Two backends, chosen once at construction:
+/// Two backends, chosen by [ColumnScan] before the read starts:
 ///
 /// - **Batch-matcher** — when [BatchFilterCompiler] accepts the predicate (flat,
-///   top-level, supported `(type, op)`), a [BatchMatchMerger] runs the
-///   per-column matcher fragments over the flat batches and combines them into
-///   one survivor bitmap. This is the row reader's batch-matcher merge, in the
-///   mode where the merger runs the matchers itself because no column has run
-///   them as its cells completed.
+///   top-level, supported `(type, op)`), each predicate column ran its matcher
+///   fragment into its batch's `matches` array as the batch's cell completed, and a
+///   [BatchMatchMerger] combines those bitmaps into one survivor bitmap, as the row
+///   reader's does.
 /// - **Record matcher** — otherwise (nested paths, float16, geospatial,
 ///   unsupported operators) the compiled [RowMatcher] is evaluated per record over a
 ///   [PredicateView] of the predicate columns — the accessor the row readers
@@ -84,21 +83,26 @@ final class SelectionEngine {
         this.batchSize = batchSize;
     }
 
+    /// Compiles `resolved` to batch matchers for a column read over `decoded`, or returns `null`
+    /// where the compiler does not accept it and the record matcher evaluates it instead. Only
+    /// top-level leaves are accepted: a column read decodes a leaf below a struct through its
+    /// levels, into a batch that carries no `matches` array.
+    static CompiledBatchFilter compile(FileSchema schema, ProjectedSchema decoded, ResolvedPredicate resolved) {
+        return BatchFilterCompiler.tryCompile(resolved, schema, decoded::toProjectedIndex, false);
+    }
+
     /// Builds an engine for `resolved` over the decoded projection, reading
     /// predicate values from the current batches of `cursorsByProjectedIndex` (indexed
     /// by the decoded column index).
+    ///
+    /// @param compiled what [#compile] returned for `resolved`; when non-null, every column
+    ///        it holds a matcher for ran that matcher into its batches' `matches` arrays
     static SelectionEngine create(FileSchema schema, ProjectedSchema decoded,
-                                  ResolvedPredicate resolved,
+                                  ResolvedPredicate resolved, CompiledBatchFilter compiled,
                                   ColumnCursor[] cursorsByProjectedIndex, int batchSize) {
-        int wordsLen = (batchSize + 63) >>> 6;
-        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                resolved, schema, decoded::toProjectedIndex, false);
-
         if (compiled != null) {
-            // Owning mode: no column ran the matchers as its cells completed, so the
-            // merger runs them itself into buffers it allocates.
-            BatchMatchMerger merger = BatchMatchMerger.owning(
-                    compiled, cursorsByProjectedIndex.length, wordsLen);
+            BatchMatchMerger merger = new BatchMatchMerger(
+                    compiled.mergePlan(), cursorsByProjectedIndex.length, (batchSize + 63) >>> 6);
             return new SelectionEngine(merger, cursorsByProjectedIndex.length,
                     cursorsByProjectedIndex, null, null, batchSize);
         }

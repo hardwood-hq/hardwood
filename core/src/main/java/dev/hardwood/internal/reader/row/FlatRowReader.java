@@ -378,7 +378,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // The merger *is* the batch-matcher path in the reader: present exactly when the
         // predicate compiled to one, absent when the record matcher takes over.
         BatchMatchMerger matchMerger = batchMatchers
-                ? BatchMatchMerger.aliasing(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
+                ? new BatchMatchMerger(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
                 : null;
 
         FlatRowReader reader = new FlatRowReader(buffers, schema, projection.payload(), structs,

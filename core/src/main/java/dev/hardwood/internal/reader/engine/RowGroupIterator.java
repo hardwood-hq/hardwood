@@ -183,8 +183,9 @@ public final class RowGroupIterator implements Closeable {
         return files.inputFiles().getFirst().name();
     }
 
-    /// Starts the read's decoded columns, publishing into detaching exchanges without a row cap or
-    /// filter fragments, as a column read does, and returns each one's exchange, in decoded order.
+    /// Starts the read's decoded columns, publishing into detaching exchanges without filter
+    /// fragments, as a column read without batch matchers does, and returns each one's exchange,
+    /// in decoded order.
     ///
     /// @param layers the layers of each decoded column decoded through levels, `null` for a flat
     ///        one, in decoded order
