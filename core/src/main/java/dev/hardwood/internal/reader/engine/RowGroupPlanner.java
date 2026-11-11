@@ -249,7 +249,7 @@ final class RowGroupPlanner {
     /// range that cannot be read fails the read at `u`.
     private void fetch(UnitListing u, List<RangeFetch> ranges, Runnable then) {
         for (RangeFetch r : ranges) {
-            if (!r.hasArrived()) {
+            if (!r.output().hasValue()) {
                 fetcher.fetch(u.file(), r, u.base());
             }
         }
@@ -262,10 +262,10 @@ final class RowGroupPlanner {
         if (missing == null) {
             then.run();
         }
-        else if (missing.failure() != null) {
-            publisher.failAt(u.base(), missing.failure() instanceof IOException e ? new IOException(
+        else if (missing.output().failure() != null) {
+            publisher.failAt(u.base(), missing.output().failure() instanceof IOException e ? new IOException(
                     ExceptionContext.filePrefix(u.file().name()) + "Failed to fetch metadata for row group "
-                            + u.rowGroup(), e) : missing.failure());
+                            + u.rowGroup(), e) : missing.output().failure());
         }
         else {
             missing.output().whenEnded(() -> whenArrived(u, ranges, then));

@@ -35,14 +35,4 @@ final class ChunkDictionary {
         return values;
     }
 
-    /// Its values, `null` until they have arrived.
-    Dictionary values() {
-        return values.value();
-    }
-
-    /// Whether its values have arrived.
-    boolean hasArrived() {
-        return values.hasValue();
-    }
-
 }
