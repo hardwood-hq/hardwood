@@ -20,7 +20,8 @@ import dev.hardwood.internal.reader.batch.Dictionary;
 ///
 /// A single-value check scans the dictionary, which is unsorted, so it costs one pass. A
 /// membership check over a short list repeats that pass per literal; every branch of such a pass
-/// goes the same way until a match, so the passes stay cheap. A longer list is indexed once, and
+/// goes the same way until a match, so the passes stay cheap; a pass over byte strings is not, so
+/// a byte-string list is indexed from a few literals on. A longer list is indexed once, and
 /// the single pass over the dictionary probes the index per entry: a [RangeBitmask] where integer
 /// literals lie close together, else a [LongSet] over the values' raw bits or a [BinarySet] over
 /// byte strings. A `FLOAT16` list always takes a bitmask over the halves' raw bits, which span at
@@ -39,6 +40,11 @@ public final class DictionaryFilterSupport {
     /// `DOUBLE` literals, whose passes compare raw bits. A pass over primitives costs far less per
     /// entry than a hash probe, so the hash set only wins from this count. Tuning: #1594.
     static final int SPARSE_PASS_LIMIT = 16;
+
+    /// Literal count up to which a byte-string membership check runs one pass per literal. A pass
+    /// compares bytes per entry, so it costs several times a primitive pass and the [BinarySet]
+    /// wins from a few literals on. Tuning: #1594.
+    static final int BINARY_PASS_LIMIT = 2;
 
     private DictionaryFilterSupport() {
     }
@@ -175,7 +181,7 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        if (values.length <= PASS_LIMIT) {
+        if (values.length <= BINARY_PASS_LIMIT) {
             return absentByPasses(dict, values);
         }
         return absent(dict, new BinarySet(values));
