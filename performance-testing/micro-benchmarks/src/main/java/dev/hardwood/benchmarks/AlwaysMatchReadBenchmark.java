@@ -58,10 +58,8 @@ import dev.hardwood.reader.RowReader;
 /// filters on the string column through a shape the batch compiler rejects — two
 /// conjunctions over `label` and `id` — so the row reader falls back to the
 /// record-matcher path (where per-row evaluation is most expensive);
-/// `columnReaderLong` filters on `id` while draining `value`. The last reads
-/// through `SelectionEngine`, which does not yet consume the always-match proof
-/// (a #795 follow-up), so it stands as a control rather than a scenario expected
-/// to improve.
+/// `columnReaderLong` filters on `id` while draining `value`, through
+/// `SelectionEngine`.
 ///
 /// Run:
 /// ```shell

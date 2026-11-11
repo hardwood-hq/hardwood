@@ -69,8 +69,8 @@ import dev.hardwood.schema.FileSchema;
 
 /// Compiles an eligible [ResolvedPredicate] into a [CompiledBatchFilter]:
 /// per-column [ColumnBatchMatcher] fragments plus a [MergePlan] describing
-/// how the consumer (in [dev.hardwood.internal.reader.row.FlatRowReader]) combines
-/// the per-column bitmaps into one per-batch survivor mask.
+/// how the consumer ([dev.hardwood.internal.reader.row.FlatRowReader] or a filtered
+/// column read) combines the per-column bitmaps into one per-batch survivor mask.
 ///
 /// Eligibility:
 ///

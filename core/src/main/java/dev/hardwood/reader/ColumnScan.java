@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
@@ -35,7 +37,9 @@ import dev.hardwood.schema.FileSchema;
 /// expose come first, then any predicate columns outside the projection. For a
 /// filtered read, each [#advance()] asks the [SelectionEngine] for the matching
 /// records of the aligned batches and compacts every payload cursor's batch down
-/// to them.
+/// to them. Where the filter compiles to batch matchers, each predicate column runs
+/// its matcher on the job that completes its batch, as the flat row reader's
+/// columns do, and the engine only merges their bitmaps.
 ///
 /// One party advances a scan: its [ColumnReaders] group, or the single
 /// [ColumnReader] that is its only view. The views take up each step after it.
@@ -70,10 +74,11 @@ final class ColumnScan implements Closeable {
     /// columns have started by then and no scan will own them, so a failure closes the read
     /// before it propagates, naming the file whose schema it was found in.
     private static SelectionEngine createSelectionEngine(FileSchema schema, ProjectedSchema decoded,
-                                                         ResolvedPredicate filter, ColumnCursor[] cursors,
-                                                         int batchSize, RowGroupIterator read) {
+                                                         ResolvedPredicate filter, CompiledBatchFilter compiled,
+                                                         ColumnCursor[] cursors, int batchSize,
+                                                         RowGroupIterator read) {
         try {
-            return SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
+            return SelectionEngine.create(schema, decoded, filter, compiled, cursors, batchSize);
         }
         catch (RuntimeException e) {
             RuntimeException placed = ExceptionContext.addFileContext(read.referenceFileName(), e);
@@ -104,8 +109,11 @@ final class ColumnScan implements Closeable {
             NestedLevelComputer.Layers columnLayers = layers[column.columnIndex()];
             nestedLayers.add(ColumnCursor.isNested(columnLayers, column) ? columnLayers : null);
         }
-        List<BatchExchange<?>> exchanges = iterator.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled,
-                batchSize, budgetRows);
+        CompiledBatchFilter compiled = filter == null ? null : SelectionEngine.compile(schema, decoded, filter);
+        List<BatchExchange<?>> exchanges = compiled == null
+                ? iterator.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled, batchSize, budgetRows)
+                : iterator.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled, batchSize, budgetRows,
+                        exchanges(schema, decoded, nestedLayers, compiled, batchSize), compiled.columnMatchers());
         ColumnCursor[] cursors = new ColumnCursor[exchanges.size()];
         for (int i = 0; i < cursors.length; i++) {
             cursors[i] = ColumnCursor.of(schema.getColumn(decoded.toOriginalIndex(i)), exchanges.get(i),
@@ -113,8 +121,36 @@ final class ColumnScan implements Closeable {
         }
         SelectionEngine selection = filter == null
                 ? null
-                : createSelectionEngine(schema, decoded, filter, cursors, batchSize, iterator);
+                : createSelectionEngine(schema, decoded, filter, compiled, cursors, batchSize, iterator);
         return new ColumnScan(cursors, projection.payloadColumnCount(), selection, iterator);
+    }
+
+    /// The detaching exchange of each decoded column, in decoded order, for a read whose filter
+    /// compiled to batch matchers: a column with a matcher gets batches carrying a `matches`
+    /// array, which its matcher fills as each batch's cell completes.
+    ///
+    /// @throws IllegalStateException if a matcher is compiled for a column decoded through
+    ///         levels, whose batches carry no `matches` array
+    private static List<BatchExchange<?>> exchanges(FileSchema schema, ProjectedSchema decoded,
+                                                    List<NestedLevelComputer.Layers> nestedLayers,
+                                                    CompiledBatchFilter compiled, int batchSize) {
+        ColumnBatchMatcher[] matchers = compiled.columnMatchers();
+        List<BatchExchange<?>> exchanges = new ArrayList<>(nestedLayers.size());
+        for (int c = 0; c < nestedLayers.size(); c++) {
+            String name = schema.getColumn(decoded.toOriginalIndex(c)).name();
+            boolean matched = c < matchers.length && matchers[c] != null;
+            if (nestedLayers.get(c) != null) {
+                if (matched) {
+                    throw new IllegalStateException("Column '" + name
+                            + "' is decoded through levels and cannot carry a batch matcher");
+                }
+                exchanges.add(BatchExchange.detachingNested(name, batchSize));
+            }
+            else {
+                exchanges.add(BatchExchange.detachingFlat(name, batchSize, matched));
+            }
+        }
+        return exchanges;
     }
 
     /// The cursor of payload column `index`.

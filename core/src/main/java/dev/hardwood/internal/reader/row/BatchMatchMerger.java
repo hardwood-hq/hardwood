@@ -7,31 +7,24 @@
  */
 package dev.hardwood.internal.reader.row;
 
-import dev.hardwood.internal.predicate.ColumnBatchMatcher;
-import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.MergePlan;
 import dev.hardwood.internal.predicate.MergePlanEvaluator;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 
 /// Combines the per-column [BatchExchange.Batch#matches] bitmaps a compiled
 /// batch filter produces into the one per-row survivor bitmap its consumer
-/// iterates.
+/// iterates. Each column ran its matcher fragment into its batch's own `matches`
+/// array as the batch's cell completed, so the merge reseats pointers and copies
+/// nothing.
 ///
 /// Owns everything the merge needs — the plan, the evaluator and its scratch
 /// pool, the per-column bitmap slots and the combined buffer — so a consumer
 /// holds a single collaborator rather than five correlated fields.
 ///
-/// Two axes, both decided once at construction:
-///
-/// - **Where the per-column bitmaps come from.** [#aliasing] serves a consumer
-///   whose columns already ran the matchers into each batch's own
-///   `matches` array as its cells completed: the merge reseats pointers and copies
-///   nothing. [#owning] serves a consumer whose columns run no matchers — it runs
-///   them itself, into buffers allocated here.
-/// - **Plan shape.** A single-column plan has nothing to combine, so the merge
-///   yields that one column's bitmap: no combined buffer, no evaluator, no
-///   scratch pool. Any other plan goes to the evaluator, which populates the
-///   combined buffer in place.
+/// A single-column plan has nothing to combine, so the merge yields that one
+/// column's bitmap: no combined buffer, no evaluator, no scratch pool. Any other
+/// plan goes to the evaluator, which populates the combined buffer in place,
+/// decided once at construction.
 ///
 /// [#merge] runs once per batch, never per row.
 public final class BatchMatchMerger {
@@ -41,19 +34,14 @@ public final class BatchMatchMerger {
     /// construction so the per-batch path is an int test rather than a type test.
     private final int aliasedColumn;
 
-    /// Per-column matchers to run over each batch, indexed by projected column
-    /// index, or `null` when the consumer's columns already ran them.
-    private final ColumnBatchMatcher[] matchers;
     /// Projected indices the plan reads. The only entries of [#merge]'s
     /// `batches` argument it dereferences, so a caller staging that array need
     /// keep only these current — and the only entries of [#perColumn] it
     /// touches, so the per-batch cost scales with the filter width rather than
     /// the projection width.
     private final int[] referencedColumns;
-    /// Per-column bitmaps indexed by projected column index. Under [#owning]
-    /// the referenced entries are buffers allocated here and overwritten by the
-    /// matchers; under [#aliasing] they are reseated each batch to the batches'
-    /// own arrays.
+    /// Per-column bitmaps indexed by projected column index, reseated each batch
+    /// to the batches' own arrays.
     private final long[][] perColumn;
 
     // Compound-plan state; all null on the single-column path.
@@ -66,35 +54,15 @@ public final class BatchMatchMerger {
     /// Destination for the combined bitmap, owned and reused across batches.
     private final long[] combined;
 
-    /// A merger for a consumer whose columns already wrote every batch's `matches` array, as
-    /// the read does as each flat cell completes on the batch-matcher read path.
+    /// A merger for a consumer whose columns write every batch's `matches` array, as the read
+    /// does as each flat cell completes on the batch-matcher read path.
     ///
     /// @param plan how to combine the per-column bitmaps
     /// @param columnCount number of projected columns
     /// @param wordsLen words needed to cover the largest batch
-    public static BatchMatchMerger aliasing(MergePlan plan, int columnCount, int wordsLen) {
-        return new BatchMatchMerger(plan, null, columnCount, wordsLen);
-    }
-
-    /// A merger for a consumer whose columns run no matchers: [#merge] runs `filter`'s
-    /// per-column matchers over the batches itself, into buffers allocated here.
-    ///
-    /// @param filter the compiled filter, supplying both the matchers and the plan
-    /// @param columnCount number of projected columns
-    /// @param wordsLen words needed to cover the largest batch
-    public static BatchMatchMerger owning(CompiledBatchFilter filter, int columnCount, int wordsLen) {
-        return new BatchMatchMerger(filter.mergePlan(), filter.columnMatchers(), columnCount, wordsLen);
-    }
-
-    private BatchMatchMerger(MergePlan plan, ColumnBatchMatcher[] matchers, int columnCount, int wordsLen) {
-        this.matchers = matchers;
+    public BatchMatchMerger(MergePlan plan, int columnCount, int wordsLen) {
         this.referencedColumns = referencedColumns(plan, columnCount);
         this.perColumn = new long[columnCount][];
-        if (matchers != null) {
-            for (int c : referencedColumns) {
-                perColumn[c] = new long[wordsLen];
-            }
-        }
         if (plan instanceof MergePlan.Column c) {
             this.aliasedColumn = c.projectedIndex();
             this.plan = null;
@@ -117,44 +85,31 @@ public final class BatchMatchMerger {
     }
 
     /// Returns the survivor bitmap for the batch now loaded, set bit = the row
-    /// matches. Valid until the next call; on the single-column
-    /// [#aliasing] path it is the batch's own array, which stays valid until
-    /// that batch is recycled.
+    /// matches. Valid until the next call; on the single-column path it is the
+    /// batch's own array, which stays valid until that batch is recycled.
     ///
     /// The combined buffer is written only over the words covering
     /// `[0, recordCount)` — bits past `recordCount` are never read by the
     /// consumer, so leaving them stale from an earlier, longer batch is safe
     /// and saves a trailing zero-fill per batch. The same holds of the
-    /// per-column bitmaps, whether a column or [#bitmap] filled them.
+    /// per-column bitmaps.
     ///
     /// @param batches the batches being served, indexed by projected column
     ///         index; only [#referencedColumns] are dereferenced
     /// @param recordCount rows in the batch
     public long[] merge(BatchExchange.Batch[] batches, int recordCount) {
         if (aliasedColumn >= 0) {
-            return bitmap(batches, aliasedColumn);
+            return batches[aliasedColumn].matches;
         }
         // Snapshot the bitmaps the plan reads for this batch and hand off to the
         // evaluator. Only the plan-referenced columns are touched (one pointer
-        // each under aliasing); the indirection is negligible vs. the per-row
-        // merge work.
+        // each); the indirection is negligible vs. the per-row merge work.
         for (int i = 0; i < referencedColumns.length; i++) {
             int c = referencedColumns[i];
-            perColumn[c] = bitmap(batches, c);
+            perColumn[c] = batches[c].matches;
         }
         evaluator.eval(plan, combined, (recordCount + 63) >>> 6, perColumn);
         return combined;
-    }
-
-    /// The bitmap for projected column `c`: the batch's own array when the
-    /// consumer's columns filled it, otherwise this merger's buffer, filled here.
-    private long[] bitmap(BatchExchange.Batch[] batches, int c) {
-        if (matchers == null) {
-            return batches[c].matches;
-        }
-        long[] words = perColumn[c];
-        matchers[c].test(batches[c], words);
-        return words;
     }
 
     /// Collects the projected column indices referenced by `plan`, so [#merge]
