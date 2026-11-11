@@ -242,7 +242,6 @@ final class HeaderScanner {
         if (u.plan().preloaded()[column] != null) {
             // decoded by the unit's probe: the scan starts at the first data page
             dictionary = ChunkDictionary.preloaded(u.plan().preloaded()[column]);
-            dictionary.addReader();
             start = u.plan().dictionaryEnd()[column];
         }
         List<RangeFetch> overlapping = new ArrayList<>();
@@ -349,7 +348,6 @@ final class HeaderScanner {
             PageType type = f.header().type();
             if (type == PageType.DICTIONARY_PAGE && s.pages() == 0 && s.dictionary() == null) {
                 ChunkDictionary dictionary = new ChunkDictionary();
-                dictionary.addReader();
                 s.found(dictionary);
                 TrackedPage dictionaryPage = new TrackedPage(s.unit(), s.column(), key(s),
                         NeededPage.dictionary(f.offset(), f.length()), within(s, f), dictionary, false);
@@ -490,8 +488,5 @@ final class HeaderScanner {
     private void release(Scan s) {
         s.placement().allAdded();
         fetcher.readersDone(s.stop());
-        if (s.dictionary() != null) {
-            s.dictionary().readerDone();
-        }
     }
 }

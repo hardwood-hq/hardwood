@@ -100,7 +100,6 @@ Fetch and decode are bounded apart because their delays differ. A request has a 
 | Held | Readers | Returned |
 |---|---|---|
 | A range's bytes | its unit's tracking until its scans hold it; the pages that lie in it; a scan until it has passed it; the batch of a flat page's last cell until every column has published it | once the last is done; a range whose last reader is done before its fetch starts is not fetched |
-| A dictionary's values | the data pages of its chunk | once the last has decoded |
 | A footer read ahead | its file | once the consumer passes the file |
 
 A range a file holds already (a file in memory, the part of a file's tail the read holds) is sliced in place and charged to neither F nor R. Decoded values count against the read's working set ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), not R. The read's close returns every charge still held.
