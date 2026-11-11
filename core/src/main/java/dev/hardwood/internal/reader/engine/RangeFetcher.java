@@ -8,7 +8,10 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -22,6 +25,8 @@ import dev.hardwood.internal.io.ReadRanges;
 final class RangeFetcher {
 
     private final JobScheduler scheduler;
+    /// the job fetching each range, until it has ended or is taken out
+    private final Map<RangeFetch, JobScheduler.Job<ByteBuffer>> fetching = new IdentityHashMap<>();
 
     RangeFetcher(JobScheduler scheduler) {
         this.scheduler = scheduler;
@@ -30,15 +35,23 @@ final class RangeFetcher {
     /// Fetches `r` from `file` as a job keyed at `key`, ending its output ([RangeFetch#output]),
     /// which pages, scans and the planner wait on; a fetch that fails returns its charge.
     void fetch(InputFile file, RangeFetch r, long key) {
-        r.job(new JobScheduler.Job<>(key, r.range().length(), JobScheduler.Kind.FETCH, r.charge(), buffers -> {
-            try (FetchReason.Scope ignored = FetchReason.set(r.range().reason())) {
-                return ReadRanges.read(file, r.range().start(), r.range().length());
-            }
-        }, r.output()::arrived, t -> r.output().failed(t instanceof Exception e
-                ? new IOException(ExceptionContext.filePrefix(file.name()) + "Failed to fetch data at offset "
-                        + r.range().start() + " (length " + r.range().length() + ")", e)
-                : t)));
-        scheduler.add(r.job());
+        JobScheduler.Job<ByteBuffer> job = new JobScheduler.Job<>(key, r.range().length(), JobScheduler.Kind.FETCH,
+                r.charge(), buffers -> {
+                    try (FetchReason.Scope ignored = FetchReason.set(r.range().reason())) {
+                        return ReadRanges.read(file, r.range().start(), r.range().length());
+                    }
+                }, bytes -> {
+                    fetching.remove(r);
+                    r.output().arrived(bytes);
+                }, t -> {
+                    fetching.remove(r);
+                    r.output().failed(t instanceof Exception e
+                            ? new IOException(ExceptionContext.filePrefix(file.name()) + "Failed to fetch data at offset "
+                                    + r.range().start() + " (length " + r.range().length() + ")", e)
+                            : t);
+                });
+        fetching.put(r, job);
+        scheduler.add(job);
     }
 
     /// A reader of each of `ranges` is done; the last of a range's returns its charge, lets go of
@@ -48,8 +61,9 @@ final class RangeFetcher {
         for (RangeFetch r : ranges) {
             if (r.readerDone()) {
                 scheduler.release(r.charge());
-                if (r.job() != null) {
-                    scheduler.remove(r.job());
+                JobScheduler.Job<ByteBuffer> job = fetching.get(r);
+                if (job != null && scheduler.remove(job)) {
+                    fetching.remove(r);
                 }
             }
         }
@@ -59,8 +73,9 @@ final class RangeFetcher {
     /// page serving row `key` in them, whose bytes the consumer's need must reach.
     void keyAt(List<RangeFetch> ranges, long key) {
         for (RangeFetch r : ranges) {
-            if (r.job() != null) {
-                scheduler.lower(r.job(), key);
+            JobScheduler.Job<ByteBuffer> job = fetching.get(r);
+            if (job != null) {
+                scheduler.lower(job, key);
             }
         }
     }

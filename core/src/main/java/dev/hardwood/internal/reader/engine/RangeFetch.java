@@ -23,8 +23,6 @@ final class RangeFetch {
     private final FileRange range;
     private final Charge charge = new Charge();
     private final Output<ByteBuffer> bytes = new Output<>();
-    /// its fetch job, once added, so that a scan finding a page in it can key it at the page's row
-    private JobScheduler.Job<ByteBuffer> job;
 
     RangeFetch(FileRange range) {
         this.range = range;
@@ -93,15 +91,6 @@ final class RangeFetch {
             }
         }
         return null;
-    }
-
-    /// Its fetch job, `null` until added.
-    JobScheduler.Job<ByteBuffer> job() {
-        return job;
-    }
-
-    void job(JobScheduler.Job<ByteBuffer> job) {
-        this.job = job;
     }
 
     /// `[offset, offset + length)` from those of `ranges` that hold part of it: a slice where one
