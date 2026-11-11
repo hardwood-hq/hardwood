@@ -18,20 +18,45 @@ import dev.hardwood.internal.reader.batch.Dictionary;
 /// dictionary holds no charge of R. Used under the read's lock.
 final class ChunkDictionary {
 
-    final List<TrackedPage> waiting = new ArrayList<>();
-    Dictionary values;
-    boolean arrived;
+    private final List<TrackedPage> waiting = new ArrayList<>();
+    private Dictionary values;
+    private boolean arrived;
     private int readers;
 
-    /// A dictionary whose values have arrived.
-    static ChunkDictionary arrived(Dictionary values) {
+    /// A dictionary the unit's probe decoded, whose values are there from the start.
+    static ChunkDictionary preloaded(Dictionary values) {
         ChunkDictionary d = new ChunkDictionary();
-        d.values = values;
-        d.arrived = true;
+        d.arrived(values);
         return d;
     }
 
-    void reader() {
+    /// Its values, `null` until they have arrived and once the last reader is done.
+    Dictionary values() {
+        return values;
+    }
+
+    /// Whether its values have arrived.
+    boolean hasArrived() {
+        return arrived;
+    }
+
+    /// Its values have arrived.
+    void arrived(Dictionary values) {
+        this.values = values;
+        this.arrived = true;
+    }
+
+    /// `page` waits for its values.
+    void await(TrackedPage page) {
+        waiting.add(page);
+    }
+
+    /// The data pages that wait for its values.
+    List<TrackedPage> waiting() {
+        return waiting;
+    }
+
+    void addReader() {
         readers++;
     }
 

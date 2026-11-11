@@ -43,7 +43,7 @@ sealed interface Unit {
             List<FileRange> missing = new ArrayList<>();
             String reason = "rg=" + listing.rowGroup() + " pruning";
             ByteSource bytes = (offset, length) -> {
-                ByteBuffer found = RangeFetch.read(window.bloomFilters, offset, length);
+                ByteBuffer found = RangeFetch.read(window.bloomFilters(), offset, length);
                 found = found != null ? found : RangeFetch.read(probed, offset, length);
                 if (found == null) {
                     missing.add(new FileRange(offset, length, reason));
@@ -75,7 +75,7 @@ sealed interface Unit {
         /// A pass lacked bytes, `more`, which the next reads once fetched.
         void fetching(List<RangeFetch> more) {
             probed.addAll(more);
-            probed.sort(Comparator.comparingLong(r -> r.range.start()));
+            probed.sort(Comparator.comparingLong(r -> r.range().start()));
         }
 
         /// The probe kept it, reporting `event` unless it is `null`: its page index is waited for.

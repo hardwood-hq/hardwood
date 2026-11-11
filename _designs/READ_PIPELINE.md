@@ -33,7 +33,7 @@ A read is a `RowGroupIterator` (`internal.reader.engine`), one per data reader, 
 | `JobScheduler` | decides which ready job starts next, by the one priority within the bounds; knows nothing of Parquet | the ready jobs and the bounds |
 | `ReadDriver` | runs the jobs on the context's executors and applies their results under the read's one lock | the lock and the hand-off of results between threads |
 
-The parts pass items between them, each holding the state of one thing the read handles. A part acts on items; an item holds state and calls no part, so whatever an item's state change needs of the scheduler or a fetch, a part does.
+The parts pass items between them, each holding the state of one thing the read handles. A part acts on items; an item holds state and calls no part, so whatever an item's state change needs of the scheduler or a fetch, a part does. An item keeps its state private: parts, an enclosing one included, read it through accessors and change it only through methods that name the change, so each item's state changes only in the ways it allows.
 
 | Item | Holds |
 |---|---|

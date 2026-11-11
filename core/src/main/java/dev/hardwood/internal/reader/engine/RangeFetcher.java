@@ -32,22 +32,22 @@ final class RangeFetcher {
     /// Fetches `r` from `file` as a job keyed at `key`; `then` runs under the lock once it has
     /// arrived, with `null`, or with its failure, its charge returned.
     void fetch(InputFile file, RangeFetch r, long key, Consumer<Throwable> then) {
-        r.job = new JobScheduler.Job(key, r.range.length(), JobScheduler.Kind.FETCH, r.charge, buffers -> {
+        r.job(new JobScheduler.Job(key, r.range().length(), JobScheduler.Kind.FETCH, r.charge(), buffers -> {
             ByteBuffer bytes;
-            try (FetchReason.Scope ignored = FetchReason.set(r.range.reason())) {
-                bytes = ReadRanges.read(file, r.range.start(), r.range.length());
+            try (FetchReason.Scope ignored = FetchReason.set(r.range().reason())) {
+                bytes = ReadRanges.read(file, r.range().start(), r.range().length());
             }
             return () -> {
-                r.bytes = bytes;
+                r.arrived(bytes);
                 then.accept(null);
             };
         }, t -> () -> {
-            scheduler.release(r.charge);
+            scheduler.release(r.charge());
             then.accept(t instanceof Exception e ? new IOException(ExceptionContext.filePrefix(file.name())
-                    + "Failed to fetch data at offset " + r.range.start() + " (length " + r.range.length() + ")", e)
+                    + "Failed to fetch data at offset " + r.range().start() + " (length " + r.range().length() + ")", e)
                     : t);
-        });
-        scheduler.add(r.job);
+        }));
+        scheduler.add(r.job());
     }
 
     /// A reader of each of `ranges` is done; the last of a range's returns its charge, lets go of
@@ -55,11 +55,10 @@ final class RangeFetcher {
     /// fetches.
     void readersDone(List<RangeFetch> ranges) {
         for (RangeFetch r : ranges) {
-            if (r.charge.readerDone()) {
-                scheduler.release(r.charge);
-                r.bytes = null;
-                if (r.job != null) {
-                    scheduler.remove(r.job);
+            if (r.readerDone()) {
+                scheduler.release(r.charge());
+                if (r.job() != null) {
+                    scheduler.remove(r.job());
                 }
             }
         }
@@ -69,8 +68,8 @@ final class RangeFetcher {
     /// page serving row `key` in them, whose bytes the consumer's need must reach.
     void keyAt(List<RangeFetch> ranges, long key) {
         for (RangeFetch r : ranges) {
-            if (r.job != null) {
-                scheduler.lower(r.job, key);
+            if (r.job() != null) {
+                scheduler.lower(r.job(), key);
             }
         }
     }

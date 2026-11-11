@@ -57,7 +57,7 @@ class RangeFetcherTest {
     private static RangeFetch range(int readers) {
         RangeFetch range = new RangeFetch(new FileRange(0, 100, "test"));
         for (int i = 0; i < readers; i++) {
-            range.charge.reader();
+            range.addReader();
         }
         return range;
     }

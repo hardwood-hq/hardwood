@@ -15,7 +15,6 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
@@ -66,10 +65,8 @@ final class PageTracker {
         List<RangeFetch> ranges = new ArrayList<>();
         PagePlacer.ChunkPlacement[] placements = new PagePlacer.ChunkPlacement[u.plan().pages().length];
         for (FileRange range : u.plan().ranges()) {
-            RangeFetch r = new RangeFetch(range);
-            r.charge.reader();
-            r.bytes = HeldBytes.slice(u.listing().file(), range.start(), range.length());
-            r.arrived = r.bytes != null;
+            RangeFetch r = RangeFetch.of(u.listing().file(), range);
+            r.addReader();
             ranges.add(r);
         }
         List<TrackedPage> pages = new ArrayList<>();
@@ -77,7 +74,9 @@ final class PageTracker {
             List<NeededPage> needed = u.plan().pages()[c];
             PagePlacer.ChunkPlacement placement = placer.placement(c, u);
             placements[c] = placement;
-            placement.ended = needed != null;
+            if (needed != null) {
+                placement.allAdded();
+            }
             if (needed == null || needed.isEmpty()) {
                 continue;
             }
@@ -85,7 +84,7 @@ final class PageTracker {
             ChunkDictionary dictionary = null;
             if (u.plan().preloaded()[c] != null) {
                 // decoded by the unit's probe
-                dictionary = ChunkDictionary.arrived(u.plan().preloaded()[c]);
+                dictionary = ChunkDictionary.preloaded(u.plan().preloaded()[c]);
             }
             else if (u.plan().dictionaryStart()[c] > 0) {
                 dictionary = new ChunkDictionary();
@@ -103,7 +102,7 @@ final class PageTracker {
             }
         }
         for (RangeFetch r : ranges) {
-            if (!r.arrived) {
+            if (!r.hasArrived()) {
                 addFetch(u.listing().file(), r, key(u, r));
             }
         }
@@ -124,15 +123,15 @@ final class PageTracker {
     /// the chunk as the range lies.
     private static long key(Unit.Batched u, RangeFetch r) {
         long key = Long.MAX_VALUE;
-        for (TrackedPage pw : r.waiting) {
-            key = Math.min(key, pw.key);
+        for (TrackedPage pw : r.waiting()) {
+            key = Math.min(key, pw.key());
         }
         long rows = u.listing().metaData().numRows();
         for (int c = 0; c < u.plan().pages().length; c++) {
             long start = u.listing().chunks()[c].chunkStartOffset();
             long length = u.listing().chunks()[c].metaData().totalCompressedSize();
-            long into = Math.max(0, r.range.start() - start);
-            if (u.plan().pages()[c] == null && r.range.start() < start + length && r.range.end() > start) {
+            long into = Math.max(0, r.range().start() - start);
+            if (u.plan().pages()[c] == null && r.range().start() < start + length && r.range().end() > start) {
                 key = Math.min(key, u.key((long) (rows * (double) into / length)));
             }
         }
@@ -143,7 +142,7 @@ final class PageTracker {
     /// placement.
     void decodeReady(List<TrackedPage> pages) {
         for (TrackedPage pw : pages) {
-            if (pw.missing == 0) {
+            if (pw.waitsForNothing()) {
                 addDecode(pw);
             }
         }
@@ -153,9 +152,9 @@ final class PageTracker {
     /// placed, so it waits for its placement as for a range.
     TrackedPage add(PagePlacer.ChunkPlacement placement, TrackedPage pw) {
         hold(pw);
-        placer.add(pw.column, placement, pw);
-        if (!placer.nested(pw.column)) {
-            pw.missing++;
+        placer.add(pw.column(), placement, pw);
+        if (!placer.nested(pw.column())) {
+            pw.waitForOneMore();
         }
         return pw;
     }
@@ -167,10 +166,10 @@ final class PageTracker {
             if (placer.nested(column)) {
                 continue;
             }
-            if (pw.task.segments().isEmpty()) {
+            if (pw.task().segments().isEmpty()) {
                 done(pw);
             }
-            else if (--pw.missing == 0) {
+            else if (pw.oneArrived()) {
                 addDecode(pw);
             }
         }
@@ -179,7 +178,7 @@ final class PageTracker {
     private static List<RangeFetch> overlapping(List<RangeFetch> ranges, long offset, int length) {
         List<RangeFetch> found = new ArrayList<>(2);
         for (RangeFetch r : ranges) {
-            if (r.range.start() < offset + length && r.range.end() > offset) {
+            if (r.range().start() < offset + length && r.range().end() > offset) {
                 found.add(r);
             }
         }
@@ -188,18 +187,19 @@ final class PageTracker {
 
     /// `pw` will read its ranges, and a data page its dictionary: each waits for it until done.
     TrackedPage hold(TrackedPage pw) {
-        for (RangeFetch r : pw.ranges) {
-            r.charge.reader();
-            if (!r.arrived) {
-                r.waiting.add(pw);
-                pw.missing++;
+        for (RangeFetch r : pw.ranges()) {
+            r.addReader();
+            if (!r.hasArrived()) {
+                r.await(pw);
+                pw.waitForOneMore();
             }
         }
-        if (pw.data && pw.dictionary != null) {
-            pw.dictionary.reader();
-            if (!pw.dictionary.arrived) {
-                pw.dictionary.waiting.add(pw);
-                pw.missing++;
+        ChunkDictionary dictionary = pw.dictionary();
+        if (pw.data() && dictionary != null) {
+            dictionary.addReader();
+            if (!dictionary.hasArrived()) {
+                dictionary.await(pw);
+                pw.waitForOneMore();
             }
         }
         return pw;
@@ -212,104 +212,101 @@ final class PageTracker {
                 arrived(r);
                 return;
             }
-            r.failure = t;
-            for (TrackedPage pw : r.waiting) {
-                publisher.failAt(pw.key, pw.column, t);
+            r.failed(t);
+            for (TrackedPage pw : r.waiting()) {
+                publisher.failAt(pw.key(), pw.column(), t);
             }
-            r.listeners.forEach(Runnable::run);
+            r.notifyListeners();
         });
     }
 
     /// `r`'s bytes have arrived: the pages waiting for it may decode.
     private void arrived(RangeFetch r) {
-        r.arrived = true;
-        release(r.waiting);
-        r.listeners.forEach(Runnable::run);
+        release(r.waiting());
+        r.notifyListeners();
     }
 
     /// The values of `d` have arrived: the data pages waiting for them may decode.
     private void arrived(ChunkDictionary d, Dictionary values) {
-        d.values = values;
-        d.arrived = true;
-        release(d.waiting);
+        d.arrived(values);
+        release(d.waiting());
     }
 
     /// `waiting` have one thing less to wait for; those waiting for nothing more decode.
     private void release(List<TrackedPage> waiting) {
         for (TrackedPage pw : waiting) {
-            if (--pw.missing == 0) {
+            if (pw.oneArrived()) {
                 addDecode(pw);
             }
         }
     }
 
     private void addDecode(TrackedPage pw) {
-        if (!pw.data) {
+        if (!pw.data()) {
             addDictionaryDecode(pw);
             return;
         }
-        if (placer.nested(pw.column)) {
+        if (placer.nested(pw.column())) {
             addMeasure(pw);
             return;
         }
         // its values are the read's working set's, which the decode charges, not R's
-        scheduler.add(new JobScheduler.Job(pw.key, 0, JobScheduler.Kind.DECODE, null, buffers -> {
-            Dictionary dictionary = pw.dictionary == null ? null : pw.dictionary.values;
-            List<Cell> completed = placer.decode(pw.column, pw.task,
-                    pw.placeholder > 0 ? null : pw.bytes(), dictionary, buffers);
+        scheduler.add(new JobScheduler.Job(pw.key(), 0, JobScheduler.Kind.DECODE, null, buffers -> {
+            Dictionary dictionary = pw.dictionary() == null ? null : pw.dictionary().values();
+            List<Cell> completed = placer.decode(pw.column(), pw.task(),
+                    pw.placeholder() > 0 ? null : pw.bytes(), dictionary, buffers);
             return () -> {
                 // its ranges are held by the batch of its last row until every column has published
                 // it, as R holds what is fetched ahead of the consumer
-                publisher.hold(pw.column, pw.task.segments().getLast().cell(), pw.ranges);
+                publisher.hold(pw.column(), pw.task().segments().getLast().cell(), pw.ranges());
                 for (Cell cell : completed) {
-                    publisher.completed(pw.column, cell);
+                    publisher.completed(pw.column(), cell);
                 }
-                if (pw.dictionary != null) {
-                    pw.dictionary.readerDone();
+                if (pw.dictionary() != null) {
+                    pw.dictionary().readerDone();
                 }
             };
         }, t -> () -> {
-            publisher.failAt(pw.key, pw.column, t);
+            publisher.failAt(pw.key(), pw.column(), t);
             done(pw);
         }));
     }
 
     /// Decodes and measures a page decoded through levels, which can then be placed.
     private void addMeasure(TrackedPage pw) {
-        scheduler.add(new JobScheduler.Job(pw.key, 0, JobScheduler.Kind.DECODE, null, buffers -> {
+        scheduler.add(new JobScheduler.Job(pw.key(), 0, JobScheduler.Kind.DECODE, null, buffers -> {
             NestedPageTask task = placer.nestedTask(pw,
-                    pw.placeholder > 0 ? null : DataPage.parse(pw.bytes()),
-                    pw.dictionary == null ? null : pw.dictionary.values);
+                    pw.placeholder() > 0 ? null : DataPage.parse(pw.bytes()),
+                    pw.dictionary() == null ? null : pw.dictionary().values());
             try {
                 task.decodeAndMeasure(buffers);
             }
             catch (RuntimeException e) {
-                throw placer.placed(pw.column, e, task);
+                throw placer.placed(pw.column(), e, task);
             }
             return () -> {
-                pw.task = task;
-                pw.ready = true;
+                pw.ready(task);
                 done(pw);
-                placed(pw.column);
+                placed(pw.column());
             };
         }, t -> () -> {
-            publisher.failAt(pw.key, pw.column, t);
+            publisher.failAt(pw.key(), pw.column(), t);
             done(pw);
         }));
     }
 
     /// Parses a chunk's dictionary page; its values arrive as a range's bytes do.
     private void addDictionaryDecode(TrackedPage pw) {
-        scheduler.add(new JobScheduler.Job(pw.key, 0, JobScheduler.Kind.DECODE, null,
+        scheduler.add(new JobScheduler.Job(pw.key(), 0, JobScheduler.Kind.DECODE, null,
                 buffers -> {
                     Dictionary values = parseDictionary(pw, buffers);
                     return () -> {
                         done(pw);
-                        arrived(pw.dictionary, values);
+                        arrived(pw.dictionary(), values);
                     };
                 }, t -> () -> {
-                    publisher.failAt(pw.key, pw.column, t instanceof Exception e ? placer.placed(pw.column, e, pw.unit.listing().file().name(),
-                            pw.unit.listing().rowGroup(), ExceptionContext.DICTIONARY_PAGE) : t);
+                    publisher.failAt(pw.key(), pw.column(), t instanceof Exception e ? placer.placed(pw.column(), e, pw.unit().listing().file().name(),
+                            pw.unit().listing().rowGroup(), ExceptionContext.DICTIONARY_PAGE) : t);
                     done(pw);
                 }));
     }
@@ -325,16 +322,16 @@ final class PageTracker {
             throw new ParquetReadException("Malformed Parquet metadata: the dictionary page header declares "
                     + pageLength + " bytes but only " + region.remaining() + " bytes lie before the first data page");
         }
-        return placer.chargeDictionary(pw.column, pw.unit, () -> DictionaryParser.parsePage(page.header(), page.body(),
-                placer.schema(pw.column), pw.unit.listing().chunks()[pw.column].metaData(), context, placer.workingSet(pw.column),
+        return placer.chargeDictionary(pw.column(), pw.unit(), () -> DictionaryParser.parsePage(page.header(), page.body(),
+                placer.schema(pw.column()), pw.unit().listing().chunks()[pw.column()].metaData(), context, placer.workingSet(pw.column()),
                 buffers));
     }
 
     /// A page is done with its ranges and its dictionary; the last reader of each returns it.
     private void done(TrackedPage pw) {
-        fetcher.readersDone(pw.ranges);
-        if (pw.data && pw.dictionary != null) {
-            pw.dictionary.readerDone();
+        fetcher.readersDone(pw.ranges());
+        if (pw.data() && pw.dictionary() != null) {
+            pw.dictionary().readerDone();
         }
     }
 

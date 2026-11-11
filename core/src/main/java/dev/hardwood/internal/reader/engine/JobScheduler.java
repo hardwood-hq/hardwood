@@ -63,13 +63,13 @@ final class JobScheduler {
     /// A ready job: `cost` bytes, taken by `charge` as it starts, then `work` outside the lock.
     static final class Job {
         /// lowered while the job waits, where the read learns it serves an earlier row ([#lower])
-        long key;
-        final long cost;
-        final Kind kind;
+        private long key;
+        private final long cost;
+        private final Kind kind;
         /// what holds the bytes once started; `null` for a job that holds none
-        final Charge charge;
-        final Work work;
-        final Failed failed;
+        private final Charge charge;
+        private final Work work;
+        private final Failed failed;
         private long seq;
         /// keyed below need as it started
         private boolean needed;
@@ -81,6 +81,59 @@ final class JobScheduler {
             this.charge = charge;
             this.work = work;
             this.failed = failed;
+        }
+
+        /// The first row of the read it serves.
+        long key() {
+            return key;
+        }
+
+        /// The bytes it holds once started.
+        long cost() {
+            return cost;
+        }
+
+        Kind kind() {
+            return kind;
+        }
+
+        /// What holds its bytes once started, `null` for a job that holds none.
+        Charge charge() {
+            return charge;
+        }
+
+        Work work() {
+            return work;
+        }
+
+        /// What it applies under the lock where its work failed.
+        Failed onFailure() {
+            return failed;
+        }
+
+        /// The order it was added in, which breaks ties between equal keys.
+        long seq() {
+            return seq;
+        }
+
+        /// Whether it was keyed below need as it started.
+        boolean needed() {
+            return needed;
+        }
+
+        /// It is added as the `seq`-th job.
+        void added(long seq) {
+            this.seq = seq;
+        }
+
+        /// It serves row `key`, before it starts.
+        void keyAt(long key) {
+            this.key = key;
+        }
+
+        /// It started keyed below need.
+        void startedNeeded() {
+            needed = true;
         }
 
         boolean cpu() {
@@ -98,8 +151,8 @@ final class JobScheduler {
         }
     }
 
-    private static final Comparator<Job> ORDER = (a, b) -> a.key != b.key ? Long.compare(a.key, b.key)
-            : Long.compare(a.seq, b.seq);
+    private static final Comparator<Job> ORDER = (a, b) -> a.key() != b.key() ? Long.compare(a.key(), b.key())
+            : Long.compare(a.seq(), b.seq());
     private static final Kind[] KINDS = Kind.values();
     /// the kinds a refusal holds back: a bound's own kind, and for R every kind that charges
     private static final int FETCHES = 1 << Kind.FETCH.ordinal() | 1 << Kind.FOOTER.ordinal();
@@ -140,23 +193,23 @@ final class JobScheduler {
     }
 
     void add(Job job) {
-        job.seq = seq++;
-        ready.get(job.kind.ordinal()).add(job);
+        job.added(seq++);
+        ready.get(job.kind().ordinal()).add(job);
     }
 
     /// Keys `job` at `key` where that is lower and the job has not started: work the read keyed by
     /// an estimate turns out to serve an earlier row, which need must reach.
     void lower(Job job, long key) {
-        TreeSet<Job> set = ready.get(job.kind.ordinal());
-        if (key < job.key && set.remove(job)) {
-            job.key = key;
+        TreeSet<Job> set = ready.get(job.kind().ordinal());
+        if (key < job.key() && set.remove(job)) {
+            job.keyAt(key);
             set.add(job);
         }
     }
 
     /// Takes `job` out before it starts; returns whether it was waiting.
     boolean remove(Job job) {
-        return ready.get(job.kind.ordinal()).remove(job);
+        return ready.get(job.kind().ordinal()).remove(job);
     }
 
     /// Starts what the position and the bounds let start, lowest key first.
@@ -168,7 +221,7 @@ final class JobScheduler {
             for (Kind k : KINDS) {
                 TreeSet<Job> set = ready.get(k.ordinal());
                 boolean open = (refused & 1 << k.ordinal()) == 0 && (k == Kind.FETCH || k == Kind.FOOTER || cpuInFlight < cpuSlots);
-                if (open && !set.isEmpty() && set.first().key <= at.end() && (job == null || before(set.first(), job))) {
+                if (open && !set.isEmpty() && set.first().key() <= at.end() && (job == null || before(set.first(), job))) {
                     job = set.first();
                 }
             }
@@ -180,13 +233,13 @@ final class JobScheduler {
     }
 
     private static boolean before(Job a, Job b) {
-        return (a.kind == Kind.PLAN) != (b.kind == Kind.PLAN) ? a.kind == Kind.PLAN : ORDER.compare(a, b) < 0;
+        return (a.kind() == Kind.PLAN) != (b.kind() == Kind.PLAN) ? a.kind() == Kind.PLAN : ORDER.compare(a, b) < 0;
     }
 
     /// Starts `job`, or returns the kinds the bound that refused it holds back.
     private int tryStart(Job job, Position at, List<Job> out) {
-        boolean needed = job.key < at.need();
-        if (job.kind == Kind.DECODE && job.key >= at.reach()) {
+        boolean needed = job.key() < at.need();
+        if (job.kind() == Kind.DECODE && job.key() >= at.reach()) {
             return DECODES;
         }
         boolean forced = needed && neededInFlight == 0;
@@ -197,22 +250,22 @@ final class JobScheduler {
             return FETCHES;
         }
         // the job need forces holds what it reads uncharged: R holds what the read chose to start
-        long charged = forced ? 0 : job.cost;
+        long charged = forced ? 0 : job.cost();
         if (!charge(charged)) {
             return FETCHES | DECODES;
         }
         if (needed) {
-            job.needed = true;
+            job.startedNeeded();
             neededInFlight++;
         }
-        if (job.charge != null) {
-            job.charge.take(charged, ahead);
+        if (job.charge() != null) {
+            job.charge().take(charged, ahead);
         }
         if (ahead) {
-            fetchedAhead += job.cost;
+            fetchedAhead += job.cost();
         }
-        if (job.kind == Kind.FETCH && job.cost > 0) {
-            fetchedTo = Math.max(fetchedTo, job.key);
+        if (job.kind() == Kind.FETCH && job.cost() > 0) {
+            fetchedTo = Math.max(fetchedTo, job.key());
         }
         remove(job);
         if (job.cpu()) {
@@ -229,10 +282,10 @@ final class JobScheduler {
     Runnable run(Job job, DecodeBuffers buffers) {
         Runnable apply;
         try {
-            apply = job.cpu() ? job.work.run(buffers) : retried(job.work);
+            apply = job.cpu() ? job.work().run(buffers) : retried(job.work());
         }
         catch (Throwable t) {
-            apply = job.failed.at(t);
+            apply = job.onFailure().at(t);
         }
         Runnable then = apply;
         return () -> {
@@ -243,7 +296,7 @@ final class JobScheduler {
 
     /// What to apply under the lock for a started job that never ran, failed with `t`.
     Runnable refused(Job job, Throwable t) {
-        Runnable then = job.failed.at(t);
+        Runnable then = job.onFailure().at(t);
         return () -> {
             ended(job);
             then.run();
@@ -276,19 +329,19 @@ final class JobScheduler {
 
     /// Returns the bytes `charge` holds to the bounds.
     void release(Charge charge) {
-        if (charge.bytes > 0) {
-            held -= charge.bytes;
-            released += charge.bytes;
-            if (charge.ahead) {
-                fetchedAhead -= charge.bytes;
+        long bytes = charge.takeBack();
+        if (bytes > 0) {
+            held -= bytes;
+            released += bytes;
+            if (charge.ahead()) {
+                fetchedAhead -= bytes;
             }
-            charge.bytes = 0;
         }
     }
 
     private void ended(Job job) {
         running.remove(job);
-        if (job.needed) {
+        if (job.needed()) {
             neededInFlight--;
         }
         if (job.cpu()) {
@@ -308,11 +361,11 @@ final class JobScheduler {
     /// Whether a job keyed at or below `key` is ready or running: work that may still fail at a
     /// row no later than it.
     boolean pendingThrough(long key) {
-        if (!running.isEmpty() && running.first().key <= key) {
+        if (!running.isEmpty() && running.first().key() <= key) {
             return true;
         }
         for (TreeSet<Job> set : ready) {
-            if (!set.isEmpty() && set.first().key <= key) {
+            if (!set.isEmpty() && set.first().key() <= key) {
                 return true;
             }
         }

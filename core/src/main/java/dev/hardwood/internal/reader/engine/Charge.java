@@ -13,8 +13,8 @@ package dev.hardwood.internal.reader.engine;
 /// lock.
 final class Charge {
 
-    long bytes;
-    boolean ahead;
+    private long bytes;
+    private boolean ahead;
     private int readers;
 
     /// Takes `bytes` the scheduler charged as a job started; `ahead` where they count against F.
@@ -26,6 +26,18 @@ final class Charge {
     /// One more reader, before the charge can be returned.
     void reader() {
         readers++;
+    }
+
+    /// Whether the bytes count against F.
+    boolean ahead() {
+        return ahead;
+    }
+
+    /// Hands the bytes back: returns them, and holds none from then on.
+    long takeBack() {
+        long returned = bytes;
+        bytes = 0;
+        return returned;
     }
 
     /// A reader is done; returns whether it was the last, after which the charge is returned.
