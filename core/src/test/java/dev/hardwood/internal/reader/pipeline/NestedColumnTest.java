@@ -33,11 +33,10 @@ import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.decode.ChunkPages;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.decode.ReferencePageDecoder;
 import dev.hardwood.internal.reader.engine.RowGroupIterator;
-import dev.hardwood.internal.reader.fetch.PageWalks;
-import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.plan.RowGroupIterators;
 import dev.hardwood.internal.schema.ColumnRequests;
@@ -58,7 +57,7 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// A [NestedColumn] publishes the records the [ReferencePageDecoder] decodes from the
+/// A column decoded through levels publishes the records the [ReferencePageDecoder] decodes from the
 /// column's pages, whatever its batch capacity: read at capacities that put batch edges inside
 /// pages and pages inside batches, and at one whose batches end only at row groups, record by
 /// record its batches hold the reference's levels and values, every array allocated at the size
@@ -196,10 +195,8 @@ class NestedColumnTest {
             FileMetaData meta = ParquetMetadataReader.readMetadata(inputFile);
             FileSchema schema = FileSchema.fromSchemaElements(meta.schema());
             ColumnSchema tags = schema.getColumn("tags.list.element");
-            PageWalks.Pages pages = PageWalks.of(SequentialFetchPlan.build(inputFile, tags,
-                    meta.rowGroups().get(0).columns().get(tags.columnIndex()), context, 0, inputFile.name(), 0));
-            while (pages.hasNext()) {
-                PageInfo page = pages.next();
+            for (PageInfo page : ChunkPages.of(inputFile, tags, meta.rowGroups().get(0).columns().get(tags.columnIndex()),
+                    context)) {
                 int[] repetitionLevels = new ReferencePageDecoder(tags, page.columnMetaData().codec(),
                         context.decompressorFactory()).decode(page.pageData(), page.dictionary()).repetitionLevels();
                 if (Arrays.stream(repetitionLevels).noneMatch(level -> level == 0)) {
@@ -213,7 +210,7 @@ class NestedColumnTest {
         assertThat(pagesWithoutRecordStart).isPositive();
     }
 
-    /// Reads one column of `file` through a [NestedColumn] with the fixed-size-list fast path on,
+    /// Reads one column of `file`, decoded through levels, with the fixed-size-list fast path on,
     /// ending at `maxRows` rows unless it is `0`.
     private static List<NestedBatch> read(Path file, int columnIndex, NestedIndexMode mode, int batchSize,
                                           long maxRows) throws Exception {
@@ -230,7 +227,7 @@ class NestedColumnTest {
             try (RowGroupIterator iterator = RowGroupIterators.initialized(List.of(inputFile), context,
                     ignored -> ReadProjection.of(decoded), null, maxRows)) {
                 BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
-                iterator.start(decoded, List.of(layers), mode, true, batchSize, batchSize, maxRows,
+                iterator.start(decoded, List.of(layers), mode, true, batchSize, batchSize,
                         List.of(exchange), null);
                 List<NestedBatch> batches = new ArrayList<>();
                 NestedBatch batch;
@@ -258,11 +255,8 @@ class NestedColumnTest {
             ColumnSchema column = schema.getColumn(columnIndex);
             for (int g = 0; g < meta.rowGroups().size(); g++) {
                 RowGroup rowGroup = meta.rowGroups().get(g);
-                PageWalks.Pages pages = PageWalks.of(SequentialFetchPlan.build(inputFile, column, rowGroup.columns().get(columnIndex),
-                        context, g, inputFile.name(), 0));
                 ReferenceChunk chunk = new ReferenceChunk(column);
-                while (pages.hasNext()) {
-                    PageInfo page = pages.next();
+                for (PageInfo page : ChunkPages.of(inputFile, column, rowGroup.columns().get(columnIndex), context)) {
                     chunk.add(new ReferencePageDecoder(column, page.columnMetaData().codec(),
                             context.decompressorFactory()).decode(page.pageData(), page.dictionary()));
                 }

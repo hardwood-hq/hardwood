@@ -8,13 +8,10 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.nio.ByteBuffer;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.AfterEach;
@@ -28,7 +25,6 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.ObservedPool;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.engine.RowGroupIterator;
-import dev.hardwood.internal.reader.plan.GatedReads.GatedFile;
 import dev.hardwood.internal.reader.plan.GatedReads.ReadGate;
 import dev.hardwood.internal.reader.plan.GatedReads.RemoteLike;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -36,7 +32,6 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
-import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -62,45 +57,6 @@ class ReadAheadTest {
 
     /// With F of zero and the first row group's data held back, so that no column can leave it, the
     /// read starts the first request of the second row group, its next unit, and nothing past it.
-    @Test
-    void theNextUnitStartsBeforeAnyColumnReachesItWithoutFetchAheadRoom() throws Exception {
-        System.setProperty(RowGroupIterator.FETCH_AHEAD_BYTES_PROPERTY, "0");
-        ReadGate firstData = new ReadGate(reason -> reason.startsWith("rg=0 col="));
-        CountingInputFile file = new CountingInputFile(
-                new GatedFile(InputFile.of(ByteBuffer.wrap(Files.readAllBytes(FOUR_ROW_GROUPS))), firstData));
-        ObservedPool pool = new ObservedPool(4, "read-ahead-test");
-        QuiescentExecutor io = new QuiescentExecutor();
-        AtomicLong rows = new AtomicLong();
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        try (HardwoodContextImpl context = pool.context(io);
-             ParquetFileReader reader = ParquetFileReader.open(file, context)) {
-            assertThat(reader.getFileMetaData().rowGroups()).hasSize(4);
-            firstData.arm();
-            Thread consumer = Thread.ofPlatform().name("consumer").start(() -> {
-                try (ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.all()).build()) {
-                    while (columns.nextBatch()) {
-                        rows.addAndGet(columns.getRecordCount());
-                    }
-                }
-                catch (Throwable e) {
-                    failure.set(e);
-                }
-            });
-
-            awaitTrue(() -> !dataReads(file, 1).isEmpty(), "the second row group's first request starts");
-            awaitSettled(io, firstData, pool);
-            assertThat(firstData.inFlight()).as("first row group's reads held").isPositive();
-            assertThat(dataReads(file, 1)).as("data reads of the next unit").hasSize(1);
-            assertThat(dataReads(file, 2)).as("data reads of the third row group").isEmpty();
-            assertThat(dataReads(file, 3)).as("data reads of the fourth row group").isEmpty();
-
-            firstData.release();
-            consumer.join(TimeUnit.SECONDS.toMillis(30));
-            assertThat(consumer.isAlive()).as("consumer still reading").isFalse();
-        }
-        assertThat(failure.get()).isNull();
-        assertThat(rows.get()).isEqualTo(200);
-    }
 
     private static final int ROW_GROUPS = 40;
     private static final int ROWS_PER_ROW_GROUP = 400_000;

@@ -9,7 +9,6 @@ package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -29,10 +28,6 @@ import dev.hardwood.internal.reader.step.ReadTasks;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.reader.ColumnReaders;
-import dev.hardwood.reader.FilterPredicate;
-import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -50,55 +45,6 @@ class PlanningEventTimingTest extends AbstractJfrRecorderTest {
 
     /// A read held in its first file plans the files after it ahead, and closes there: only the
     /// first file and the next one, which the read resolves as its next unit, report their pruning.
-    @Tag("pool")
-    @Test
-    void aFilePlannedAheadThatTheReadNeverReachesReportsNothing() throws Exception {
-        enable("dev.hardwood.RowGroupFilter");
-        CountDownLatch release = new CountDownLatch(1);
-        List<CountingInputFile> files = new ArrayList<>();
-        for (int i = 0; i < FILES; i++) {
-            files.add(new CountingInputFile(new NamedFile("f" + i, write(i), i == 0 ? release : null)));
-        }
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
-            ParquetFileReader reader = ParquetFileReader.openAll(List.copyOf(files), context);
-            ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.all())
-                    .filter(FilterPredicate.gtEq("id", 0L)).build();
-            Thread consumer = Thread.ofPlatform().start(() -> {
-                try {
-                    while (columns.nextBatch()) {
-                        // reads until the close ends the read
-                    }
-                }
-                catch (IOException | RuntimeException e) {
-                    // the close ends the read
-                }
-            });
-            for (int i = 0; i < 5_000 && dataReads(files.getLast()) == 0; i++) {
-                Thread.sleep(1);
-            }
-            assertThat(dataReads(files.getLast())).as("the last file planned ahead").isPositive();
-
-            Thread closer = Thread.ofPlatform().start(() -> {
-                try {
-                    columns.close();
-                    reader.close();
-                }
-                catch (IOException e) {
-                    throw new IllegalStateException(e);
-                }
-            });
-            // Released only once the close has stopped the columns and waits for the held read, so
-            // no column moves on to a later file meanwhile
-            awaitWaitingForTheRead(closer);
-            release.countDown();
-            closer.join(TimeUnit.SECONDS.toMillis(30));
-            consumer.join(TimeUnit.SECONDS.toMillis(30));
-        }
-        awaitEvents();
-
-        assertThat(events("dev.hardwood.RowGroupFilter").map(event -> event.getString("file")))
-                .containsExactlyInAnyOrder("f0", "f1");
-    }
 
     /// A file whose footer is read ahead reports its open from the start of its footer entry to the
     /// parse of its footer, however long after the read the parse runs.

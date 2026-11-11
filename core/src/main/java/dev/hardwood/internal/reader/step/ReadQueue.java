@@ -15,64 +15,39 @@ import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.DecodeExecutor;
 import dev.hardwood.internal.HardwoodContextImpl;
 
-/// The walk advances, page tasks and planning of one read on a context without a pool
+/// The CPU jobs of one read on a context without a pool
 /// ([HardwoodContextImpl#hasPool()]), which the threads using the read run: its consumer, when a
 /// poll finds no batch ([dev.hardwood.internal.reader.batch.BatchExchange#poll()]), and the thread
 /// closing it ([ReadTasks#await]).
 ///
-/// The queue keeps the order of the pool's queue ([DecodeExecutor]): a walk advance goes to the head,
-/// a page task and planning to the tail. Its items are the ones the pool runs, which are safe to run
-/// on several threads at once, so a close on one thread and a poll on another may both run them.
+/// The queue runs its jobs in the order they arrive, as the pool's queue does ([DecodeExecutor]).
+/// Its items are the ones the pool runs, which are safe to run on several threads at once, so a
+/// close on one thread and a poll on another may both run them.
 ///
 /// A thread that finds nothing to run parks on the read's [ReadTasks] until it signals, which the
 /// queue does whenever an item is queued or ends.
-public final class ReadQueue implements ReadExecutor {
+public final class ReadQueue {
 
     private final HardwoodContextImpl context;
     private final ReadTasks tasks = new ReadTasks();
     private final ConcurrentLinkedDeque<Runnable> items = new ConcurrentLinkedDeque<>();
 
     /// @param context the context without a pool the read runs on
-    ReadQueue(HardwoodContextImpl context) {
+    public ReadQueue(HardwoodContextImpl context) {
         this.context = context;
     }
 
-    @Override
+    /// The read's jobs in flight, and the wait of the threads using it.
     public ReadTasks tasks() {
         return tasks;
     }
 
-    /// Queues a walk advance, at the head.
-    ///
-    /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
-    @Override
-    public void executeStep(Runnable step) {
-        checkOpen();
-        items.addFirst(step);
-        tasks.signal();
-    }
-
-    /// Queues a page task, at the tail, to run with a set of the context's decode buffers on the
+    /// Queues a job, at the tail, to run with a set of the context's decode buffers on the
     /// thread that takes it.
     ///
     /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
-    @Override
     public void executePage(Consumer<DecodeBuffers> task) {
         addLast(() -> context.runInPlace(task));
-    }
-
-    /// One: the thread driving the read runs its pages, whichever threads run the queue.
-    @Override
-    public int decodeThreads() {
-        return 1;
-    }
-
-    /// Queues planning, at the tail.
-    ///
-    /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
-    @Override
-    public void executePlanning(Runnable task) {
-        addLast(task);
     }
 
     private void addLast(Runnable task) {

@@ -1,0 +1,481 @@
+/*
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Copyright The original authors
+ *
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
+package dev.hardwood.internal.reader.engine;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.Comparator;
+import java.util.List;
+
+import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.io.HeldBytes;
+import dev.hardwood.internal.reader.fetch.Span;
+import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
+import dev.hardwood.internal.reader.plan.BatchPlan;
+import dev.hardwood.internal.reader.plan.IndexWindow;
+import dev.hardwood.internal.reader.plan.RowGroupPruning;
+import dev.hardwood.internal.reader.plan.UnitListing;
+import dev.hardwood.internal.reader.plan.UnitPlan;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
+import jdk.jfr.Event;
+
+/// Plans a read's row groups, moving each through its states ([Unit.State]). Lists each file's row
+/// groups that statistics and the read's skip and limit keep, as [Unit]s; probes each unit's Bloom
+/// filters and dictionaries; reads its window's page index (sliced from the file's tail where it
+/// holds it), from which [PagePlanner] plans its pages and ranges into a [UnitPlan]; and installs the units in unit
+/// order, so batches stay in row order whichever plan finishes first. A unit whose planning fails fails the read at its first row, between two units. Used
+/// under the read's lock, except the jobs' work.
+final class RowGroupPlanner {
+
+    /// An [IndexWindow]'s units, the `count` from the one at `first`, and its requests: its Bloom
+    /// filters, read first, and its page index, read once a unit of it survives its Bloom filters
+    /// and dictionaries; each held by every unit of it.
+    static final class Window {
+        final int first;
+        final int count;
+        final List<PageFetcher.Range> bloomFilters;
+        final List<PageFetcher.Range> index;
+        boolean indexRead;
+        boolean indexArrived;
+
+        Window(int first, int count, List<PageFetcher.Range> bloomFilters, List<PageFetcher.Range> index) {
+            this.first = first;
+            this.count = count;
+            this.bloomFilters = bloomFilters;
+            this.index = index;
+        }
+    }
+
+    private final JobScheduler scheduler;
+    private final BatchQueue queue;
+    private final PageFetcher fetcher;
+    private final HeaderScanner scanner;
+    private final PagePlacer placer;
+    private final BatchPlan batchPlan;
+    private final ColumnSchema[] schemas;
+    private final List<Unit> units = new ArrayList<>();
+    private int nextInstall;
+    private long endKey;
+    private boolean listed;
+    /// what statistics reported of each listed file, committed once the consumer reaches the file,
+    /// and the files and units whose reports are committed: a unit's are once the consumer reaches
+    /// it and it is planned, so a read that stops before a file or unit reports nothing of it
+    private final List<FileReport> fileReports = new ArrayList<>();
+    private int reportedFiles;
+    private int reportedUnits;
+    /// the unit holding the consumer's first unpublished row, as far as [#fileAt] has moved it
+    private int scan;
+
+    private final RowGroupPruning pruning;
+    /// plans a unit's pages and ranges once its page index has arrived
+    private final PagePlanner pages;
+    /// the rows the read's row limit leaves to list, and the leading rows its physical skip still
+    /// drops. Under a filter the budget counts
+    /// the rows of row groups statistics prove to match, every row of which is returned, and the
+    /// first one they leave undecided lifts it, as the batch plan's cap
+    private long budget;
+    private final boolean filteredRead;
+    private long skip;
+
+    RowGroupPlanner(JobScheduler scheduler, BatchQueue queue, PageFetcher fetcher, HeaderScanner scanner,
+                    PagePlacer placer, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
+                    long budget, boolean filteredRead, long skip, long maskedRows) {
+        this.budget = budget;
+        this.filteredRead = filteredRead;
+        this.skip = skip;
+        this.pages = new PagePlanner(schemas, filterOnly, pruning, maskedRows);
+        this.pruning = pruning;
+        this.scheduler = scheduler;
+        this.queue = queue;
+        this.fetcher = fetcher;
+        this.scanner = scanner;
+        this.placer = placer;
+        this.batchPlan = batchPlan;
+        this.schemas = schemas;
+    }
+
+    /// Lists the row groups of a file, `file` with `rowGroups`, that its statistics keep, as
+    /// [#addFile(int, InputFile, FileSchema, RowGroupPruning.FilteredRowGroups, FileColumnOrdinals)].
+    ///
+    /// @throws UncheckedIOException if the file's length cannot be read
+    void addFile(int fileIndex, InputFile file, FileSchema fileSchema, List<RowGroup> rowGroups,
+                 FileColumnOrdinals ordinals) {
+        try {
+            addFile(fileIndex, file, fileSchema, pruning.filterRowGroups(rowGroups, file, ordinals), ordinals);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /// Lists `filtered`, the row groups of a file, `file`, that its statistics keep, as units
+    /// behind those listed, each column's chunk at its ordinal in the file, and reads their bloom
+    /// filters and page indexes, a window of units at a time ([IndexWindow]).
+    ///
+    /// @throws UncheckedIOException if the file's length cannot be read
+    void addFile(int fileIndex, InputFile file, FileSchema fileSchema, RowGroupPruning.FilteredRowGroups filtered,
+                 FileColumnOrdinals ordinals) {
+        try {
+            int from = units.size();
+            List<UnitListing> listings = new ArrayList<>();
+            List<IndexWindow.Member> members = new ArrayList<>();
+            if (filtered.event() != null) {
+                fileReports.add(new FileReport(filtered.event(), endKey));
+            }
+            for (RowGroupPruning.FilteredRowGroup kept : filtered.rowGroups()) {
+                RowGroup rg = kept.rowGroup();
+                if (budget <= 0) {
+                    break;
+                }
+                if (filteredRead && !kept.alwaysMatches()) {
+                    budget = Long.MAX_VALUE;
+                }
+                if (skip >= rg.numRows()) {
+                    skip -= rg.numRows();
+                    continue;
+                }
+                long leading = skip;
+                skip = 0;
+                ColumnChunk[] chunks = new ColumnChunk[schemas.length];
+                for (int c = 0; c < schemas.length; c++) {
+                    chunks[c] = rg.columns().get(ordinals.fileOrdinal(schemas[c].columnIndex()));
+                }
+                // the leading rows of a physical skip are read and the reader drops them
+                UnitListing u = new UnitListing(file, fileIndex, fileSchema, ordinals, rg, kept.fileRowGroupIndex(),
+                        from + listings.size(),
+                        endKey, kept.alwaysMatches(), kept.leafDecisions(), kept.bloomFilterColumns(), chunks,
+                        leading + Math.min(rg.numRows() - leading, budget));
+                BitSet columnIndexes = RowGroupPruning.columnIndexColumns(u, pruning.pageFiltering(u));
+                BitSet offsetIndexes = (BitSet) columnIndexes.clone();
+                for (int c = 0; c < schemas.length; c++) {
+                    if (!pages.filterOnly(c) || !kept.alwaysMatches()) {
+                        offsetIndexes.set(ordinals.fileOrdinal(schemas[c].columnIndex()));
+                    }
+                }
+                for (int o = offsetIndexes.nextSetBit(0); o >= 0; o = offsetIndexes.nextSetBit(o + 1)) {
+                    if (rg.columns().get(o).offsetIndexOffset() == null) {
+                        offsetIndexes.clear(o);
+                    }
+                }
+                budget -= u.limit() - leading;
+                listings.add(u);
+                endKey += rg.numRows();
+                // a row group with a chunk in another file fails before any of its indexes is read
+                members.add(u.storedInThisFile() ? new IndexWindow.Member(rg, kept.fileRowGroupIndex(),
+                        offsetIndexes, columnIndexes, u.bloomFilterColumns())
+                        : new IndexWindow.Member(rg, kept.fileRowGroupIndex(), new BitSet(), new BitSet(), new BitSet()));
+            }
+            if (members.isEmpty()) {
+                return;
+            }
+            int first = from;
+            for (IndexWindow window : IndexWindow.plan(IndexWindow.budgetBytes(), file, members)) {
+                int count = window.memberCount();
+                Window w = new Window(first, count, ranges(file, window.bloomFilterSpans(), count),
+                        ranges(file, window.indexSpans(), count));
+                for (int i = first; i < first + count; i++) {
+                    // a row group with a chunk in another file reads no index: it fails first
+                    IndexWindow.Member m = members.get(i - from);
+                    units.add(new Unit.Listed(listings.get(i - from), m.offsetIndexColumns(), m.columnIndexColumns(), w));
+                }
+                first += count;
+                fetch(units.get(w.first).listing(), w.bloomFilters, () -> {
+                    for (int i = w.first; i < w.first + w.count; i++) {
+                        bloomFiltersArrived((Unit.Listed) units.get(i));
+                    }
+                });
+            }
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /// Ranges of `spans` of `file` in file order, each held by `readers`, sliced where the file
+    /// holds them.
+    private static List<PageFetcher.Range> ranges(InputFile file, List<Span> spans, int readers) {
+        List<PageFetcher.Range> ranges = new ArrayList<>(spans.size());
+        for (Span span : spans.stream().sorted(Comparator.comparingLong(Span::start)).toList()) {
+            PageFetcher.Range r = new PageFetcher.Range(span);
+            for (int i = 0; i < readers; i++) {
+                r.charge.reader();
+            }
+            r.bytes = HeldBytes.slice(file, span.start(), span.length());
+            ranges.add(r);
+        }
+        return ranges;
+    }
+
+    /// Fetches those of `ranges` not held, at `u`'s key, then runs `then`; a range that cannot be
+    /// read fails the read at `u`.
+    private void fetch(UnitListing u, List<PageFetcher.Range> ranges, Runnable then) {
+        int[] missing = {0};
+        for (PageFetcher.Range r : ranges) {
+            if (r.bytes == null) {
+                missing[0]++;
+                fetcher.fetch(u.file(), r, u.base(), t -> {
+                    if (t != null) {
+                        queue.failAt(u.base(), t instanceof IOException e ? new IOException(ExceptionContext.filePrefix(
+                                u.file().name()) + "Failed to fetch metadata for row group " + u.rowGroup(), e) : t);
+                    }
+                    else if (--missing[0] == 0) {
+                        then.run();
+                    }
+                });
+            }
+        }
+        if (missing[0] == 0) {
+            then.run();
+        }
+    }
+
+    /// `l`'s Bloom filters have arrived: it is probed where they or its dictionaries may drop it,
+    /// and waits for its page index otherwise.
+    private void bloomFiltersArrived(Unit.Listed l) {
+        if (RowGroupPruning.droppableOnArrival(l.listing())) {
+            probe(l.probing());
+            return;
+        }
+        fetcher.readersDone(l.window().bloomFilters);
+        awaitIndex(l.nothingToProbe());
+    }
+
+    /// Probes `p`'s Bloom filters and dictionaries on a job: the dictionary bytes a pass lacks are
+    /// fetched and it is probed again, until it is decided.
+    private void probe(Unit.Probing p) {
+        set(p);
+        UnitListing u = p.listing();
+        p.missing().clear();
+        scheduler.add(new JobScheduler.Job(u.base(), 0, planKind(u), null, buffers -> {
+            // its chunks lie in the file before a dictionary of them is read
+            pages.extents(u);
+            RowGroupPruning.Arrival arrival = pruning.probeOnArrival(u, p.bytes(), p.bytes(), p.probe());
+            return () -> {
+                if (arrival.dropped() || p.missing().isEmpty()) {
+                    probed(p, arrival);
+                    return;
+                }
+                List<PageFetcher.Range> more = ranges(u.file(), p.missing(), 1);
+                p.fetching(more);
+                fetch(u, more, () -> probe(p));
+            };
+        }, t -> () -> queue.failAt(u.base(), t)));
+    }
+
+    /// `p`'s Bloom filters and dictionaries decided: a unit they dropped is planned with no row,
+    /// one they kept waits for its page index.
+    private void probed(Unit.Probing p, RowGroupPruning.Arrival arrival) {
+        Window w = p.listed().window();
+        fetcher.readersDone(w.bloomFilters);
+        fetcher.readersDone(p.probed());
+        if (arrival.dropped()) {
+            set(p.dropped(arrival.dropEvent(), schemas.length));
+            installPlanned(w.index);
+            return;
+        }
+        awaitIndex(p.kept(arrival.dropEvent()));
+    }
+
+    /// `a` waits for its window's page index, which is read once a first unit of the window waits
+    /// for it, and is planned once it has arrived.
+    private void awaitIndex(Unit.AwaitingIndex a) {
+        set(a);
+        Window w = a.listed().window();
+        if (w.indexArrived) {
+            plan(a);
+        }
+        else if (!w.indexRead) {
+            w.indexRead = true;
+            fetch(units.get(w.first).listing(), w.index, () -> {
+                w.indexArrived = true;
+                for (int i = w.first; i < w.first + w.count; i++) {
+                    if (units.get(i) instanceof Unit.AwaitingIndex waiting) {
+                        plan(waiting);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Replaces the unit's state with `u`.
+    private void set(Unit u) {
+        units.set(u.listing().index(), u);
+    }
+
+    /// Whether the read's row limit leaves rows to list.
+    boolean budgetLeft() {
+        return budget > 0;
+    }
+
+    /// Every file is listed, or the listing failed: no unit follows those listed.
+    void listed() {
+        listed = true;
+        if (allInstalled()) {
+            queue.allPublishable();
+        }
+    }
+
+    /// The key below which every batch has been added.
+    long installedKey() {
+        return nextInstall < units.size() ? units.get(nextInstall).listing().base() : endKey;
+    }
+
+    /// The file of the unit holding `key`, `-1` where none is listed; `consumer` where `key` is
+    /// the consumer's first unpublished row, which only moves on, else a key at or past it.
+    int fileAt(long key, boolean consumer) {
+        int i = scan;
+        while (i < units.size()
+                && units.get(i).listing().base() + units.get(i).listing().metaData().numRows() <= key) {
+            i++;
+        }
+        if (consumer) {
+            scan = i;
+        }
+        return i < units.size() ? units.get(i).listing().fileIndex() : -1;
+    }
+
+    boolean allInstalled() {
+        return listed && nextInstall == units.size();
+    }
+
+    long endKey() {
+        return endKey;
+    }
+
+    /// Plans `a` on a job, its page index arrived.
+    private void plan(Unit.AwaitingIndex a) {
+        UnitListing u = a.listing();
+        List<PageFetcher.Range> index = a.listed().window().index;
+        scheduler.add(new JobScheduler.Job(u.base(), 0, planKind(u), null, buffers -> {
+            List<Event> events = new ArrayList<>();
+            UnitPlan plan = pages.plan(a, index, events);
+            return () -> {
+                set(a.planned(plan, events));
+                installPlanned(index);
+            };
+        }, t -> () -> {
+            releaseIndex(index);
+            // met first by the first column, at no page
+            queue.failAt(u.base(), t instanceof Exception e
+                    ? placer.placed(0, e, u.file().name(), u.rowGroup(), ExceptionContext.UNKNOWN_PAGE) : t);
+        }));
+    }
+
+    /// The kind of `u`'s probe and plan: planning ahead leads to fetches, whose latency it hides;
+    /// the plan of a unit whose file holds every byte leads to none, and is held to the look-ahead
+    /// like the decodes it leads to, so that the read does not hold every unit's pages at once.
+    private static JobScheduler.Kind planKind(UnitListing u) {
+        return HeldBytes.inMemory(u.file()) ? JobScheduler.Kind.DECODE : JobScheduler.Kind.PLAN;
+    }
+
+    /// Commits what pruning reports of the files and units the consumer has reached, its first
+    /// unpublished row at `key`.
+    void report(long key) {
+        for (; reportedFiles < fileReports.size() && fileReports.get(reportedFiles).base() <= key; reportedFiles++) {
+            fileReports.get(reportedFiles).event().commit();
+        }
+        for (; reportedUnits < units.size() && events(units.get(reportedUnits)) != null
+                && units.get(reportedUnits).listing().base() <= key; reportedUnits++) {
+            events(units.get(reportedUnits)).forEach(Event::commit);
+        }
+    }
+
+    /// What `u`'s pruning reports, `null` before it is planned.
+    private static List<Event> events(Unit u) {
+        return switch (u) {
+            case Unit.Planned p -> p.events();
+            case Unit.Installed i -> i.events();
+            default -> null;
+        };
+    }
+
+    /// A file's statistics report, and the key of its first row.
+    private record FileReport(Event event, long base) {
+    }
+
+    /// Charges the dictionary `u`'s probe decoded for `column` as the column takes it, in its batch's
+    /// window; a charge over the read's limit fails the read at the unit.
+    private void chargePreloaded(Unit.Installed u, int column) {
+        try {
+            placer.inWindow(column, u, () -> {
+                placer.workingSet(column).dictionary(u.plan().preloaded()[column]);
+                return null;
+            });
+        }
+        catch (RuntimeException e) {
+            queue.failAt(u.listing().base(), column, placer.placed(column, e, u.listing().file().name(),
+                    u.listing().rowGroup(), ExceptionContext.UNKNOWN_PAGE));
+        }
+    }
+
+    /// A unit's planning used `index`, its window's page index, and ended.
+    private void releaseIndex(List<PageFetcher.Range> index) {
+        for (PageFetcher.Range r : index) {
+            r.charge.read(scheduler);
+        }
+    }
+
+    /// A unit is planned, its planning done with `index`: installs the units planned in unit
+    /// order, up to the read's failure.
+    private void installPlanned(List<PageFetcher.Range> index) {
+        releaseIndex(index);
+        while (nextInstall < units.size() && units.get(nextInstall) instanceof Unit.Planned p
+                && p.listing().base() < queue.failedAt()) {
+            nextInstall++;
+            install(p);
+        }
+        if (allInstalled()) {
+            queue.allPublishable();
+        }
+    }
+
+    /// Takes the unit's batches from the batch plan, its first rows continuing the batch the unit
+    /// before left open where the plan says so, and hands its pages and ranges to [PageFetcher].
+    private void install(Unit.Planned planned) {
+        UnitListing u = planned.listing();
+        BatchPlan.RowGroupBatches batches = batchPlan.plan(u.index(), u.fileIndex(), u.file().name(),
+                u.alwaysMatches(), planned.plan().matching().rowCount(u.metaData().numRows()));
+        Unit.Installed p = planned.installed(batches);
+        set(p);
+        if (batches.endsRead()) {
+            // the row cap ends the read in it: no further file is listed
+            budget = 0;
+        }
+        long first = u.base();
+        for (int i = 0; i < batches.segmentCount(); i++) {
+            if (i > 0 || batches.continuedRows() == 0) {
+                queue.add(new Batch(first, batches.readRowsBefore() + first - u.base(), schemas.length));
+            }
+            first += batches.segmentRows(i);
+            queue.last().endKey = first;
+            for (int c = 0; c < schemas.length; c++) {
+                if (pages.skips(u, c)) {
+                    queue.skipLast(c);
+                }
+            }
+        }
+        for (int c = 0; c < schemas.length; c++) {
+            if (p.plan().preloaded()[c] != null) {
+                chargePreloaded(p, c);
+            }
+        }
+        PageFetcher.ScanInput scans = fetcher.install(p);
+        for (int c = 0; c < schemas.length; c++) {
+            if (p.plan().pages()[c] == null) {
+                scanner.scan(p, c, scans.placement()[c], scans.ranges());
+            }
+        }
+        fetcher.installed(scans);
+    }
+}

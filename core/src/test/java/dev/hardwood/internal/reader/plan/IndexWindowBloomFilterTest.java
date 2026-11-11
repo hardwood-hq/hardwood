@@ -8,22 +8,18 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
-import dev.hardwood.internal.reader.fetch.InPlaceSections;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.metadata.ColumnChunk;
@@ -59,58 +55,39 @@ class IndexWindowBloomFilterTest {
     }
 
     @Test
-    void theWindowsFiltersAreFetchedOnceAndServeEveryMemberFromTheWindow() throws Exception {
-        CountingInputFile file = countingFile();
+    void theWindowsFiltersAreOneRequestForEveryMember() throws Exception {
         BitSet[] columns = { new BitSet(), column(CODE), column(CODE) };
-        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0, members(rowGroups().subList(0, 3), columns))
+        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, countingFile(), members(rowGroups().subList(0, 3), columns))
                 .getFirst();
-        window.insertSections(new InPlaceSections());
-        assertThat(file.reads()).isEmpty();
-
-        IndexWindowTest.awaitMet(window.bloomFiltersNeed());
-        ByteSource outsideTheWindow = (offset, length) -> {
-            throw new AssertionError("Range at " + offset + " read outside the window");
-        };
         ColumnMetaData firstCode = metaData(rowGroups().get(1));
-        ByteBuffer first = window.bloomFilters(1, outsideTheWindow)
-                .read(firstCode.bloomFilterOffset(), firstCode.bloomFilterLength());
         ColumnMetaData secondCode = metaData(rowGroups().get(2));
-        ByteBuffer second = window.bloomFilters(2, outsideTheWindow)
-                .read(secondCode.bloomFilterOffset(), secondCode.bloomFilterLength());
 
-        assertThat(file.reads()).extracting(CountingInputFile.Read::reason).containsExactly("rg=0-2 pruning");
-        assertThat(first).isEqualTo(countingFile().readRange(firstCode.bloomFilterOffset(),
-                firstCode.bloomFilterLength()));
-        assertThat(second.remaining()).isEqualTo(secondCode.bloomFilterLength());
+        assertThat(window.bloomFilterSpans()).singleElement().satisfies(span -> {
+            assertThat(span.reason()).isEqualTo("rg=0-2 pruning");
+            assertThat(span.holders()).isEqualTo(3);
+            assertThat(span.start()).isEqualTo(firstCode.bloomFilterOffset());
+            assertThat(span.start() + span.length())
+                    .isEqualTo(secondCode.bloomFilterOffset() + secondCode.bloomFilterLength());
+        });
     }
 
     @Test
     void aFilterWithoutALengthIsLeftOutOfTheWindowAndReadByTheSource() throws Exception {
         CountingInputFile file = countingFile();
         RowGroup withoutLength = withoutBloomFilterLength(rowGroups().get(0), CODE);
-        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file, 0,
+        IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file,
                 members(List.of(withoutLength), new BitSet[] { column(CODE) })).getFirst();
-        window.insertSections(new InPlaceSections());
-        assertThat(window.bloomFiltersNeed()).isNull();
-        assertThat(file.reads()).isEmpty();
+        assertThat(window.bloomFilterSpans()).isEmpty();
 
-        BloomFilter filter = new RowGroupBloomFilterSource(file, window.bloomFilters(0, ByteSource.of(file)),
-                withoutLength).forColumn(CODE);
+        BloomFilter filter = new RowGroupBloomFilterSource(file, ByteSource.of(file), withoutLength).forColumn(CODE);
 
         assertThat(filter).isNotNull();
         assertThat(file.reads()).isNotEmpty();
     }
 
-    private final HardwoodContextImpl context = HardwoodContextImpl.create(0);
-
-    @AfterEach
-    void closeContext() {
-        context.close();
-    }
-
     private static List<IndexWindow> plan(long budget, List<RowGroup> rowGroups, BitSet[] bloomFilterColumns)
             throws Exception {
-        return IndexWindow.plan(budget, countingFile(), 0, members(rowGroups, bloomFilterColumns));
+        return IndexWindow.plan(budget, countingFile(), members(rowGroups, bloomFilterColumns));
     }
 
     private static RowGroup withoutBloomFilterLength(RowGroup rowGroup, int column) {

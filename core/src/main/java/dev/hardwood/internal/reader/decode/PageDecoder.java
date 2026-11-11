@@ -37,8 +37,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// [#decodeFlat], [#decodeFlatBinary] and [#decodeNestedInPlace]. A page no reader takes is
 /// refused before it is decompressed.
 ///
-/// Page location is handled by the [dev.hardwood.internal.reader.fetch.FetchPlan] implementations,
-/// dictionary parsing by [DictionaryParser].
+/// Page location is the read's ([dev.hardwood.internal.reader.engine.RowGroupIterator]), dictionary
+/// parsing [DictionaryParser]'s.
 public class PageDecoder {
 
     /// A task's buffer for decompressed bytes that do not outlive the decode which asks
@@ -258,13 +258,6 @@ public class PageDecoder {
             case FIXED_LEN_BYTE_ARRAY -> FixedWidthValidator.requireWidth(null, column);
             default -> -1;
         };
-    }
-
-    /// Whether this is the decoder of the column chunk `metaData` describes. A decoder checks a
-    /// page against its own chunk's metadata, so a page of another chunk takes a decoder of its
-    /// own, even one with the same codec.
-    public boolean decodesChunk(ColumnMetaData metaData) {
-        return columnMetaData == metaData;
     }
 
     /// Reads a data page (`V1` or `V2`) of a fixed-width numeric or boolean column without

@@ -14,9 +14,8 @@ import java.nio.ByteBuffer;
 /// Parquet stores two complementary page-level indexes per column chunk:
 ///
 /// - **Offset Index** — the *location* of each page: file offset,
-///       compressed size, and first row index. Used to build an
-///       [dev.hardwood.internal.reader.fetch.IndexedFetchPlan], which seeks
-///       directly to pages without scanning headers sequentially.
+///       compressed size, and first row index. Used to locate a column's
+///       pages directly, without scanning their headers.
 /// - **Column Index** — the *statistics* of each page: min/max
 ///       values, null counts, and boundary order. Used for page-level
 ///       predicate pushdown (skipping pages whose value range doesn't match

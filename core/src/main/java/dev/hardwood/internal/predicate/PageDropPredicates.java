@@ -12,11 +12,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import dev.hardwood.internal.metadata.DataPageHeader;
+import dev.hardwood.internal.metadata.DataPageHeaderV2;
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.metadata.Statistics;
+import dev.hardwood.schema.ColumnSchema;
 
-/// Collects leaf predicates safe to use for per-page drop decisions in
-/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] when only inline page
-/// statistics are available.
+/// Collects leaf predicates safe to use for per-page drop decisions when only inline page
+/// statistics are available, and decides a page by them ([#canDropPage(List, PageHeader,
+/// ColumnSchema, BoundsReadability, LogContext)]).
 ///
 /// A leaf is **AND-necessary** — i.e. falsifying it falsifies the whole
 /// predicate — iff the path from the predicate root to the leaf consists only
@@ -88,6 +92,41 @@ public final class PageDropPredicates {
 
     private static void add(Map<Integer, List<ResolvedPredicate>> out, int column, ResolvedPredicate leaf) {
         out.computeIfAbsent(column, k -> new ArrayList<>()).add(leaf);
+    }
+
+    /// Whether the inline statistics of the data page `header` describes prove that no row of it
+    /// can match `leaves`, the AND-necessary leaves testing `column`: a page the caller then
+    /// replaces with a page of nulls ([dev.hardwood.internal.reader.decode.PageInfo#nullPlaceholder]).
+    /// A required column cannot represent nulls, so its pages are never dropped.
+    ///
+    /// A null count is held against the page's rows. A v2 header counts them. A v1 header counts
+    /// values, which are the rows of a column with no repeated node above it, since such a column
+    /// writes one entry per row; below a repeated node the page carries no row count and is
+    /// decided from its bounds alone.
+    public static boolean canDropPage(List<ResolvedPredicate> leaves, PageHeader header, ColumnSchema column,
+            BoundsReadability readability, LogContext logContext) {
+        if (leaves == null || leaves.isEmpty() || column.maxDefinitionLevel() == 0) {
+            return false;
+        }
+        Statistics inline;
+        long rowCount;
+        switch (header.type()) {
+            case DATA_PAGE -> {
+                DataPageHeader page = header.dataPageHeader();
+                inline = page == null ? null : page.statistics();
+                rowCount = page == null || column.maxRepetitionLevel() > 0 ? UNKNOWN_ROW_COUNT : page.numValues();
+            }
+            case DATA_PAGE_V2 -> {
+                DataPageHeaderV2 page = header.dataPageHeaderV2();
+                inline = page == null ? null : page.statistics();
+                rowCount = page == null ? UNKNOWN_ROW_COUNT : page.numRows();
+            }
+            default -> {
+                inline = null;
+                rowCount = UNKNOWN_ROW_COUNT;
+            }
+        }
+        return canDropPage(leaves, inline, rowCount, readability, logContext);
     }
 
     /// Returns `true` if any of the given AND-necessary leaves proves, from the

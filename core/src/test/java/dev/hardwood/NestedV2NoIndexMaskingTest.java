@@ -25,9 +25,8 @@ import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Drives the rep-level walk path in
-/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] against a
-/// `DATA_PAGE_V2` nested column without OffsetIndex. The fixture pairs a
+/// Drives the header scan of a `DATA_PAGE_V2` nested column without
+/// OffsetIndex. The fixture pairs a
 /// flat `narrow` INT32 with a nested `tags` LIST&lt;STRING&gt; whose pages
 /// flush at different rows than the flat column. Filter pushdown and
 /// tail-mode tests verify cross-column row alignment.

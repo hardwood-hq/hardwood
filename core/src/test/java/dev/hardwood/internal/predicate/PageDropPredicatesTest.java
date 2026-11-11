@@ -14,16 +14,23 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.DataPageHeader;
+import dev.hardwood.internal.metadata.DataPageHeaderV2;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.metadata.PageType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate.Operator;
+import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The inline-page-statistics drop path used by
-/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] when a file carries no page index:
-/// which AND-necessary leaves reach a column, and whether a page's own statistics prove it
-/// holds no matching row.
+/// The inline-page-statistics drop path for a file without a page index: which AND-necessary
+/// leaves reach a column, and whether a page's own statistics, or its header, prove it holds no
+/// matching row.
 class PageDropPredicatesTest {
 
     private static final int COLUMN = 0;
@@ -162,7 +169,66 @@ class PageDropPredicatesTest {
                 BoundsReadability.ofOneColumn(false), PAGE)).isFalse();
     }
 
+    // ==================== Deciding a page by its header ====================
+
+    @Test
+    void aV2HeaderWhoseBoundsExcludeTheProbeDropsAnOptionalColumnsPage() {
+        PageHeader page = v2(stats(intBytes(20), intBytes(30)));
+
+        assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), page, OPTIONAL, BoundsReadability.ALL, PAGE))
+                .isTrue();
+    }
+
+    @Test
+    void aRequiredColumnsPageIsNeverDropped() {
+        // a required column cannot hold the nulls a dropped page is replaced by
+        PageHeader page = v2(stats(intBytes(20), intBytes(30)));
+
+        assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), page, REQUIRED, BoundsReadability.ALL, PAGE))
+                .isFalse();
+    }
+
+    @Test
+    void aV1HeaderCountsItsValuesAsRowsOnlyAboveEveryRepeatedNode() {
+        // a v1 header counts values: the rows of a flat column, nothing below a repeated node
+        PageHeader allNull = v1(new Statistics(null, null, (long) ROWS, null, false));
+
+        assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), allNull, OPTIONAL, BoundsReadability.ALL,
+                PAGE)).isTrue();
+        assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), allNull, REPEATED, BoundsReadability.ALL,
+                PAGE)).isFalse();
+        assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), v1(stats(intBytes(20), intBytes(30))),
+                REPEATED, BoundsReadability.ALL, PAGE)).isTrue();
+    }
+
+    @Test
+    void aPageThatIsNoDataPageIsNotDropped() {
+        PageHeader dictionary = new PageHeader(PageType.DICTIONARY_PAGE, 0, 0, null, null, null, null);
+
+        assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), dictionary, OPTIONAL, BoundsReadability.ALL,
+                PAGE)).isFalse();
+    }
+
     // ==================== Fixtures ====================
+
+    private static final ColumnSchema OPTIONAL = column(RepetitionType.OPTIONAL, 1, 0);
+    private static final ColumnSchema REQUIRED = column(RepetitionType.REQUIRED, 0, 0);
+    private static final ColumnSchema REPEATED = column(RepetitionType.OPTIONAL, 2, 1);
+
+    private static ColumnSchema column(RepetitionType repetition, int maxDefinitionLevel, int maxRepetitionLevel) {
+        return new ColumnSchema(FieldPath.of("order", "price"), PhysicalType.INT32, repetition, null, COLUMN,
+                maxDefinitionLevel, maxRepetitionLevel, null);
+    }
+
+    private static PageHeader v1(Statistics stats) {
+        return new PageHeader(PageType.DATA_PAGE, 0, 0,
+                new DataPageHeader(ROWS, Encoding.PLAIN, 0, Encoding.RLE, Encoding.RLE, stats), null, null, null);
+    }
+
+    private static PageHeader v2(Statistics stats) {
+        return new PageHeader(PageType.DATA_PAGE_V2, 0, 0, null,
+                new DataPageHeaderV2(ROWS, 0, ROWS, Encoding.PLAIN, 0, 0, 0, false, stats), null, null);
+    }
 
     private static boolean canDropPage(ResolvedPredicate leaf, Statistics stats) {
         return PageDropPredicates.canDropPage(List.of(leaf), stats, ROWS, BoundsReadability.ALL, PAGE);

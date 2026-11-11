@@ -64,12 +64,15 @@ final class SelectionEngine {
     /// Reusable buffer holding the matching record indices of the current batch
     /// in `[0, count)`. Owned by the engine and overwritten every batch, so the
     /// [ColumnScan] must consume it (apply it to all payload cursors)
-    /// before the next [#computeSelection]. Sized to the batch capacity.
-    private final int[] selection;
+    /// before the next [#computeSelection]. Sized to the batch capacity, and allocated by the
+    /// first batch that evaluates the predicate: a read whose row groups are all dropped
+    /// produces no batch, and its batch capacity is sized for the rows it would have read.
+    private int[] selection;
+    private final int batchSize;
 
     private SelectionEngine(BatchMatchMerger merger, int columnCount,
                             ColumnCursor[] cursorsByProjectedIndex,
-                            RowMatcher rowMatcher, PredicateView predicateView, int[] selection) {
+                            RowMatcher rowMatcher, PredicateView predicateView, int batchSize) {
         this.merger = merger;
         this.stagedBatches = merger != null ? new BatchExchange.Batch[columnCount] : null;
         this.stagedColumns = merger != null ? merger.referencedColumns() : null;
@@ -78,7 +81,7 @@ final class SelectionEngine {
         this.predicateView = predicateView;
         this.flatBatches = predicateView != null ? new BatchExchange.Batch[columnCount] : null;
         this.nestedBatches = predicateView != null ? new NestedBatch[columnCount] : null;
-        this.selection = selection;
+        this.batchSize = batchSize;
     }
 
     /// Builds an engine for `resolved` over the decoded projection, reading
@@ -88,7 +91,6 @@ final class SelectionEngine {
                                   ResolvedPredicate resolved,
                                   ColumnCursor[] cursorsByProjectedIndex, int batchSize) {
         int wordsLen = (batchSize + 63) >>> 6;
-        int[] selection = new int[batchSize];
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
                 resolved, schema, decoded::toProjectedIndex, false);
 
@@ -98,7 +100,7 @@ final class SelectionEngine {
             BatchMatchMerger merger = BatchMatchMerger.owning(
                     compiled, cursorsByProjectedIndex.length, wordsLen);
             return new SelectionEngine(merger, cursorsByProjectedIndex.length,
-                    cursorsByProjectedIndex, null, null, selection);
+                    cursorsByProjectedIndex, null, null, batchSize);
         }
 
         // Record-matcher backend, over a view of the predicate columns' batches. The
@@ -108,7 +110,7 @@ final class SelectionEngine {
                 p -> cursorsByProjectedIndex[p].isNested(), true);
         RowMatcher matcher = RecordFilterCompiler.compile(resolved, schema, view::indexOf);
         return new SelectionEngine(null, cursorsByProjectedIndex.length,
-                cursorsByProjectedIndex, matcher, view, selection);
+                cursorsByProjectedIndex, matcher, view, batchSize);
     }
 
     /// Computes the matching records of the current batch into the reusable
@@ -125,6 +127,9 @@ final class SelectionEngine {
     int computeSelection(int recordCount) {
         if (cursorsByProjectedIndex[0].filterAlwaysMatches()) {
             return -1;
+        }
+        if (selection == null) {
+            selection = new int[batchSize];
         }
         return merger != null
                 ? computeBatchMatchers(recordCount)

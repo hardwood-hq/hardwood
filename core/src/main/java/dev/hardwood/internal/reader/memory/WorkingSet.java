@@ -7,15 +7,12 @@
  */
 package dev.hardwood.internal.reader.memory;
 
-import java.io.IOException;
 import java.util.ArrayDeque;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 
-import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
-import dev.hardwood.internal.reader.step.Need;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
@@ -48,21 +45,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// The limit is per read and nothing waits for it. Working-set memory is released only as the
 /// consumer reads, so a read that waited for another's could wait for a consumer blocked on
 /// itself.
-///
-/// The tasks of a read that run beside the one its working set counts hold their buffers by the
-/// reader's choice, and the context's [ReadAheadBuffer] holds them ([#admit]): a task whose
-/// buffers exceed the retention size starts as the read's one task while no other such task of
-/// the read runs, beside it only while its buffers fit the buffer, and otherwise once a task ends.
-/// A task within the retention size starts at once, as a context keeps that much per thread
-/// anyway.
 public final class WorkingSet {
 
-    /// The admission of a task [#admit] admitted as the read's one task its working set counts.
-    public static final long OWN_TASK = -1;
-    /// The admission of a task [#admitTask] did not admit.
-    private static final long REFUSED = -2;
-
-    static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
+    public static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
 
     /// The share of the maximum heap a read's working set may take without the override: all of
     /// it, since the charges err high and a read whose working set exceeds the heap could not run.
@@ -76,21 +61,14 @@ public final class WorkingSet {
     /// The largest buffers a task has needed, in a one-element array to share [#raise].
     private final AtomicLongArray task = new AtomicLongArray(1);
     private final AtomicLong total = new AtomicLong();
-    /// Holds the buffers of the read's tasks beside its one task; `null` outside a read, whose
-    /// tasks are not admitted.
-    private final ReadAheadBuffer readAhead;
-    /// Raised while a task of the read whose buffers exceed the retention size runs as its one task.
-    private final AtomicBoolean ownTask = new AtomicBoolean();
 
-    /// A working set of `columns` decoded columns, held to [#maxWorkingSetBytes], whose tasks
-    /// beside its one task `readAhead` holds.
-    public WorkingSet(int columns, ReadAheadBuffer readAhead) {
-        this(columns, maxWorkingSetBytes(), readAhead);
+    /// A working set of `columns` decoded columns, held to [#maxWorkingSetBytes].
+    public WorkingSet(int columns) {
+        this(columns, maxWorkingSetBytes());
     }
 
-    public WorkingSet(int columns, long limit, ReadAheadBuffer readAhead) {
+    public WorkingSet(int columns, long limit) {
         this.limit = limit;
-        this.readAhead = readAhead;
         this.dictionaries = new AtomicLongArray(columns);
         this.windows = new DictionaryWindow[columns];
         for (int i = 0; i < columns; i++) {
@@ -103,7 +81,7 @@ public final class WorkingSet {
     /// outside a read: the metadata tools and the dictionaries a filter parses to prune row
     /// groups.
     public static Column standalone(ColumnSchema schema) {
-        return new WorkingSet(1, null).column(0, schema);
+        return new WorkingSet(1).column(0, schema);
     }
 
     /// The handle through which the decoded column at `index` charges its dictionaries and
@@ -149,65 +127,6 @@ public final class WorkingSet {
         }
     }
 
-    /// What [#admit] came to: the task admitted, with the admission to hand to [#taskEnded] when
-    /// its buffers are released ([#OWN_TASK], the bytes charged to the read-ahead buffer, or `0`),
-    /// or refused, with what it waits for: a task ending or read-ahead released after it was
-    /// refused, met at once if one has. A refused task always has one to wait for: it was refused
-    /// only while the read's own task ran.
-    ///
-    /// @param admission the admission of an admitted task
-    /// @param refused what a refused task waits for, `null` for an admitted one
-    public record Admission(long admission, Need refused) {
-
-        private static final Admission UNCHARGED = new Admission(0, null);
-
-        public boolean admitted() {
-            return refused == null;
-        }
-    }
-
-    /// Admits a task of the read whose buffers take `bytes`, to start now: at once, uncharged, if
-    /// they are within the retention size ([DecodeBuffers#RETAINED_BYTES]) or the task runs
-    /// outside a read; as the read's one task while no other larger one runs; beside it while
-    /// they fit the context's read-ahead buffer, which they are charged to.
-    public Admission admit(long bytes) {
-        long seen = readAhead == null ? 0 : readAhead.releases();
-        long admission = admitTask(bytes);
-        if (admission == REFUSED) {
-            return new Admission(0, readAhead.releaseAfter(seen));
-        }
-        return admission == 0 ? Admission.UNCHARGED : new Admission(admission, null);
-    }
-
-    /// The admission of a task whose buffers take `bytes` ([#admit]), or [#REFUSED].
-    private long admitTask(long bytes) {
-        if (readAhead == null || bytes <= DecodeBuffers.RETAINED_BYTES) {
-            return 0;
-        }
-        if (ownTask.compareAndSet(false, true)) {
-            return OWN_TASK;
-        }
-        return readAhead.tryCharge(bytes) ? bytes : REFUSED;
-    }
-
-    /// Releases what [#admit] admitted a task under, which runs what waits for a task to end.
-    public void taskEnded(long admission) {
-        if (admission == OWN_TASK) {
-            ownTask.set(false);
-            readAhead.wake();
-        }
-        else if (admission > 0) {
-            readAhead.release(admission);
-        }
-    }
-
-    /// Drops `retry` if it still waits for a task to end.
-    public void cancelWait(Runnable retry) {
-        if (readAhead != null) {
-            readAhead.cancel(retry);
-        }
-    }
-
     /// Raises `slots`' entry at `slot` to `bytes` if it is lower, and returns by how much.
     private static long raise(AtomicLongArray slots, int slot, long bytes) {
         long previous;
@@ -219,19 +138,6 @@ public final class WorkingSet {
         }
         while (!slots.compareAndSet(slot, previous, bytes));
         return bytes - previous;
-    }
-
-    /// Reads and parses a dictionary page for [Column#parseDictionary].
-    @FunctionalInterface
-    public interface DictionaryRead {
-
-        /// The dictionary.
-        Dictionary read() throws IOException;
-    }
-
-    /// What [Column#parseDictionary] came to: the dictionary parsed, or, with no dictionary, what
-    /// the parse waits for.
-    public record DictionaryParse(Dictionary dictionary, Need pending) {
     }
 
     /// One decoded column of a [WorkingSet].
@@ -250,27 +156,6 @@ public final class WorkingSet {
             this.index = index;
             this.schema = schema;
         }
-
-        /// Reads and parses a dictionary page whose header declares `uncompressedSize` bytes, once
-        /// its parse is admitted beside the read's other tasks ([WorkingSet#admit]), and
-        /// releases the admission when `read` returns. `read` parses the page, whose bytes the
-        /// caller has read.
-        ///
-        /// @return the dictionary `read` returned, or what the parse waits for: a task of the read
-        ///         ending
-        public DictionaryParse parseDictionary(int uncompressedSize, DictionaryRead read) throws IOException {
-            Admission admitted = set.admit(uncompressedSize);
-            if (!admitted.admitted()) {
-                return new DictionaryParse(null, admitted.refused());
-            }
-            try {
-                return new DictionaryParse(read.read(), null);
-            }
-            finally {
-                set.taskEnded(admitted.admission());
-            }
-        }
-
 
         /// Charges a dictionary page before it is decompressed and parsed: the entries the column
         /// holds, as many bytes as the page plus an offset per entry for a binary column, beside
@@ -360,10 +245,7 @@ public final class WorkingSet {
         }
 
         private static boolean isNumeric(PhysicalType type) {
-            return switch (type) {
-                case BOOLEAN, INT32, INT64, FLOAT, DOUBLE -> true;
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
-            };
+            return !BinaryBatchValues.holds(type);
         }
 
         /// The bytes a batch holds per value: the value's own for a numeric column; for a binary

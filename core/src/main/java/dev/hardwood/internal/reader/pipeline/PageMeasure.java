@@ -34,7 +34,7 @@ import dev.hardwood.reader.ParquetReadException;
 ///
 /// The record starts and the byte prefix live in the page's own [PageDecoder.LevelScratch], which
 /// the page keeps until its segments are filled.
-final class PageMeasure {
+public final class PageMeasure {
 
     private final int values;
     private final int records;

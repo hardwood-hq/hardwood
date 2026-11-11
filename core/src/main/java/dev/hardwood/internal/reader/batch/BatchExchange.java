@@ -21,9 +21,9 @@ import dev.hardwood.jfr.BatchWaitEvent;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
-/// Exchange buffer between a [dev.hardwood.internal.reader.pipeline.DecodedColumn]'s decode jobs
-/// and the consumer. The column publishes without waiting ([#tryPublish]); a batch that finds no
-/// room waits in the column until the consumer's next take ([#setRoomListener]).
+/// Exchange buffer between a decoded column's jobs and the consumer. The column publishes without
+/// waiting ([#tryPublish]); a batch that finds no room waits in the column until the consumer's
+/// next take ([#setRoomListener]).
 ///
 /// Two modes are available:
 ///
@@ -483,8 +483,7 @@ public class BatchExchange<B> {
     /// Call this after detecting a finished/null batch to surface pipeline errors.
     ///
     /// An [IOException], a `RuntimeException` and an [Error] are all rethrown as they stand.
-    /// [dev.hardwood.internal.reader.pipeline.DecodedColumn] has already said what a failure
-    /// means by the time it reaches here — a decode failure is a `ParquetReadException`, a fetch
+    /// The read has already said what a failure means by the time it reaches here — a decode failure is a `ParquetReadException`, a fetch
     /// failure the `IOException` it was — and an `Error` is neither the file's fault nor something
     /// a caller retries. Relabelling any of them would undo that one frame below the reader, and an
     /// `OutOfMemoryError` reported as a `RuntimeException` is catchable by handlers that must never

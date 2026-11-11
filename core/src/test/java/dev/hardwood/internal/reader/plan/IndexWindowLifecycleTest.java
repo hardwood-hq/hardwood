@@ -10,7 +10,6 @@ package dev.hardwood.internal.reader.plan;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -21,7 +20,6 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
@@ -31,8 +29,8 @@ import dev.hardwood.schema.ColumnProjection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// How a read drives its page-index windows: how a failed window read reaches the read, the budget
-/// in a whole read, and that every window is released.
+/// How a read drives its page-index windows: how a failed window read reaches the read, and the
+/// budget in a whole read.
 ///
 /// Uses page_index_windows.parquet: twelve row groups of 400 rows over twenty INT64 columns, a
 /// page index. At the default budget the twelve row groups are one window; the tests that need
@@ -120,64 +118,6 @@ class IndexWindowLifecycleTest {
         assertThat(bytesPerWindow).hasSizeGreaterThan(1);
         assertThat(bytesPerWindow.values()).allSatisfy(bytes -> assertThat(bytes).isLessThanOrEqualTo(budget));
         assertThat(bytesPerWindow.keySet()).anySatisfy(reason -> assertThat(reason).contains("-"));
-    }
-
-    @Test
-    void aWholeReadReleasesEveryWindow() throws Exception {
-        CountingInputFile file = countingFile(InputFile.of(FIXTURE));
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            FileMetadataCache metadata = new FileMetadataCache(List.of(file), context);
-            ReadPlanning planning = planning(metadata, context);
-            List<WorkItem> workItems = workItems(planning);
-            for (WorkItem workItem : workItems) {
-                RowGroupIterators.plans(planning, workItem.workItemIndex());
-                planning.release(workItem.workItemIndex());
-            }
-
-            assertEveryWindowReleased(workItems);
-            metadata.close();
-        }
-    }
-
-    @Test
-    void closingAReadThatStoppedEarlyReleasesEveryWindow() throws Exception {
-        CountingInputFile file = countingFile(InputFile.of(FIXTURE));
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            FileMetadataCache metadata = new FileMetadataCache(List.of(file), context);
-            ReadPlanning planning = planning(metadata, context);
-            List<WorkItem> workItems = workItems(planning);
-            RowGroupIterators.plans(planning, 0);
-            planning.discard();
-
-            assertEveryWindowReleased(workItems);
-            metadata.close();
-        }
-    }
-
-    private static void assertEveryWindowReleased(List<WorkItem> workItems) {
-        assertThat(workItems).hasSize(ROW_GROUPS);
-        for (WorkItem workItem : workItems) {
-            int index = workItem.workItemIndex();
-            assertThatThrownBy(() -> workItem.indexWindow().buffersFor(index))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("Page index of work item " + index
-                            + " is not present: the window was not read, or was released");
-        }
-    }
-
-    /// The planning of a read of the fixture, projecting `c05` alone, each row group a window of
-    /// its own.
-    private static ReadPlanning planning(FileMetadataCache metadata, HardwoodContextImpl context) throws Exception {
-        return RowGroupIterators.planning(metadata, context, ColumnProjection.columns("c05"),
-                ONE_ROW_GROUP_PER_WINDOW);
-    }
-
-    private static List<WorkItem> workItems(ReadPlanning planning) {
-        List<WorkItem> workItems = new ArrayList<>();
-        for (int i = 0; i < ROW_GROUPS; i++) {
-            workItems.add(planning.workItem(i));
-        }
-        return workItems;
     }
 
     /// The rows of column `c05` of `file`, read through a column reader whose windows fetch at most

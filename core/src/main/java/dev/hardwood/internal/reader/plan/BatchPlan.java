@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.plan;
 
 import java.util.List;
 
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.schema.ColumnSchema;
 
 /// The batch boundaries of one read, decided once for every decoded column.
@@ -91,12 +92,8 @@ public final class BatchPlan {
     /// @param columns every column the read decodes, predicate columns included
     public static boolean endsBatchesAtRowGroupBoundaries(List<ColumnSchema> columns) {
         for (ColumnSchema column : columns) {
-            switch (column.type()) {
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
-                    return true;
-                }
-                case INT32, INT64, FLOAT, DOUBLE, BOOLEAN -> {
-                }
+            if (BinaryBatchValues.holds(column.type())) {
+                return true;
             }
         }
         return false;

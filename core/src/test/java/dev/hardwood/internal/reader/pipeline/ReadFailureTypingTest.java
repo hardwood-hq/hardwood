@@ -12,6 +12,7 @@ import java.io.UncheckedIOException;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.reader.ParquetReadException;
@@ -26,13 +27,11 @@ class ReadFailureTypingTest {
 
     @Test
     void transportFailuresPassThroughUnchanged() {
-        // Neither is the file's fault, and an UncheckedIOException is a RuntimeException only
-        // because a fetch failure has to cross a task boundary.
-        IOException io = new IOException("connection reset");
-        UncheckedIOException unchecked = new UncheckedIOException(io);
+        // Not the file's fault: an UncheckedIOException is a RuntimeException only because a
+        // fetch failure has to cross a task boundary
+        UncheckedIOException unchecked = new UncheckedIOException(new IOException("connection reset"));
 
-        assertThat(DecodedColumn.asReadFailure(io)).isSameAs(io);
-        assertThat(DecodedColumn.asReadFailure(unchecked)).isSameAs(unchecked);
+        assertThat(ExceptionContext.asReadFailure(unchecked)).isSameAs(unchecked);
     }
 
     /// A truncation is a read failure like any other, but its type is internal; it leaves
@@ -41,7 +40,7 @@ class ReadFailureTypingTest {
     void anInternalReadFailureLeavesAsAParquetReadException() {
         ThriftTruncatedException truncated = new ThriftTruncatedException("Unexpected EOF while reading varint");
 
-        Exception typed = DecodedColumn.asReadFailure(truncated);
+        Exception typed = ExceptionContext.asReadFailure(truncated);
 
         assertThat(typed).isExactlyInstanceOf(ParquetReadException.class)
                 .hasMessage("Unexpected EOF while reading varint")

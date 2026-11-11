@@ -126,7 +126,7 @@ public class RowGroupIndexBuffers {
     /// planned.
     ///
     /// @throws IllegalStateException if `bytes` does not hold a slice
-    static RowGroupIndexBuffers slice(RowGroup rowGroup, BitSet offsetIndexColumns,
+    public static RowGroupIndexBuffers slice(RowGroup rowGroup, BitSet offsetIndexColumns,
             BitSet columnIndexColumns, ByteSource bytes) throws IOException {
         List<ColumnChunk> chunks = rowGroup.columns();
         ColumnIndexBuffers[] result = new ColumnIndexBuffers[chunks.size()];

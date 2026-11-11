@@ -39,7 +39,6 @@ import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
-import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -530,25 +529,18 @@ class ZeroThreadContextTest {
         volatile Object outcome;
         volatile Throwable closeFailure;
 
-        /// Opens the read with F = 0, takes its first batch, arms the hold and starts the consumer,
-        /// and returns once a data read is held and the consumer waits for it.
+        /// Opens the read with the last file's data reads held, takes its first batch, from the first
+        /// file, and starts the consumer, and returns once a data read is held and the consumer
+        /// waits for it.
         static HeldRead start(HardwoodContextImpl context) throws Exception {
             HeldRead read = new HeldRead();
-            for (Path path : files) {
-                read.inputs.add(new HeldInputFile(InputFile.of(path), read));
+            for (int i = 0; i < files.size(); i++) {
+                read.inputs.add(new HeldInputFile(InputFile.of(files.get(i)), read, i == files.size() - 1));
             }
             read.reader = ParquetFileReader.openAll(List.copyOf(read.inputs), context);
-            // Without read-ahead past the next unit, so a data read is left to hold once armed: the
-            // fixtures are small enough to be fetched whole before the first batch otherwise
-            System.setProperty(RowGroupIterator.FETCH_AHEAD_BYTES_PROPERTY, "0");
-            try {
-                read.columns = read.reader.buildColumnReaders(ColumnProjection.columns("v")).batchSize(100).build();
-            }
-            finally {
-                System.clearProperty(RowGroupIterator.FETCH_AHEAD_BYTES_PROPERTY);
-            }
-            assertThat(read.columns.nextBatch()).isTrue();
             read.armed.set(true);
+            read.columns = read.reader.buildColumnReaders(ColumnProjection.columns("v")).batchSize(100).build();
+            assertThat(read.columns.nextBatch()).isTrue();
             read.consumer = Thread.ofPlatform().start(() -> {
                 try {
                     while (read.columns.nextBatch()) {
@@ -602,15 +594,18 @@ class ZeroThreadContextTest {
     private static final class HeldInputFile extends CountingInputFile {
 
         private final HeldRead read;
+        /// whether its data reads are held once armed
+        private final boolean held;
 
-        HeldInputFile(InputFile delegate, HeldRead read) {
+        HeldInputFile(InputFile delegate, HeldRead read, boolean held) {
             super(delegate);
             this.read = read;
+            this.held = held;
         }
 
         @Override
         public ByteBuffer readRange(long offset, int length) throws IOException {
-            if (read.armed.get() && Thread.currentThread().isVirtual()
+            if (held && read.armed.get() && Thread.currentThread().isVirtual()
                     && FetchReason.current().contains(" col=")) {
                 read.held.countDown();
                 boolean interrupted = false;

@@ -506,21 +506,11 @@ public class ParquetFileReader implements Closeable {
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        // Initialize the read first, without a tail skip; the mask capability cached on its
-        // SharedRowGroupMetadata is what surfaces the gate decision, so the page-format check runs
-        // once per row group.
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
         RowGroupIterator iterator = trackedIterator();
-        iterator.initialize(schema, subset, ReadProjection.of(projectedSchema), null, true, 0, 0);
-        boolean fastSkip = (skip == 0) || iterator.canFastSkipAllRowGroups();
-        if (fastSkip && skip > 0) {
-            iterator.setTailSkip(skip);
-        }
+        iterator.initialize(schema, subset, ReadProjection.of(projectedSchema), null, true, 0, skip);
         RowReader reader = createRowReader(iterator, schema, ReadProjection.of(projectedSchema), null, 0, subset);
-        // Fallback: at least one projected column closes the per-page mask gate (a nested-v1
-        // column without an OffsetIndex). Decode every leading row and discard it to preserve
-        // cross-column row alignment.
-        return fastSkip ? reader : discardLeadingRows(reader, skip);
+        return discardLeadingRows(reader, iterator.leadingRows());
     }
 
     /// Resolves a user-facing predicate against the reference schema, or returns `null`
@@ -566,16 +556,11 @@ public class ParquetFileReader implements Closeable {
         RowGroupIterator iterator = trackedIterator();
         iterator.initialize(schema, firstFileRowGroups, readProjection, resolved, metadataFilteringEnabled, maxRows,
                 physicalSkip);
-        // Physical-skip residue: the read has seeked to the row group the offset lands in and
-        // exposes the leading rows of that group still to be dropped. The reader yields them
-        // (head(N) bounds *yielded* rows), so cap it at the residue-adjusted limit and then walk
-        // past the residue. Both are zero, and the discard a no-op, for non-skip reads and for the
-        // filtered (logical) skip path.
-        long firstRowGroupSkip = iterator.firstRowGroupSkip();
-        long readerMaxRows = maxRows == 0 ? 0 : Math.addExact(maxRows, firstRowGroupSkip);
-        RowReader reader = createRowReader(iterator, schema, readProjection, resolved, readerMaxRows,
-                firstFileRowGroups);
-        return discardLeadingRows(reader, firstRowGroupSkip);
+        // The rows before the skip's end in the row group it lands in, where the read cannot mask
+        // them out: the read returns them, counted against its limit, and the reader drops them.
+        // None for a read without a skip or with a filter, whose skip counts matching rows.
+        RowReader reader = createRowReader(iterator, schema, readProjection, resolved, maxRows, firstFileRowGroups);
+        return discardLeadingRows(reader, iterator.leadingRows());
     }
 
     /// Creates a [RowReader] over `iterator`'s read.
@@ -741,19 +726,13 @@ public class ParquetFileReader implements Closeable {
 
     /// A column read of `projection` driven by the [RowGroupIterator], filtered by `resolved` unless it
     /// is `null`. The batches are sized against the decoded columns: the predicate columns
-    /// allocate per-batch arrays too, so they count toward the byte budget. Where pruning leaves no
-    /// work item (statistics dropped every row group while planning, or bloom filters and
-    /// dictionaries drop each one the read reaches), the scan has no cursors and is exhausted from
-    /// the start; decided up to the first row group that survives, so a read that has one consults
-    /// and plans no further.
+    /// allocate per-batch arrays too, so they count toward the byte budget. Where pruning drops
+    /// every row group, the columns publish their end and the scan's first batch finds it.
     private ColumnRead openRead(ReadProjection projection, ResolvedPredicate resolved,
                                       List<RowGroup> rowGroups, NestedLevelComputer.Layers[] layers, int batchSize)
             throws IOException {
         RowGroupIterator iterator = trackedIterator();
         iterator.initialize(schema, rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled, 0, 0);
-        if (!iterator.hasLiveWorkItem()) {
-            return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), projection.payload(), layers);
-        }
         ProjectedSchema decoded = projection.decoded();
         ColumnScan scan = trackedChild(iterator, ColumnScan.open(iterator, fixedListFastPathEnabled, schema, layers,
                 projection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),

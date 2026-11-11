@@ -12,12 +12,8 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.internal.reader.plan.FetchPlanBuilder;
-import dev.hardwood.internal.reader.step.ByteSource;
-import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.reader.plan.RowGroupIterators;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -25,26 +21,20 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Exercises the fallback path for a nested column that has neither an
 /// OffsetIndex nor a `DATA_PAGE_V2` shape — the rep-level prefix lives
 /// inside the compressed area on a v1 page, so counting top-level records
-/// would require decompression. The row-group-wide gate closes, every
-/// `matchingRows` is promoted to `RowRanges.ALL`, and:
+/// would require decompression. The row-group-wide gate closes, every row
+/// group is read whole, and:
 ///
 /// - filter pushdown still produces correct rows via the row reader's
 ///   residual-filter pass over every undropped row group;
 /// - tail reading falls back to decode-and-discard of leading rows
 ///   instead of using per-page masks.
 ///
-/// The fixture is the only one in the suite that closes the gate, so it
-/// covers the dead-code-shaped branches (`MaskCapability.NO`, the
-/// `IllegalStateException` guard inside
-/// `SequentialFetchPlan.computeRecordsInPage`) that the other no-Page-Index
-/// fixtures cannot reach.
 class NestedV1NoIndexFallbackTest {
 
     private static final Path FIXTURE =
@@ -67,27 +57,11 @@ class NestedV1NoIndexFallbackTest {
 
     @Test
     void testMaskGateClosesForV1NestedColumn() throws Exception {
-        try (InputFile file = InputFile.of(FIXTURE)) {
-            file.open();
-            FileMetaData meta = ParquetMetadataReader.readMetadata(file);
-            RowGroup rg = meta.rowGroups().get(0);
-
-            FileSchema schema = FileSchema.fromSchemaElements(meta.schema());
-            ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
-            boolean applicable = FetchPlanBuilder.masksApplicableForRowGroup(
-                    projected, rg, schema,
-                    FileColumnOrdinals.identity(schema.getColumnCount(), null, BoundsReadability.ALL),
-                    ByteSource.of(file)).get();
-
-            // Gate must be closed: a nested column without an OffsetIndex
-            // and with v1 pages can't be record-counted without
-            // decompression. If this ever returns true on this fixture, the
-            // probe is no longer detecting v1 pages and the
-            // skip-without-decompress optimisation has been silently broken.
-            assertThat(applicable)
-                    .as("mask gate must close on nested-v1-no-index fixture")
-                    .isFalse();
-        }
+        // A nested column without an OffsetIndex closes the gate: its pages cannot be masked
+        // without their records counted, so the row group is read whole and filtered per record
+        assertThat(RowGroupIterators.masksLeadingRows(InputFile.of(FIXTURE), ColumnProjection.all()))
+                .as("mask gate must close on nested-v1-no-index fixture")
+                .isFalse();
     }
 
     @Test

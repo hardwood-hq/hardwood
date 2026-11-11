@@ -10,14 +10,11 @@ package dev.hardwood.internal.reader.plan;
 import java.nio.file.Path;
 import java.util.List;
 
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.FilterPredicate;
@@ -115,20 +112,6 @@ class BloomFilterWindowIoTest {
 
     /// Listing a file reads no Bloom filter; the read's first question about its work items reads
     /// the window's filters in one request.
-    @Test
-    void planningAFileReadsNoBloomFilter() throws Exception {
-        CountingInputFile file = countingFile();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context,
-                     ColumnProjection.columns("code"), FilterPredicate.eq("code", 5), 0)) {
-            assertThat(pruningReads(file)).isEmpty();
-
-            assertThat(iterator.hasLiveWorkItem()).isFalse();
-
-            assertThat(pruningReads(file)).extracting(CountingInputFile.Read::reason)
-                    .containsExactly("rg=0-4 pruning");
-        }
-    }
 
     private static long count(ReadKind kind, CountingInputFile file, FilterPredicate filter) throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(file)) {

@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader.plan;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
@@ -149,20 +150,11 @@ public final class BatchSizing {
     private static int binaryValueRows(ProjectedSchema projectedSchema, double[] valuesPerRow) {
         long rows = MAX_BATCH;
         for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {
-            if (isBinary(projectedSchema.getProjectedColumn(i))) {
+            if (BinaryBatchValues.holds(projectedSchema.getProjectedColumn(i).type())) {
                 rows = Math.min(rows, (long) (MAX_BATCH / fanout(valuesPerRow, i)));
             }
         }
         return (int) Math.max(1, rows);
-    }
-
-    /// Whether `ColumnReader.getBinaries()` reads the column, building a reference array of its
-    /// values.
-    private static boolean isBinary(ColumnSchema column) {
-        return switch (column.type()) {
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> true;
-            case BOOLEAN, INT32, INT64, FLOAT, DOUBLE -> false;
-        };
     }
 
     /// Returns projected column `i`'s list fan-out, falling back to `1.0` for a `null` or short

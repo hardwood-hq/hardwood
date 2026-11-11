@@ -12,15 +12,12 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
-import dev.hardwood.internal.reader.step.Need;
-
-/// The memory a context's reads hold by choice rather than because a file forces it, R: the buffers
-/// of a read's tasks decoding beside the one its working set counts ([WorkingSet#admit]), the
-/// speculative requests of a read ([dev.hardwood.internal.reader.engine.RowGroupIterator]), and
-/// the footers a multi-file read reads for the files past the next one, each charged the tail it
-/// reads until the read is done with the file.
+/// The memory a context's reads hold by choice rather than because a file forces it, R: the
+/// requests a read ([dev.hardwood.internal.reader.engine.RowGroupIterator]) starts ahead of its
+/// consumer, and the footers a multi-file read reads ahead, each charged the tail it reads until
+/// the read is done with the file.
 ///
-/// Such a task, request or footer read starts only while it fits; one that does not fit is
+/// Such a request or footer read starts only while it fits; one that does not fit is
 /// not started and is considered again on a later release, whose waiters run in registration order.
 /// Nothing waits for the buffer, so the reads of a context can share it: a read's own task, its
 /// demanded requests, its next unit and its next file are never charged here, and every
@@ -86,15 +83,14 @@ public final class ReadAheadBuffer {
         wake();
     }
 
-    /// Runs what waited for a release: a read's own task ended, which lets one of its tasks start
-    /// without the buffer, or room was released, which lets a deferred task, footer read or span of
-    /// any read start. A waiter runs on the releasing thread, so it takes no lock it could wait for.
+    /// Runs what waited for a release: room was released, which lets a deferred job of any read
+    /// start. A waiter runs on the releasing thread, so it takes no lock it could wait for.
     ///
     /// Runs the waiters registered before it only, every one of them even where one throws, and
     /// then rethrows the first failure. A waiter that finds no room again registers
     /// for the next release; were it run by this one too, it would retry for as long as it found
     /// no room.
-    void wake() {
+    private void wake() {
         releases.incrementAndGet();
         List<Runnable> woken = new ArrayList<>();
         Runnable waiter;
@@ -131,12 +127,6 @@ public final class ReadAheadBuffer {
         if (releases.get() != releasesSeen && waiters.remove(resume)) {
             resume.run();
         }
-    }
-
-    /// The next release after the one `releasesSeen` counted, as a [Need]: met on the thread
-    /// releasing, or at once on the caller's if one has come since ([#whenReleased]).
-    Need releaseAfter(long releasesSeen) {
-        return resume -> whenReleased(releasesSeen, resume);
     }
 
     /// Drops `resume` if it still waits, so that a waiter its owner no longer needs, such as one

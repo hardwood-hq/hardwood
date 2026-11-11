@@ -17,8 +17,6 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.TestDecodeBuffers;
-import dev.hardwood.internal.reader.fetch.PageWalks;
-import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -103,11 +101,7 @@ class FixedSizeListEngagementTest {
             PageDecoder.LevelScratch scratch = new PageDecoder.LevelScratch();
 
             for (RowGroup rowGroup : reader.getFileMetaData().rowGroups()) {
-                SequentialFetchPlan plan = SequentialFetchPlan.build(
-                        inputFile, columnSchema, rowGroup.columns().get(leaf), context, 0, inputFile.name(), 0);
-                PageWalks.Pages pages = PageWalks.of(plan);
-                while (pages.hasNext()) {
-                    PageInfo pageInfo = pages.next();
+                for (PageInfo pageInfo : ChunkPages.of(inputFile, columnSchema, rowGroup.columns().get(leaf), context)) {
                     PageDecoder decoder = new PageDecoder(
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), false);
@@ -150,10 +144,7 @@ class FixedSizeListEngagementTest {
             }
             ColumnChunk chunk = rowGroup.columns().get(leaf);
             ColumnSchema columnSchema = schema.getColumn(leaf);
-            SequentialFetchPlan plan = SequentialFetchPlan.build(
-                    inputFile, columnSchema, chunk, context, 0, inputFile.name(), 0);
-            PageWalks.Pages pages = PageWalks.of(plan);
-            PageInfo pageInfo = pages.next();
+            PageInfo pageInfo = ChunkPages.of(inputFile, columnSchema, chunk, context).getFirst();
             PageDecoder decoder = new PageDecoder(
                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
                     context.decompressorFactory(), fastPath);
@@ -180,11 +171,7 @@ class FixedSizeListEngagementTest {
             List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
             for (RowGroup rowGroup : rowGroups) {
                 ColumnChunk chunk = rowGroup.columns().get(leaf);
-                SequentialFetchPlan plan = SequentialFetchPlan.build(
-                        inputFile, columnSchema, chunk, context, 0, inputFile.name(), 0);
-                PageWalks.Pages pages = PageWalks.of(plan);
-                while (pages.hasNext()) {
-                    PageInfo pageInfo = pages.next();
+                for (PageInfo pageInfo : ChunkPages.of(inputFile, columnSchema, chunk, context)) {
                     PageDecoder decoder = new PageDecoder(
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), true);

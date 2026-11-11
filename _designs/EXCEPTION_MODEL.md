@@ -84,8 +84,8 @@ naming the variant, rather than a type of its own.
 
 **A method declares `IOException` only if it can reach a file.** Parsing a buffer and decoding
 a page cannot, so no `catch (IOException)` around them can turn a corrupt file into a failed
-read. Advancing a column's pages declares it (`PageWalk.advance`, which is not a
-`java.util.Iterator` for that reason): a walk raises the failure of a read it needs.
+read. Fetching a range declares it (`ReadRanges.read`): a fetch raises the failure of the read it
+makes, which the read places at the first row the fetch served.
 
 ## Error messages
 
@@ -119,9 +119,9 @@ passed to `computeIfAbsent`. Those are the only places an I/O failure is wrapped
 caller sees one. **A boundary counts when the language forbids the declaration, not when an
 interface we chose happens to.**
 
-A read's jobs (walk advances, decodes, planning, requests) meet at boundaries that catch
+A read's jobs (fetches, plans, scans, decodes) meet at boundaries that catch
 `Exception`, record where they were, and hand it to the consumer
-([READ_PIPELINE.md](READ_PIPELINE.md#error-propagation)). Whatever the decoders raise there,
+([READ_PIPELINE.md](READ_PIPELINE.md#failures)). Whatever the decoders raise there,
 other than an `UnsupportedOperationException`, becomes a `ParquetReadException` keeping the
 original as its cause: a judgement about which mistake to make, since otherwise every corrupt file raises
 an `ArrayIndexOutOfBoundsException` out of a reader. `ExceptionContext.asReadFailure` does

@@ -9,13 +9,9 @@ package dev.hardwood.internal.reader.decode;
 
 import java.nio.ByteBuffer;
 
-import dev.hardwood.internal.metadata.DataPageHeader;
-import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.reader.batch.Dictionary;
-import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.Encoding;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Page metadata and resolved data buffer.
@@ -25,17 +21,12 @@ import dev.hardwood.schema.ColumnSchema;
 /// no lazy I/O, no reference to the request it was sliced from. This keeps `PageInfo` a
 /// simple data holder.
 ///
-/// A `PageInfo` may also carry a **null-placeholder** marker, produced by
-/// [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] when inline page statistics prove that
-/// none of the page's rows can match the active filter predicate. In that mode [#dataPage()] is
+/// A `PageInfo` may also carry a **null-placeholder** marker, standing for a page whose inline
+/// statistics prove that none of its rows can match the active filter predicate
+/// ([dev.hardwood.internal.predicate.PageDropPredicates]). In that mode [#dataPage()] is
 /// `null`; [#isNullPlaceholder()] is `true`; and [#placeholderNumValues()] gives the number of rows
 /// the placeholder stands in for. Decoding short-circuits to an all-null typed page, preserving
 /// cross-column row alignment while skipping decompression and value decoding.
-///
-/// The [#BOUNDARY_MARKER] stands in for a whole row group of a column that is not read there
-/// ([dev.hardwood.internal.reader.fetch.SkippedColumnFetchPlan]). It carries no bytes, no metadata
-/// and no rows; the column places nothing for it and only closes the batch in progress where its
-/// siblings close theirs.
 ///
 /// The optional [#mask()] selects which records of the decoded page are kept.
 /// Defaults to [PageRowMask#ALL] (keep everything); the filter-pushdown path
@@ -51,10 +42,6 @@ public class PageInfo {
 
     /// [#records()] of a page whose records only its repetition levels give.
     public static final int UNKNOWN_RECORDS = -1;
-
-    /// The one page of a column that is not read in a row group. See
-    /// [dev.hardwood.internal.reader.fetch.SkippedColumnFetchPlan].
-    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL, 0);
 
     /// The page's bytes with its parsed header, `null` for a page without bytes.
     private final DataPage page;
@@ -141,18 +128,6 @@ public class PageInfo {
         return dictionary;
     }
 
-    /// The buffers the task decoding the page takes ([WorkingSet.Column#pageBuffers]): from the
-    /// header's sizes for a page with bytes, whatever value count it declares; from the values it
-    /// stands for for a null placeholder; `0` for a page without either, which no task decodes.
-    public long taskBytes() {
-        if (isNullPlaceholder()) {
-            return WorkingSet.Column.pageBuffers(columnSchema, placeholderNumValues, 0, Encoding.PLAIN);
-        }
-        // The decompressed bytes, which a page read where it lies does not take: the bound errs high
-        return page == null ? 0
-                : WorkingSet.Column.pageBuffers(columnSchema, declaredValues(), uncompressedSize(), encoding());
-    }
-
     public boolean isNullPlaceholder() {
         return placeholderNumValues > 0;
     }
@@ -162,11 +137,6 @@ public class PageInfo {
         return placeholderNumValues;
     }
 
-    /// Whether this is the [#BOUNDARY_MARKER].
-    public boolean isBoundaryMarker() {
-        return this == BOUNDARY_MARKER;
-    }
-
     /// Per-page row selection. [PageRowMask#ALL] when every row is kept;
     /// otherwise a tighter mask coming from filter pushdown.
     public PageRowMask mask() {
@@ -174,29 +144,8 @@ public class PageInfo {
     }
 
     /// The records the page contributes after its [#mask()], or [#UNKNOWN_RECORDS] for a column
-    /// with repetition. `0` for the [#BOUNDARY_MARKER].
+    /// with repetition.
     public int records() {
         return records;
-    }
-
-    /// The values the page's header declares; `0` for a page without bytes, or one that is no data
-    /// page, which its decode refuses.
-    public int declaredValues() {
-        DataPageHeader v1 = page != null ? page.header().dataPageHeader() : null;
-        DataPageHeaderV2 v2 = page != null ? page.header().dataPageHeaderV2() : null;
-        return v1 != null ? v1.numValues() : v2 != null ? v2.numValues() : 0;
-    }
-
-    /// The page's uncompressed size from its header; `0` for a page without bytes.
-    public int uncompressedSize() {
-        return page != null ? page.header().uncompressedPageSize() : 0;
-    }
-
-    /// The encoding of the page's values from its header; `PLAIN` for a page without bytes, or one
-    /// that is no data page.
-    public Encoding encoding() {
-        DataPageHeader v1 = page != null ? page.header().dataPageHeader() : null;
-        DataPageHeaderV2 v2 = page != null ? page.header().dataPageHeaderV2() : null;
-        return v1 != null ? v1.encoding() : v2 != null ? v2.encoding() : Encoding.PLAIN;
     }
 }

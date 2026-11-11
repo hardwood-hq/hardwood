@@ -86,12 +86,18 @@ public final class FileMetadataCache {
     /// Whether a [MetadataSource] supplied the footers rather than each being read from its file.
     /// It supplies every file's footer or none: [ParquetMetadataReader#readFooter] takes the footer
     /// from a source it is given and fails the file when the source returns none.
-    boolean footersSupplied() {
+    public boolean footersSupplied() {
         return metadataSource != ParquetMetadataReader.FROM_FILE;
     }
 
     public FileMetaData getFileMetaData(int fileIndex) throws IOException {
         return getFile(fileIndex).metaData();
+    }
+
+    /// The file `fileIndex` as its footer's load prepared it, holding its tail where the load took
+    /// it.
+    public InputFile preparedInputFile(int fileIndex) throws IOException {
+        return getFile(fileIndex).inputFile();
     }
 
     /// Gets a prepared file, loading it on the calling thread unless a load is registered, which
@@ -150,7 +156,7 @@ public final class FileMetadataCache {
     /// Drops the tail of `fileIndex` once its footer has been read ([HeldBytes#dropHeld]), and,
     /// but for the first file's, its footer once loaded, for a read that is done with the file or
     /// will not reach it.
-    void drop(int fileIndex) {
+    public void drop(int fileIndex) {
         Footer footer;
         synchronized (lifecycleLock) {
             footer = footers.get(fileIndex);
@@ -280,14 +286,14 @@ public final class FileMetadataCache {
     /// of a load that has completed; a load of another read or caller under way, `pending`, after
     /// which it asks again; or the load, claimed for the caller, which runs its read and parse as
     /// jobs of its own and completes it ([ClaimedLoad]). Exactly one is set.
-    record Claim(PreparedFile file, Throwable failure, CompletableFuture<?> pending, ClaimedLoad load) {
+    public record Claim(PreparedFile file, Throwable failure, CompletableFuture<?> pending, ClaimedLoad load) {
     }
 
     /// Claims the load of `fileIndex` for a read, unless a load of it has completed or is
     /// under way ([Claim]).
     ///
     /// @throws IllegalStateException if the cache is closed
-    Claim claim(int fileIndex) {
+    public Claim claim(int fileIndex) {
         Footer footer;
         synchronized (lifecycleLock) {
             if (closeStarted) {
@@ -315,7 +321,7 @@ public final class FileMetadataCache {
     /// thread unless the footer is read in place ([#readsInPlace()]), and its parse, a CPU job, which
     /// completes the file's entry for every read of the reader. The read runs them one after the
     /// other, never at once, and orders them through its lock.
-    final class ClaimedLoad {
+    public final class ClaimedLoad {
 
         private final int fileIndex;
         private final Footer footer;
@@ -328,14 +334,14 @@ public final class FileMetadataCache {
 
         /// Whether the read waits for nothing, so that the parse's job reads the footer too: the
         /// file's bytes are in memory.
-        boolean readsInPlace() {
+        public boolean readsInPlace() {
             return FileMetadataCache.this.readsInPlace(fileIndex);
         }
 
         /// Opens the file and reads its footer as far as I/O goes. Run again after a failure.
         ///
         /// @throws IOException the read's failure, naming the file
-        void read() throws IOException {
+        public void read() throws IOException {
             try {
                 opened = readFooter(inputFiles.get(fileIndex));
             }
@@ -348,7 +354,7 @@ public final class FileMetadataCache {
         /// file's entry with the prepared file or the failure.
         ///
         /// @throws IOException the load's failure, as [#getFile] raises it
-        PreparedFile parse() throws IOException {
+        public PreparedFile parse() throws IOException {
             try {
                 if (opened == null) {
                     read();
@@ -365,14 +371,14 @@ public final class FileMetadataCache {
         }
 
         /// Completes the file's entry with `failure`, the read's last.
-        void fail(Throwable failure) {
+        public void fail(Throwable failure) {
             footer.outcome.completeExceptionally(failure instanceof IOException io ? new UncheckedIOException(io) : failure);
         }
 
         /// Gives the load up as the read closes before completing it: the entry is
         /// dropped, so that the next request for the file loads it afresh, and a caller waiting
         /// for it asks again.
-        void abandon() {
+        public void abandon() {
             synchronized (lifecycleLock) {
                 if (footers.get(fileIndex) == footer) {
                     footers.remove(fileIndex);
@@ -425,14 +431,14 @@ public final class FileMetadataCache {
     ///
     /// @param boundsReadability which of the file's columns have `min` / `max` bounds
     ///        in an order this reader can read
-    record PreparedFile(
+    public record PreparedFile(
             InputFile inputFile,
             FileMetaData metaData,
             FileSchema schema,
             List<RowGroup> rowGroups,
             BoundsReadability boundsReadability
     ) {
-        PreparedFile {
+        public PreparedFile {
             Objects.requireNonNull(inputFile, "inputFile");
             Objects.requireNonNull(metaData, "metaData");
             Objects.requireNonNull(schema, "schema");

@@ -46,9 +46,8 @@ import dev.hardwood.writer.WriterConfig;
 /// referencing it. An ordinary file pays exactly the same setup cost and buries it under value
 /// decoding, so a scan of one is a test of whether the setup regressed, not a measurement of it.
 ///
-/// The fixture is written by Hardwood's own writer, which emits no page index — that is what puts
-/// the read on [dev.hardwood.internal.reader.fetch.SequentialFetchPlan] rather than the indexed
-/// plan — and which stamps a CRC on every page. The `dictionaryValues` sweep widens the dictionary
+/// The fixture is written by Hardwood's own writer, which emits no page index — so the read locates its
+/// pages by their headers rather than by an offset index — and which stamps a CRC on every page. The `dictionaryValues` sweep widens the dictionary
 /// the header describes and the checksum covers.
 ///
 /// The fixture is read into memory once and scanned from there, because the cost under test is

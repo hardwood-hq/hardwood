@@ -22,7 +22,7 @@ import dev.hardwood.internal.reader.decode.BinaryPageValues;
 /// its ids, and the empty views of its nulls; its values' views are built when a reader needs them.
 /// A segment of plain values writes its views and copies its bytes into chunks of its own
 /// ([PlainBytes]). Every value is written once.
-final class BinaryFill implements FlatFill.Run {
+public final class BinaryFill implements FlatFill.Run {
 
     private final BinaryPageValues values;
     private final FlatFill.ValidityWriter validity;
@@ -48,7 +48,7 @@ final class BinaryFill implements FlatFill.Run {
     /// Fills `segment` from `values` into the cell's batch `out`.
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
-    static void fill(Segment segment, BinaryPageValues values, BinaryBatchValues out, int maxDefinitionLevel) {
+    public static void fill(Segment segment, BinaryPageValues values, BinaryBatchValues out, int maxDefinitionLevel) {
         FlatFill.ValidityWriter validity = new FlatFill.ValidityWriter(segment, maxDefinitionLevel);
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         if (dictionary != null) {
@@ -88,7 +88,7 @@ final class BinaryFill implements FlatFill.Run {
 
     /// Finishes a completed cell's batch: in a batch with entry ids, the values of the segments
     /// that wrote none have none, and the ids are complete when every segment wrote them.
-    static void finish(Cell cell, BinaryBatchValues out, BinaryBatchValues.ViewDemand demand) {
+    public static void finish(Cell cell, BinaryBatchValues out, BinaryBatchValues.ViewDemand demand) {
         if (out.dictionary != null) {
             boolean complete = true;
             for (Segment segment : cell.segments()) {

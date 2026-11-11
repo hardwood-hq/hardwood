@@ -29,7 +29,6 @@ import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.RowGroupIterator;
-import dev.hardwood.internal.reader.step.CloseClaim;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.RowReader;
@@ -191,17 +190,6 @@ public final class NestedRowReader implements FileAwareRowReader {
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
         long readerMatchLimit = filter != null ? maxRows : FlatRowReader.UNLIMITED;
 
-        // No row group left once the leading row groups' bloom filters and dictionaries are
-        // probed: the reader starts no column and is exhausted from the start.
-        if (!iterator.hasLiveWorkItem()) {
-            @SuppressWarnings("unchecked")
-            BatchExchange<NestedBatch>[] none = new BatchExchange[0];
-            NestedRowReader reader = new NestedRowReader(none, schema,
-                    projection.payload(), dataView, readerMatchLimit, recordMatcher, predicateView, tally, iterator);
-            reader.exhausted = true;
-            return reader;
-        }
-
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
         // batch plan still takes it — it holds it only while statistics prove every row
         // of the row groups it reaches matches, and drops it at the first row group that
@@ -221,7 +209,7 @@ public final class NestedRowReader implements FileAwareRowReader {
             columnLayers.add(layers[originalIndex]);
         }
         iterator.start(decoded, columnLayers, NestedIndexMode.ALL_ITEMS, fixedListFastPathEnabled, batchSize,
-                budgetRows, maxRows, new ArrayList<>(Arrays.asList(buffers)), null);
+                budgetRows, new ArrayList<>(Arrays.asList(buffers)), null);
 
         NestedRowReader reader = new NestedRowReader(buffers, schema, projection.payload(), dataView,
                 readerMatchLimit, recordMatcher, predicateView, tally, iterator);

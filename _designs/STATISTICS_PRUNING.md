@@ -170,7 +170,7 @@ Readability is a property of the file that wrote the bounds. `BoundsReadability.
 
 The readability also records which unreadable columns have been reported. `claimReport` grants one report per column, so an opened file names each unreadable column once, however many row groups and pages its reads prune.
 
-`MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`FetchPlanBuilder` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` reads the remaining leaves as readable, under the column's `INT96` order where it has one ([INT96 and stored-byte comparisons](#int96-and-stored-byte-comparisons)). Untested.
+`MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`HeaderScanner` takes an empty list for it), and `PageDropPredicates.canDropPage` reads the remaining leaves as readable, under the column's `INT96` order where it has one ([INT96 and stored-byte comparisons](#int96-and-stored-byte-comparisons)). Untested.
 
 Whether an annotation names an order at all is `AnnotationKind.namesAnOrder`, a fact of the annotation's constant ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#annotation-model)); `AnnotationPairings.namesAnOrder`, which takes the file's `ColumnOrder` and the physical type too, decides the first and second conditions above together. Bounds readability here reads it, as do the writer's `StatisticsOrder.supportsBounds` and `FilterPredicateResolver`'s refusal of ordered operators. A column whose values have no order has no bounds worth recording or trusting, which is why one answer serves all three.
 
@@ -218,7 +218,7 @@ A file may declare `INT96_TIMESTAMP_ORDER` instead, which `BoundsReadability.int
 
 A pair whose own nanoseconds lie outside `[0, 1 day)` shows the promise broken and is discarded (`NANOS_OUTSIDE_A_DAY`), reported as any faulty pair is. A value inside the unit that breaks it cannot be seen from the bounds: such a file can lose rows the way a file whose `INT64` maximum sits below a value it holds does. Decoding stays lenient regardless: a value with nanoseconds past one day reads as the instant it encodes.
 
-Inline page statistics are decided by leaves numbered in the reference file's ordinals rather than the page's file's, so `FetchPlanBuilder` hands `SequentialFetchPlan` the column's order alone (`BoundsReadability.ofOneColumn`).
+Inline page statistics are decided by leaves numbered in the reference file's ordinals rather than the page's file's, so a chunk's scan (`HeaderScanner`) takes the column's order alone (`BoundsReadability.ofOneColumn`).
 
 On any other column a `STORED_BYTES` comparison reads no bounds and reports nothing, since it tests equality on raw bytes of a column whose bounds are in value order. Type-specific comparison rules are in [PREDICATE_MODEL.md](PREDICATE_MODEL.md#per-column-type).
 
@@ -301,7 +301,7 @@ Tests: `PageFilterEvaluatorTest`, `RowRangesTest`.
 
 ### Inline page statistics
 
-A column chunk with no offset index is read through `SequentialFetchPlan`, which walks page headers and can drop a page from the `Statistics` in its header. The offset index decides the path: a chunk that has one takes the column-index path, so a chunk with an offset index but no column index is pruned by neither its own column index nor its inline statistics.
+A column chunk with no offset index is read by a scan of its page headers (`HeaderScanner`), which can drop a page from the `Statistics` in its header (`PageDropPredicates.canDropPage`), reading it as nulls. The offset index decides the path: a chunk that has one takes the column-index path, so a chunk with an offset index but no column index is pruned by neither its own column index nor its inline statistics.
 
 - **Leaves.** `PageDropPredicates.byColumn` collects the AND-necessary leaves per column: it recurses into `AND`, skips every `OR` subtree, and keeps leaves. Falsifying such a leaf falsifies the predicate.
 - **Placeholders.** A dropped page is replaced by `PageInfo.nullPlaceholder` with the rows the page contributes (the masked count where a row mask applies), decoded as an all-null page. Sibling columns stay row-aligned and the per-row filter rejects the null rows. Hence only a leaf a null row fails may drop a page: `IS NULL` is never collected.

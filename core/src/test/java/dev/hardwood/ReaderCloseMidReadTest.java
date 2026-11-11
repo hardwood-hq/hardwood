@@ -42,9 +42,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// last job finishes. The cases differ in where the read comes to rest: [ColumnReaders] uses the
 /// detaching `BatchExchange` mode, whose ready queue is limited in rows, and [RowReader] the
 /// recycling mode, whose ready queue is limited in batch holders; a flat column places its pages
-/// as its walk hands them out ([dev.hardwood.internal.reader.pipeline.FlatColumn]), and a struct
-/// field's column places them once decoded and holds its pages not yet placed
-/// ([dev.hardwood.internal.reader.pipeline.NestedColumn]).
+/// as they are planned, and a struct field's column places them once decoded and holds its pages
+/// not yet placed.
 class ReaderCloseMidReadTest {
 
     /// Wide enough for the row-reader case to reproduce at all. Batch size there is
@@ -103,9 +102,8 @@ class ReaderCloseMidReadTest {
         }
     }
 
-    /// The nested row reader recycles its batch holders too, and its struct fields are
-    /// [dev.hardwood.internal.reader.pipeline.NestedColumn]s: they place their pages once decoded,
-    /// and hold their pages not yet placed.
+    /// The nested row reader recycles its batch holders too, and its struct fields are decoded
+    /// through levels: they place their pages once decoded, and hold their pages not yet placed.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void nestedRowReaderCloseMidFileReturns() throws Exception {
@@ -219,8 +217,7 @@ class ReaderCloseMidReadTest {
         return InMemoryFiles.toByteArray(out);
     }
 
-    /// A struct of `COLUMNS` required `INT64` fields, which a row read decodes through
-    /// [dev.hardwood.internal.reader.pipeline.NestedColumn]s.
+    /// A struct of `COLUMNS` required `INT64` fields, which a row read decodes through levels.
     private static byte[] writeSyntheticStructFile() throws Exception {
         FileSchema schema = FileSchema.builder("close_scaling_struct")
                 .struct(STRUCT, RepetitionType.REQUIRED, struct -> {

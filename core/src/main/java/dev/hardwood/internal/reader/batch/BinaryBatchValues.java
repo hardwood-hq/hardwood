@@ -17,6 +17,7 @@ import java.util.UUID;
 import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 
 /// Per-batch values slot for a varlength leaf (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`
@@ -49,6 +50,16 @@ public final class BinaryBatchValues {
     public static final int CHUNK_BYTES = 256 * 1024;
 
     private static final byte[] EMPTY = new byte[0];
+
+    /// Whether a leaf of `type` keeps its values in a batch's [BinaryBatchValues]: a
+    /// `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` leaf. Every other leaf keeps them in a
+    /// primitive array.
+    public static boolean holds(PhysicalType type) {
+        return switch (type) {
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> true;
+            case BOOLEAN, INT32, INT64, FLOAT, DOUBLE -> false;
+        };
+    }
 
     /// The buffers the views point into, `[0, bufferCount)` in use. Buffer `0` is empty in a batch
     /// being filled, for the views of nulls.
@@ -122,6 +133,11 @@ public final class BinaryBatchValues {
     /// The column's [ViewDemand], set while dictionary values may be deferred, so that building
     /// their views tells the column to stop deferring.
     ViewDemand viewDemand;
+
+    /// The column's [ViewDemand], `null` where the batch's dictionary values are not deferred.
+    public ViewDemand viewDemand() {
+        return viewDemand;
+    }
 
     /// Raised by the first reader that needs the views of deferred dictionary values. From then
     /// on the column builds views as it completes a cell, on the completing thread, so that only the

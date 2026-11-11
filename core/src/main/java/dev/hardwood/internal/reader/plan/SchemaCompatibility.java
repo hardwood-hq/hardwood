@@ -35,7 +35,7 @@ import dev.hardwood.schema.FileSchema;
 /// touches ([#validateReferenceColumns]), each later file's columns against it
 /// ([#validateSchemaCompatibility]), and each row group's chunk list against its file's schema
 /// ([ChunkPathCheck]).
-final class SchemaCompatibility {
+public final class SchemaCompatibility {
 
     private final FileSchema referenceSchema;
     /// Reference schema leaf ordinals this read touches: every projected column plus
@@ -47,7 +47,7 @@ final class SchemaCompatibility {
     /// name give rise to; such a column is matched in each file by its position among the path's.
     private final BitSet sharedPaths;
 
-    SchemaCompatibility(FileSchema referenceSchema, ProjectedSchema projected, ResolvedPredicate filter) {
+    public SchemaCompatibility(FileSchema referenceSchema, ProjectedSchema projected, ResolvedPredicate filter) {
         this.referenceSchema = referenceSchema;
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
         this.sharedPaths = sharedPaths(referenceSchema);
@@ -89,6 +89,20 @@ final class SchemaCompatibility {
         BareRepeatedGroups.refuseTouchedVariants(fileName, referenceSchema, touchedColumns);
     }
 
+    /// Validates a read of `file`, the first, without a filter as its planning does before any row
+    /// group is read: the touched columns' declarations ([#validateReferenceColumns]), then the
+    /// chunk paths of each of `rowGroups` ([ChunkPathCheck#verify]).
+    public static void validateFirstFile(InputFile file, FileSchema schema, ProjectedSchema projected,
+                                         List<RowGroup> rowGroups) {
+        SchemaCompatibility compatibility = new SchemaCompatibility(schema, projected, null);
+        compatibility.validateReferenceColumns(file.name());
+        ChunkPathCheck paths = compatibility.chunkPathCheck(schema,
+                FileColumnOrdinals.identity(schema.getColumnCount(), null, null));
+        for (int i = 0; i < rowGroups.size(); i++) {
+            paths.verify(rowGroups.get(i), i, file);
+        }
+    }
+
     /// The reference leaf ordinals a read with this projection and filter touches.
     private static BitSet touchedColumns(ProjectedSchema projected, ResolvedPredicate filter,
                                          int referenceColumnCount) {
@@ -111,7 +125,7 @@ final class SchemaCompatibility {
     /// @return this file's leaf ordinal per reference leaf ordinal, `-1` where unresolved
     /// @throws SchemaIncompatibleException if a touched column is missing or its leaf
     ///         differs in a way that changes how its pages decode
-    int[] validateSchemaCompatibility(InputFile inputFile, FileSchema fileSchema) {
+    public int[] validateSchemaCompatibility(InputFile inputFile, FileSchema fileSchema) {
         int referenceColumnCount = referenceSchema.getColumnCount();
         int[] fileOrdinals = new int[referenceColumnCount];
         Arrays.fill(fileOrdinals, -1);
@@ -223,7 +237,7 @@ final class SchemaCompatibility {
 
         // The leaf's own repetition type matching does not imply its ancestors' do,
         // and both levels are read from the per-file leaf when a page is decoded but
-        // from the reference leaf when records are assembled from it (DecodedColumn).
+        // from the reference leaf when records are assembled from it.
         // The same leaf path under an optional rather than a required ancestor group
         // misreads nulls; under a repeated rather than a non-repeated one it misreads
         // record boundaries.
@@ -257,7 +271,7 @@ final class SchemaCompatibility {
     ///
     /// @param fileOrdinals this file's leaf ordinal per touched column
     /// @param schemaPaths the schema path each of those ordinals was resolved from
-    record ChunkPathCheck(int[] fileOrdinals, FieldPath[] schemaPaths) {
+    public record ChunkPathCheck(int[] fileOrdinals, FieldPath[] schemaPaths) {
 
         /// Asserts that the column chunk found at a touched leaf's ordinal is the
         /// chunk for that leaf, by comparing the chunk's own `path_in_schema`
@@ -271,7 +285,7 @@ final class SchemaCompatibility {
         /// are left to the type checks alone.
         ///
         /// @throws SchemaIncompatibleException if a chunk disagrees with the schema
-        void verify(RowGroup rowGroup, int rowGroupIndex, InputFile inputFile) {
+        public void verify(RowGroup rowGroup, int rowGroupIndex, InputFile inputFile) {
             List<ColumnChunk> chunks = rowGroup.columns();
             int chunkCount = chunks.size();
             for (int i = 0; i < fileOrdinals.length; i++) {
@@ -297,7 +311,7 @@ final class SchemaCompatibility {
     }
 
     /// Resolves the file-level side of the chunk-path cross-check for one file.
-    ChunkPathCheck chunkPathCheck(FileSchema fileSchema, FileColumnOrdinals columnOrdinals) {
+    public ChunkPathCheck chunkPathCheck(FileSchema fileSchema, FileColumnOrdinals columnOrdinals) {
         int touchedCount = touchedColumns.cardinality();
         int[] fileOrdinals = new int[touchedCount];
         FieldPath[] schemaPaths = new FieldPath[touchedCount];

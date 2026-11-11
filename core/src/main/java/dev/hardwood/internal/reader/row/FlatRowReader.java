@@ -34,7 +34,6 @@ import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.RowGroupIterator;
 import dev.hardwood.internal.reader.plan.BatchSizing;
-import dev.hardwood.internal.reader.step.CloseClaim;
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
@@ -269,9 +268,7 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     /// Creates a [RowReader] over a read the [RowGroupIterator] drives: the read's flat columns publish
     /// into the reader's recycling exchanges and run its filter fragments, and the reader is
-    /// initialized. A read with no row group left once its leading row groups' bloom filters and
-    /// dictionaries are probed ([RowGroupIterator#hasLiveWorkItem]) starts no column and is exhausted from
-    /// the start. A filter is installed on whichever path can carry it — per batch by the batch
+    /// initialized. A filter is installed on whichever path can carry it — per batch by the batch
     /// matchers, per record otherwise — which is decided by the predicate's shape alone, never by
     /// what a file holds.
     ///
@@ -338,15 +335,6 @@ public final class FlatRowReader implements FileAwareRowReader {
         // boundaries as it loads batches.
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
 
-        if (!iterator.hasLiveWorkItem()) {
-            @SuppressWarnings("unchecked")
-            BatchExchange<BatchExchange.Batch>[] none = new BatchExchange[0];
-            FlatRowReader reader = new FlatRowReader(none, schema, projection.payload(),
-                    structs, null, readerMatchLimit, recordMatcher, predicateView, tally, iterator);
-            reader.exhausted = true;
-            return reader;
-        }
-
         // Every column closes its batches where the read's batch plan does, so the columns
         // stay row-aligned. Under a filter the cap counts matching rows: the plan holds it
         // only while statistics prove every row of the row groups it reaches matches.
@@ -384,7 +372,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             buffers[i] = buffer;
         }
         List<NestedLevelComputer.Layers> flat = Collections.nCopies(buffers.length, null);
-        iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, batchSize, budgetRows, maxRows,
+        iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, batchSize, budgetRows,
                 new ArrayList<>(Arrays.asList(buffers)), columnFilters);
 
         // The merger *is* the batch-matcher path in the reader: present exactly when the

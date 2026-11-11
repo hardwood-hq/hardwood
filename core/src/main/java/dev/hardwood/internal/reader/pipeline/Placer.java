@@ -37,10 +37,10 @@ import dev.hardwood.reader.ParquetReadException;
 /// not thread-safe: the column calls it under the column lock, one page at a time in page order.
 ///
 /// @param <C> the cell type
-final class Placer<C> {
+public final class Placer<C> {
 
     /// What the placer's decisions act on.
-    interface Sink<C> {
+    public interface Sink<C> {
 
         /// Opens the cell of a batch whose first record is the read's row `firstRow`.
         ///
@@ -56,10 +56,6 @@ final class Placer<C> {
 
         /// Takes a cell that holds every record it will hold.
         void sealed(C cell);
-
-        /// Ends the read: the row cap or the end of the stream was reached, and every cell is
-        /// sealed.
-        void endRead();
     }
 
     private final Sink<C> sink;
@@ -75,11 +71,6 @@ final class Placer<C> {
     private int segmentRowsLeft;
     /// Records of the current row group placed so far.
     private long rowsPlaced;
-    /// Whether the column is not read in the current row group (a boundary marker stands for it).
-    private boolean rowGroupSkipped;
-    /// Whether the plan left a batch open across a row group the column is not read in. Only a
-    /// row group that closes that batch may follow with records.
-    private boolean openBatchSkipped;
     /// Whether a page with values has been placed in the current column chunk.
     private boolean chunkStarted;
     /// Whether the last page placed in the current column chunk keeps its last record, which the
@@ -92,21 +83,20 @@ final class Placer<C> {
     private boolean stopped;
 
     /// @param batchCapacity the read's batch capacity, which every row group's batches must have
-    Placer(Sink<C> sink, int batchCapacity) {
+    public Placer(Sink<C> sink, int batchCapacity) {
         this.sink = sink;
         this.batchCapacity = batchCapacity;
     }
 
     /// Places the next page of a column without repetition, whose kept records its metadata
-    /// gives, one value each: enters its row group if it starts one, then places its records. A
-    /// boundary marker places nothing.
+    /// gives, one value each: enters its row group if it starts one, then places its records.
     ///
     /// @return whether the column goes on
-    boolean place(PageTask page) {
+    public boolean place(PageTask page) {
         if (!enter(page)) {
             return false;
         }
-        return page.isBoundaryMarker() || placeRecords(page, page.records(), null);
+        return placeRecords(page, page.records(), null);
     }
 
     /// Places the next page of a column decoded through levels, from its measure: one record per
@@ -117,12 +107,9 @@ final class Placer<C> {
     /// @throws ParquetReadException if the page begins inside a record that its column chunk does
     ///         not start before it, that begins on a page the read skips, or that the previous
     ///         page's row mask drops
-    boolean place(PageTask page, PageMeasure measure, boolean repeated) {
+    public boolean place(PageTask page, PageMeasure measure, boolean repeated) {
         if (!enter(page)) {
             return false;
-        }
-        if (page.isBoundaryMarker()) {
-            return true;
         }
         return repeated ? placeRecordsWithRepetition(page, measure) : placeRecords(page, measure.records(), measure);
     }
@@ -136,11 +123,11 @@ final class Placer<C> {
             return true;
         }
         rowGroup = page.rowGroup;
-        return enterRowGroup(page.batches, page.isBoundaryMarker());
+        return enterRowGroup(page.batches);
     }
 
     /// Ends the stream of pages: checks the last row group, and ends the read.
-    void end() {
+    public void end() {
         if (!stopped && finishRowGroup()) {
             endRead();
         }
@@ -156,7 +143,7 @@ final class Placer<C> {
     /// @param failure the failure that ended the read
     /// @param column the column's path, for the shortfall's message
     /// @return the open cell, unsealed, if the column is short of the plan; `null` otherwise
-    C sealOpenCell(Throwable failure, String column) {
+    public C sealOpenCell(Throwable failure, String column) {
         if (stopped) {
             return null;
         }
@@ -175,8 +162,7 @@ final class Placer<C> {
     /// Whether the column placed every record the plan takes from its current row group.
     private boolean placedRowGroup() {
         BatchPlan.RowGroupBatches batches = rowGroupBatches;
-        return batches == null || rowGroupSkipped
-                || (segment >= batches.segmentCount() - 1 && segmentRowsLeft == 0);
+        return batches == null || segment >= batches.segmentCount() - 1 && segmentRowsLeft == 0;
     }
 
     private IllegalStateException shortOfPlan() {
@@ -188,22 +174,28 @@ final class Placer<C> {
     /// at a row the other columns read past, so the cell's partial batch is not published.
     ///
     /// @return the open cell, `null` if there is none
-    C abandonOpenCell() {
+    public C abandonOpenCell() {
         C cell = stopped ? null : openCell;
         openCell = null;
         stopped = true;
         return cell;
     }
 
+    /// Whether the column places nothing more: the read ended in it, or its placement was stopped
+    /// at a failure.
+    public boolean stopped() {
+        return stopped;
+    }
+
     /// The read's row the column's next record is at: the plan's rows before the current row
     /// group and the records placed in it, every planned record of a row group the column is not
     /// read in counted. `0` before the first page.
-    long nextRow() {
+    public long nextRow() {
         BatchPlan.RowGroupBatches batches = rowGroupBatches;
         if (batches == null) {
             return 0;
         }
-        return batches.readRowsBefore() + (rowGroupSkipped ? batches.plannedRows() : rowsPlaced);
+        return batches.readRowsBefore() + rowsPlaced;
     }
 
     /// Places `records` records of a column without repetition. Record `r` holds value
@@ -293,10 +285,7 @@ final class Placer<C> {
     /// Moves to the next row group's batches: checks the column placed every record the plan takes
     /// from the row group it leaves, seals a batch the plan closes at that row group's end or before
     /// the new row group, and takes the new row group's batches.
-    ///
-    /// @param skipped whether the column is not read in the row group (a boundary marker): it
-    ///        places no records there, and no consumer takes its batches for them
-    private boolean enterRowGroup(BatchPlan.RowGroupBatches batches, boolean skipped) {
+    private boolean enterRowGroup(BatchPlan.RowGroupBatches batches) {
         // A batch of a column with repetition that the row cap ends waits for its last record to
         // complete, which the first page past the cap shows.
         if (!finishRowGroup()) {
@@ -310,27 +299,12 @@ final class Placer<C> {
                     + batches.capacity() + ", the column's " + batchCapacity);
         }
         if (batches.closesOpenBatch()) {
-            openBatchSkipped = false;
             sealOpen();
         }
-        else if (skipped ? openCell != null : openBatchSkipped) {
-            throw new IllegalStateException("Batch plan mismatch: a batch spans a row group the column is not read in and one it is");
-        }
         rowGroupBatches = batches;
-        rowGroupSkipped = skipped;
         rowsPlaced = 0;
         chunkStarted = false;
         int segmentCount = batches.segmentCount();
-        if (skipped) {
-            segment = Math.max(0, segmentCount - 1);
-            segmentRowsLeft = 0;
-            openBatchSkipped = batches.lastOpen();
-            if (batches.endsRead()) {
-                endRead();
-                return false;
-            }
-            return true;
-        }
         segment = 0;
         segmentRowsLeft = segmentCount > 0 ? batches.segmentRows(0) : 0;
         return true;
@@ -341,7 +315,7 @@ final class Placer<C> {
     /// batch of a column with repetition waiting for its last record to complete.
     private boolean finishRowGroup() {
         BatchPlan.RowGroupBatches batches = rowGroupBatches;
-        if (batches == null || rowGroupSkipped) {
+        if (batches == null) {
             return true;
         }
         int last = batches.segmentCount() - 1;
@@ -400,6 +374,5 @@ final class Placer<C> {
     private void endRead() {
         sealOpen();
         stopped = true;
-        sink.endRead();
     }
 }

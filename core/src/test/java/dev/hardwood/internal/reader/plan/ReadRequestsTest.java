@@ -11,20 +11,19 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.UnaryOperator;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
-import dev.hardwood.internal.reader.fetch.PageWalks;
-import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.ColumnChunk;
@@ -38,7 +37,6 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -60,46 +58,61 @@ class ReadRequestsTest {
         System.clearProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
     }
 
-    /// A column without an offset index under a row limit holds its chunk's first part; the
-    /// rest is requested as the walk reaches it, a piece of at most S at a time, and no byte twice.
+    /// A row-limited read of a column without an OffsetIndex fetches its chunk's first part, sized
+    /// from the limit, and nothing of the rest it does not reach.
     @Test
-    void theRestOfAChunkARowLimitLeftOutIsRequestedAsTheWalkReachesIt() throws Exception {
+    void aRowLimitReadsTheFirstPartOfAChunkWithoutAnOffsetIndex() throws Exception {
         // About 4.8 MB of plain longs, above the size a row limit fetches whole
         int rows = 600_000;
-        byte[] bytes = FooterRewriter.withoutPageIndex(write(rows, rows, "a"));
         int maxSpan = 1024 * 1024;
         System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(maxSpan));
-        CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(bytes));
-        file.open();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
-            FileMetaData metaData = ParquetMetadataReader.readMetadata(file);
-            ColumnSchema column = FileSchema.fromSchemaElements(metaData.schema()).getColumn("a");
-            ColumnChunk chunk = metaData.rowGroups().getFirst().columns().getFirst();
-            int before = file.readCount();
-            PageWalks.Pages pages = PageWalks.of(SequentialFetchPlan.build(file, column, chunk, context, 0,
-                    file.name(), rows));
+        byte[] bytes = FooterRewriter.withoutPageIndex(write(rows, rows, "a"));
+        ColumnChunk chunk = chunks(bytes)[0];
 
-            pages.next();
-            assertThat(file.readCount() - before).as("requests for the first page").isEqualTo(1);
-            while (pages.hasNext()) {
-                pages.next();
-            }
+        List<CountingInputFile.Read> data = dataReads(bytes, chunk, 1_000);
 
-            List<CountingInputFile.Read> data = file.reads().subList(before, file.readCount()).stream()
-                    .sorted(Comparator.comparingLong(CountingInputFile.Read::offset)).toList();
-            long chunkLength = chunk.metaData().totalCompressedSize();
-            assertThat(data).hasSize(Math.toIntExact(Math.ceilDiv(chunkLength, maxSpan)));
-            assertThat(data).allSatisfy(read -> assertThat(read.length()).isLessThanOrEqualTo(maxSpan));
-            for (int i = 1; i < data.size(); i++) {
-                assertThat(data.get(i).offset()).as("each piece starts where the one before ends")
-                        .isEqualTo(data.get(i - 1).end());
-            }
-            assertThat(data.getLast().end()).isEqualTo(chunk.chunkStartOffset() + chunkLength);
-        }
+        assertThat(data).hasSize(1);
+        assertThat(data.getFirst().offset()).isEqualTo(chunk.chunkStartOffset());
+        assertThat(data.getFirst().length()).isLessThanOrEqualTo(maxSpan);
     }
 
-    /// Column chunks that overlap fail the read with a `ParquetReadException` naming the
-    /// column, before any data is requested.
+    /// A row-limited read that reaches past its chunk's first part fetches the rest as its scan
+    /// reaches it, a piece of at most S at a time, each starting where the one before ends, and no
+    /// byte twice.
+    @Test
+    void theRestOfAChunkIsFetchedAsTheScanReachesIt() throws Exception {
+        int rows = 600_000;
+        int maxSpan = 1024 * 1024;
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(maxSpan));
+        byte[] bytes = FooterRewriter.withoutPageIndex(write(rows, rows, "a"));
+        ColumnChunk chunk = chunks(bytes)[0];
+
+        List<CountingInputFile.Read> data = dataReads(bytes, chunk, rows - 1);
+
+        long chunkLength = chunk.metaData().totalCompressedSize();
+        assertThat(data).hasSize(Math.toIntExact(Math.ceilDiv(chunkLength, maxSpan)));
+        assertThat(data).allSatisfy(read -> assertThat(read.length()).isLessThanOrEqualTo(maxSpan));
+        for (int i = 1; i < data.size(); i++) {
+            assertThat(data.get(i).offset()).as("each piece starts where the one before ends")
+                    .isEqualTo(data.get(i - 1).end());
+        }
+        assertThat(data.getLast().end()).isEqualTo(chunk.chunkStartOffset() + chunkLength);
+    }
+
+    /// Pages larger than S in chunks without an OffsetIndex, each spanning several requests: a
+    /// request is keyed by where it lies in its chunk until the scan finds the page it holds, and
+    /// then by that page's row, so the requests of a page the consumer's next batch needs are
+    /// within its need however far into the chunk they lie.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aPageSpanningSeveralRequestsOfAChunkWithoutAnOffsetIndexIsRead() throws Exception {
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(128 * 1024));
+        byte[] bytes = FooterRewriter.withoutPageIndex(write(20 * 50_000, 50_000, "c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"));
+        CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(bytes));
+        file.open();
+        assertThat(readAll(file)).isEqualTo(20 * 50_000);
+    }
+
     @Test
     void overlappingColumnChunksAreRejected() throws Exception {
         byte[] bytes = write(ROWS_PER_ROW_GROUP, ROWS_PER_ROW_GROUP, "a", "b");
@@ -184,6 +197,26 @@ class ReadRequestsTest {
             }
         }
         return rows;
+    }
+
+    /// The reads of `chunk`'s bytes a read of the first `limit` rows of `bytes` makes, by offset.
+    private static List<CountingInputFile.Read> dataReads(byte[] bytes, ColumnChunk chunk, long limit)
+            throws Exception {
+        CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(bytes));
+        file.open();
+        long read = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                RowReader rows = reader.buildRowReader().head(limit).build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                read++;
+            }
+        }
+        assertThat(read).isEqualTo(limit);
+        long start = chunk.chunkStartOffset();
+        long end = start + chunk.metaData().totalCompressedSize();
+        return file.reads().stream().filter(r -> r.offset() >= start && r.offset() < end)
+                .sorted(Comparator.comparingLong(CountingInputFile.Read::offset)).toList();
     }
 
     private static ColumnChunk[] chunks(byte[] bytes) throws Exception {

@@ -14,13 +14,13 @@ import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 
-/// One page of a [DecodedColumn] on its way into batches: the page, where it came from, its place
+/// One page of a decoded column on its way into batches: the page, where it came from, its place
 /// in the read's row order, the decoder its job decodes it with, and the [Segment]s the column
 /// placed it as.
 ///
 /// The column creates and places it under the read's lock, and the read hands it to its job
 /// through the executor, which orders the column's writes before the job's reads.
-class PageTask {
+public class PageTask {
 
     final PageInfo info;
     /// The file, row group and page ordinal the page came from, which a failure met while
@@ -38,8 +38,8 @@ class PageTask {
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
 
-    PageTask(PageInfo info, String fileName, int rowGroup, int pageIndex, BatchPlan.RowGroupBatches batches,
-             PageDecoder decoder, long firstRow) {
+    public PageTask(PageInfo info, String fileName, int rowGroup, int pageIndex, BatchPlan.RowGroupBatches batches,
+                    PageDecoder decoder, long firstRow) {
         this.info = info;
         this.fileName = fileName;
         this.rowGroup = rowGroup;
@@ -49,10 +49,31 @@ class PageTask {
         this.firstRow = firstRow;
     }
 
-    /// Whether the page stands for a row group the column is not read in.
-    boolean isBoundaryMarker() {
-        return info.isBoundaryMarker();
+    public PageInfo info() {
+        return info;
     }
+
+    public String fileName() {
+        return fileName;
+    }
+
+    public int rowGroup() {
+        return rowGroup;
+    }
+
+    public int pageIndex() {
+        return pageIndex;
+    }
+
+    public PageDecoder decoder() {
+        return decoder;
+    }
+
+    /// The segments the page was placed as, in page order.
+    public List<Segment> segments() {
+        return segments;
+    }
+
 
     /// The records the page contributes after its mask.
     int records() {

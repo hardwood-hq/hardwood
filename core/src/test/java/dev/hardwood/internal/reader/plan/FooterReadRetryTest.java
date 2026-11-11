@@ -11,12 +11,10 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.CountingInputFile;
@@ -24,10 +22,11 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A footer read ahead of the read that fails is read again at once, as a data request that fails
-/// is, and once more as the read lists the file where it fails again: a transient failure ahead
-/// does not fail the read, which returns every row of every file.
+/// A footer read that fails is read again at once, as a data request that fails is: a transient
+/// failure does not fail the read. One that fails again fails the read at its file's first row, and
+/// the next read of the reader reads the footer again.
 class FooterReadRetryTest {
 
     private static final Path FIRST = Path.of("src/test/resources/multi_file_part0.parquet");
@@ -53,27 +52,34 @@ class FooterReadRetryTest {
         assertThat(third.failures.get()).isEqualTo(1);
     }
 
-    /// A footer read ahead that fails again on its second read gives up the read's claim, so the
-    /// file fails no other read of the reader, and is read once more as the read lists the file.
     @Test
-    @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void aFooterReadThatFailsTwiceAheadIsReadAgainOnceTheFileIsListed() throws Exception {
-        long expectedRows = rows(FIRST) + rows(SECOND) + rows(SECOND);
+    void aFooterReadThatFailsTwiceFailsTheReadAtItsFileAndIsReadAgainByTheNextRead() throws Exception {
+        long rowsBefore = rows(FIRST) + rows(SECOND);
         FailingReads third = new FailingReads(InputFile.of(SECOND), 2);
-        // the listing does not reach the third file before its footer failed twice ahead
-        HeldUntil second = new HeldUntil(InputFile.of(SECOND), third.failed);
 
-        long rows = 0;
         try (ParquetFileReader parquet = ParquetFileReader.openAll(List.of(
-                new CountingInputFile(InputFile.of(FIRST)), second, third));
-                RowReader reader = parquet.rowReader()) {
-            while (reader.hasNext()) {
-                reader.next();
-                rows++;
-            }
-        }
+                new CountingInputFile(InputFile.of(FIRST)), new CountingInputFile(InputFile.of(SECOND)), third))) {
+            AtomicLong returned = new AtomicLong();
+            assertThatThrownBy(() -> {
+                try (RowReader reader = parquet.rowReader()) {
+                    while (reader.hasNext()) {
+                        reader.next();
+                        returned.incrementAndGet();
+                    }
+                }
+            }).isInstanceOf(IOException.class)
+                    .hasMessage("[multi_file_part1.parquet] Failed to read metadata");
+            assertThat(returned).hasValue(rowsBefore);
 
-        assertThat(rows).isEqualTo(expectedRows);
+            returned.set(0);
+            try (RowReader reader = parquet.rowReader()) {
+                while (reader.hasNext()) {
+                    reader.next();
+                    returned.incrementAndGet();
+                }
+            }
+            assertThat(returned).hasValue(rowsBefore + rows(SECOND));
+        }
         assertThat(third.failures.get()).isEqualTo(2);
     }
 
@@ -84,11 +90,10 @@ class FooterReadRetryTest {
     }
 
     /// Fails its first `count` reads, as a backend does on a transient fault, and reads `delegate`
-    /// after; `failed` is counted down at the last failure.
+    /// after.
     private static final class FailingReads extends CountingInputFile {
 
         final AtomicInteger failures = new AtomicInteger();
-        final CountDownLatch failed = new CountDownLatch(1);
         private final int count;
 
         FailingReads(InputFile delegate, int count) {
@@ -100,37 +105,9 @@ class FooterReadRetryTest {
         public ByteBuffer readRange(long offset, int length) throws IOException {
             int failure = failures.incrementAndGet();
             if (failure <= count) {
-                if (failure == count) {
-                    failed.countDown();
-                }
                 throw new IOException("Connection reset");
             }
             failures.decrementAndGet();
-            return super.readRange(offset, length);
-        }
-    }
-
-    /// Holds every read of `delegate` until `released` is counted down.
-    private static final class HeldUntil extends CountingInputFile {
-
-        private final CountDownLatch released;
-
-        HeldUntil(InputFile delegate, CountDownLatch released) {
-            super(delegate);
-            this.released = released;
-        }
-
-        @Override
-        public ByteBuffer readRange(long offset, int length) throws IOException {
-            try {
-                if (!released.await(10, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("The read was not released");
-                }
-            }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException(e);
-            }
             return super.readRange(offset, length);
         }
     }

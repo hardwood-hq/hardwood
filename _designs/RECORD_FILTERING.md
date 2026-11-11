@@ -123,7 +123,7 @@ Tests: `BatchMatcherOracleTest`.
 
 `BatchMatchMerger` (`internal.reader.row`) combines the per-column bitmaps into one survivor bitmap per batch, once per batch. It has two modes, fixed at construction:
 
-- **Aliasing** (`FlatRowReader`): each `FlatColumn` runs its fragment into the batch's own `matches` array as the batch's cell completes, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
+- **Aliasing** (`FlatRowReader`): each flat column runs its fragment into the batch's own `matches` array as the batch's cell completes, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
 - **Owning** (`SelectionEngine`): the column readers' columns carry no fragment, so the merger runs the fragments itself into buffers it owns, on the consumer thread.
 
 A plan that is a single `MergePlan.Column` yields that column's bitmap directly; any other plan goes through `MergePlanEvaluator` into a combined buffer. The merger dereferences only the columns its plan references (`referencedColumns()`), so a caller that stages the batch array need keep only those entries current.
@@ -165,7 +165,7 @@ A column reads the flag of its own batch; a reader reads it from the first paylo
 
 | Consumer | Proven batch |
 |---|---|
-| `FlatColumn` with a fragment | Writes the all-ones mask instead of running the fragment |
+| A flat column with a fragment | Writes the all-ones mask instead of running the fragment |
 | `FlatRowReader`, no cap | Clears the active matcher and merger; the batch takes the plain cursor and is tallied whole |
 | `FlatRowReader` with `head(N)` | Batch matchers: use an all-ones survivor bitmap without merging. Per-row: counts every row as a match without calling the matcher |
 | `NestedRowReader` | As `FlatRowReader`'s per-row path |
@@ -185,17 +185,17 @@ A filter-only column serves only the predicate, and the predicate needs it only 
 | `MIGHT_MATCH` | read | read |
 | `ALWAYS_MATCHES` | read | not fetched, decompressed or decoded |
 
-`FetchPlanBuilder.skipsColumn` gives a column the `SkippedColumnFetchPlan` exactly when the work item carries `filterAlwaysMatches` and the column is filter-only. The plan holds no request, takes no part in coalescing the row group's needed ranges, and yields one `PageInfo.BOUNDARY_MARKER`: a page with no bytes and no rows. The column places the marker with no decode: the placement takes the row group's batches from the plan and places nothing. A proven row group never shares a batch with an undecided one, so the plan closes the column's undecided batch in progress before the marker's row group, where the payload columns close theirs, and the column stays aligned across a proven row group placed between undecided ones; a batch the plan continues from a skipped row group into a read one fails the read. No page of the column is scanned, so it emits no `RowGroupScanned` event for the row group.
+The planner leaves a column out of a row group (`PagePlanner.skips`) exactly when the row group carries `filterAlwaysMatches` and the column is filter-only. The column holds none of the row group's ranges, takes no part in coalescing its needed ranges, and has no page in it: its placement takes the row group's batches from the plan and places nothing. A proven row group never shares a batch with an undecided one, so the plan closes the column's undecided batch in progress before the marker's row group, where the payload columns close theirs, and the column stays aligned across a proven row group placed between undecided ones; a batch the plan continues from a skipped row group into a read one fails the read. No page of the column is scanned, so it emits no `RowGroupScanned` event for the row group.
 
 **Planning and polling must agree.** Every consumer takes a step's payload batches first and takes a batch from each filter-only column only when the step is not proven; otherwise the lockstep checks cover every column. The skip condition in `skipsColumn` is exactly this poll condition. If a filter-only column were read in a proven row group, it would publish batches no consumer takes, and the next undecided step would take them in place of its own. Nothing else, such as a page mask narrowing the payload columns in a proven row group or a row cap, may enter the skip decision, since the skipped column assembles no rows; a page mask changes how many rows the plan places in the payload columns' batches, which the skipped column holds none of. A `ColumnScan` filter-only cursor keeps its previous batch through a proven step, and nothing reads it. At the end of the stream every exchange is checked for errors, so a failure on a filter-only column surfaces. Untested.
 
-A filter-only column keeps its `FlatColumn` or `NestedColumn` and exchange for the whole read, since the decode set is fixed before the first row group is planned.
+A filter-only column keeps its exchange for the whole read, since the decode set is fixed before the first row group is planned.
 
 Tests: `FilterOnlyColumnSkipTest`.
 
 ### The row cap
 
-With a filter, `head(N)` caps matching rows. The batch plan holds the cap while every row group with kept rows is a proven one, where assembled rows and matching rows are the same rows, and drops it for the rest of the read at the first undecided row group; from there the reader counts matches. Where the cap falls inside a proven row group, the plan ends the read there: every payload column publishes its last batch and ends its stream, and a filter-only column, which reads a boundary marker for the row group, ends its stream too.
+With a filter, `head(N)` caps matching rows. The batch plan holds the cap while every row group with kept rows is a proven one, where assembled rows and matching rows are the same rows, and drops it for the rest of the read at the first undecided row group; from there the reader counts matches. Where the cap falls inside a proven row group, the plan ends the read there: every payload column publishes its last batch and ends its stream, and a filter-only column, which has no page in the row group, ends its stream too.
 
 Tests: `AlwaysMatchingRowGroupTest`, `BatchPlanTest`, `FilterOnlyColumnSkipTest`, `PredicatePushDownTest`.
 

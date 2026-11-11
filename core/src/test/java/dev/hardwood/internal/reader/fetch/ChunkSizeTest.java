@@ -12,7 +12,6 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -25,9 +24,10 @@ import dev.hardwood.schema.ColumnSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Unit tests for `SequentialFetchPlan.computeChunkSize`, focused on the
-/// "fetch the whole column when small enough" threshold introduced for #382.
-class SequentialFetchPlanChunkSizeTest {
+/// The first part of a column chunk without an OffsetIndex a read fetches
+/// ([CoalescingPolicy#computeChunkSize]), the whole column when it is small enough, and the length
+/// of a chunk this reader can address ([CoalescingPolicy#chunkLength]).
+class ChunkSizeTest {
 
     private static final int ONE_MIB = 1024 * 1024;
 
@@ -39,7 +39,7 @@ class SequentialFetchPlanChunkSizeTest {
         // size would clamp to the 1 MB floor; with #382 it returns the
         // full column length so the column is coalesce-safe.
         int columnLength = 2 * ONE_MIB;
-        int chunk = SequentialFetchPlan.computeChunkSize(
+        int chunk = CoalescingPolicy.computeChunkSize(
                 columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(columnLength);
@@ -49,7 +49,7 @@ class SequentialFetchPlanChunkSizeTest {
     void columnAtThresholdBoundaryFetchesEntireChunk() {
         // Exactly 4 MB sits at the threshold — included.
         int columnLength = 4 * ONE_MIB;
-        int chunk = SequentialFetchPlan.computeChunkSize(
+        int chunk = CoalescingPolicy.computeChunkSize(
                 columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(columnLength);
@@ -61,7 +61,7 @@ class SequentialFetchPlanChunkSizeTest {
         // so the per-column truncation keeps a 50+ MB column from
         // pulling its full bytes for a 30-row preview.
         int columnLength = 5 * ONE_MIB;
-        int chunk = SequentialFetchPlan.computeChunkSize(
+        int chunk = CoalescingPolicy.computeChunkSize(
                 columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(ONE_MIB);
@@ -77,7 +77,7 @@ class SequentialFetchPlanChunkSizeTest {
         // dynamic path so a regression that breaks the interpolation
         // is observable.
         int columnLength = 50 * ONE_MIB;
-        int chunk = SequentialFetchPlan.computeChunkSize(
+        int chunk = CoalescingPolicy.computeChunkSize(
                 columnLength, fakeMetaData(columnLength, 100), 10, 128 * ONE_MIB);
 
         assertThat(chunk)
@@ -91,7 +91,7 @@ class SequentialFetchPlanChunkSizeTest {
         // Without head(N), behavior is unchanged: full chunk size up to
         // the configured ceiling.
         int columnLength = 50 * ONE_MIB;
-        int chunk = SequentialFetchPlan.computeChunkSize(
+        int chunk = CoalescingPolicy.computeChunkSize(
                 columnLength, fakeMetaData(columnLength, 100_000), 0, 128 * ONE_MIB);
 
         // computeChunkSize returns the ceiling; the build() caller
@@ -130,7 +130,7 @@ class SequentialFetchPlanChunkSizeTest {
     void unparseableSpanOverrideIsRejected() {
         System.setProperty(MAX_SPAN_PROPERTY, "128k");
         try {
-            assertThatThrownBy(SequentialFetchPlanChunkSizeTest::chunkSizeWithoutRowLimit)
+            assertThatThrownBy(ChunkSizeTest::chunkSizeWithoutRowLimit)
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage(MAX_SPAN_PROPERTY + " must be a positive byte count, but was: 128k");
         }
@@ -148,21 +148,18 @@ class SequentialFetchPlanChunkSizeTest {
                 RepetitionType.REQUIRED, null, 0, 0, 0, null);
         ColumnChunk columnChunk = new ColumnChunk(fakeMetaData(columnLength, 100), null, null, null, null, null);
 
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
-            assertThatThrownBy(() -> SequentialFetchPlan.build(null, columnSchema, columnChunk, context,
-                    3, "f.parquet", 0))
-                    .isExactlyInstanceOf(UnsupportedOperationException.class)
-                    .hasMessage("[f.parquet: row group 3, column 'col'] Column chunk too large ("
-                            + columnLength + " bytes); the reader supports column chunks of up to "
-                            + Integer.MAX_VALUE + " bytes");
-        }
+        assertThatThrownBy(() -> CoalescingPolicy.chunkLength(columnChunk, 3, "f.parquet", columnSchema))
+                .isExactlyInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("[f.parquet: row group 3, column 'col'] Column chunk too large ("
+                        + columnLength + " bytes); the reader supports column chunks of up to "
+                        + Integer.MAX_VALUE + " bytes");
     }
 
     /// The size of the first part a read without a row limit fetches of a 64 MiB chunk, capped at
-    /// the span limit in effect, as a plan caps it.
+    /// the span limit in effect, as a read caps it.
     private static int chunkSizeWithoutRowLimit() {
         int maxSpan = CoalescingPolicy.maxSpanBytes();
-        return Math.min(maxSpan, SequentialFetchPlan.computeChunkSize(
+        return Math.min(maxSpan, CoalescingPolicy.computeChunkSize(
                 64 * ONE_MIB, fakeMetaData(64 * ONE_MIB, 1_000_000), 0, maxSpan));
     }
 

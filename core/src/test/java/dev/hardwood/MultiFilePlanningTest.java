@@ -99,7 +99,7 @@ class MultiFilePlanningTest {
         assertThat(touched(files))
                 .as("the first file alone covers head(5), so the other %d are never planned",
                         FILE_COUNT - 1)
-                .isLessThan(FILE_COUNT);
+                .isOne();
     }
 
     /// `id > 150` splits the first surviving row group, so from there on a scanned row

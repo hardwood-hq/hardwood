@@ -10,7 +10,11 @@ package dev.hardwood.internal.reader.fetch;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.memory.InternalProperty;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Decides whether two byte ranges a read needs are fetched as one request: when the gap between
 /// them is at most [#GAP_BYTES] (G) and the merged span at most [#maxSpanBytes()] (S). Every merge
@@ -31,6 +35,16 @@ public final class CoalescingPolicy {
     /// Largest request without the override, so that each `readRange()` stays bounded, enabling
     /// read-ahead to overlap decode and a read that stops early to leave the rest unfetched.
     private static final int DEFAULT_MAX_SPAN_BYTES = 128 * 1024 * 1024;
+
+    /// The least first part of a chunk a read under a row limit fetches, so that scanning its page
+    /// headers takes no round trip per page.
+    private static final int MAX_ROWS_CHUNK_FLOOR = 1024 * 1024;
+
+    /// How many times the bytes a row limit's rows take on average the first part covers.
+    private static final int MAX_ROWS_CHUNK_SAFETY_FACTOR = 2;
+
+    /// The chunk length up to which a read under a row limit fetches the whole chunk at once.
+    private static final int FETCH_WHOLE_COLUMN_THRESHOLD = 4 * MAX_ROWS_CHUNK_FLOOR;
 
     private CoalescingPolicy() {
     }
@@ -126,5 +140,55 @@ public final class CoalescingPolicy {
             }
         }
         return ranges;
+    }
+
+    /// The length of `columnChunk`.
+    ///
+    /// @throws UnsupportedOperationException if the chunk is longer than this reader can address
+    public static int chunkLength(ColumnChunk columnChunk, int rowGroupIndex, String fileName,
+                                  ColumnSchema columnSchema) {
+        long totalCompressedSize = columnChunk.metaData().totalCompressedSize();
+        if (totalCompressedSize > Integer.MAX_VALUE) {
+            // the file is correct; this reader does not fetch a region it cannot address with an int
+            throw new UnsupportedOperationException(ExceptionContext.readPrefix(fileName, rowGroupIndex,
+                    columnSchema.fieldPath().toString())
+                    + "Column chunk too large (" + totalCompressedSize
+                    + " bytes); the reader supports column chunks of up to " + Integer.MAX_VALUE + " bytes");
+        }
+        return Math.toIntExact(totalCompressedSize);
+    }
+
+    /// The size of the first part of a column chunk without an OffsetIndex a read under `maxRows`
+    /// fetches, the rest following on demand.
+    ///
+    /// Without `maxRows`, returns at least `maxSpan` (S), so the whole chunk is needed. With
+    /// `maxRows`, estimates the bytes required from the column's average compressed bytes per
+    /// value:
+    ///
+    /// ```
+    /// chunkSize = maxRows * (totalCompressedSize / numValues) * safetyFactor
+    /// ```
+    ///
+    /// The estimate is floored at [#MAX_ROWS_CHUNK_FLOOR] to avoid sub-page round trips while the
+    /// headers are scanned, and capped at `maxSpan`. A chunk of at most
+    /// [#FETCH_WHOLE_COLUMN_THRESHOLD] bytes is fetched whole.
+    public static int computeChunkSize(int columnChunkLength, ColumnMetaData metaData, long maxRows, int maxSpan) {
+        if (maxRows <= 0) {
+            return Math.max(columnChunkLength, maxSpan);
+        }
+        if (columnChunkLength <= FETCH_WHOLE_COLUMN_THRESHOLD) {
+            return columnChunkLength;
+        }
+        long numValues = metaData.numValues();
+        if (numValues <= 0) {
+            return MAX_ROWS_CHUNK_FLOOR;
+        }
+        long totalCompressedSize = metaData.totalCompressedSize();
+        // both factors are bounded by the chunk's own counts, so the product cannot overflow
+        long effectiveRows = Math.min(maxRows, numValues);
+        long estimate = Math.ceilDiv(effectiveRows * totalCompressedSize * MAX_ROWS_CHUNK_SAFETY_FACTOR, numValues);
+        // a span limit below the floor lowers the floor, so the clamp range stays valid
+        long floor = Math.min(MAX_ROWS_CHUNK_FLOOR, maxSpan);
+        return Math.toIntExact(Math.clamp(estimate, floor, maxSpan));
     }
 }

@@ -8,7 +8,6 @@
 package dev.hardwood.perf;
 
 import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -23,14 +22,12 @@ import com.sun.management.ThreadMXBean;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.reader.decode.InPlacePageReads;
 import dev.hardwood.internal.io.MappedInputFile;
+import dev.hardwood.internal.reader.decode.ChunkPages;
+import dev.hardwood.internal.reader.decode.InPlacePageReads;
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
-import dev.hardwood.internal.reader.fetch.PageWalk;
-import dev.hardwood.internal.reader.fetch.SequentialFetchPlan;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -167,22 +164,7 @@ public class PageDecodeAllocationProfileTest {
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
-                    ColumnMetaData meta = columnChunk.metaData();
-                    Long dictOffset = meta.dictionaryPageOffset();
-                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : meta.dataPageOffset();
-                    int chunkLen = Math.toIntExact(meta.totalCompressedSize());
-                    ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
-
-                    SequentialFetchPlan plan = SequentialFetchPlan.build(
-                            inputFile, columnSchema, columnChunk,
-                            context, rgIdx, inputFile.name(), 0);
-                    List<PageInfo> pages = new ArrayList<>();
-                    // A file in memory: the walk never stops for bytes
-                    PageWalk walk = plan.walk();
-                    PageInfo page;
-                    while ((page = walk.advance()) != null) {
-                        pages.add(page);
-                    }
+                    List<PageInfo> pages = ChunkPages.of(inputFile, columnSchema, columnChunk, context);
 
                     InPlacePageReads reads = new InPlacePageReads();
                     for (PageInfo pageInfo : pages) {

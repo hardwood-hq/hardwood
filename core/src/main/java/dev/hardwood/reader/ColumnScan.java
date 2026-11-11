@@ -21,9 +21,8 @@ import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.RowGroupIterator;
-import dev.hardwood.internal.reader.pipeline.DecodedColumn;
+import dev.hardwood.internal.reader.row.CloseClaim;
 import dev.hardwood.internal.reader.row.RecordFilterTally;
-import dev.hardwood.internal.reader.step.CloseClaim;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.schema.ColumnSchema;
@@ -88,12 +87,6 @@ final class ColumnScan implements Closeable {
         }
     }
 
-    /// A scan for a read in which pruning dropped every row group: it has no
-    /// cursors, starts no column, and its first [#advance()] returns `false`.
-    static ColumnScan empty(Closeable read) {
-        return new ColumnScan(new ColumnCursor[0], 0, null, read);
-    }
-
     /// A scan over every decoded column of `projection`, driven by `iterator`. With a `filter`, the
     /// filter-only columns past the payload carry the predicate and are decoded to evaluate it; the
     /// payload columns are compacted to the matching records. `layers` holds the layers of every
@@ -111,11 +104,12 @@ final class ColumnScan implements Closeable {
             NestedLevelComputer.Layers columnLayers = layers[column.columnIndex()];
             nestedLayers.add(ColumnCursor.isNested(columnLayers, column) ? columnLayers : null);
         }
-        List<DecodedColumn> sides = iterator.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled,
+        List<BatchExchange<?>> exchanges = iterator.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled,
                 batchSize, budgetRows);
-        ColumnCursor[] cursors = new ColumnCursor[sides.size()];
+        ColumnCursor[] cursors = new ColumnCursor[exchanges.size()];
         for (int i = 0; i < cursors.length; i++) {
-            cursors[i] = ColumnCursor.of(schema.getColumn(decoded.toOriginalIndex(i)), sides.get(i));
+            cursors[i] = ColumnCursor.of(schema.getColumn(decoded.toOriginalIndex(i)), exchanges.get(i),
+                    nestedLayers.get(i) != null);
         }
         SelectionEngine selection = filter == null
                 ? null

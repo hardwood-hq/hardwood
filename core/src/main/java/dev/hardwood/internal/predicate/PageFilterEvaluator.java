@@ -34,9 +34,8 @@ import dev.hardwood.reader.ParquetReadException;
 /// [RowGroupFilterEvaluator] asks of a column chunk, and a page is kept unless it is
 /// [FilterDecision#CANNOT_MATCH].
 ///
-/// When the `ColumnIndex` is absent, this evaluator returns `RowRanges.all()` — page
-/// skipping then happens per-column inside [dev.hardwood.internal.reader.fetch.SequentialFetchPlan]
-/// based on inline `DataPageHeader.statistics`.
+/// When the `ColumnIndex` is absent, this evaluator returns `RowRanges.all()`: a page can then be
+/// decided only by its inline header statistics ([PageDropPredicates]).
 public class PageFilterEvaluator {
 
     /// Computes the row ranges within a row group that might match the given predicate,

@@ -233,20 +233,6 @@ public class HardwoodContextImpl implements HardwoodContext {
         decodeExecutor.runInPlace(task);
     }
 
-    /// Runs a column's walk advance on the context's pool, at the head of its queue.
-    ///
-    /// @throws RejectedExecutionException if the context is closed
-    public void executeStep(Runnable advance) {
-        decodeExecutor.executeFirst(advance);
-    }
-
-    /// Runs speculative CPU work on the context's pool, at the tail of its queue.
-    ///
-    /// @throws RejectedExecutionException if the context is closed
-    public void executeSpeculative(Runnable task) {
-        decodeExecutor.executeLast(task);
-    }
-
     /// Runs `work` on the context's pool, with a set of its decode buffers, and waits for its
     /// result; on a thread of the pool, such as a column's walk advance, and on a context without
     /// a pool, it runs in place. A failure of `work` is thrown as it was thrown.
