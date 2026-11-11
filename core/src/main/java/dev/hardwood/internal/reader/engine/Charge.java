@@ -7,12 +7,14 @@
  */
 package dev.hardwood.internal.reader.engine;
 
-/// The charge of something a read holds, such as a range's bytes or a file's tail, returned
-/// once nothing reads it any more. Used under the read's lock.
+/// The charge of something a read holds, such as a range's bytes or a file's tail: the bytes the
+/// scheduler charged as its job started, whether they count against F, and its readers, the last of
+/// which hands it back to the scheduler ([JobScheduler#release(Charge)]). Used under the read's
+/// lock.
 final class Charge {
 
-    private long bytes;
-    private boolean ahead;
+    long bytes;
+    boolean ahead;
     private int readers;
 
     /// Takes `bytes` the scheduler charged as a job started; `ahead` where they count against F.
@@ -26,18 +28,8 @@ final class Charge {
         readers++;
     }
 
-    /// A reader is done; the last returns the charge. Returns whether it was the last.
-    boolean read(JobScheduler scheduler) {
-        if (--readers == 0) {
-            returnTo(scheduler);
-            return true;
-        }
-        return false;
-    }
-
-    /// Returns the charge now, whatever its readers.
-    void returnTo(JobScheduler scheduler) {
-        scheduler.release(bytes, ahead);
-        bytes = 0;
+    /// A reader is done; returns whether it was the last, after which the charge is returned.
+    boolean readerDone() {
+        return --readers == 0;
     }
 }

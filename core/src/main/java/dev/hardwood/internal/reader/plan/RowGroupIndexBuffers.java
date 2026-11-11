@@ -14,7 +14,7 @@ import java.util.List;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.ReadRanges;
-import dev.hardwood.internal.reader.fetch.CoalescedRanges;
+import dev.hardwood.internal.reader.fetch.CoalescedRequests;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
@@ -22,9 +22,9 @@ import dev.hardwood.metadata.RowGroup;
 /// The page-index slices a read fetched for one row group: the OffsetIndex and ColumnIndex of
 /// the columns it needs, looked up by the column's ordinal in the file via [#forColumn(int)].
 ///
-/// The slices are views of requests merged per structure by [CoalescedRanges]: ColumnIndex
+/// The slices are views of requests merged per structure by [CoalescedRequests]: ColumnIndex
 /// slices only with ColumnIndex slices, OffsetIndex slices only with OffsetIndex slices.
-/// [#addRanges] and [#slice] let one pair of [CoalescedRanges] serve several row groups.
+/// [#addRanges] and [#slice] let one pair of [CoalescedRequests] serve several row groups.
 public class RowGroupIndexBuffers {
 
     private final ColumnIndexBuffers[] columns;
@@ -68,8 +68,8 @@ public class RowGroupIndexBuffers {
     /// @param columnIndexColumns the file ordinals of the columns whose ColumnIndex is needed
     public static RowGroupIndexBuffers fetch(InputFile inputFile, RowGroup rowGroup,
             BitSet offsetIndexColumns, BitSet columnIndexColumns) throws IOException {
-        CoalescedRanges.Builder offsetIndexes = CoalescedRanges.builder();
-        CoalescedRanges.Builder columnIndexes = CoalescedRanges.builder();
+        CoalescedRequests.Builder offsetIndexes = CoalescedRequests.builder();
+        CoalescedRequests.Builder columnIndexes = CoalescedRequests.builder();
         addRanges(rowGroup, offsetIndexColumns, columnIndexColumns, offsetIndexes, columnIndexes);
         return slice(rowGroup, offsetIndexColumns, columnIndexColumns,
                 fetch(inputFile, offsetIndexes.build(), columnIndexes.build()));
@@ -77,15 +77,15 @@ public class RowGroupIndexBuffers {
 
     /// Reads every request of `structures` from `inputFile`: a source holding the ranges they
     /// cover.
-    private static ByteSource fetch(InputFile inputFile, CoalescedRanges... structures) throws IOException {
+    private static ByteSource fetch(InputFile inputFile, CoalescedRequests... structures) throws IOException {
         int count = 0;
-        for (CoalescedRanges ranges : structures) {
+        for (CoalescedRequests ranges : structures) {
             count += ranges.requestCount();
         }
         long[] starts = new long[count];
         ByteBuffer[] buffers = new ByteBuffer[count];
         int request = 0;
-        for (CoalescedRanges ranges : structures) {
+        for (CoalescedRequests ranges : structures) {
             for (int r = 0; r < ranges.requestCount(); r++, request++) {
                 starts[request] = ranges.requestStart(r);
                 buffers[request] = ReadRanges.read(inputFile, starts[request],
@@ -106,7 +106,7 @@ public class RowGroupIndexBuffers {
     ///
     /// @throws IndexOutOfBoundsException if a column ordinal lies outside the row group
     static void addRanges(RowGroup rowGroup, BitSet offsetIndexColumns, BitSet columnIndexColumns,
-            CoalescedRanges.Builder offsetIndexes, CoalescedRanges.Builder columnIndexes) {
+            CoalescedRequests.Builder offsetIndexes, CoalescedRequests.Builder columnIndexes) {
         List<ColumnChunk> chunks = rowGroup.columns();
         for (int c = offsetIndexColumns.nextSetBit(0); c >= 0; c = offsetIndexColumns.nextSetBit(c + 1)) {
             ColumnChunk chunk = chunks.get(c);

@@ -37,11 +37,11 @@ import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.pipeline.BatchCell;
 import dev.hardwood.internal.reader.pipeline.BinaryFill;
 import dev.hardwood.internal.reader.pipeline.Cell;
+import dev.hardwood.internal.reader.pipeline.ColumnPlacer;
 import dev.hardwood.internal.reader.pipeline.FlatFill;
 import dev.hardwood.internal.reader.pipeline.NestedCell;
 import dev.hardwood.internal.reader.pipeline.NestedPageTask;
 import dev.hardwood.internal.reader.pipeline.PageTask;
-import dev.hardwood.internal.reader.pipeline.Placer;
 import dev.hardwood.internal.reader.pipeline.Segment;
 import dev.hardwood.internal.reader.pipeline.SegmentFillException;
 import dev.hardwood.internal.reader.plan.BatchPlan;
@@ -51,8 +51,8 @@ import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Places each column's pages into the cells of a read's batch plan, through Hardwood's
-/// [Placer], in page order: a column's chunks unit after unit, a chunk's pages as they are known
-/// (planned at install, or found by a scan), each once it can be. A flat page can be placed at
+/// [ColumnPlacer], in page order: a column's chunks unit after unit, a chunk's pages as they are known
+/// (planned, once their unit is batched, or found by a scan), each once it can be. A flat page can be placed at
 /// once; its job then decodes it and fills its segments, and its cell completes at its last fill
 /// or its seal, whichever comes last. A page decoded through levels can be placed once its job has
 /// measured it; a cell it is placed into is filled on a job once sealed.
@@ -66,23 +66,24 @@ final class PagePlacer {
     /// Scratch a column decoded through levels keeps for its next pages.
     private static final int SCRATCH_POOL = 4;
 
-    /// A column's pages of one unit, in page order, and how many are placed.
-    static final class Chunk {
-        final Unit.Installed unit;
-        final List<PageFetcher.PageWork> pages = new ArrayList<>();
+    /// The placement of one column chunk: its pages in page order as they are known, how many are
+    /// placed, whether the chunk has ended, and a scan's failure past its pages.
+    static final class ChunkPlacement {
+        final Unit.Batched unit;
+        final List<TrackedPage> pages = new ArrayList<>();
         PageDecoder decoder;
         int placed;
         boolean ended;
         /// the scan's failure, past its pages: the column places nothing after them
         Throwable failure;
 
-        Chunk(Unit.Installed unit) {
+        ChunkPlacement(Unit.Batched unit) {
             this.unit = unit;
         }
     }
 
     private final JobScheduler scheduler;
-    private final BatchQueue queue;
+    private final BatchPublisher publisher;
     private final ColumnSchema[] schemas;
     private final List<BatchExchange<?>> exchanges;
     /// per column, its layers where it is decoded through levels, `null` for a flat one
@@ -93,8 +94,8 @@ final class PagePlacer {
     private final boolean footersSupplied;
     /// the read's working set, which every decode and dictionary charges before it allocates
     private final WorkingSet workingSet;
-    private final List<Placer<? extends BatchCell<?>>> placers = new ArrayList<>();
-    private final List<ArrayDeque<Chunk>> chunks = new ArrayList<>();
+    private final List<ColumnPlacer<? extends BatchCell<?>>> placers = new ArrayList<>();
+    private final List<ArrayDeque<ChunkPlacement>> placements = new ArrayList<>();
     private final List<ArrayBlockingQueue<PageDecoder.LevelScratch>> scratch = new ArrayList<>();
     private final BinaryBatchValues.ViewDemand[] views;
     /// per flat column, its filter fragment, which writes each batch's matches as it completes;
@@ -103,13 +104,13 @@ final class PagePlacer {
     /// per column, the last page it placed, which a shortfall at the read's end is placed with
     private final PageTask[] last;
 
-    PagePlacer(JobScheduler scheduler, BatchQueue queue, ColumnSchema[] schemas, List<BatchExchange<?>> exchanges,
+    PagePlacer(JobScheduler scheduler, BatchPublisher publisher, ColumnSchema[] schemas, List<BatchExchange<?>> exchanges,
                List<NestedLevelComputer.Layers> layers, NestedIndexMode indexMode, boolean fixedListFastPathEnabled,
                int batchCapacity, DecompressorFactory decompressors, boolean footersSupplied, WorkingSet workingSet,
                ColumnBatchMatcher[] filters) {
         this.scheduler = scheduler;
         this.filters = filters;
-        this.queue = queue;
+        this.publisher = publisher;
         this.schemas = schemas;
         this.exchanges = exchanges;
         this.layers = layers;
@@ -121,9 +122,9 @@ final class PagePlacer {
         this.views = new BinaryBatchValues.ViewDemand[schemas.length];
         this.last = new PageTask[schemas.length];
         for (int c = 0; c < schemas.length; c++) {
-            placers.add(nested(c) ? new Placer<>(new NestedSink(c), batchCapacity)
-                    : new Placer<>(new Sink(c), batchCapacity));
-            chunks.add(new ArrayDeque<>());
+            placers.add(nested(c) ? new ColumnPlacer<>(new NestedSink(c), batchCapacity)
+                    : new ColumnPlacer<>(new Sink(c), batchCapacity));
+            placements.add(new ArrayDeque<>());
             scratch.add(new ArrayBlockingQueue<>(SCRATCH_POOL));
             views[c] = new BinaryBatchValues.ViewDemand();
         }
@@ -143,16 +144,16 @@ final class PagePlacer {
     }
 
     /// The column's chunk of `u`, behind the chunks of the units before it.
-    Chunk chunk(int column, Unit.Installed u) {
-        Chunk chunk = new Chunk(u);
-        chunks.get(column).addLast(chunk);
-        return chunk;
+    ChunkPlacement placement(int column, Unit.Batched u) {
+        ChunkPlacement placement = new ChunkPlacement(u);
+        placements.get(column).addLast(placement);
+        return placement;
     }
 
-    /// Runs `charge`, which charges a dictionary of `column`'s chunk of `u`, in the window of the
-    /// batches `u` places: one column's dictionaries one at a time, so that each counts beside
+    /// Runs `charge`, which charges a dictionary of `column`'s chunk of `u`, against the batches
+    /// `u` places: one column's dictionaries one at a time, so that each counts beside
     /// those of its own batch alone, in whichever order they decode; on any thread.
-    <T> T inWindow(int column, Unit.Installed u, Supplier<T> charge) {
+    <T> T chargeDictionary(int column, Unit.Batched u, Supplier<T> charge) {
         BatchPlan.RowGroupBatches batches = u.batches();
         synchronized (views[column]) {
             workingSet.enter(column, batches.readRowsBefore() - batches.continuedRows(),
@@ -163,23 +164,23 @@ final class PagePlacer {
 
     /// Adds `pw`, a data page of `column`'s `chunk`, behind the chunk's pages; a flat page can be
     /// placed at once.
-    void add(int column, Chunk chunk, PageFetcher.PageWork pw) {
-        ColumnMetaData meta = chunk.unit.listing().chunks()[column].metaData();
-        if (chunk.decoder == null) {
-            chunk.decoder = new PageDecoder(meta, schemas[column], decompressors,
+    void add(int column, ChunkPlacement placement, TrackedPage pw) {
+        ColumnMetaData meta = placement.unit.listing().chunks()[column].metaData();
+        if (placement.decoder == null) {
+            placement.decoder = new PageDecoder(meta, schemas[column], decompressors,
                     !nested(column) || fixedListFastPathEnabled, workingSet(column));
         }
-        pw.decoder = chunk.decoder;
+        pw.decoder = placement.decoder;
         if (!nested(column)) {
-            pw.task = new PageTask(info(column, pw, null, null), chunk.unit.batches().fileName(), chunk.unit.listing().rowGroup(),
-                    pw.page.pageIndex(), chunk.unit.batches(), pw.decoder,
-                    chunk.unit.batches().readRowsBefore() + pw.page.location().firstRowIndex());
+            pw.task = new PageTask(info(column, pw, null, null), placement.unit.batches().fileName(), placement.unit.listing().rowGroup(),
+                    pw.page.pageIndex(), placement.unit.batches(), pw.decoder,
+                    placement.unit.batches().readRowsBefore() + pw.page.location().firstRowIndex());
             pw.ready = true;
         }
-        chunk.pages.add(pw);
+        placement.pages.add(pw);
     }
 
-    private PageInfo info(int column, PageFetcher.PageWork pw, DataPage page, Dictionary dictionary) {
+    private PageInfo info(int column, TrackedPage pw, DataPage page, Dictionary dictionary) {
         if (pw.placeholder > 0) {
             return PageInfo.nullPlaceholder(pw.placeholder, schemas[column], pw.unit.listing().chunks()[column].metaData(),
                     PageInfo.keptRecords(schemas[column], PageRowMask.ALL, pw.placeholder));
@@ -199,7 +200,7 @@ final class PagePlacer {
         if (placers.isEmpty()) {
             return false;
         }
-        for (Placer<?> p : placers) {
+        for (ColumnPlacer<?> p : placers) {
             if (!p.stopped()) {
                 return false;
             }
@@ -208,9 +209,9 @@ final class PagePlacer {
     }
 
     /// The task of a page decoded through levels whose bytes are `page`, on a job.
-    NestedPageTask nestedTask(PageFetcher.PageWork pw, DataPage page, Dictionary dictionary) {
+    NestedPageTask nestedTask(TrackedPage pw, DataPage page, Dictionary dictionary) {
         PageDecoder.LevelScratch levels = scratch.get(pw.column).poll();
-        Unit.Installed u = pw.unit;
+        Unit.Batched u = pw.unit;
         return new NestedPageTask(info(pw.column, pw, page, dictionary), u.batches().fileName(), u.listing().rowGroup(),
                 pw.page.pageIndex(), u.batches(), pw.decoder, u.batches().readRowsBefore() + pw.page.location().firstRowIndex(),
                 levels != null ? levels : new PageDecoder.LevelScratch());
@@ -218,30 +219,30 @@ final class PagePlacer {
 
     /// Places the column's pages that can be, in order, moving on to its next chunk once one has
     /// ended and is placed; returns the pages it took.
-    List<PageFetcher.PageWork> place(int column) {
-        List<PageFetcher.PageWork> placed = new ArrayList<>();
-        ArrayDeque<Chunk> q = chunks.get(column);
+    List<TrackedPage> place(int column) {
+        List<TrackedPage> placed = new ArrayList<>();
+        ArrayDeque<ChunkPlacement> q = placements.get(column);
         while (!q.isEmpty()) {
-            Chunk chunk = q.peekFirst();
-            while (chunk.placed < chunk.pages.size() && chunk.pages.get(chunk.placed).ready) {
-                PageFetcher.PageWork pw = chunk.pages.get(chunk.placed++);
+            ChunkPlacement placement = q.peekFirst();
+            while (placement.placed < placement.pages.size() && placement.pages.get(placement.placed).ready) {
+                TrackedPage pw = placement.pages.get(placement.placed++);
                 if (!placers.get(column).stopped()) {
                     place(column, pw);
                 }
                 placed.add(pw);
             }
-            if (!chunk.ended || chunk.placed < chunk.pages.size()) {
+            if (!placement.ended || placement.placed < placement.pages.size()) {
                 break;
             }
-            if (chunk.failure != null && !placers.get(column).stopped()) {
-                stop(column, chunk.failure);
+            if (placement.failure != null && !placers.get(column).stopped()) {
+                stop(column, placement.failure);
             }
             q.pollFirst();
         }
         return placed;
     }
 
-    private void place(int column, PageFetcher.PageWork pw) {
+    private void place(int column, TrackedPage pw) {
         PageTask task = pw.task;
         try {
             if (task instanceof NestedPageTask n) {
@@ -255,7 +256,7 @@ final class PagePlacer {
         catch (RuntimeException e) {
             // at the open cell, which is abandoned: the segments placed before it still fill theirs
             BatchCell<?> open = placers.get(column).abandonOpenCell();
-            queue.failAt(open != null ? open.firstRow() : Math.max(pw.key, placers.get(column).nextRow()), column,
+            publisher.failAt(open != null ? open.firstRow() : Math.max(pw.key, placers.get(column).nextRow()), column,
                     placed(column, e, task));
         }
         if (task instanceof NestedPageTask n && n.allSegmentsFilled()) {
@@ -268,7 +269,7 @@ final class PagePlacer {
     /// `endKey`, the end of the read, where it has none.
     void end(long endKey) {
         for (int c = 0; c < schemas.length; c++) {
-            if (!placers.get(c).stopped() && !chunks.get(c).isEmpty()) {
+            if (!placers.get(c).stopped() && !placements.get(c).isEmpty()) {
                 return;
             }
         }
@@ -279,7 +280,7 @@ final class PagePlacer {
                 }
                 catch (RuntimeException e) {
                     BatchCell<?> abandoned = placers.get(c).abandonOpenCell();
-                    queue.failAt(abandoned != null ? abandoned.firstRow() : endKey, c,
+                    publisher.failAt(abandoned != null ? abandoned.firstRow() : endKey, c,
                             last[c] == null ? e : placed(c, e, last[c]));
                 }
             }
@@ -288,15 +289,15 @@ final class PagePlacer {
 
     /// Seals the open cell of every column that has placed every record up to `failure`'s row,
     /// `failedAt`, and none past it: for a failure between two units, the batch open across them
-    /// is published. A column short of the plan, where every unit before the failure is installed
-    /// (`installedToIt`), abandons its open cell, which moves the failure to it.
+    /// is published. A column short of the plan, where every unit before the failure is batched
+    /// (`batchedToIt`), abandons its open cell, which moves the failure to it.
 
-    void sealAt(Throwable failure, long failedAt, boolean installedToIt) {
+    void sealAt(Throwable failure, long failedAt, boolean batchedToIt) {
         for (int c = 0; c < schemas.length; c++) {
             long next = placers.get(c).nextRow();
             // a column that placed all it was given up to the failure and stops short of it holds
             // fewer rows than the plan
-            if (!placers.get(c).stopped() && (next == failedAt || next < failedAt && installedToIt && chunks.get(c).isEmpty())) {
+            if (!placers.get(c).stopped() && (next == failedAt || next < failedAt && batchedToIt && placements.get(c).isEmpty())) {
                 stop(c, failure);
             }
         }
@@ -307,7 +308,7 @@ final class PagePlacer {
     private void stop(int column, Throwable failure) {
         BatchCell<?> abandoned = placers.get(column).sealOpenCell(failure, schemas[column].fieldPath().toString());
         if (abandoned != null) {
-            queue.failAt(abandoned.firstRow(), column, failure);
+            publisher.failAt(abandoned.firstRow(), column, failure);
         }
     }
 
@@ -443,20 +444,20 @@ final class PagePlacer {
     /// Fills a sealed cell of a column decoded through levels, on a job keyed at its batch.
     @SuppressWarnings("unchecked")
     private void fill(int column, NestedCell cell) {
-        long key = queue.of(column, cell).key;
+        long key = publisher.of(column, cell).key;
         scheduler.add(new JobScheduler.Job(key, 0, JobScheduler.Kind.CPU, null, buffers -> {
             cell.fill((BatchExchange<NestedBatch>) exchanges.get(column), schemas[column], layers.get(column),
                     indexMode, views[column], buffers, scratch.get(column));
-            return () -> queue.completed(column, cell);
+            return () -> publisher.completed(column, cell);
         }, t -> () -> {
             PageTask page = t instanceof SegmentFillException s ? s.page() : cell.lastPage();
             Throwable failure = t instanceof SegmentFillException s ? s.failure() : t;
-            queue.failAt(key, column, page != null && failure instanceof Exception e ? placed(column, e, page) : failure);
+            publisher.failAt(key, column, page != null && failure instanceof Exception e ? placed(column, e, page) : failure);
         }));
     }
 
     /// What the placer's decisions do to one flat column; under the read's lock.
-    private final class Sink implements Placer.Sink<Cell> {
+    private final class Sink implements ColumnPlacer.Sink<Cell> {
 
         private final int column;
 
@@ -467,7 +468,7 @@ final class PagePlacer {
         @Override
         public Cell open(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow) {
             Cell cell = new Cell(fileName, alwaysMatches, plannedRecords, capacity, firstRow);
-            queue.open(column, cell);
+            publisher.open(column, cell);
             return cell;
         }
 
@@ -480,14 +481,14 @@ final class PagePlacer {
         public void sealed(Cell cell) {
             if (cell.pending().decrementAndGet() == 0) {
                 complete(column, cell);
-                queue.completed(column, cell);
+                publisher.completed(column, cell);
             }
         }
 
     }
 
     /// What the placer's decisions do to one column decoded through levels; under the read's lock.
-    private final class NestedSink implements Placer.Sink<NestedCell> {
+    private final class NestedSink implements ColumnPlacer.Sink<NestedCell> {
 
         private final int column;
 
@@ -499,7 +500,7 @@ final class PagePlacer {
         public NestedCell open(String fileName, boolean alwaysMatches, int plannedRecords, int capacity,
                                long firstRow) {
             NestedCell cell = new NestedCell(fileName, alwaysMatches, firstRow);
-            queue.open(column, cell);
+            publisher.open(column, cell);
             return cell;
         }
 

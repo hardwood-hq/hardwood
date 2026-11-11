@@ -20,19 +20,29 @@ Every data reader (`FlatRowReader`, `NestedRowReader`, a `ColumnReaders` group, 
 
 A read is a `RowGroupIterator` (`internal.reader.engine`), one per data reader, built from parts that each own their state. Dependencies run one way, from the footers to the batches:
 
-| Part | Owns |
+| Part | Does | Owns |
+|---|---|---|
+| `FooterReader` | reads the footers of the files after the first, through the reader's `FileMetadataCache`, and lists the files in order, each checked against the first file's schema | the footers being read and the files listed |
+| `RowGroupPlanner` | moves each unit through its states: lists it, probes its Bloom filters and dictionaries, reads its page-index window, plans it, and batches the units in order; commits what pruning reports of each file and unit once the consumer reaches it | the read's units while they are planned, their page-index windows, and the pruning reports |
+| `PagePlanner` | plans a unit's pages and ranges on its plan job, from its listing and page index | nothing of the read |
+| `RangeFetcher` | fetches each range a read requests, the planner's and a batched unit's, as a job; re-keys a fetch not yet started; and releases a range once its last reader is done | nothing beyond the ranges' own state |
+| `HeaderScanner` | scans each column chunk without an OffsetIndex header by header as its bytes arrive, and hands the pages it finds to placement | each such chunk's scan |
+| `PageTracker` | tracks each page of a batched unit until its ranges, its dictionary and its placement are there, and starts its decode then | the batched units' pages and their chunks' dictionaries |
+| `PagePlacer` | places each column's pages in page order into the cells of the batch plan, and seals or abandons a column's open cell at a failure | each column's placement |
+| `BatchPublisher` | publishes each column's batches in row order into its exchange, and places the read's failure | the batches in plan order, the consumer's position and the read's failure |
+| `JobScheduler` | decides which ready job starts next, by the one priority within the bounds; knows nothing of Parquet | the ready jobs and the bounds |
+| `ReadDriver` | runs the jobs on the context's executors and applies their results under the read's one lock | the lock and the hand-off of results between threads |
+
+The parts pass items between them, each holding the state of one thing the read handles. A part acts on items; an item holds state and calls no part, so whatever an item's state change needs of the scheduler or a fetch, a part does.
+
+| Item | Holds |
 |---|---|
-| `FooterReader` | the footers of the files after the first, through the reader's `FileMetadataCache`, and their listing in file order, each checked against the first file's schema |
-| `RowGroupPlanner` | the read's units, one per row group its statistics keep, while they are planned: their page-index windows, their pruning by Bloom filters and dictionaries, their plans of pages and ranges, their install in unit order into the batch plan, and what pruning reports of each file and unit, committed once the consumer reaches it |
-| `PagePlanner` | no state of the read: a unit's pages and ranges, computed on its planning job from its listing and page index |
-| `Unit` | a row group of the read in one of its states ([a unit's states](#a-units-states)), each a record holding what the row group has in it: what its file's listing decided of it (`UnitListing`), then its plan (`UnitPlan`), then its batches (`RowGroupBatches`); the planner holds each unit's current state, and the parts after the planner read the installed one |
-| `HeaderScanner` | the scan of a column chunk without an OffsetIndex, header by header as its bytes arrive |
-| `PageFetcher` | a unit's ranges once it is installed, its dictionaries, and the decode of each page once its bytes have arrived |
-| `PagePlacer` | each column's pages, placed in page order into the cells of the batch plan, and the seal or abandonment of a column's open cell at a failure |
-| `BatchQueue` | the batches in plan order, the consumer's position, their publication into the exchanges, and the read's failure |
-| `JobScheduler` | the ready jobs, the bounds and the one priority that decides which starts next; it knows nothing of Parquet |
-| `ReadDriver` | the read's one lock, the hand-off of results between threads, and the executors the jobs run on |
-| `Charge` | something the read holds, returned once its last reader is done |
+| `Unit` | a row group of the read in one of its states ([a unit's states](#a-units-states)), each a record holding what the row group has in it: what its file's listing decided of it (`UnitListing`), then its plan (`UnitPlan`), then its batches (`RowGroupBatches`); the planner holds each unit's current state, and the parts after the planner read the batched one |
+| `RangeFetch` | the fetch of one range of a file a read requests as one (`FileRange`): its bytes once arrived, its charge, and what waits for it |
+| `TrackedPage` | a page of a batched unit until it is decoded: its ranges, its chunk's dictionary, what it still waits for, and its task once placed |
+| `ChunkDictionary` | a column chunk's dictionary: its values once decoded, and the data pages waiting for them |
+| `Batch` | one batch of the batch plan: each column's cell for it, and the ranges it holds until every column has published it |
+| `Charge` | the bytes something the read holds was charged and its readers; the scheduler takes it back once the last reader is done |
 | `BatchExchange` | per decoded column, the bounded hand-off of published batches to the consumer |
 
 The decoded columns are the projection plus any filter-only predicate columns (`ReadProjection.decoded()`, see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)). Every decoded column publishes batches cut by the read's one batch plan into its `BatchExchange`. A column is an index into the parts' arrays; no part keeps an object per column.
@@ -53,7 +63,7 @@ A read's work leaves its lock as jobs. A job runs outside the lock and returns a
 | Decode | decodes a page into its cells, measures a page decoded through levels, parses a dictionary | the look-ahead and CPU slots |
 | CPU | scans a chunk's headers, fills a sealed nested cell, completes a sealed flat cell | CPU slots |
 
-**Priority.** Every job is keyed by the first row of the read it serves: the rows of the files and units before it plus its row in its unit, counted in rows its filter keeps. A range of a chunk without an OffsetIndex is keyed by the row as far into the chunk as it lies until its chunk's scan finds a page in it, and then at that page's row, so the bytes of a page the consumer needs are never keyed past its need, and a footer by the end of the rows listed. The scheduler starts the lowest key first, across kinds. Planning takes a free CPU slot before any other CPU job, whatever its key: it leads to a fetch, whose latency the decodes queued ahead of it would otherwise wait out first. A unit whose file holds every byte (`HeldBytes.inMemory`) leads to no fetch, so its probe and plan run as decodes do, in key order within the look-ahead: planned ahead, every unit of such a file is installed at once, and its pages' state, made at install and filled in as they decode, lives long enough to be promoted. Nothing keyed past the read's failure starts.
+**Priority.** Every job is keyed by the first row of the read it serves: the rows of the files and units before it plus its row in its unit, counted in rows its filter keeps. A range of a chunk without an OffsetIndex is keyed by the row as far into the chunk as it lies until its chunk's scan finds a page in it, and then at that page's row, so the bytes of a page the consumer needs are never keyed past its need, and a footer by the end of the rows listed. The scheduler starts the lowest key first, across kinds. Planning takes a free CPU slot before any other CPU job, whatever its key: it leads to a fetch, whose latency the decodes queued ahead of it would otherwise wait out first. A unit whose file holds every byte (`HeldBytes.inMemory`) leads to no fetch, so its probe and plan run as decodes do, in key order within the look-ahead: planned ahead, every unit of such a file is batched at once, and its pages' state, made as their tracking starts and filled in as they decode, lives long enough to be promoted. Nothing keyed past the read's failure starts.
 
 **Bounds.** Each bound governs its own kinds of job, and a refusal holds back only the later jobs of those kinds:
 
@@ -76,7 +86,7 @@ A read's work leaves its lock as jobs. A job runs outside the lock and returns a
 
 Fetch and decode are bounded apart because their delays differ. A request has a fixed latency on every range, so F follows from latency and range size. A decode starts as soon as a slot is free and takes milliseconds a batch, so it needs only a few batches ahead, and decoded values are several times their compressed bytes, so decoding ahead costs more memory than fetching ahead; one bound sized for both either holds many times the values or starves the requests. Which bound binds follows from the read's rates, not from where its file lives, so no bound switches on location or on a mode: F binds only where fetching gets ahead of the consumer, the look-ahead only where decoding does. In memory F fills at once and the look-ahead binds; on a remote read a range's pages become decodable together as it arrives, and the look-ahead keeps most of them compressed until the consumer nears.
 
-**Invariant: need is the progress guarantee and no bound of its own.** While no job keyed below the consumer's next batch is in flight, the lowest such job starts, refused by no bound (a fetch at once, a CPU job at the next free slot a plan job does not take): the look-ahead never reaches below need, and that one job holds what it reads uncharged to R and counts against no F. The next batch thus advances one job at a time where the bounds hold everything else back. Where the consumer's next batch is the last the batch plan has added, the row groups not yet installed may continue it, and the planning of the next of them is below need too. R holds what the read chose to fetch ahead, and a read never waits for room another read holds to give its consumer the next batch.
+**Invariant: need is the progress guarantee and no bound of its own.** While no job keyed below the consumer's next batch is in flight, the lowest such job starts, refused by no bound (a fetch at once, a CPU job at the next free slot a plan job does not take): the look-ahead never reaches below need, and that one job holds what it reads uncharged to R and counts against no F. The next batch thus advances one job at a time where the bounds hold everything else back. Where the consumer's next batch is the last the batch plan has added, the row groups not yet batched may continue it, and the planning of the next of them is below need too. R holds what the read chose to fetch ahead, and a read never waits for room another read holds to give its consumer the next batch.
 
 **Results.** A job's thread that finds the lock held queues its result and moves on, and the thread that holds the lock applies every queued result, and asks the scheduler again, before it lets go of it, so a queued result waits for no later acquisition; no thread waits for the lock to apply a result. A callback from outside the read (the consumer making room in an exchange, a release of R, another read's footer load completing) is a result like a job's. Bytes the read returns to R under the lock are returned once it lets go of it, since R runs its waiters, other reads' among them, on the releasing thread. Placement, the cells' bookkeeping and publishing run under the lock, as part of applying a result; decoding, filling and I/O never do, apart from completing a cell its placement seals after its last fill (see Cells).
 
@@ -86,7 +96,7 @@ Fetch and decode are bounded apart because their delays differ. A request has a 
 
 | Held | Readers | Returned |
 |---|---|---|
-| A range's bytes | the unit's install until its scans hold it; the pages that lie in it; a scan until it has passed it; the batch of a flat page's last cell until every column has published it | once the last is done; a range whose last reader is done before its fetch starts is not fetched |
+| A range's bytes | its unit's tracking until its scans hold it; the pages that lie in it; a scan until it has passed it; the batch of a flat page's last cell until every column has published it | once the last is done; a range whose last reader is done before its fetch starts is not fetched |
 | A dictionary's values | the data pages of its chunk | once the last has decoded |
 | A footer read ahead | its file | once the consumer passes the file |
 
@@ -97,7 +107,7 @@ Tests: `JobSchedulerTest`, `ReadDriverTest`, `ReadYieldTest`, `PoolWaitTest`, `S
 ## Decoded columns
 
 ```
-unit installed ─→ planned pages (OffsetIndex) / pages a scan finds (no OffsetIndex)
+unit batched ─→ planned pages (OffsetIndex) / pages a scan finds (no OffsetIndex)
                     │ placed in page order into the batch plan's cells (flat: before decoding)
 fetch jobs ─→ ranges arrive ─→ decode job: decode into cells (flat) / decode and measure (nested)
                     │ applied: cells completed, measured pages placed (nested), sealed cells to a job
@@ -106,7 +116,7 @@ fetch jobs ─→ ranges arrive ─→ decode job: decode into cells (flat) / de
 
 A column builds a new `PageDecoder` for each column chunk its pages come from, since a decoder checks a page against its own chunk's metadata ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)). A page reaches its column from the unit's plan, listed from its OffsetIndex, or from a scan of its chunk ([FETCH_PLANNING.md](FETCH_PLANNING.md#pages)). A scan emits a null placeholder for a page inline statistics prove holds no matching row, read by a decode job as a page of all-zero definition levels and no value bytes, without decompression (`PageDecoder.nullsInPlace`), which keeps the column row-aligned ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)).
 
-**Placement.** A column's pages are placed in page order, a column's chunks unit after unit, through the column's `Placer`: following the unit's batches from the batch plan, it splits the page's kept records into one `Segment` per batch they fall into, opens a `Cell` at a batch's first record and seals it when the batch holds every record the plan puts in it. A flat page's kept records are known from its metadata (`PageInfo.records()`), so a flat page is placed as soon as its predecessors are, and its decode waits for its placement as for its bytes. A filter-only column a unit does not read ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)) places nothing and closes the batch where the plan closes it.
+**Placement.** A column's pages are placed in page order, a column's chunks unit after unit, through the column's `ColumnPlacer`: following the unit's batches from the batch plan, it splits the page's kept records into one `Segment` per batch they fall into, opens a `Cell` at a batch's first record and seals it when the batch holds every record the plan puts in it. A flat page's kept records are known from its metadata (`PageInfo.records()`), so a flat page is placed as soon as its predecessors are, and its decode waits for its placement as for its bytes. A filter-only column a unit does not read ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)) places nothing and closes the batch where the plan closes it.
 
 **Columns decoded through levels.** A column with repetition, or with a layer above its leaf, and every column of a nested row read, is placed after its pages are decoded, since only a page's levels say where its records start. Its decode job decodes and measures the page (`NestedPageTask.decodeAndMeasure`); as the results are applied, the measured pages at the head of the column's pages are placed, in page order, and the cells the placement seals are filled on a job (`NestedCell.fill`, [NESTED_DECODE.md](NESTED_DECODE.md#cells)).
 
@@ -127,9 +137,9 @@ A column builds a new `PageDecoder` for each column chunk its pages come from, s
 
 A pool keeps a bounded number of returned scratch buffers, and a page that finds the pool empty allocates one. Either kind keeps no array above `DecodeBuffers.RETAINED_BYTES` past its page ([VALUE_DECODE.md](VALUE_DECODE.md#decode-buffers)).
 
-**Publishing.** `BatchQueue` publishes each column's completed batches in plan order (`BatchExchange.tryPublish`), under the read's lock and without waiting: a batch that finds the ready queue at its limit stays at the head of the column's order, and the consumer's take runs the column's room listener (`BatchExchange.setRoomListener`), a result of the read that publishes it. No job waits on the exchange. The job that completes a flat cell also runs the column's filter fragment on its batch ([RECORD_FILTERING.md](RECORD_FILTERING.md#batch-matchers)); a fragment's calls are serialized, since cells complete on several threads at once.
+**Publishing.** `BatchPublisher` publishes each column's completed batches in plan order (`BatchExchange.tryPublish`), under the read's lock and without waiting: a batch that finds the ready queue at its limit stays at the head of the column's order, and the consumer's take runs the column's room listener (`BatchExchange.setRoomListener`), a result of the read that publishes it. No job waits on the exchange. The job that completes a flat cell also runs the column's filter fragment on its batch ([RECORD_FILTERING.md](RECORD_FILTERING.md#batch-matchers)); a fragment's calls are serialized, since cells complete on several threads at once.
 
-Tests: `ReadAheadTest`, `PlacerTest`, `BinaryFillChunksTest`, `ConcurrentPlainBinaryFillTest`, `FlatBinaryViewsTest`, `NestedColumnTest`, `DictionaryFallbackNullsTest`, `BatchPlanTest`, `BatchExchangeTest`, `FilterOnlyColumnSkipTest`, `ShuffledTaskOrderTest`, which runs the jobs in seeded random orders, and the result-comparing suites, which read every fixture through the column readers at small batch capacities.
+Tests: `ReadAheadTest`, `ColumnPlacerTest`, `BinaryFillChunksTest`, `ConcurrentPlainBinaryFillTest`, `FlatBinaryViewsTest`, `NestedColumnTest`, `DictionaryFallbackNullsTest`, `BatchPlanTest`, `BatchExchangeTest`, `FilterOnlyColumnSkipTest`, `ShuffledTaskOrderTest`, which runs the jobs in seeded random orders, and the result-comparing suites, which read every fixture through the column readers at small batch capacities.
 
 ### When a batch closes
 
@@ -146,7 +156,7 @@ Where every batch of a read closes is decided once for the read, by its `BatchPl
 
 **The plan.** Every input to these rules is known before a page is decoded, counts rows, and is the same for every column: the capacity ([batch sizing](#batch-sizing)), the units' files and always-match flags, the row cap, and each row group's kept rows, which are the rows of its `RowRanges` when page masks apply and all its rows otherwise. Masks apply to every decoded column of a row group or to none ([FETCH_PLANNING.md](FETCH_PLANNING.md#the-mask-capability-gate)), so every column keeps the same rows. A row group that keeps no row (its row ranges are empty, or its bloom filters or dictionaries drop it) takes no part: it closes no batch and leaves the row cap in place.
 
-The plan is extended a row group at a time, as its unit is installed, in unit order ([units and files](#units-and-files)), so a row group's batches depend only on the row groups before it. Each row group is added exactly once, so every column reads the same batches, and `BatchPlan` fails the read on a row group added out of order.
+The plan is extended a row group at a time, as its unit is batched, in unit order ([units and files](#units-and-files)), so a row group's batches depend only on the row groups before it. Each row group is added exactly once, so every column reads the same batches, and `BatchPlan` fails the read on a row group added out of order.
 
 **Consumption.** A column's placement takes a unit's batches (`RowGroupBatches`) with the unit's pages. Its placement checks that it placed every row the plan takes from the row group it leaves, seals a cell the plan closes, and takes the file name and flag for the cells that follow. A flat column seals a cell the moment it holds its planned rows. A column with repetition seals it at the next record start, at the next row group or at the end of the stream, since the record's last values can follow on later pages.
 
@@ -154,7 +164,7 @@ The plan is extended a row group at a time, as its unit is installed, in unit or
 
 The row-group cut costs every column of the read a batch hand-off per row group, which slows a scan over small row groups measurably, so only a read with a binary column, whose values draw on a dictionary per batch, pays it. A batch spans row groups of one file only in a read without a binary column, and **no batch straddles files**. `RecordFilterTally` attributes counts per file from the batch's file name, and both row readers take their current file name (for `FileAwareRowReader` and error context) from the first column's batch. A file is told apart by its position in the read, so a path listed twice in a row starts a new batch.
 
-Tests: `BatchPlanTest`, `PlacerTest`, `RecordFilterEventTest`, `FileNameInExceptionTest`, `FilterOnlyColumnSkipTest`.
+Tests: `BatchPlanTest`, `ColumnPlacerTest`, `RecordFilterEventTest`, `FileNameInExceptionTest`, `FilterOnlyColumnSkipTest`.
 
 ### BatchExchange
 
@@ -211,7 +221,7 @@ Tests: `BatchSizingTest`, `WideListBatchBoundTest`.
 
 The read's units are its row groups that statistics keep, in file order and row-group order: a unit holds its file, its row group and its index in the file, its key (the first row of it the read publishes), its always-match flag, its page-index window and, once planned, its pages and ranges. Listing a file (`FooterReader`, then `RowGroupPlanner.addFile`) takes place once its footer is loaded and the files before it are listed: it validates the file's schema against the reference schema (the first file's), matching columns by path and, where sibling fields of one name give several columns one path, the `k`-th of the path to the `k`-th (`SchemaCompatibility`), resolves the file's own leaf ordinals for the touched columns, checks that the chunk at each touched ordinal carries that leaf's path, prunes row groups on their statistics ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)), applies the physical skip and the row budget, and forms the file's page-index windows. A unit's Bloom filters, dictionaries and page index are read as its window's fetches reach it ([FETCH_PLANNING.md](FETCH_PLANNING.md#per-row-group)), and the unit is planned on a plan job once they have arrived.
 
-Units are planned in any order and installed in unit order: a unit is installed, its batches taken from the batch plan and its pages handed to its columns, once it and every unit before it are planned, so batches stay in row order whichever plan finishes first.
+Units are planned in any order and batched in unit order: a unit is batched, its batches taken from the batch plan, and its pages handed to `PageTracker`, once it and every unit before it are planned, so batches stay in row order whichever plan finishes first.
 
 #### A unit's states
 
@@ -230,7 +240,7 @@ PROBING ⟲ lacks dictionary bytes:     │
   └─────────────────────────────→ PLANNED
                                       │ every unit before it is planned
                                       ▼
-                                  INSTALLED
+                                   BATCHED
 ```
 
 | State | Entered when | The unit gains |
@@ -239,16 +249,16 @@ PROBING ⟲ lacks dictionary bytes:     │
 | `PROBING` | its Bloom filters have arrived and it has a leaf they or its dictionaries may decide | what its passes decided and decoded; a pass that lacks dictionary bytes fetches them and probes again |
 | `AWAITING_INDEX` | its probe kept it, or it has nothing to probe | the dictionaries its probe decoded; its page index is read with its neighbours' ([FETCH_PLANNING.md](FETCH_PLANNING.md#per-row-group)), and its plan is made on a job once the index has arrived |
 | `PLANNED` | its plan is made, or its probe dropped it, which plans it with no row | its plan: the rows its filter keeps, each column's pages and dictionary page, and its ranges |
-| `INSTALLED` | it and every unit before it are planned | its batches, from the batch plan; its ranges are fetched and its pages handed to its columns from here on |
+| `BATCHED` | it and every unit before it are planned | its batches, from the batch plan; its ranges are fetched and its pages handed to its columns from here on |
 
-Each state is a record of `Unit` (`Unit.Listed`, `Unit.Probing`, `Unit.AwaitingIndex`, `Unit.Planned`, `Unit.Installed`) holding exactly what the unit has in it, and a state's transitions return the next one, so a transition the diagram lacks does not compile. `RowGroupPlanner` owns each unit until it is installed: it keeps the unit's current state and replaces it on each transition. The parts after the planner take the immutable `Unit.Installed`; a probe's state accumulates in place across its passes and is the planner's alone. A unit whose probe or plan fails takes no further transition: the read fails at its first row, and no unit from there on is installed.
+Each state is a record of `Unit` (`Unit.Listed`, `Unit.Probing`, `Unit.AwaitingIndex`, `Unit.Planned`, `Unit.Batched`) holding exactly what the unit has in it, and a state's transitions return the next one, so a transition the diagram lacks does not compile. `RowGroupPlanner` owns each unit until it is batched: it keeps the unit's current state and replaces it on each transition. The parts after the planner take the immutable `Unit.Batched`; a probe's state accumulates in place across its passes and is the planner's alone. A unit whose probe or plan fails takes no further transition: the read fails at its first row, and no unit from there on is batched.
 
 **Invariant: reader structure is never derived from the contents of individual row groups in individual files.** A decision the reader takes once, at construction, from facts about row groups would force every file to be planned before the first row, returning time to first row to O(files). Facts about a row group reach the read on its unit:
 
 | Question | Answered |
 |---|---|
 | Does statistics prove every row matches? | Per row group: the unit's always-match flag → batch plan → the unit's `RowGroupBatches` → cell → `Batch.filterAlwaysMatches` |
-| Where do batches close, and does the row cap still hold under a filter? | Per row group, by the batch plan, as the unit is installed ([When a batch closes](#when-a-batch-closes), [row limits](#row-limits)) |
+| Where do batches close, and does the row cap still hold under a filter? | Per row group, by the batch plan, as the unit is batched ([When a batch closes](#when-a-batch-closes), [row limits](#row-limits)) |
 | Batch-matcher or per-row filter evaluation? | From the predicate's shape alone (`BatchFilterCompiler.tryCompile`) |
 | Batch size | From the first file ([batch sizing](#batch-sizing)) |
 | Does the read have any work? | Found by the read itself: a read that lists no unit, or whose Bloom filters or dictionaries drop every unit, ends its columns at once and returns no row |
@@ -286,7 +296,7 @@ The always-match decision travels from the unit to the column in the row group's
 
 A column whose placement reaches the cap takes no further page; once every column's has, the read plans nothing more. A page is the smallest decode unit: a page that straddles the cap is decoded and filled up to the cap. The column readers carry no row cap (#433).
 
-Tests: `BatchPlanTest`, `PlacerTest`, `AlwaysMatchingRowGroupTest`, `MultiFilePlanningTest`, `S3SelectiveReadJfrIT` (s3).
+Tests: `BatchPlanTest`, `ColumnPlacerTest`, `AlwaysMatchingRowGroupTest`, `MultiFilePlanningTest`, `S3SelectiveReadJfrIT` (s3).
 
 ### Failures
 
@@ -299,13 +309,13 @@ A read fails from the view of its rows, independently of which job ran first:
 5. **An `Error` is the JVM's, not a row's.** It is reported at the consumer's next call, whatever its row, and the read's close throws nothing.
 6. **A failure ends the read.** No job starts, everything held is returned, and every waiting consumer wakes.
 
-`BatchQueue` keeps the failure and its row; each column meets it at the first batch whose rows reach it. Where it lies decides the column's open cell (`PagePlacer`): at a failure between two units, every column's open cell is sealed and published, or abandoned where the column holds fewer rows than the plan takes before the failure; at a failure inside a unit, the open cell is left, since the batch holding the failure's row is never published. A column places nothing past a chunk whose scan failed. A column a later file lacks reads as nulls and is no failure.
+`BatchPublisher` keeps the failure and its row; each column meets it at the first batch whose rows reach it. Where it lies decides the column's open cell (`PagePlacer`): at a failure between two units, every column's open cell is sealed and published, or abandoned where the column holds fewer rows than the plan takes before the failure; at a failure inside a unit, the open cell is left, since the batch holding the failure's row is never published. A column places nothing past a chunk whose scan failed. A column a later file lacks reads as nulls and is no failure.
 
 Each failure is placed before it reaches the exchange (`PagePlacer.placed`): the column path is the column's own, and the file, row group and page come from the page or the scan it was met at. A fill that runs on another page's job, a nested cell's, raises a segment's failure with the segment's own page (`SegmentFillException`), which is placed instead. A runtime failure is classified as a read failure (`ExceptionContext.asReadFailure`, [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#crossing-a-thread-boundary)); an `IOException` stays checked and gains the place; an `Error` stays unplaced. Where a `MetadataSource` supplied the footers, a read failure also carries a hint at the supplied footer. `BatchExchange.checkError` rethrows each as it stands, so the reader's signature declares `IOException` and nothing between the read and the reader wraps. A job the executor refuses, as a closed `HardwoodContext` refuses it, fails the read with an `IllegalStateException` whose cause is the refusal. The exception types a caller sees are in [error-handling.md](../docs/content/reference/error-handling.md).
 
 A reader that finds any column's stream ended checks every exchange for an error before reporting the end, so a failure on a column other than the first, a filter-only column included, is not reported as a short read.
 
-Tests: `ReadFailureTypingTest`, `ReadFailurePositionTest`, `SpeculativeErrorTest`, `ColumnReadersTransportFailureTest`, `ContextClosedMidReadTest`, `LaterFileFailureTest`, `LaterFileDataFailureTest`, `PlanningFailureTest`, `FooterReadRetryTest`, `BetweenWorkItemsFailureTest`, `ColumnFailureTest`, `PageRowCountTest`, `PlacerTest`, `BatchPlanTest`, `BatchExchangeTest`.
+Tests: `ReadFailureTypingTest`, `ReadFailurePositionTest`, `SpeculativeErrorTest`, `ColumnReadersTransportFailureTest`, `ContextClosedMidReadTest`, `LaterFileFailureTest`, `LaterFileDataFailureTest`, `PlanningFailureTest`, `FooterReadRetryTest`, `BetweenWorkItemsFailureTest`, `ColumnFailureTest`, `PageRowCountTest`, `ColumnPlacerTest`, `BatchPlanTest`, `BatchExchangeTest`.
 
 ### Cancellation and close
 
@@ -341,7 +351,7 @@ Tests: `MetadataFilteringOptionTest`, `FixedSizeListFastPathReadTest`.
 
 - **The look-ahead and the consumer's pace (#1577).** The look-ahead is a fixed number of batch budgets and ignores the consumer's pace. It is the only bound on decoding, so a read whose fetches keep up decodes to it, and its decoded batches can wait long enough to survive a young collection and be promoted. How much a pausing consumer needs ahead is the consumer's to know; a look-ahead derived from the read's own state does not know it.
 - **Files ahead and F are not derived from the read's rate.** What a read needs ahead is the requests that hide its latency at its consumer's rate. F, sized for large requests, binds nothing on small files, where the files-ahead count is the only bound; a read closed early has started the footers of up to that many files past its data. The data's reach passes the units listed once F lets the read fetch every listed unit, and the files ahead are then counted from the next file to list.
-- **Pages' state made at install.** A unit's pages get their state (the page's work, its task and segments, its job) when the unit is installed, and the decodes fill it in later, so on a read that installs ahead of its decodes the state is promoted and every fill dirties an old card. It costs young pauses, not CPU, on a read of many small pages.
+- **Pages' state made as tracking starts.** A unit's pages get their state (the page's work, its task and segments, its job) when the unit is batched, and the decodes fill it in later, so on a read that batches ahead of its decodes the state is promoted and every fill dirties an old card. It costs young pauses, not CPU, on a read of many small pages.
 - **Concurrent first touches of a mapped file.** Pages of one chunk decode on several threads, which fault in the same parts of a mapped file concurrently; the extra faults show where faults are costly.
 - **One lock per read.** Every result is applied under the read's one lock. Where a page decodes in tens of microseconds on many cores, the lock may bind before the cores do; nothing measures it.
 - **Nothing detects a read that waits for nothing.** A rule of the read that misses a case leaves its consumer waiting on a context with a pool; a context of zero threads fails such a read ([THREADING.md](THREADING.md#a-context-of-zero-threads)).

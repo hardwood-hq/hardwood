@@ -88,14 +88,14 @@ final class PagePlanner {
 
     /// The rows of `u` its filter keeps by the ColumnIndex, where it narrows them: all of them
     /// where a nested column without an OffsetIndex could not take a page mask.
-    private RowRanges matching(Unit.AwaitingIndex p, List<PageFetcher.Range> index) throws IOException {
+    private RowRanges matching(Unit.AwaitingIndex p, List<RangeFetch> index) throws IOException {
         UnitListing u = p.listing();
         if (!pruning.pageFiltering(u)) {
             return RowRanges.ALL;
         }
         RowGroupIndexBuffers buffers = RowGroupIndexBuffers.slice(u.metaData(), p.listed().offsetIndexes(),
                 p.listed().columnIndexes(),
-                (offset, length) -> PageFetcher.read(index, offset, length));
+                (offset, length) -> RangeFetch.read(index, offset, length));
         RowRanges matching = PageFilterEvaluator.computeMatchingRows(u.columnOrdinals().filter(), u.metaData(),
                 buffers, new LogContext(u.file().name(), u.rowGroup()), u.columnOrdinals().boundsReadability());
         for (int c = 0; c < schemas.length && !matching.isAll() && !matching.isEmpty(); c++) {
@@ -110,7 +110,7 @@ final class PagePlanner {
     /// rows its filter matches, and the unit's ranges: its chunks' extents, or under page
     /// filtering the pages kept, adding to `events` what page filtering reports; on a job.
     @SuppressWarnings("unchecked")
-    UnitPlan plan(Unit.AwaitingIndex p, List<PageFetcher.Range> index, List<Event> events)
+    UnitPlan plan(Unit.AwaitingIndex p, List<RangeFetch> index, List<Event> events)
             throws IOException {
         UnitListing u = p.listing();
         u.requireSameFile();
@@ -126,7 +126,7 @@ final class PagePlanner {
         long[] firstDataPage = new long[n];
         Dictionary[] preloaded = new Dictionary[n];
         long[] dictionaryEnd = new long[n];
-        List<CoalescingPolicy.Range> ranges = new ArrayList<>();
+        List<CoalescingPolicy.Need> needs = new ArrayList<>();
         // pages are read alone where a filter or the row limit leaves some of them out
         boolean pageRanges = !matching.isAll() || u.limit() < u.metaData().numRows();
         CoalescingPolicy.Extent[] extents = new CoalescingPolicy.Extent[n];
@@ -148,12 +148,12 @@ final class PagePlanner {
                 continue;
             }
             if (chunk.offsetIndexOffset() == null) {
-                // scanned once installed ([HeaderScanner]), unless no row of it is kept
+                // scanned once its unit is batched ([HeaderScanner]), unless no row of it is kept
                 pages[c] = matching.isEmpty() ? List.of() : null;
                 continue;
             }
             try {
-                ByteBuffer slice = PageFetcher.read(index, chunk.offsetIndexOffset(), chunk.offsetIndexLength());
+                ByteBuffer slice = RangeFetch.read(index, chunk.offsetIndexOffset(), chunk.offsetIndexLength());
                 List<PageLocation> all = OffsetIndexReader.read(new ThriftCompactReader(slice), chunk.metaData())
                         .pageLocations();
                 pages[c] = NeededPage.select(all, matching, u.metaData().numRows());
@@ -168,7 +168,7 @@ final class PagePlanner {
                     dictionaryStart[c] = preloaded[c] != null ? 0
                             : DictionaryParser.dictionaryPageStart(chunk, firstDataPage[c]);
                     if (pageRanges && dictionaryStart[c] > 0 && !pages[c].isEmpty()) {
-                        ranges.add(new CoalescingPolicy.Range(c, dictionaryStart[c], firstDataPage[c]));
+                        needs.add(new CoalescingPolicy.Need(c, dictionaryStart[c], firstDataPage[c]));
                     }
                 }
                 for (NeededPage page : pages[c]) {
@@ -176,7 +176,7 @@ final class PagePlanner {
                     long end = start + page.location().compressedPageSize();
                     checkWithinChunk(u.file().name(), u.rowGroup(), path, chunk, start, end);
                     if (pageRanges) {
-                        ranges.add(new CoalescingPolicy.Range(c, start, end));
+                        needs.add(new CoalescingPolicy.Need(c, start, end));
                     }
                 }
             }
@@ -198,11 +198,11 @@ final class PagePlanner {
                         Math.toIntExact(end - extent.start()), u.chunks()[extent.column()].metaData(), u.limit(), maxSpan));
             }
             for (long piece = extent.start(); piece < end; piece += maxSpan) {
-                ranges.add(new CoalescingPolicy.Range(extent.column(), piece, Math.min(end, piece + maxSpan)));
+                needs.add(new CoalescingPolicy.Need(extent.column(), piece, Math.min(end, piece + maxSpan)));
             }
         }
         return new UnitPlan(matching, pages, dictionaryStart, firstDataPage, preloaded, dictionaryEnd,
-                CoalescingPolicy.coalesce(ranges, extents, names, u.rowGroup(), maxSpan, HeldBytes.heldFrom(u.file())));
+                CoalescingPolicy.coalesce(needs, names, u.rowGroup(), maxSpan, HeldBytes.heldFrom(u.file())));
     }
 
     private static PageFilterEvent pageFilterEvent(UnitListing u, String column, int totalPages, int pagesKept) {

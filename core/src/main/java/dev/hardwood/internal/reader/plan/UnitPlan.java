@@ -11,7 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import dev.hardwood.internal.reader.batch.Dictionary;
-import dev.hardwood.internal.reader.fetch.Span;
+import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.select.RowRanges;
 
 /// The plan the read makes for a [UnitListing] on a job, once its page index has arrived: the
@@ -27,9 +27,9 @@ import dev.hardwood.internal.reader.select.RowRanges;
 /// @param preloaded per decoded column, the dictionary the unit's pruning probe decoded, which its
 ///        pages decode with instead of reading it again, `null` for none
 /// @param dictionaryEnd per decoded column, where such a dictionary's page ends, `0` for none
-/// @param spans the unit's ranges, coalesced across its columns
+/// @param ranges the unit's requests, coalesced across its columns
 public record UnitPlan(RowRanges matching, List<NeededPage>[] pages, long[] dictionaryStart,
-                long[] firstDataPage, Dictionary[] preloaded, long[] dictionaryEnd, List<Span> spans) {
+                long[] firstDataPage, Dictionary[] preloaded, long[] dictionaryEnd, List<FileRange> ranges) {
 
     /// The plan of a unit of `columns` decoded columns of which no row is read, its rows kept by
     /// `matching`.

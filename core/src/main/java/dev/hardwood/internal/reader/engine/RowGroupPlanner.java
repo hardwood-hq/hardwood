@@ -17,7 +17,7 @@ import java.util.List;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.io.HeldBytes;
-import dev.hardwood.internal.reader.fetch.Span;
+import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.internal.reader.plan.IndexWindow;
@@ -33,23 +33,23 @@ import jdk.jfr.Event;
 /// Plans a read's row groups, moving each through its states ([Unit.State]). Lists each file's row
 /// groups that statistics and the read's skip and limit keep, as [Unit]s; probes each unit's Bloom
 /// filters and dictionaries; reads its window's page index (sliced from the file's tail where it
-/// holds it), from which [PagePlanner] plans its pages and ranges into a [UnitPlan]; and installs the units in unit
+/// holds it), from which [PagePlanner] plans its pages and ranges into a [UnitPlan]; and batches the units in unit
 /// order, so batches stay in row order whichever plan finishes first. A unit whose planning fails fails the read at its first row, between two units. Used
 /// under the read's lock, except the jobs' work.
 final class RowGroupPlanner {
 
-    /// An [IndexWindow]'s units, the `count` from the one at `first`, and its requests: its Bloom
-    /// filters, read first, and its page index, read once a unit of it survives its Bloom filters
-    /// and dictionaries; each held by every unit of it.
-    static final class Window {
+    /// The fetch of an [IndexWindow] in the read: its units, the `count` from the one at `first`,
+    /// and its requests: its Bloom filters, read first, and its page index, read once a unit of it
+    /// survives its Bloom filters and dictionaries; each held by every unit of it.
+    static final class WindowFetch {
         final int first;
         final int count;
-        final List<PageFetcher.Range> bloomFilters;
-        final List<PageFetcher.Range> index;
+        final List<RangeFetch> bloomFilters;
+        final List<RangeFetch> index;
         boolean indexRead;
         boolean indexArrived;
 
-        Window(int first, int count, List<PageFetcher.Range> bloomFilters, List<PageFetcher.Range> index) {
+        WindowFetch(int first, int count, List<RangeFetch> bloomFilters, List<RangeFetch> index) {
             this.first = first;
             this.count = count;
             this.bloomFilters = bloomFilters;
@@ -58,14 +58,15 @@ final class RowGroupPlanner {
     }
 
     private final JobScheduler scheduler;
-    private final BatchQueue queue;
-    private final PageFetcher fetcher;
+    private final BatchPublisher publisher;
+    private final RangeFetcher fetcher;
+    private final PageTracker tracker;
     private final HeaderScanner scanner;
     private final PagePlacer placer;
     private final BatchPlan batchPlan;
     private final ColumnSchema[] schemas;
     private final List<Unit> units = new ArrayList<>();
-    private int nextInstall;
+    private int nextBatched;
     private long endKey;
     private boolean listed;
     /// what statistics reported of each listed file, committed once the consumer reaches the file,
@@ -75,7 +76,7 @@ final class RowGroupPlanner {
     private int reportedFiles;
     private int reportedUnits;
     /// the unit holding the consumer's first unpublished row, as far as [#fileAt] has moved it
-    private int scan;
+    private int consumerUnit;
 
     private final RowGroupPruning pruning;
     /// plans a unit's pages and ranges once its page index has arrived
@@ -88,7 +89,7 @@ final class RowGroupPlanner {
     private final boolean filteredRead;
     private long skip;
 
-    RowGroupPlanner(JobScheduler scheduler, BatchQueue queue, PageFetcher fetcher, HeaderScanner scanner,
+    RowGroupPlanner(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, PageTracker tracker, HeaderScanner scanner,
                     PagePlacer placer, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
                     long budget, boolean filteredRead, long skip, long maskedRows) {
         this.budget = budget;
@@ -97,8 +98,9 @@ final class RowGroupPlanner {
         this.pages = new PagePlanner(schemas, filterOnly, pruning, maskedRows);
         this.pruning = pruning;
         this.scheduler = scheduler;
-        this.queue = queue;
+        this.publisher = publisher;
         this.fetcher = fetcher;
+        this.tracker = tracker;
         this.scanner = scanner;
         this.placer = placer;
         this.batchPlan = batchPlan;
@@ -182,8 +184,8 @@ final class RowGroupPlanner {
             int first = from;
             for (IndexWindow window : IndexWindow.plan(IndexWindow.budgetBytes(), file, members)) {
                 int count = window.memberCount();
-                Window w = new Window(first, count, ranges(file, window.bloomFilterSpans(), count),
-                        ranges(file, window.indexSpans(), count));
+                WindowFetch w = new WindowFetch(first, count, ranges(file, window.bloomFilterRanges(), count),
+                        ranges(file, window.indexRanges(), count));
                 for (int i = first; i < first + count; i++) {
                     // a row group with a chunk in another file reads no index: it fails first
                     IndexWindow.Member m = members.get(i - from);
@@ -202,16 +204,16 @@ final class RowGroupPlanner {
         }
     }
 
-    /// Ranges of `spans` of `file` in file order, each held by `readers`, sliced where the file
+    /// Fetches of `requests` of `file` in file order, each held by `readers`, sliced where the file
     /// holds them.
-    private static List<PageFetcher.Range> ranges(InputFile file, List<Span> spans, int readers) {
-        List<PageFetcher.Range> ranges = new ArrayList<>(spans.size());
-        for (Span span : spans.stream().sorted(Comparator.comparingLong(Span::start)).toList()) {
-            PageFetcher.Range r = new PageFetcher.Range(span);
+    private static List<RangeFetch> ranges(InputFile file, List<FileRange> requests, int readers) {
+        List<RangeFetch> ranges = new ArrayList<>(requests.size());
+        for (FileRange range : requests.stream().sorted(Comparator.comparingLong(FileRange::start)).toList()) {
+            RangeFetch r = new RangeFetch(range);
             for (int i = 0; i < readers; i++) {
                 r.charge.reader();
             }
-            r.bytes = HeldBytes.slice(file, span.start(), span.length());
+            r.bytes = HeldBytes.slice(file, range.start(), range.length());
             ranges.add(r);
         }
         return ranges;
@@ -219,14 +221,14 @@ final class RowGroupPlanner {
 
     /// Fetches those of `ranges` not held, at `u`'s key, then runs `then`; a range that cannot be
     /// read fails the read at `u`.
-    private void fetch(UnitListing u, List<PageFetcher.Range> ranges, Runnable then) {
+    private void fetch(UnitListing u, List<RangeFetch> ranges, Runnable then) {
         int[] missing = {0};
-        for (PageFetcher.Range r : ranges) {
+        for (RangeFetch r : ranges) {
             if (r.bytes == null) {
                 missing[0]++;
                 fetcher.fetch(u.file(), r, u.base(), t -> {
                     if (t != null) {
-                        queue.failAt(u.base(), t instanceof IOException e ? new IOException(ExceptionContext.filePrefix(
+                        publisher.failAt(u.base(), t instanceof IOException e ? new IOException(ExceptionContext.filePrefix(
                                 u.file().name()) + "Failed to fetch metadata for row group " + u.rowGroup(), e) : t);
                     }
                     else if (--missing[0] == 0) {
@@ -266,22 +268,22 @@ final class RowGroupPlanner {
                     probed(p, arrival);
                     return;
                 }
-                List<PageFetcher.Range> more = ranges(u.file(), p.missing(), 1);
+                List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
                 p.fetching(more);
                 fetch(u, more, () -> probe(p));
             };
-        }, t -> () -> queue.failAt(u.base(), t)));
+        }, t -> () -> publisher.failAt(u.base(), t)));
     }
 
     /// `p`'s Bloom filters and dictionaries decided: a unit they dropped is planned with no row,
     /// one they kept waits for its page index.
     private void probed(Unit.Probing p, RowGroupPruning.Arrival arrival) {
-        Window w = p.listed().window();
+        WindowFetch w = p.listed().window();
         fetcher.readersDone(w.bloomFilters);
         fetcher.readersDone(p.probed());
         if (arrival.dropped()) {
             set(p.dropped(arrival.dropEvent(), schemas.length));
-            installPlanned(w.index);
+            batchPlanned(w.index);
             return;
         }
         awaitIndex(p.kept(arrival.dropEvent()));
@@ -291,7 +293,7 @@ final class RowGroupPlanner {
     /// for it, and is planned once it has arrived.
     private void awaitIndex(Unit.AwaitingIndex a) {
         set(a);
-        Window w = a.listed().window();
+        WindowFetch w = a.listed().window();
         if (w.indexArrived) {
             plan(a);
         }
@@ -321,32 +323,32 @@ final class RowGroupPlanner {
     /// Every file is listed, or the listing failed: no unit follows those listed.
     void listed() {
         listed = true;
-        if (allInstalled()) {
-            queue.allPublishable();
+        if (allBatched()) {
+            publisher.allPublishable();
         }
     }
 
     /// The key below which every batch has been added.
-    long installedKey() {
-        return nextInstall < units.size() ? units.get(nextInstall).listing().base() : endKey;
+    long batchedKey() {
+        return nextBatched < units.size() ? units.get(nextBatched).listing().base() : endKey;
     }
 
     /// The file of the unit holding `key`, `-1` where none is listed; `consumer` where `key` is
     /// the consumer's first unpublished row, which only moves on, else a key at or past it.
     int fileAt(long key, boolean consumer) {
-        int i = scan;
+        int i = consumerUnit;
         while (i < units.size()
                 && units.get(i).listing().base() + units.get(i).listing().metaData().numRows() <= key) {
             i++;
         }
         if (consumer) {
-            scan = i;
+            consumerUnit = i;
         }
         return i < units.size() ? units.get(i).listing().fileIndex() : -1;
     }
 
-    boolean allInstalled() {
-        return listed && nextInstall == units.size();
+    boolean allBatched() {
+        return listed && nextBatched == units.size();
     }
 
     long endKey() {
@@ -356,18 +358,18 @@ final class RowGroupPlanner {
     /// Plans `a` on a job, its page index arrived.
     private void plan(Unit.AwaitingIndex a) {
         UnitListing u = a.listing();
-        List<PageFetcher.Range> index = a.listed().window().index;
+        List<RangeFetch> index = a.listed().window().index;
         scheduler.add(new JobScheduler.Job(u.base(), 0, planKind(u), null, buffers -> {
             List<Event> events = new ArrayList<>();
             UnitPlan plan = pages.plan(a, index, events);
             return () -> {
                 set(a.planned(plan, events));
-                installPlanned(index);
+                batchPlanned(index);
             };
         }, t -> () -> {
-            releaseIndex(index);
+            fetcher.readersDone(index);
             // met first by the first column, at no page
-            queue.failAt(u.base(), t instanceof Exception e
+            publisher.failAt(u.base(), t instanceof Exception e
                     ? placer.placed(0, e, u.file().name(), u.rowGroup(), ExceptionContext.UNKNOWN_PAGE) : t);
         }));
     }
@@ -395,7 +397,7 @@ final class RowGroupPlanner {
     private static List<Event> events(Unit u) {
         return switch (u) {
             case Unit.Planned p -> p.events();
-            case Unit.Installed i -> i.events();
+            case Unit.Batched i -> i.events();
             default -> null;
         };
     }
@@ -404,49 +406,42 @@ final class RowGroupPlanner {
     private record FileReport(Event event, long base) {
     }
 
-    /// Charges the dictionary `u`'s probe decoded for `column` as the column takes it, in its batch's
-    /// window; a charge over the read's limit fails the read at the unit.
-    private void chargePreloaded(Unit.Installed u, int column) {
+    /// Charges the dictionary `u`'s probe decoded for `column` as the column takes it, against the
+    /// batches `u` places; a charge over the read's limit fails the read at the unit.
+    private void chargePreloaded(Unit.Batched u, int column) {
         try {
-            placer.inWindow(column, u, () -> {
+            placer.chargeDictionary(column, u, () -> {
                 placer.workingSet(column).dictionary(u.plan().preloaded()[column]);
                 return null;
             });
         }
         catch (RuntimeException e) {
-            queue.failAt(u.listing().base(), column, placer.placed(column, e, u.listing().file().name(),
+            publisher.failAt(u.listing().base(), column, placer.placed(column, e, u.listing().file().name(),
                     u.listing().rowGroup(), ExceptionContext.UNKNOWN_PAGE));
         }
     }
 
-    /// A unit's planning used `index`, its window's page index, and ended.
-    private void releaseIndex(List<PageFetcher.Range> index) {
-        for (PageFetcher.Range r : index) {
-            r.charge.read(scheduler);
-        }
-    }
-
-    /// A unit is planned, its planning done with `index`: installs the units planned in unit
+    /// A unit is planned, its planning done with `index`: batches the units planned in unit
     /// order, up to the read's failure.
-    private void installPlanned(List<PageFetcher.Range> index) {
-        releaseIndex(index);
-        while (nextInstall < units.size() && units.get(nextInstall) instanceof Unit.Planned p
-                && p.listing().base() < queue.failedAt()) {
-            nextInstall++;
-            install(p);
+    private void batchPlanned(List<RangeFetch> index) {
+        fetcher.readersDone(index);
+        while (nextBatched < units.size() && units.get(nextBatched) instanceof Unit.Planned p
+                && p.listing().base() < publisher.failedAt()) {
+            nextBatched++;
+            takeBatches(p);
         }
-        if (allInstalled()) {
-            queue.allPublishable();
+        if (allBatched()) {
+            publisher.allPublishable();
         }
     }
 
     /// Takes the unit's batches from the batch plan, its first rows continuing the batch the unit
-    /// before left open where the plan says so, and hands its pages and ranges to [PageFetcher].
-    private void install(Unit.Planned planned) {
+    /// before left open where the plan says so, and hands its pages and ranges to [PageTracker].
+    private void takeBatches(Unit.Planned planned) {
         UnitListing u = planned.listing();
         BatchPlan.RowGroupBatches batches = batchPlan.plan(u.index(), u.fileIndex(), u.file().name(),
                 u.alwaysMatches(), planned.plan().matching().rowCount(u.metaData().numRows()));
-        Unit.Installed p = planned.installed(batches);
+        Unit.Batched p = planned.batched(batches);
         set(p);
         if (batches.endsRead()) {
             // the row cap ends the read in it: no further file is listed
@@ -455,13 +450,13 @@ final class RowGroupPlanner {
         long first = u.base();
         for (int i = 0; i < batches.segmentCount(); i++) {
             if (i > 0 || batches.continuedRows() == 0) {
-                queue.add(new Batch(first, batches.readRowsBefore() + first - u.base(), schemas.length));
+                publisher.add(new Batch(first, batches.readRowsBefore() + first - u.base(), schemas.length));
             }
             first += batches.segmentRows(i);
-            queue.last().endKey = first;
+            publisher.last().endKey = first;
             for (int c = 0; c < schemas.length; c++) {
                 if (pages.skips(u, c)) {
-                    queue.skipLast(c);
+                    publisher.skipLast(c);
                 }
             }
         }
@@ -470,12 +465,12 @@ final class RowGroupPlanner {
                 chargePreloaded(p, c);
             }
         }
-        PageFetcher.ScanInput scans = fetcher.install(p);
+        PageTracker.ScanInput scans = tracker.track(p);
         for (int c = 0; c < schemas.length; c++) {
             if (p.plan().pages()[c] == null) {
-                scanner.scan(p, c, scans.placement()[c], scans.ranges());
+                scanner.scan(p, c, scans.placements()[c], scans.ranges());
             }
         }
-        fetcher.installed(scans);
+        tracker.handedToScans(scans);
     }
 }

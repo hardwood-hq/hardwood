@@ -16,7 +16,7 @@ import dev.hardwood.internal.reader.pipeline.BatchCell;
 /// placement opened for it and whether the cell is complete. Written under the read's lock.
 final class Batch {
 
-    /// the key of its first row, and the key past its last row of the row groups installed so far
+    /// the key of its first row, and the key past its last row of the row groups batched so far
     final long key;
     long endKey;
     /// the read's row it starts at, which a filter makes fewer than its key
@@ -25,7 +25,7 @@ final class Batch {
     final boolean[] complete;
     int columnsLeft;
     /// the ranges its pages were decoded from, held until every column has published it
-    final List<PageFetcher.Range> held = new ArrayList<>(0);
+    final List<RangeFetch> held = new ArrayList<>(0);
 
     Batch(long key, long row, int columns) {
         this.key = key;

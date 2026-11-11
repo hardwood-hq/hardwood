@@ -138,7 +138,7 @@ The read path in `core` is split into packages by responsibility. Each package d
 | `internal.reader.batch` | The batches a read hands its consumers: `BatchExchange`, `NestedBatch`, `BinaryBatchValues`, `Dictionary`, the layers `NestedLevelComputer` derives from levels | [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) |
 | `internal.reader.memory` | The working-set limit and the context's read-ahead buffer | [VALUE_DECODE.md](_designs/VALUE_DECODE.md#page-decode) |
 | `internal.reader.decode` | Page bytes to page values: `PageDecoder`, the page values, dictionary parsing | [VALUE_DECODE.md](_designs/VALUE_DECODE.md) |
-| `internal.reader.fetch` | The ranges a read requests: their coalescing (`CoalescingPolicy`, `CoalescedRanges`) and a file's tail (`TailedInputFile`) | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
+| `internal.reader.fetch` | The ranges a read requests: their coalescing (`CoalescingPolicy`, `CoalescedRequests`) and a file's tail (`TailedInputFile`) | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
 | `internal.reader.footer` | Reading and parsing a file's footer | [FILE_METADATA.md](_designs/FILE_METADATA.md) |
 | `internal.reader.plan` | What a read plans from metadata: footers (`FileMetadataCache`), pruning, page-index windows, schema checks, batch sizing and the batch plan | [READ_PIPELINE.md](_designs/READ_PIPELINE.md), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) |
 | `internal.reader.pipeline` | Decoded pages into batches: the placement, cells, segments and fills | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) |

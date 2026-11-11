@@ -37,18 +37,22 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/// One read of a [dev.hardwood.reader.ParquetFileReader], its column reads and its row reads: the
-/// row groups of its files, planned, fetched, decoded and published into its columns' exchanges.
-/// It is built from parts that each own their state:
+/// Runs one read of a [dev.hardwood.reader.ParquetFileReader], for its column reads and its row
+/// reads: builds the read's parts, which plan, fetch and decode the row groups of its files and
+/// publish them into its columns' exchanges, hands the consumer's polls to them, and closes them.
+/// The parts each own their state:
 ///
 /// - [FooterReader] reads the footers of the files after the first and lists them in order.
 /// - [RowGroupPlanner] moves each row group's [Unit] through its states: lists it, probes it,
-///   plans its pages and ranges once its page index has arrived, installs the units in order,
+///   plans its pages and ranges once its page index has arrived, batches the units in order,
 ///   and commits what pruning reports once the consumer reaches it.
-/// - [HeaderScanner] walks the page headers of a column chunk without an OffsetIndex.
-/// - [PageFetcher] fetches a row group's ranges and decodes each page once its bytes have arrived.
+/// - [RangeFetcher] fetches each range the read requests ([RangeFetch]) and releases it once its
+///   last reader is done.
+/// - [HeaderScanner] scans each column chunk without an OffsetIndex header by header.
+/// - [PageTracker] tracks each page of a batched unit ([TrackedPage]) until its bytes, its dictionary and
+///   its placement are there, and starts its decode then.
 /// - [PagePlacer] places each column's pages in page order into the cells of the batch plan.
-/// - [BatchQueue] publishes each column's batches in row order and places the read's failure.
+/// - [BatchPublisher] publishes each column's batches in row order and places the read's failure.
 /// - [JobScheduler] decides which job starts next, by one priority within three bounds.
 /// - [ReadDriver] runs the jobs and applies their results under the read's one lock.
 ///
@@ -72,7 +76,7 @@ public final class RowGroupIterator implements Closeable {
     /// the file, as the reader holds it: with its tail
     private InputFile file;
     private ReadDriver driver;
-    private BatchQueue queue;
+    private BatchPublisher publisher;
     private RowGroupPlanner planner;
     private FooterReader footers;
     private PagePlacer placer;
@@ -220,27 +224,28 @@ public final class RowGroupIterator implements Closeable {
                     ? BatchExchange.detachingNested(name, batchSize) : BatchExchange.detachingFlat(name, batchSize));
         }
         driver = new ReadDriver(context, readQueue, defaultFetchAheadBytes(CoalescingPolicy.maxSpanBytes()),
-                this::poll, t -> queue.failAt(0, t));
+                this::poll, t -> publisher.failAt(0, t));
         JobScheduler scheduler = driver.scheduler();
-        queue = new BatchQueue(scheduler, started, batchSize, CAP_BUDGETS * budgetRows);
-        placer = new PagePlacer(scheduler, queue, schemas, started, layers, indexMode, fixedListFastPathEnabled,
+        RangeFetcher fetcher = new RangeFetcher(scheduler);
+        publisher = new BatchPublisher(fetcher, started, batchSize, CAP_BUDGETS * budgetRows);
+        placer = new PagePlacer(scheduler, publisher, schemas, started, layers, indexMode, fixedListFastPathEnabled,
                 batchSize, context.decompressorFactory(), files.footersSupplied(),
                 new WorkingSet(n), filters);
-        PageFetcher fetcher = new PageFetcher(scheduler, queue, placer, context);
-        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, placer, queue,
+        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, placer, context);
+        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, placer, publisher,
                 pruning.prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
-        planner = new RowGroupPlanner(scheduler, queue, fetcher, scanner, placer, new BatchPlan(batchSize,
+        planner = new RowGroupPlanner(scheduler, fetcher, publisher, tracker, scanner, placer, new BatchPlan(batchSize,
                 BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()), filter != null,
                 limit == 0 ? 0 : limit + leadingRows()), schemas, filterOnly, pruning,
                 limit > 0 ? limit : Long.MAX_VALUE, filter != null, skip, masked ? leading : 0);
-        footers = new FooterReader(files, scheduler, planner, queue, compatibility, filter, limit > 0,
+        footers = new FooterReader(files, scheduler, planner, publisher, compatibility, filter, limit > 0,
                 driver::update);
         for (int c = 0; c < n; c++) {
             int column = c;
             if (readQueue != null) {
                 started.get(c).setQueue(readQueue);
             }
-            started.get(c).setRoomListener(() -> driver.update(() -> queue.publishable(column)));
+            started.get(c).setRoomListener(() -> driver.update(() -> publisher.publishable(column)));
         }
         driver.locked(() -> footers.start(file, schema, firstKept, firstOrdinals));
         return started;
@@ -249,34 +254,34 @@ public final class RowGroupIterator implements Closeable {
     /// Ends or seals the columns' placement where the read has reached its end or a failure
     /// between units, publishes what can be, and says where the consumer stands; under the lock.
     private JobScheduler.Position poll() {
-        long installed = planner.installedKey();
-        if (planner.allInstalled() && !queue.failed()) {
+        long batchedTo = planner.batchedKey();
+        if (planner.allBatched() && !publisher.failed()) {
             placer.end(planner.endKey());
         }
         // the failure stands once no work at or before its row is left; only then do the columns
         // seal or abandon their open cells at it, which can move it to a lower row
-        while (queue.failed() && !queue.settled()) {
-            queue.settle(driver.scheduler().pendingThrough(queue.failedAt()));
-            if (!queue.settled()) {
+        while (publisher.failed() && !publisher.settled()) {
+            publisher.settle(driver.scheduler().pendingThrough(publisher.failedAt()));
+            if (!publisher.settled()) {
                 break;
             }
-            placer.sealAt(queue.failure(), queue.failedAt(), installed >= queue.failedAt());
+            placer.sealAt(publisher.failure(), publisher.failedAt(), batchedTo >= publisher.failedAt());
         }
-        queue.publish(installed, planner.allInstalled());
-        JobScheduler.Position at = queue.position(installed);
+        publisher.publish(batchedTo, planner.allBatched());
+        JobScheduler.Position at = publisher.position(batchedTo);
         if (placer.allPlacementEnded()) {
-            // no column takes a further page: nothing of a unit not installed starts, neither its
+            // no column takes a further page: nothing of a unit not batched starts, neither its
             // probe, plan and index fetches nor a footer past it
-            at = new JobScheduler.Position(at.need(), at.reach(), Math.min(at.end(), installed - 1));
+            at = new JobScheduler.Position(at.need(), at.reach(), Math.min(at.end(), batchedTo - 1));
         }
         // footers start ahead of the file the read's data has reached, which F bounds, or of the
         // consumer's need where that is further: the data never waits for a footer F would let
         // it fetch
-        footers.advance(queue.firstUnpublished(installed), Math.max(at.need(), driver.scheduler().fetchedTo() + 1));
+        footers.advance(publisher.firstUnpublished(batchedTo), Math.max(at.need(), driver.scheduler().fetchedTo() + 1));
         if (at.end() != Long.MAX_VALUE) {
             footers.endAt(at.end());
         }
-        planner.report(queue.firstUnpublished(installed));
+        planner.report(publisher.firstUnpublished(batchedTo));
         return at;
     }
 
@@ -285,7 +290,7 @@ public final class RowGroupIterator implements Closeable {
     @Override
     public void close() {
         if (driver != null) {
-            driver.locked(queue::stop);
+            driver.locked(publisher::stop);
             driver.close();
             // under the lock, beside another read's load ending, which then starts nothing
             driver.locked(footers::close);

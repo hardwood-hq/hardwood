@@ -73,10 +73,8 @@ class IndexWindowTest {
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, countingFile(InputFile.of(FIXTURE)),
                 members(rowGroups().subList(0, 3), column(0), column(0))).getFirst();
 
-        assertThat(window.indexSpans()).hasSize(2).allSatisfy(span -> {
-            assertThat(span.reason()).isEqualTo("rg=0-2 indexes");
-            assertThat(span.holders()).isEqualTo(3);
-        });
+        assertThat(window.indexRanges()).hasSize(2)
+                .allSatisfy(range -> assertThat(range.reason()).isEqualTo("rg=0-2 indexes"));
     }
 
     private static List<IndexWindow> plan(long budget, List<RowGroup> rowGroups,

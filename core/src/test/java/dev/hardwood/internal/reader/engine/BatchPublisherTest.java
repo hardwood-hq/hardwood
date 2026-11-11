@@ -16,25 +16,25 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class BatchQueueTest {
+class BatchPublisherTest {
 
     private static final int BATCH_ROWS = 100;
 
-    private final BatchQueue queue = new BatchQueue(
-            new JobScheduler(new ReadAheadBuffer(1000), () -> {
-            }, 1, 1000),
+    private final BatchPublisher publisher = new BatchPublisher(
+            new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
+            }, 1, 1000)),
             List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 50);
 
-    /// The last batch the plan has added may go on into the units not yet installed, such as
+    /// The last batch the plan has added may go on into the units not yet batched, such as
     /// those Bloom filters drop as they are planned, which lie past the slowest column's
     /// look-ahead: the planning of the next is within need, and the look-ahead reaches to it.
     @Test
     void needReachesTheNextUnitWhileTheLastBatchMayGoOn() {
         Batch open = new Batch(1000, 0, 1);
         open.endKey = 1020;
-        queue.add(open);
+        publisher.add(open);
 
-        JobScheduler.Position at = queue.position(5000);
+        JobScheduler.Position at = publisher.position(5000);
 
         assertThat(at.need()).isGreaterThan(5000);
         assertThat(at.reach()).isEqualTo(at.need());
@@ -43,8 +43,8 @@ class BatchQueueTest {
     /// The look-ahead reaches the cap's rows past the first row some column has not published.
     @Test
     void lookAheadReachesTheCapPastTheFirstUnpublishedRow() {
-        BatchQueue wide = new BatchQueue(new JobScheduler(new ReadAheadBuffer(1000), () -> {
-        }, 1, 1000), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
+        BatchPublisher wide = new BatchPublisher(new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
+        }, 1, 1000)), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
         Batch open = new Batch(1000, 0, 1);
         open.endKey = 1020;
         wide.add(open);
@@ -60,9 +60,9 @@ class BatchQueueTest {
     void needEndsWithAClosedBatch() {
         Batch closed = new Batch(1000, 0, 1);
         closed.endKey = 1020;
-        queue.add(closed);
-        queue.add(new Batch(1020, 20, 1));
+        publisher.add(closed);
+        publisher.add(new Batch(1020, 20, 1));
 
-        assertThat(queue.position(5000).need()).isEqualTo(1100);
+        assertThat(publisher.position(5000).need()).isEqualTo(1100);
     }
 }

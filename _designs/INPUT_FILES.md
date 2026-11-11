@@ -128,7 +128,7 @@ For local files the effective limit is therefore per column chunk read without a
 
 Page-index slices are merged into requests that stay within the gap policy's span limit, contiguous slices included, unless one slice alone is longer; a slice is at most 2 GB, so no page-index request needs a larger buffer however far apart the slices lie ([FETCH_PLANNING.md](FETCH_PLANNING.md#gap-policy)).
 
-Tests: `MappedInputFileLargeFileTest`, `ChunkSizeTest`, `CoalescedRangesTest`. The range-cache limit is untested.
+Tests: `MappedInputFileLargeFileTest`, `ChunkSizeTest`, `CoalescedRequestsTest`. The range-cache limit is untested.
 
 ## Boundaries
 

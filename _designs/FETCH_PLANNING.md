@@ -26,7 +26,7 @@ A file is listed once its footer is loaded and the files before it are listed ([
 
 ### The file's tail
 
-The footer's read of a file's tail (`TailedInputFile`) serves every later read that lies inside it as a slice, without a request: the footer, the page index and the Bloom filters that sit before it, and data. A file up to the tail's size costs that one request. Coalescing cuts a unit's ranges at the tail's start, so no data request crosses it: the part before the start is requested and the part after it is sliced. A page-index window merges no slices across the tail's start either, so of its slices only one that straddles the start is requested across it (`CoalescedRanges`, the one merge both use). The read holds a file's tail until the consumer passes the file, and drops it then, with the file's footer, or when it closes; a read of the file from then on is a request again. A footer read ahead is charged its tail's size against F and R until then. The tail's size is an internal property (`hardwood.internal.tailBytes`, 256 KiB by default), read for each file; core's tests set it to the eight bytes of the trailer, so a fixture of a few kilobytes reads as a file larger than its tail.
+The footer's read of a file's tail (`TailedInputFile`) serves every later read that lies inside it as a slice, without a request: the footer, the page index and the Bloom filters that sit before it, and data. A file up to the tail's size costs that one request. Coalescing cuts a unit's ranges at the tail's start, so no data request crosses it: the part before the start is requested and the part after it is sliced. A page-index window merges no slices across the tail's start either, so of its slices only one that straddles the start is requested across it (`CoalescedRequests`, the one merge both use). The read holds a file's tail until the consumer passes the file, and drops it then, with the file's footer, or when it closes; a read of the file from then on is a request again. A footer read ahead is charged its tail's size against F and R until then. The tail's size is an internal property (`hardwood.internal.tailBytes`, 256 KiB by default), read for each file; core's tests set it to the eight bytes of the trailer, so a fixture of a few kilobytes reads as a file larger than its tail.
 
 A file in memory holds every byte while it is open, and a file whose tail the read took holds the tail until it is dropped; the read asks a file what it holds through `HeldBytes` (from which offset, whether for as long as the file is open, a slice without I/O), never by its class, so the tail cut in coalescing, the ranges sliced in place and the dropping of a tail treat both alike.
 
@@ -42,7 +42,7 @@ A unit's reads follow one another in the order Parquet forces; each is a fetch k
 | 2 | Dictionaries a filter can prune with, in a row group statistics and Bloom filters left undecided: fully dictionary-encoded filter columns whose `EQ`/`IN` leaf can be decided | `RowGroupDictionaryFilterSource`, in the same probe | One per such column, as the filter's fold reaches a leaf it can decide, sized by the gap to the first data page or by a bounded probe, and a second only when the page header declares more than that read held |
 | 3 | Page index | the unit's index window | The OffsetIndex of every decoded column the row group reads and, under page filtering, the ColumnIndex of every filter column. Fetched for the window once its first member is kept by its Bloom filters and dictionaries: at most one request per structure when the window's slices lie within the gap limit of each other |
 | 4 | Plan | `PagePlanner`, on the unit's plan job, which `RowGroupPlanner` schedules | None: each decoded column's pages from its OffsetIndex, kept by the rows the filter matches and the row limit, and the unit's ranges |
-| 5 | Data | the unit's ranges, once it is installed (`PageFetcher`) | Every needed range of every decoded column coalesced at once under the [gap policy](#gap-policy) ([Coalescing a unit](#coalescing-a-unit)) |
+| 5 | Data | the unit's ranges, once it is batched (`PageTracker`) | Every needed range of every decoded column coalesced at once under the [gap policy](#gap-policy) ([Coalescing a unit](#coalescing-a-unit)) |
 
 A probe reads over the bytes present: a filter or dictionary not present counts as absent for that pass, so a drop it reaches stands, and a keep is evaluated again once the ranges it lacked have arrived; the fold keeps each leaf's decision once final, so it reads the same dictionaries, in the same order, as a probe that waited for each. A row group its Bloom filters drop reads no dictionary. A row group its Bloom filters or dictionaries drop is planned with no page and no range, and steps 3 to 5 read nothing for it, unless another member of its window needs the page index. The dictionaries a probe read are decoded with the unit's pages, so a dictionary page pruning read is not fetched again. How the Bloom filters and dictionaries refine the decisions listing recorded is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
@@ -69,13 +69,13 @@ Two byte ranges are fetched as one request when the gap between them is at most 
 | Merge | Where |
 |---|---|
 | A row group's needed data ranges, of every column at once, into its data requests | `CoalescingPolicy.coalesce` |
-| Page-index and bloom-filter slices of one structure | `CoalescedRanges` |
+| Page-index and bloom-filter slices of one structure | `CoalescedRequests` |
 
 A merge bridges the gap between two needed ranges. It never extends a request before the first needed byte or past the last one. A range longer than the span limit is a request of its own.
 
 The gap limit is the serial break-even of a remote request: the bytes that take as long to transfer as one round trip (latency × bandwidth), so fetching a gap costs no more than issuing a second request. The span limit keeps each `readRange` bounded, which lets read-ahead overlap decode and lets a read that stops early leave the rest unfetched. The best gap depends on the storage and on how many requests run in parallel; the rule lives in one class so that a storage-dependent value replaces one constant. The span limit has a tuning override (`hardwood.internal.maxCoalescedBytes`), read once per read, which is not a public option; a value that is not a positive byte count is rejected with `IllegalArgumentException`.
 
-Tests: `CoalescingPolicyTest`, `CoalescedRangesTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`.
+Tests: `CoalescingPolicyTest`, `CoalescedRequestsTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`.
 
 ## Pages
 
@@ -84,7 +84,7 @@ A column chunk's pages reach its placement in one of two ways, and the only choi
 | Chunk | Pages | Bytes |
 |---|---|---|
 | With an OffsetIndex | listed from it when the unit is planned (`PagePlanner.plan`), kept by the rows the filter matches and truncated by the row limit | the unit's ranges holding each page, planned with them |
-| Without one | found by a scan of the chunk's headers once the unit is installed (`HeaderScanner`), as the ranges holding them arrive | the chunk's ranges, keyed by the row as far into the chunk as each lies until the scan finds a page in it, then at that page's row |
+| Without one | found by a scan of the chunk's headers once the unit is batched (`HeaderScanner`), as the ranges holding them arrive | the chunk's ranges, keyed by the row as far into the chunk as each lies until the scan finds a page in it, then at that page's row |
 | Filter-only, in a row group statistics proved to match in full ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)) | none | none |
 
 **A page's bytes come from the ranges it lies in.** A page that lies in one range is a zero-copy slice of it. A page that straddles the cut between two ranges is copied from both into one buffer once both have arrived. A page's decode starts only once every range holding it, and its chunk's dictionary, have arrived, so a decode does no I/O and parses no header again. The ranges stay held by the pages in them until each is decoded and every fill that reads the page's [stored values](VALUE_DECODE.md#page-decode) in place is done with it.

@@ -101,7 +101,8 @@ class JobSchedulerTest {
 
         // a request larger than F still runs one ahead; F then holds back fetches, not decodes
         assertThat(keys(s.start(at))).containsExactly(10L, 30L);
-        first.read(s);
+        assertThat(first.readerDone()).isTrue();
+        s.release(first);
         assertThat(keys(s.start(at))).containsExactly(20L);
     }
 
@@ -120,7 +121,8 @@ class JobSchedulerTest {
         assertThat(keys(s.start(at))).containsExactly(10L, 40L);
         assertThat(s.start(at)).isEmpty();
 
-        first.read(s);
+        assertThat(first.readerDone()).isTrue();
+        s.release(first);
         r.release(s.takeReleased());
         assertThat(wakes).hasValue(1);
         assertThat(keys(s.start(at))).containsExactly(20L, 30L);
@@ -178,7 +180,7 @@ class JobSchedulerTest {
             long consumer = left.stream().mapToLong(j -> j.key).min().getAsLong();
             for (JobScheduler.Job held : List.copyOf(holding)) {
                 if (held.key < consumer) {
-                    held.charge.returnTo(s);
+                    s.release(held.charge);
                     holding.remove(held);
                 }
             }
@@ -244,7 +246,7 @@ class JobSchedulerTest {
     }
 
     @Test
-    void chargeReturnsAtItsLastReader() {
+    void theSchedulerReturnsAChargeItsLastReaderLetsGo() {
         ReadAheadBuffer r = new ReadAheadBuffer(1000);
         JobScheduler s = new JobScheduler(r, NOTHING, 4, 1000);
         Charge range = new Charge();
@@ -253,9 +255,10 @@ class JobSchedulerTest {
         s.add(job("f", 10, 100, JobScheduler.Kind.FETCH, range));
         s.start(new JobScheduler.Position(0, NONE, NONE));
 
-        assertThat(range.read(s)).isFalse();
+        assertThat(range.readerDone()).isFalse();
+        assertThat(range.readerDone()).isTrue();
         assertThat(s.takeReleased()).isZero();
-        assertThat(range.read(s)).isTrue();
+        s.release(range);
         assertThat(s.takeReleased()).isEqualTo(100);
     }
 }

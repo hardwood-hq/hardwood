@@ -14,7 +14,7 @@ import java.util.Comparator;
 import java.util.List;
 
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
-import dev.hardwood.internal.reader.fetch.Span;
+import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.internal.reader.plan.RowGroupPruning;
 import dev.hardwood.internal.reader.plan.UnitListing;
@@ -25,7 +25,7 @@ import jdk.jfr.Event;
 
 /// A row group of the read in one of its states, each holding what the row group has in it. A
 /// state's transitions return the next state; [RowGroupPlanner] keeps each unit's current state
-/// and replaces it on each transition, and the parts after the planner read the [Installed] one.
+/// and replaces it on each transition, and the parts after the planner read the [Batched] one.
 /// Each state holds the unit's listing, what its file's listing decided of it.
 sealed interface Unit {
 
@@ -35,18 +35,18 @@ sealed interface Unit {
     /// `columnIndexes` are the file ordinals of the columns whose OffsetIndex and ColumnIndex its
     /// plan reads, from `window`, which also holds its Bloom filters.
     record Listed(UnitListing listing, BitSet offsetIndexes, BitSet columnIndexes,
-                  RowGroupPlanner.Window window) implements Unit {
+                  RowGroupPlanner.WindowFetch window) implements Unit {
 
         /// Its Bloom filters have arrived and it has a leaf they or its dictionaries may decide.
         Probing probing() {
-            List<PageFetcher.Range> probed = new ArrayList<>();
-            List<Span> missing = new ArrayList<>();
+            List<RangeFetch> probed = new ArrayList<>();
+            List<FileRange> missing = new ArrayList<>();
             String reason = "rg=" + listing.rowGroup() + " pruning";
             ByteSource bytes = (offset, length) -> {
-                ByteBuffer found = PageFetcher.read(window.bloomFilters, offset, length);
-                found = found != null ? found : PageFetcher.read(probed, offset, length);
+                ByteBuffer found = RangeFetch.read(window.bloomFilters, offset, length);
+                found = found != null ? found : RangeFetch.read(probed, offset, length);
                 if (found == null) {
-                    missing.add(new Span(offset, length, reason, 1));
+                    missing.add(new FileRange(offset, length, reason));
                 }
                 return found;
             };
@@ -64,7 +64,7 @@ sealed interface Unit {
     /// accumulates in place: `probe` holds what the passes so far decided and decoded, `probed` the
     /// dictionary bytes they fetched, in file order, and `missing` what the last pass lacked. Only
     /// the planner sees it.
-    record Probing(Listed listed, RowGroupPruning.Probe probe, List<PageFetcher.Range> probed, List<Span> missing,
+    record Probing(Listed listed, RowGroupPruning.Probe probe, List<RangeFetch> probed, List<FileRange> missing,
                    ByteSource bytes) implements Unit {
 
         @Override
@@ -73,9 +73,9 @@ sealed interface Unit {
         }
 
         /// A pass lacked bytes, `more`, which the next reads once fetched.
-        void fetching(List<PageFetcher.Range> more) {
+        void fetching(List<RangeFetch> more) {
             probed.addAll(more);
-            probed.sort(Comparator.comparingLong(r -> r.span.start()));
+            probed.sort(Comparator.comparingLong(r -> r.range.start()));
         }
 
         /// The probe kept it, reporting `event` unless it is `null`: its page index is waited for.
@@ -115,15 +115,15 @@ sealed interface Unit {
 
         /// It and every unit before it are planned: the batch plan gives it `batches`, and a unit
         /// of which they read no row (dropped, or past the read's row limit) reads no page.
-        Installed installed(BatchPlan.RowGroupBatches batches) {
-            return new Installed(listing, batches.segmentCount() == 0
+        Batched batched(BatchPlan.RowGroupBatches batches) {
+            return new Batched(listing, batches.segmentCount() == 0
                     ? UnitPlan.empty(plan.pages().length, plan.matching()) : plan, batches, events);
         }
     }
 
-    /// Installed: its batches are decided; its ranges are fetched and its pages handed to its
+    /// Batched: its batches are taken from the batch plan; its ranges are fetched and its pages handed to its
     /// columns.
-    record Installed(UnitListing listing, UnitPlan plan, BatchPlan.RowGroupBatches batches, List<Event> events)
+    record Batched(UnitListing listing, UnitPlan plan, BatchPlan.RowGroupBatches batches, List<Event> events)
             implements Unit {
 
         /// The key of the unit's row `row`: its base and the rows its filter keeps before it.

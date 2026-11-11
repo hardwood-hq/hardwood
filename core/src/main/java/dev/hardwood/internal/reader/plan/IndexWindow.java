@@ -16,9 +16,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
-import dev.hardwood.internal.reader.fetch.CoalescedRanges;
+import dev.hardwood.internal.reader.fetch.CoalescedRequests;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
-import dev.hardwood.internal.reader.fetch.Span;
+import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -27,9 +27,9 @@ import dev.hardwood.reader.ParquetReadException;
 
 /// The page-index and bloom-filter slices of a run of consecutive row groups of one file, read
 /// together: the ColumnIndex slices of all members merged into requests of their own
-/// ([CoalescedRanges]), the OffsetIndex slices into others, the bloom-filter slices into a third
+/// ([CoalescedRequests]), the OffsetIndex slices into others, the bloom-filter slices into a third
 /// set. A window takes as many row groups as fit its budget, so a file whose page index fits it is
-/// one window; the read fetches each window's requests ([#indexSpans], [#bloomFilterSpans]) as its
+/// one window; the read fetches each window's requests ([#indexRanges], [#bloomFilterRanges]) as its
 /// members' planning needs them.
 public final class IndexWindow {
 
@@ -46,18 +46,18 @@ public final class IndexWindow {
 
     private final List<Member> members;
     private final String rowGroupLabel;
-    private final CoalescedRanges offsetIndexes;
-    private final CoalescedRanges columnIndexes;
-    private final CoalescedRanges bloomFilters;
+    private final CoalescedRequests offsetIndexes;
+    private final CoalescedRequests columnIndexes;
+    private final CoalescedRequests bloomFilters;
     private IndexWindow(InputFile inputFile, List<Member> members) {
         this.members = members;
         int first = members.getFirst().rowGroupIndex();
         int last = members.getLast().rowGroupIndex();
         this.rowGroupLabel = first == last ? "rg=" + first : "rg=" + first + "-" + last;
 
-        CoalescedRanges.Builder offsetIndexBuilder = CoalescedRanges.builder();
-        CoalescedRanges.Builder columnIndexBuilder = CoalescedRanges.builder();
-        CoalescedRanges.Builder bloomFilterBuilder = CoalescedRanges.builder();
+        CoalescedRequests.Builder offsetIndexBuilder = CoalescedRequests.builder();
+        CoalescedRequests.Builder columnIndexBuilder = CoalescedRequests.builder();
+        CoalescedRequests.Builder bloomFilterBuilder = CoalescedRequests.builder();
         for (Member member : members) {
             RowGroupIndexBuffers.addRanges(member.rowGroup(), member.offsetIndexColumns(),
                     member.columnIndexColumns(), offsetIndexBuilder, columnIndexBuilder);
@@ -165,7 +165,7 @@ public final class IndexWindow {
     /// Adds the bloom-filter slices of `columns` whose extent the footer gives. A filter without
     /// one is read by [RowGroupBloomFilterSource] if a probe reaches it.
     private static void addBloomFilterRanges(RowGroup rowGroup, BitSet columns,
-            CoalescedRanges.Builder bloomFilters) {
+            CoalescedRequests.Builder bloomFilters) {
         List<ColumnChunk> chunks = rowGroup.columns();
         for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
             ColumnMetaData metaData = chunks.get(c).metaData();
@@ -193,24 +193,24 @@ public final class IndexWindow {
     }
 
     /// The window's page-index requests, OffsetIndex and ColumnIndex, each held by every member.
-    public List<Span> indexSpans() {
-        return spans("indexes", offsetIndexes, columnIndexes);
+    public List<FileRange> indexRanges() {
+        return ranges("indexes", offsetIndexes, columnIndexes);
     }
 
     /// The window's bloom-filter requests, each held by every member.
-    public List<Span> bloomFilterSpans() {
-        return spans("pruning", bloomFilters);
+    public List<FileRange> bloomFilterRanges() {
+        return ranges("pruning", bloomFilters);
     }
 
-    private List<Span> spans(String reason, CoalescedRanges... structures) {
-        List<Span> spans = new ArrayList<>();
-        for (CoalescedRanges ranges : structures) {
-            for (int r = 0; r < ranges.requestCount(); r++) {
-                long start = ranges.requestStart(r);
-                spans.add(new Span(start, Math.toIntExact(ranges.requestEnd(r) - start),
-                        rowGroupLabel + " " + reason, members.size()));
+    private List<FileRange> ranges(String reason, CoalescedRequests... structures) {
+        List<FileRange> ranges = new ArrayList<>();
+        for (CoalescedRequests structure : structures) {
+            for (int r = 0; r < structure.requestCount(); r++) {
+                long start = structure.requestStart(r);
+                ranges.add(new FileRange(start, Math.toIntExact(structure.requestEnd(r) - start),
+                        rowGroupLabel + " " + reason));
             }
         }
-        return spans;
+        return ranges;
     }
 }
