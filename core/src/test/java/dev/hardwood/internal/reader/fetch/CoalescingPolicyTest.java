@@ -37,30 +37,27 @@ class CoalescingPolicyTest {
     void neededRangesFollowTheRuleAcrossColumns() {
         // Column 0's two pages, `gap` apart, then column 1's page right after: the gap decides
         // whether column 0 takes one request, and column 1 joins the second either way.
-        assertThat(spans(GAP)).extracting(Span::start, Span::length)
+        assertThat(requests(GAP)).extracting(FileRange::start, FileRange::length)
                 .containsExactly(tuple(4L, 300 + GAP));
-        assertThat(spans(GAP + 1)).extracting(Span::start, Span::length)
+        assertThat(requests(GAP + 1)).extracting(FileRange::start, FileRange::length)
                 .containsExactly(tuple(4L, 100), tuple(105L + GAP, 200));
     }
 
     @Test
-    void aSpanNamesTheColumnsItServesAndCountsTheColumnsOverlappingIt() {
-        assertThat(spans(GAP + 1)).extracting(Span::reason, Span::holders)
-                .containsExactly(tuple("rg=7 col=a", 1), tuple("rg=7 col=a col=b", 2));
+    void aRequestNamesTheColumnsItServes() {
+        assertThat(requests(GAP + 1)).extracting(FileRange::reason)
+                .containsExactly("rg=7 col=a", "rg=7 col=a col=b");
     }
 
-    /// The spans of column `a`'s pages `[4, 104)` and `[104 + gap, 204 + gap)` and column `b`'s
+    /// The requests for column `a`'s pages `[4, 104)` and `[104 + gap, 204 + gap)` and column `b`'s
     /// page right after them.
-    private static List<Span> spans(int gap) {
+    private static List<FileRange> requests(int gap) {
         long aEnd = 204L + gap;
-        List<CoalescingPolicy.Range> ranges = List.of(
-                new CoalescingPolicy.Range(0, 4, 104),
-                new CoalescingPolicy.Range(0, 104L + gap, aEnd),
-                new CoalescingPolicy.Range(1, aEnd, aEnd + 100));
-        CoalescingPolicy.Extent[] extents = {
-                new CoalescingPolicy.Extent(0, "a", 4, aEnd),
-                new CoalescingPolicy.Extent(1, "b", aEnd, aEnd + 100) };
-        return CoalescingPolicy.coalesce(ranges, extents, new String[] { "a", "b" }, 7, CoalescingPolicy.maxSpanBytes(),
+        List<CoalescingPolicy.Need> needs = List.of(
+                new CoalescingPolicy.Need(0, 4, 104),
+                new CoalescingPolicy.Need(0, 104L + gap, aEnd),
+                new CoalescingPolicy.Need(1, aEnd, aEnd + 100));
+        return CoalescingPolicy.coalesce(needs, new String[] { "a", "b" }, 7, CoalescingPolicy.maxSpanBytes(),
                 Long.MAX_VALUE);
     }
 }

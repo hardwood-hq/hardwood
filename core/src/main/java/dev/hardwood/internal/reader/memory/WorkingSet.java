@@ -56,7 +56,7 @@ public final class WorkingSet {
     private final long limit;
     private final AtomicLongArray dictionaries;
     /// Per column, the dictionaries its current batch may hold.
-    private final DictionaryWindow[] windows;
+    private final HeldDictionaries[] heldDictionaries;
     private final AtomicLongArray pages;
     /// The largest buffers a task has needed, in a one-element array to share [#raise].
     private final AtomicLongArray task = new AtomicLongArray(1);
@@ -70,9 +70,9 @@ public final class WorkingSet {
     public WorkingSet(int columns, long limit) {
         this.limit = limit;
         this.dictionaries = new AtomicLongArray(columns);
-        this.windows = new DictionaryWindow[columns];
+        this.heldDictionaries = new HeldDictionaries[columns];
         for (int i = 0; i < columns; i++) {
-            windows[i] = new DictionaryWindow();
+            heldDictionaries[i] = new HeldDictionaries();
         }
         this.pages = new AtomicLongArray(columns);
     }
@@ -93,10 +93,10 @@ public final class WorkingSet {
     /// Tells the column at `index` that its pages now come from a row group the read's batch plan
     /// places, which holds the rows of the chunk whose dictionary it charges next: the batch
     /// holding the row group's first planned row starts at the read's row `batchStartRow`, and the
-    /// row group's planned rows end before the read's row `endRow`. Called by the column's fetch
-    /// step as it enters the row group.
+    /// row group's planned rows end before the read's row `endRow`. Called before each dictionary
+    /// of the column's chunk in that row group is charged.
     public void enter(int index, long batchStartRow, long endRow) {
-        windows[index].enter(batchStartRow, endRow);
+        heldDictionaries[index].enter(batchStartRow, endRow);
     }
 
     /// The working-set limit of a read: [#DEFAULT_HEAP_PERCENT] of the maximum heap unless
@@ -168,7 +168,7 @@ public final class WorkingSet {
             if (!isNumeric(schema.type())) {
                 entries += Integer.BYTES * (numValues + 1L);
             }
-            set.charge(set.dictionaries, index, set.windows[index].add(entries), uncompressedSize,
+            set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), uncompressedSize,
                     entries + uncompressedSize, "Dictionary page");
         }
 
@@ -180,7 +180,7 @@ public final class WorkingSet {
             long entries = dictionary instanceof Dictionary.ByteArrayDictionary binary
                     ? binary.entryBytes().length + Integer.BYTES * (dictionary.size() + 1L)
                     : (long) dictionary.size() * valueWidth(schema.type());
-            set.charge(set.dictionaries, index, set.windows[index].add(entries), 0, entries, "Dictionary page");
+            set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), 0, entries, "Dictionary page");
         }
 
         /// Charges a data page before it is decompressed and decoded: the batches its task fills,
@@ -263,7 +263,7 @@ public final class WorkingSet {
     /// The dictionaries a column's current batch may hold: those of the chunks whose rows end after
     /// the batch holding the current chunk's first row starts. Row groups are entered and charged
     /// in the read's row order, on the column's walk advances.
-    private static final class DictionaryWindow {
+    private static final class HeldDictionaries {
 
         /// A dictionary charged, held while a batch holds rows before `endRow`.
         private record Held(long endRow, long bytes) {

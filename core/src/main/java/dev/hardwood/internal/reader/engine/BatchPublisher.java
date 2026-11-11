@@ -14,14 +14,16 @@ import java.util.List;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.pipeline.BatchCell;
 
-/// A read's batches in plan order, and their publication: where each column's placement
-/// opens its next cell, each column's completed batches published into its exchange in row order,
-/// and the read's failure, which every column meets in place. A failure is placed at the first
-/// row the failed work served; the lowest placed wins, and a column meets it at the first batch
-/// whose rows reach it. An `Error` is met at every column's next batch. Used under the read's lock.
-final class BatchQueue {
+/// Keeps a read's batches in plan order and publishes them: it records where each column's
+/// placement opens its next cell, publishes each column's completed batches into its exchange in
+/// row order, holds the ranges a batch's pages were decoded from until every column has published
+/// it, and places the read's failure, which every column meets in place. A failure is placed at the
+/// first row the failed work served; the lowest placed wins, and a column meets it at the first
+/// batch whose rows reach it. An `Error` is met at every column's next batch. Used under the read's
+/// lock.
+final class BatchPublisher {
 
-    private final JobScheduler scheduler;
+    private final RangeFetcher fetcher;
     private final List<BatchExchange<?>> exchanges;
     private final int batchRows;
     /// the rows a decode may start past the first row some column has not published
@@ -44,9 +46,9 @@ final class BatchQueue {
     /// failure can still take its place, and no column meets it
     private boolean settled;
 
-    BatchQueue(JobScheduler scheduler, List<BatchExchange<?>> exchanges, int batchRows,
+    BatchPublisher(RangeFetcher fetcher, List<BatchExchange<?>> exchanges, int batchRows,
                long capRows) {
-        this.scheduler = scheduler;
+        this.fetcher = fetcher;
         this.exchanges = exchanges;
         this.batchRows = batchRows;
         this.capRows = capRows;
@@ -100,7 +102,7 @@ final class BatchQueue {
 
     /// The batch holding the column's `cell` holds `ranges` until every column has published it;
     /// they are returned at once where it has been.
-    void hold(int column, BatchCell<?> cell, List<PageFetcher.Range> ranges) {
+    void hold(int column, BatchCell<?> cell, List<RangeFetch> ranges) {
         for (int i = opened[column] - 1; i >= head; i--) {
             Batch b = batches.get(i);
             if (b != null && b.cells[column] == cell) {
@@ -108,9 +110,7 @@ final class BatchQueue {
                 return;
             }
         }
-        for (PageFetcher.Range r : ranges) {
-            r.readerDone(scheduler);
-        }
+        fetcher.readersDone(ranges);
     }
 
     /// The column's `cell` is complete: its batch can be published.
@@ -174,21 +174,21 @@ final class BatchQueue {
     }
 
     /// Publishes each column's completed batches in order as far as its exchange takes them,
-    /// then its failure once it reaches it, or its end once `allInstalled` and every batch is
-    /// published. `installed` is the key below which every batch has been added.
-    void publish(long installed, boolean allInstalled) {
+    /// then its failure once it reaches it, or its end once `allBatched` and every batch is
+    /// published. `batchedTo` is the key below which every batch has been added.
+    void publish(long batchedTo, boolean allBatched) {
         for (int c = publishable.nextSetBit(0); c >= 0; c = publishable.nextSetBit(c + 1)) {
             publishable.clear(c);
             if (!exchanges.get(c).isFinished()) {
-                publish(c, installed, allInstalled);
+                publish(c, batchedTo, allBatched);
             }
         }
     }
 
-    private void publish(int c, long installed, boolean allInstalled) {
+    private void publish(int c, long batchedTo, boolean allBatched) {
         BatchExchange<Object> exchange = cast(exchanges.get(c));
         for (int i = published[c]; ; i = ++published[c]) {
-            if (i == batches.size() ? installed >= failedAt : batches.get(i).endKey > failedAt) {
+            if (i == batches.size() ? batchedTo >= failedAt : batches.get(i).endKey > failedAt) {
                 if (!settled) {
                     return;
                 }
@@ -196,7 +196,7 @@ final class BatchQueue {
                 return;
             }
             if (i == batches.size()) {
-                if (allInstalled) {
+                if (allBatched) {
                     exchange.finish();
                 }
                 return;
@@ -219,9 +219,7 @@ final class BatchQueue {
         Batch b = batches.get(i);
         b.cells[column] = null;
         if (--b.columnsLeft == 0) {
-            for (PageFetcher.Range r : b.held) {
-                r.readerDone(scheduler);
-            }
+            fetcher.readersDone(b.held);
             batches.set(i, null);
             while (head < batches.size() && batches.get(head) == null) {
                 head++;
@@ -235,21 +233,21 @@ final class BatchQueue {
     }
 
     /// Where the consumer stands: its need, the work [JobScheduler] guarantees progress to, ends
-    /// with the next batch of the column furthest ahead, which where none is installed starts at
-    /// `installed`; where that batch is the last the plan added, the units not yet installed may
+    /// with the next batch of the column furthest ahead, which where none is added starts at
+    /// `batchedTo`; where that batch is the last the plan added, the units not yet batched may
     /// go on with it, so the need reaches the next of them. Decodes reach the cap past the first
     /// row some column has not published. Nothing past the failure starts.
-    JobScheduler.Position position(long installed) {
+    JobScheduler.Position position(long batchedTo) {
         int furthest = furthest();
-        long need = installed + batchRows;
+        long need = batchedTo + batchRows;
         if (furthest >= 0 && furthest < batches.size()) {
             Batch next = batches.get(furthest);
             need = Math.max(next.endKey, next.key + batchRows);
             if (furthest == batches.size() - 1) {
-                need = Math.max(need, installed + 1);
+                need = Math.max(need, batchedTo + 1);
             }
         }
-        return new JobScheduler.Position(need, firstUnpublished(installed) + capRows, failedAt);
+        return new JobScheduler.Position(need, firstUnpublished(batchedTo) + capRows, failedAt);
     }
 
     /// The next batch of the column furthest ahead, `-1` where every column has ended.
@@ -264,8 +262,8 @@ final class BatchQueue {
     }
 
     /// The key of the first row some column has not published.
-    long firstUnpublished(long installed) {
-        return head < batches.size() ? batches.get(head).key : installed;
+    long firstUnpublished(long batchedTo) {
+        return head < batches.size() ? batches.get(head).key : batchedTo;
     }
 
     /// Ends every exchange not ended, as the read closes: a consumer waiting for a batch finds the

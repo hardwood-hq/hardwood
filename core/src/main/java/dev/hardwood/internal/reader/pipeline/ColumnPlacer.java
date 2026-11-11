@@ -37,7 +37,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// not thread-safe: the column calls it under the column lock, one page at a time in page order.
 ///
 /// @param <C> the cell type
-public final class Placer<C> {
+public final class ColumnPlacer<C> {
 
     /// What the placer's decisions act on.
     public interface Sink<C> {
@@ -83,7 +83,7 @@ public final class Placer<C> {
     private boolean stopped;
 
     /// @param batchCapacity the read's batch capacity, which every row group's batches must have
-    public Placer(Sink<C> sink, int batchCapacity) {
+    public ColumnPlacer(Sink<C> sink, int batchCapacity) {
         this.sink = sink;
         this.batchCapacity = batchCapacity;
     }

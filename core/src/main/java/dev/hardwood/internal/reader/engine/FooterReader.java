@@ -21,9 +21,9 @@ import dev.hardwood.internal.reader.plan.RowGroupPruning;
 import dev.hardwood.internal.reader.plan.SchemaCompatibility;
 import dev.hardwood.schema.FileSchema;
 
-/// The footers of a read's files, through the reader's [FileMetadataCache], which every read
-/// of the reader shares: a footer is claimed, its load waited for where another read runs it, or
-/// read on an I/O job and parsed on a CPU job. Files are listed in order, each against the first
+/// Reads the footers of a read's files through the reader's [FileMetadataCache], which every
+/// read of the reader shares: a footer is claimed, its load waited for where another read runs it,
+/// or read on an I/O job and parsed on a CPU job. Files are listed in order, each against the first
 /// file's schema, and their row groups handed to [RowGroupPlanner].
 ///
 /// Footers start at most `filesAhead` files past the one the consumer's need reaches, and a file the consumer has
@@ -45,7 +45,7 @@ final class FooterReader {
     private final FileMetadataCache files;
     private final JobScheduler scheduler;
     private final RowGroupPlanner planner;
-    private final BatchQueue queue;
+    private final BatchPublisher publisher;
     private final SchemaCompatibility compatibility;
     private final ResolvedPredicate filter;
     /// applies a result under the read's lock: the end of another read's load of a footer
@@ -53,31 +53,31 @@ final class FooterReader {
     private final int count;
     private final int filesAhead;
     /// per file, its footer once started, until the consumer passes the file
-    private final Footer[] footers;
+    private final FooterLoad[] footers;
     private int nextList;
     private int dropped;
     /// once set, another read's load ending starts nothing: the read is done with its footers
     private boolean closed;
 
-    FooterReader(FileMetadataCache files, JobScheduler scheduler, RowGroupPlanner planner, BatchQueue queue,
+    FooterReader(FileMetadataCache files, JobScheduler scheduler, RowGroupPlanner planner, BatchPublisher publisher,
                  SchemaCompatibility compatibility, ResolvedPredicate filter, boolean limited,
                  Consumer<Runnable> results) {
         this.files = files;
         this.scheduler = scheduler;
         this.planner = planner;
-        this.queue = queue;
+        this.publisher = publisher;
         this.compatibility = compatibility;
         this.filter = filter;
         this.results = results;
         List<InputFile> inputs = files.inputFiles();
         this.count = inputs.size();
         this.filesAhead = filesAhead(limited, inputs.stream().allMatch(HeldBytes::inMemory), count);
-        this.footers = new Footer[count];
+        this.footers = new FooterLoad[count];
     }
 
     /// One file's footer as the read has it: its load while the read runs it, what that load gave,
     /// and what it holds in R, its tail, until the consumer passes the file.
-    private static final class Footer {
+    private static final class FooterLoad {
         FileMetadataCache.ClaimedLoad claimed;
         FileMetadataCache.PreparedFile file;
         Throwable failure;
@@ -104,7 +104,7 @@ final class FooterReader {
     /// statistics keep, `kept`, and `ordinals`, and starts the footers ahead of it.
     void start(InputFile file, FileSchema schema, RowGroupPruning.FilteredRowGroups kept, FileColumnOrdinals ordinals) {
         planner.addFile(0, file, schema, kept, ordinals);
-        footers[0] = new Footer();
+        footers[0] = new FooterLoad();
         nextList = 1;
         if (count == 1 || !planner.budgetLeft()) {
             nextList = count;
@@ -122,7 +122,7 @@ final class FooterReader {
         int reached = needed < 0 ? nextList : needed;
         for (int i = nextList; i < count && i <= reached + filesAhead && planner.budgetLeft(); i++) {
             if (footers[i] == null) {
-                footers[i] = new Footer();
+                footers[i] = new FooterLoad();
                 startFooter(i);
             }
         }
@@ -137,7 +137,7 @@ final class FooterReader {
         if (closed) {
             return;
         }
-        Footer f = footers[i];
+        FooterLoad f = footers[i];
         FileMetadataCache.Claim claim = files.claim(i);
         if (claim.load() == null) {
             if (claim.pending() != null) {
@@ -169,14 +169,14 @@ final class FooterReader {
         scheduler.add(f.job);
     }
 
-    private void returnCharge(Footer f) {
+    private void returnCharge(FooterLoad f) {
         if (f != null && f.charge != null) {
-            f.charge.returnTo(scheduler);
+            scheduler.release(f.charge);
             f.charge = null;
         }
     }
 
-    private void addParse(Footer f, FileMetadataCache.ClaimedLoad load) {
+    private void addParse(FooterLoad f, FileMetadataCache.ClaimedLoad load) {
         f.job = new JobScheduler.Job(planner.endKey(), 0, JobScheduler.Kind.PLAN, null, buffers -> {
             FileMetadataCache.PreparedFile file = load.parse();
             return () -> loaded(f, file, null);
@@ -188,7 +188,7 @@ final class FooterReader {
         scheduler.add(f.job);
     }
 
-    private void loaded(Footer f, FileMetadataCache.PreparedFile file, Throwable t) {
+    private void loaded(FooterLoad f, FileMetadataCache.PreparedFile file, Throwable t) {
         f.claimed = null;
         f.job = null;
         f.file = file;
@@ -200,7 +200,7 @@ final class FooterReader {
     /// schema; a file that cannot be listed fails the read at its first row.
     private void list() {
         while (nextList < count && footers[nextList] != null && footers[nextList].done()) {
-            Footer f = footers[nextList];
+            FooterLoad f = footers[nextList];
             if (f.failure == null) {
                 try {
                     FileMetadataCache.PreparedFile file = f.file;
@@ -216,7 +216,7 @@ final class FooterReader {
                 }
             }
             if (f.failure != null) {
-                queue.failAt(planner.endKey(), f.failure);
+                publisher.failAt(planner.endKey(), f.failure);
                 planner.listed();
                 return;
             }
@@ -244,7 +244,7 @@ final class FooterReader {
     /// then load it themselves.
     void endAt(long end) {
         for (int i = dropped; i < count; i++) {
-            Footer f = footers[i];
+            FooterLoad f = footers[i];
             if (f != null && f.claimed != null && f.job != null && f.job.key > end && scheduler.remove(f.job)) {
                 f.claimed.abandon();
                 f.claimed = null;
@@ -257,7 +257,7 @@ final class FooterReader {
     /// Gives up the loads claimed and not completed, as the read closes; once nothing is in flight.
     void close() {
         closed = true;
-        for (Footer f : footers) {
+        for (FooterLoad f : footers) {
             if (f != null && f.claimed != null) {
                 f.claimed.abandon();
             }

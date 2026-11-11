@@ -274,14 +274,15 @@ final class JobScheduler {
         return true;
     }
 
-    /// Returns `bytes` a job charged; `ahead` where they counted against F.
-    void release(long bytes, boolean ahead) {
-        if (bytes > 0) {
-            held -= bytes;
-            released += bytes;
-            if (ahead) {
-                fetchedAhead -= bytes;
+    /// Returns the bytes `charge` holds to the bounds.
+    void release(Charge charge) {
+        if (charge.bytes > 0) {
+            held -= charge.bytes;
+            released += charge.bytes;
+            if (charge.ahead) {
+                fetchedAhead -= charge.bytes;
             }
+            charge.bytes = 0;
         }
     }
 

@@ -25,7 +25,7 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// A cell goes through these steps, each once:
 ///
-/// 1. **Opened** by the [Placer] at its batch's first record.
+/// 1. **Opened** by the [ColumnPlacer] at its batch's first record.
 /// 2. **Segments placed**, in page order, each from a page already measured.
 /// 3. **Sealed** when the batch holds every record it will hold: for a column with repetition
 ///    once the next record start, the end of the row group or the end of the read shows its last

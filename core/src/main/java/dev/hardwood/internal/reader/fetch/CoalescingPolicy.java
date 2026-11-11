@@ -19,7 +19,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// Decides whether two byte ranges a read needs are fetched as one request: when the gap between
 /// them is at most [#GAP_BYTES] (G) and the merged span at most [#maxSpanBytes()] (S). Every merge
 /// on the read path applies this rule: a row group's needed data ranges across its columns
-/// ([#coalesce]), and the slices of a page-index window ([CoalescedRanges]).
+/// ([#coalesce]), and the slices of a page-index window ([CoalescedRequests]).
 ///
 /// A merge only bridges the gap between two needed ranges; it never extends a request before the
 /// first needed byte or past the last one.
@@ -69,40 +69,39 @@ public final class CoalescingPolicy {
         return nextStart - end <= GAP_BYTES && nextEnd - start <= maxSpan;
     }
 
-    /// A range of the file one decoded column needs.
-    public record Range(int column, long start, long end) {
+    /// Bytes `[start, end)` of the file one decoded column needs, before they are coalesced into
+    /// requests.
+    public record Need(int column, long start, long end) {
     }
 
     /// The bytes of a decoded column's chunk, `[start, end)`.
     public record Extent(int column, String name, long start, long end) {
     }
 
-    /// Coalesces `ranges`, in offset order, into the spans of a row group's requests, the
-    /// requests [CoalescedRanges] plans for them: a span bridges gaps of at most G and is at most S
-    /// long unless one range alone is longer. Each span is held by every column whose extent
-    /// overlaps it, and its reason names every column whose range it holds.
+    /// Coalesces `needs`, in offset order, into a row group's requests, those [CoalescedRequests]
+    /// plans for them: a request bridges gaps of at most G and is at most S long unless one need
+    /// alone is longer. Its reason names every column whose need it holds.
     ///
-    /// No span crosses `tailOffset`, where the tail the file's footer entry read begins
-    /// ([TailedInputFile]): a span inside the tail is sliced from it, so a range that straddles
+    /// No request crosses `tailOffset`, where the tail the file's footer entry read begins
+    /// ([TailedInputFile]): a request inside the tail is sliced from it, so a need that straddles
     /// the tail's start is cut there, and the part before it is all that is requested.
-    public static List<Span> coalesce(List<Range> ranges, Extent[] extents, String[] names,
-                                             int rowGroupIndex, int maxSpan, long tailOffset) {
-        ranges = cutAt(ranges, tailOffset);
-        CoalescedRanges.Builder builder = CoalescedRanges.builder();
-        for (Range range : ranges) {
-            builder.add(range.start(), Math.toIntExact(range.end() - range.start()));
+    public static List<FileRange> coalesce(List<Need> needs, String[] names, int rowGroupIndex, int maxSpan,
+                                           long tailOffset) {
+        needs = cutAt(needs, tailOffset);
+        CoalescedRequests.Builder builder = CoalescedRequests.builder();
+        for (Need need : needs) {
+            builder.add(need.start(), Math.toIntExact(need.end() - need.start()));
         }
-        CoalescedRanges requests = builder.build(tailOffset, maxSpan);
-        List<Span> spans = new ArrayList<>(requests.requestCount());
-        int nextRange = 0;
-        int firstExtent = 0;
+        CoalescedRequests requests = builder.build(tailOffset, maxSpan);
+        List<FileRange> ranges = new ArrayList<>(requests.requestCount());
+        int nextNeed = 0;
         boolean[] served = new boolean[names.length];
         List<Integer> servedOrder = new ArrayList<>();
         for (int r = 0; r < requests.requestCount(); r++) {
             long start = requests.requestStart(r);
             long end = requests.requestEnd(r);
-            for (; nextRange < ranges.size() && ranges.get(nextRange).start() < end; nextRange++) {
-                int column = ranges.get(nextRange).column();
+            for (; nextNeed < needs.size() && needs.get(nextNeed).start() < end; nextNeed++) {
+                int column = needs.get(nextNeed).column();
                 if (!served[column]) {
                     served[column] = true;
                     servedOrder.add(column);
@@ -114,32 +113,23 @@ public final class CoalescingPolicy {
                 served[column] = false;
             }
             servedOrder.clear();
-            while (firstExtent < extents.length && extents[firstExtent].end() <= start) {
-                firstExtent++;
-            }
-            int holders = 0;
-            for (int e = firstExtent; e < extents.length && extents[e].start() < end; e++) {
-                if (extents[e].end() > start) {
-                    holders++;
-                }
-            }
-            spans.add(new Span(start, Math.toIntExact(end - start), reason.toString(), holders));
+            ranges.add(new FileRange(start, Math.toIntExact(end - start), reason.toString()));
         }
-        return spans;
+        return ranges;
     }
 
-    /// `ranges`, in offset order, with the one that straddles `offset` cut in two there.
-    private static List<Range> cutAt(List<Range> ranges, long offset) {
-        for (int i = 0; i < ranges.size(); i++) {
-            Range range = ranges.get(i);
-            if (range.start() < offset && range.end() > offset) {
-                List<Range> cut = new ArrayList<>(ranges);
-                cut.set(i, new Range(range.column(), range.start(), offset));
-                cut.add(i + 1, new Range(range.column(), offset, range.end()));
+    /// `needs`, in offset order, with the one that straddles `offset` cut in two there.
+    private static List<Need> cutAt(List<Need> needs, long offset) {
+        for (int i = 0; i < needs.size(); i++) {
+            Need need = needs.get(i);
+            if (need.start() < offset && need.end() > offset) {
+                List<Need> cut = new ArrayList<>(needs);
+                cut.set(i, new Need(need.column(), need.start(), offset));
+                cut.add(i + 1, new Need(need.column(), offset, need.end()));
                 return cut;
             }
         }
-        return ranges;
+        return needs;
     }
 
     /// The length of `columnChunk`.

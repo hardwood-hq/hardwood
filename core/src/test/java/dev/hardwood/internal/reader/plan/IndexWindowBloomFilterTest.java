@@ -62,11 +62,10 @@ class IndexWindowBloomFilterTest {
         ColumnMetaData firstCode = metaData(rowGroups().get(1));
         ColumnMetaData secondCode = metaData(rowGroups().get(2));
 
-        assertThat(window.bloomFilterSpans()).singleElement().satisfies(span -> {
-            assertThat(span.reason()).isEqualTo("rg=0-2 pruning");
-            assertThat(span.holders()).isEqualTo(3);
-            assertThat(span.start()).isEqualTo(firstCode.bloomFilterOffset());
-            assertThat(span.start() + span.length())
+        assertThat(window.bloomFilterRanges()).singleElement().satisfies(range -> {
+            assertThat(range.reason()).isEqualTo("rg=0-2 pruning");
+            assertThat(range.start()).isEqualTo(firstCode.bloomFilterOffset());
+            assertThat(range.end())
                     .isEqualTo(secondCode.bloomFilterOffset() + secondCode.bloomFilterLength());
         });
     }
@@ -77,7 +76,7 @@ class IndexWindowBloomFilterTest {
         RowGroup withoutLength = withoutBloomFilterLength(rowGroups().get(0), CODE);
         IndexWindow window = IndexWindow.plan(Long.MAX_VALUE, file,
                 members(List.of(withoutLength), new BitSet[] { column(CODE) })).getFirst();
-        assertThat(window.bloomFilterSpans()).isEmpty();
+        assertThat(window.bloomFilterRanges()).isEmpty();
 
         BloomFilter filter = new RowGroupBloomFilterSource(file, ByteSource.of(file), withoutLength).forColumn(CODE);
 

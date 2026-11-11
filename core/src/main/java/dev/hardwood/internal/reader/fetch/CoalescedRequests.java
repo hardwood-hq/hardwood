@@ -9,20 +9,21 @@ package dev.hardwood.internal.reader.fetch;
 
 import java.util.Arrays;
 
-/// Byte ranges a read needs from one file, merged into as few requests as [CoalescingPolicy]
-/// allows, each range then served from the request that holds it.
+/// The requests a read makes for the byte ranges it needs from one file: the ranges merged into
+/// as few requests as [CoalescingPolicy] allows, each range then served from the request that
+/// holds it.
 ///
 /// Ranges that overlap are first joined into extents, so every range lies within exactly one
 /// request and no byte is fetched twice. Consecutive extents, touching ones included, are then
 /// merged under [CoalescingPolicy]: a request spans more than [CoalescingPolicy#MAX_SPAN_BYTES]
 /// only when one extent alone is longer than that, which takes a range longer than that or ranges
 /// overlapping each other across it.
-public final class CoalescedRanges {
+public final class CoalescedRequests {
 
     private final long[] requestStarts;
     private final long[] requestEnds;
 
-    private CoalescedRanges(long[] requestStarts, long[] requestEnds) {
+    private CoalescedRequests(long[] requestStarts, long[] requestEnds) {
         this.requestStarts = requestStarts;
         this.requestEnds = requestEnds;
     }
@@ -87,7 +88,7 @@ public final class CoalescedRanges {
 
         /// Plans the requests: joins overlapping ranges into extents, then merges consecutive
         /// extents under [CoalescingPolicy].
-        public CoalescedRanges build() {
+        public CoalescedRequests build() {
             return build(Long.MAX_VALUE, CoalescingPolicy.maxSpanBytes());
         }
 
@@ -95,7 +96,7 @@ public final class CoalescedRanges {
         /// the tail of the file begins ([dev.hardwood.internal.io.HeldBytes#heldFrom]): a request
         /// inside the tail is sliced from it, so only an extent that straddles the cut is
         /// requested across it.
-        public CoalescedRanges build(long cut, int maxSpan) {
+        public CoalescedRequests build(long cut, int maxSpan) {
             // Starts and ends sorted independently still give the union of the ranges: a sweep
             // that opens an extent at a start and closes it once as many ends as starts passed.
             // Touching ranges stay apart here, so the span limit can split between them.
@@ -136,7 +137,7 @@ public final class CoalescedRanges {
                     requests++;
                 }
             }
-            return new CoalescedRanges(Arrays.copyOf(requestStarts, requests),
+            return new CoalescedRequests(Arrays.copyOf(requestStarts, requests),
                     Arrays.copyOf(requestEnds, requests));
         }
     }
