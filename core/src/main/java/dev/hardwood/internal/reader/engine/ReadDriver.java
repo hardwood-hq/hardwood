@@ -33,6 +33,12 @@ import dev.hardwood.internal.reader.step.ReadTasks;
 /// thread.
 final class ReadDriver {
 
+    /// a result that changes nothing, queued where only the scheduler's answer may have changed (R
+    /// has room again, an action under the lock completed), so that the lock's holder asks it again
+    /// before it lets go
+    private static final Runnable NOTHING = () -> {
+    };
+
     private final ReentrantLock lock = new ReentrantLock();
     /// results of jobs that ended while another thread held the lock, for the holder to apply
     private final ConcurrentLinkedQueue<Runnable> results = new ConcurrentLinkedQueue<>();
@@ -68,8 +74,8 @@ final class ReadDriver {
         this.io = context.ioExecutor();
         this.tasks = queue != null ? queue.tasks() : new ReadTasks();
         this.position = position;
-        this.scheduler = new JobScheduler(readAhead, () -> update(() -> {
-        }), 2 * (queue != null ? 1 : context.threads()), fetchAheadBytes);
+        this.scheduler = new JobScheduler(readAhead, () -> update(NOTHING),
+                2 * (queue != null ? 1 : context.threads()), fetchAheadBytes);
     }
 
     JobScheduler scheduler() {
@@ -91,8 +97,9 @@ final class ReadDriver {
         lock.lock();
         try {
             action.run();
-            results.add(() -> {
-            });
+            // asks the scheduler only where the action completed: one that threw leaves the read
+            // half changed, which the caller fails
+            results.add(NOTHING);
         }
         finally {
             unlock();
