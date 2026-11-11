@@ -275,6 +275,19 @@ absent cell:
 hardwood inspect columns -f data.parquet | awk -F'|' '$11 ~ /—/ {print $3}'
 ```
 
+## Contradicted offset index
+
+`inspect pages`, `inspect columns` and the `dive` screens that use an offset
+index (**Offset index**, **Pages**, **Column chunk detail** and
+**Column-across-row-groups**) show it as the file stores it, including one that
+a read fails on because it contradicts its column chunk or row group. The
+message the read fails with follows on a line marked `⚠`, under the table in
+the commands and above the table or at the end of the facts in `dive`:
+
+```
+⚠ RG #0  Malformed Parquet metadata: OffsetIndex page 0 has a first_row_index of 1, not 0
+```
+
 ## Binary values
 
 A `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column with no logical-type annotation

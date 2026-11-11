@@ -89,9 +89,9 @@ class InspectPagesCommandTest implements InspectPagesCommandContract {
     }
 
     /// An offset index listing no page for a chunk with values is malformed, not a chunk
-    /// without pages.
+    /// without pages: the pages are listed from their headers and the index is flagged.
     @Test
-    void anEmptyOffsetIndexIsReported(@TempDir Path tempDir) throws IOException {
+    void anEmptyOffsetIndexIsFlagged(@TempDir Path tempDir) throws IOException {
         Path source = Path.of(pageIndexFile());
         ColumnChunk chunk;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
@@ -99,13 +99,33 @@ class InspectPagesCommandTest implements InspectPagesCommandContract {
         }
         Path damaged = DamagedFiles.emptyOffsetIndex(source, chunk.offsetIndexOffset(), tempDir);
 
-        Cli.Result result = Cli.launch("inspect", "pages", "-f", damaged.toString());
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", damaged.toString(), "-c", "id");
 
-        assertThat(result.exitCode()).isNotZero();
-        assertThat(result.errorOutput()).isEqualTo(
-                "Error reading pages: [damaged.parquet: row group 0, column 'id'] Malformed Parquet metadata:"
-                        + " OffsetIndex.page_locations is empty but the column chunk has "
-                        + chunk.metaData().numValues() + " values");
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.errorOutput()).isEmpty();
+        assertThat(result.output()).contains("| Total ").endsWith(
+                "\n⚠ RG #0  Malformed Parquet metadata: OffsetIndex.page_locations is empty but the column"
+                        + " chunk has " + chunk.metaData().numValues() + " values");
+    }
+
+    /// An offset index its chunk contradicts, which a read fails on, is shown as the file stores
+    /// it: its first rows fill the table, and the contradiction is flagged under it.
+    @Test
+    void anOffsetIndexItsChunkContradictsIsFlagged(@TempDir Path tempDir) throws IOException {
+        Path source = Path.of(pageIndexFile());
+        ColumnChunk chunk;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
+            chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(0);
+        }
+        Path damaged = DamagedFiles.offsetIndexFromRowOne(source, chunk.offsetIndexOffset(),
+                chunk.offsetIndexLength(), tempDir);
+
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", damaged.toString(), "-c", "id");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.errorOutput()).isEmpty();
+        assertThat(result.output()).contains("| Total ").endsWith(
+                "\n⚠ RG #0  Malformed Parquet metadata: OffsetIndex page 0 has a first_row_index of 1, not 0");
     }
 
     private Path damageFirstChunk(ToLongFunction<ColumnChunk> region, Path tempDir) throws IOException {

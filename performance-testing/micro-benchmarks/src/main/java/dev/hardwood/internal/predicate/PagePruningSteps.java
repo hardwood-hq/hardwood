@@ -9,8 +9,8 @@ package dev.hardwood.internal.predicate;
 
 import dev.hardwood.internal.reader.plan.ColumnIndexBuffers;
 import dev.hardwood.metadata.ColumnIndex;
-import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
+import dev.hardwood.metadata.RowGroup;
 
 /// The two steps of [PageFilterEvaluator#computeMatchingRows] for one column, each callable on its
 /// own, for benchmarks outside the predicate package: parsing a chunk's page index, and deciding a
@@ -38,8 +38,8 @@ public final class PagePruningSteps {
 
     /// Parses the Column Index and Offset Index of column `column` from their serialized bytes,
     /// as [PageFilterEvaluator] does before deciding any page.
-    public static ParsedIndexes parse(ColumnIndexBuffers buffers, int column, ColumnMetaData metaData) {
-        PageFilterEvaluator.IndexPair pair = PageFilterEvaluator.readIndexPair(buffers, column, metaData);
+    public static ParsedIndexes parse(ColumnIndexBuffers buffers, int column, RowGroup rowGroup) {
+        PageFilterEvaluator.IndexPair pair = PageFilterEvaluator.readIndexPair(buffers, column, rowGroup);
         return new ParsedIndexes(column, pair.columnIndex(), pair.offsetIndex());
     }
 

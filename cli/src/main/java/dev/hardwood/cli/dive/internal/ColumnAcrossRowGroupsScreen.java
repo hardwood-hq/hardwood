@@ -103,7 +103,13 @@ public final class ColumnAcrossRowGroupsScreen {
         return new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), newSelection, logical, newTop);
     }
 
-    public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnAcrossRowGroups state) {
+    public static void render(Buffer buffer, Rect screenArea, ParquetModel model,
+                              ScreenState.ColumnAcrossRowGroups state) {
+        // The page counts come from the offset indexes as the file stores them;
+        // the first visible row group whose index a read refuses is flagged.
+        String violation = firstViolation(model, state,
+                RowWindow.from(state.scrollTop(), state.selection(), model.rowGroupCount(), screenArea.height() - 3));
+        Rect area = OffsetIndexFlag.above(buffer, screenArea, violation);
         Keys.observeViewport(area.height() - 3);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         // Build Row objects only for the visible window — see RowWindow.
@@ -170,6 +176,24 @@ public final class ColumnAcrossRowGroupsScreen {
         TableState tableState = new TableState();
         tableState.select(window.selectionInWindow());
         table.render(area, buffer, tableState);
+    }
+
+    /// The message a read fails with on the offset index of the first row group
+    /// in `window` whose index its chunk contradicts, naming the row group, or
+    /// `null` when there is none. Only the visible row groups are checked, as
+    /// only theirs are read.
+    private static String firstViolation(ParquetModel model, ScreenState.ColumnAcrossRowGroups state,
+                                         RowWindow window) {
+        for (int i = window.start(); i < window.end(); i++) {
+            if (model.rowGroup(i).columns().get(state.columnIndex()).offsetIndexOffset() == null) {
+                continue;
+            }
+            String violation = model.offsetIndexViolation(i, state.columnIndex());
+            if (violation != null) {
+                return "RG #" + i + "  " + violation;
+            }
+        }
+        return null;
     }
 
     public static String keybarKeys(ScreenState.ColumnAcrossRowGroups state, ParquetModel model) {

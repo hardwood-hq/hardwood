@@ -21,6 +21,7 @@ import org.aesh.command.option.Option;
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.Fmt;
+import dev.hardwood.cli.internal.OffsetIndexCheck;
 import dev.hardwood.cli.internal.PageHeaderWalk;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
@@ -162,9 +163,13 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
 
             ColumnIndex columnIndex = null;
             OffsetIndex offsetIndex = null;
+            String offsetIndexViolation = null;
             if (!noStats) {
                 columnIndex = loadColumnIndex(chunk, inputFile, rgIdx, col.fieldPath().toString());
                 offsetIndex = loadOffsetIndex(chunk, inputFile, rgIdx, col.fieldPath().toString());
+                if (offsetIndex != null) {
+                    offsetIndexViolation = OffsetIndexCheck.violation(offsetIndex, chunk, rg.numRows());
+                }
             }
 
             boolean trackRowIndex = chunk.metaData().numValues() == rg.numRows();
@@ -185,7 +190,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             else if (!noStats) {
                 anyNoStats = true;
             }
-            rgData.add(new RowGroupData(rgIdx, pages, columnIndex, offsetIndex));
+            rgData.add(new RowGroupData(rgIdx, pages, columnIndex, offsetIndex, offsetIndexViolation));
         }
 
         if (!noStats) {
@@ -280,6 +285,13 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
 
         System.out.println(columnLabel);
         System.out.println(RowTable.renderTable(headers, rows, separatorsBefore, List.of(totalRowIdx)));
+        // The pages are listed from their headers whatever the offset index says; an index its
+        // chunk contradicts, which a read fails on, is flagged under them.
+        for (RowGroupData rd : rgData) {
+            if (rd.offsetIndexViolation() != null) {
+                System.out.println("⚠ RG #" + rd.rgIdx() + "  " + rd.offsetIndexViolation());
+            }
+        }
     }
 
     /// Formats the column label suffix indicating where the Min / Max / Nulls
@@ -406,9 +418,9 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         }
     }
 
-    /// The chunk's offset index, or `null` when the file records none. An
-    /// offset index that cannot be read fails the command, placed at the
-    /// chunk, rather than reading as an absent one.
+    /// The chunk's offset index as the file stores it, or `null` when the file
+    /// records none. An offset index that cannot be parsed fails the command,
+    /// placed at the chunk, rather than reading as an absent one.
     private static OffsetIndex loadOffsetIndex(ColumnChunk chunk, InputFile inputFile,
             int rowGroupIndex, String columnPath) throws IOException {
         Long offset = chunk.offsetIndexOffset();
@@ -417,8 +429,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             return null;
         }
         try {
-            return OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)),
-                    chunk.metaData());
+            return OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
         }
         catch (IOException e) {
             throw placed(e, inputFile, rowGroupIndex, columnPath);
@@ -433,7 +444,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                 ExceptionContext.UNKNOWN_PAGE, e);
     }
 
-    private record RowGroupData(int rgIdx, List<PageInfo> pages, ColumnIndex columnIndex, OffsetIndex offsetIndex) {
+    private record RowGroupData(int rgIdx, List<PageInfo> pages, ColumnIndex columnIndex, OffsetIndex offsetIndex,
+            String offsetIndexViolation) {
     }
 
     private record IndexCells(String firstRow, String min, String max, String nulls, long nullCount) {

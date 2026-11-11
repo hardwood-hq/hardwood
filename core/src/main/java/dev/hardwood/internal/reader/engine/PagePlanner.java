@@ -154,7 +154,7 @@ final class PagePlanner {
             }
             try {
                 ByteBuffer slice = RangeFetch.read(index, chunk.offsetIndexOffset(), chunk.offsetIndexLength());
-                List<PageLocation> all = OffsetIndexReader.read(new ThriftCompactReader(slice), chunk.metaData())
+                List<PageLocation> all = OffsetIndexReader.read(new ThriftCompactReader(slice), chunk, u.metaData().numRows())
                         .pageLocations();
                 pages[c] = NeededPage.select(all, matching, u.metaData().numRows());
                 if (u.limit() < u.metaData().numRows()) {
@@ -174,7 +174,6 @@ final class PagePlanner {
                 for (NeededPage page : pages[c]) {
                     long start = page.location().offset();
                     long end = start + page.location().compressedPageSize();
-                    checkWithinChunk(u.file().name(), u.rowGroup(), path, chunk, start, end);
                     if (pageRanges) {
                         needs.add(new CoalescingPolicy.Need(c, start, end));
                     }
@@ -239,20 +238,5 @@ final class PagePlanner {
             }
         }
         return sorted;
-    }
-
-    /// Checks that `[start, end)` lies within `chunk`, the chunk of `column` in row group
-    /// `rowGroupIndex`.
-    ///
-    /// @throws ParquetReadException if it does not
-    private static void checkWithinChunk(String fileName, int rowGroupIndex, String column, ColumnChunk chunk,
-                                 long start, long end) {
-        long chunkStart = chunk.chunkStartOffset();
-        long chunkEnd = chunkStart + chunk.metaData().totalCompressedSize();
-        if (start < chunkStart || end > chunkEnd || end < start) {
-            throw new ParquetReadException(ExceptionContext.readPrefix(fileName, rowGroupIndex, column)
-                    + "The range [" + start + ", " + end + ") lies outside the column chunk [" + chunkStart + ", "
-                    + chunkEnd + ")");
-        }
     }
 }

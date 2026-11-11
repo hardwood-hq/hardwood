@@ -116,7 +116,7 @@ public class PagePruningBenchmark {
         inputFile = InputFile.of(path);
         inputFile.open();
         indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-        parsed = PagePruningSteps.parse(indexBuffers.forColumn(0), 0, rowGroup.columns().getFirst().metaData());
+        parsed = PagePruningSteps.parse(indexBuffers.forColumn(0), 0, rowGroup);
         parsedLinear = parsed.unordered();
         checkFixture();
 

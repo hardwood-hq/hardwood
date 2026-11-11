@@ -77,6 +77,8 @@ class DictionaryParserTest {
                         + " lies after the first data page at offset 60");
     }
 
+    /// The chunk starts at its dictionary page, so its offset index places the first data page
+    /// before the chunk.
     @Test
     void aReadOfAChunkWithItsDictionaryPageDeclaredAfterTheFirstDataPageFails() {
         assertThatThrownBy(() -> {
@@ -89,9 +91,8 @@ class DictionaryParserTest {
         })
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("[dict_misplaced_page_offset.parquet: row group 0, column 'label'] Failed to"
-                        + " compute the fetch plan: Malformed Parquet metadata: the"
-                        + " dictionary page at offset 61 lies after the first data page at"
-                        + " offset 60");
+                        + " compute the fetch plan: Malformed Parquet metadata: OffsetIndex page 0"
+                        + " starts at offset 60, before its column chunk starts at offset 61");
     }
 
     /// A header probe grows while the header does not fit, but not without bound: a header that
