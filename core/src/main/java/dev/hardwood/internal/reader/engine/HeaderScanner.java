@@ -390,16 +390,16 @@ final class HeaderScanner {
         // keeps, so its siblings agree on the rows
         NeededPage page = new NeededPage(new PageLocation(f.offset(), f.length(), row),
                 nulls ? PageRowMask.ALL : mask, s.pages(), values);
-        TrackedPage pw = nulls
+        TrackedPage tracked = nulls
                 ? new TrackedPage(s.unit(), s.column(), key(s), page, List.of(), null, true)
                 : new TrackedPage(s.unit(), s.column(), key(s), page, within(s, f), s.dictionary(), true);
         if (nulls) {
-            pw.standsForNulls(mask.isAll() ? values : mask.totalRecords());
+            tracked.standsForNulls(mask.isAll() ? values : mask.totalRecords());
         }
         // the ranges were keyed by where they lie in the chunk; the page they hold serves its own
         // row, which may be lower
-        fetcher.keyAt(pw.ranges(), pw.key());
-        pages.add(tracker.add(s.placement(), pw));
+        fetcher.keyAt(tracked.ranges(), tracked.key());
+        pages.add(tracker.add(s.placement(), tracked));
     }
 
     /// Whether the scan's column needs no further row of the chunk: a flat column's pages cover
