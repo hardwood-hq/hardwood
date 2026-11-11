@@ -35,7 +35,7 @@ class JobSchedulerTest {
     }
 
     private static List<Long> keys(List<JobScheduler.Job> jobs) {
-        return jobs.stream().map(j -> j.key).toList();
+        return jobs.stream().map(j -> j.key()).toList();
     }
 
     private JobScheduler scheduler(long budget, int cpuSlots, long fetchAhead) {
@@ -177,10 +177,10 @@ class JobSchedulerTest {
         List<JobScheduler.Job> running = new ArrayList<>();
         List<JobScheduler.Job> holding = new ArrayList<>();
         while (!left.isEmpty()) {
-            long consumer = left.stream().mapToLong(j -> j.key).min().getAsLong();
+            long consumer = left.stream().mapToLong(j -> j.key()).min().getAsLong();
             for (JobScheduler.Job held : List.copyOf(holding)) {
-                if (held.key < consumer) {
-                    s.release(held.charge);
+                if (held.key() < consumer) {
+                    s.release(held.charge());
                     holding.remove(held);
                 }
             }
@@ -194,7 +194,7 @@ class JobSchedulerTest {
             JobScheduler.Job ended = running.remove(random.nextInt(running.size()));
             s.run(ended, null).run();
             left.remove(ended);
-            if (ended.charge != null) {
+            if (ended.charge() != null) {
                 holding.add(ended);
             }
         }

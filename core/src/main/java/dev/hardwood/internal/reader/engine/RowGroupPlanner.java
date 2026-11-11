@@ -42,18 +42,56 @@ final class RowGroupPlanner {
     /// and its requests: its Bloom filters, read first, and its page index, read once a unit of it
     /// survives its Bloom filters and dictionaries; each held by every unit of it.
     static final class WindowFetch {
-        final int first;
-        final int count;
-        final List<RangeFetch> bloomFilters;
-        final List<RangeFetch> index;
-        boolean indexRead;
-        boolean indexArrived;
+        private final int first;
+        private final int count;
+        private final List<RangeFetch> bloomFilters;
+        private final List<RangeFetch> index;
+        private boolean indexRead;
+        private boolean indexArrived;
 
         WindowFetch(int first, int count, List<RangeFetch> bloomFilters, List<RangeFetch> index) {
             this.first = first;
             this.count = count;
             this.bloomFilters = bloomFilters;
             this.index = index;
+        }
+
+        /// The index of its first unit.
+        int first() {
+            return first;
+        }
+
+        /// The index past its last unit.
+        int end() {
+            return first + count;
+        }
+
+        /// Its Bloom-filter requests.
+        List<RangeFetch> bloomFilters() {
+            return bloomFilters;
+        }
+
+        /// Its page-index requests.
+        List<RangeFetch> index() {
+            return index;
+        }
+
+        /// A unit of it waits for its page index: returns whether that starts its read, which
+        /// happens once.
+        boolean readIndex() {
+            boolean first = !indexRead;
+            indexRead = true;
+            return first;
+        }
+
+        /// Whether its page index has arrived.
+        boolean hasIndex() {
+            return indexArrived;
+        }
+
+        /// Its page index has arrived.
+        void indexArrived() {
+            indexArrived = true;
         }
     }
 
@@ -192,8 +230,8 @@ final class RowGroupPlanner {
                     units.add(new Unit.Listed(listings.get(i - from), m.offsetIndexColumns(), m.columnIndexColumns(), w));
                 }
                 first += count;
-                fetch(units.get(w.first).listing(), w.bloomFilters, () -> {
-                    for (int i = w.first; i < w.first + w.count; i++) {
+                fetch(units.get(w.first()).listing(), w.bloomFilters(), () -> {
+                    for (int i = w.first(); i < w.end(); i++) {
                         bloomFiltersArrived((Unit.Listed) units.get(i));
                     }
                 });
@@ -209,11 +247,10 @@ final class RowGroupPlanner {
     private static List<RangeFetch> ranges(InputFile file, List<FileRange> requests, int readers) {
         List<RangeFetch> ranges = new ArrayList<>(requests.size());
         for (FileRange range : requests.stream().sorted(Comparator.comparingLong(FileRange::start)).toList()) {
-            RangeFetch r = new RangeFetch(range);
+            RangeFetch r = RangeFetch.of(file, range);
             for (int i = 0; i < readers; i++) {
-                r.charge.reader();
+                r.addReader();
             }
-            r.bytes = HeldBytes.slice(file, range.start(), range.length());
             ranges.add(r);
         }
         return ranges;
@@ -224,7 +261,7 @@ final class RowGroupPlanner {
     private void fetch(UnitListing u, List<RangeFetch> ranges, Runnable then) {
         int[] missing = {0};
         for (RangeFetch r : ranges) {
-            if (r.bytes == null) {
+            if (!r.hasArrived()) {
                 missing[0]++;
                 fetcher.fetch(u.file(), r, u.base(), t -> {
                     if (t != null) {
@@ -249,7 +286,7 @@ final class RowGroupPlanner {
             probe(l.probing());
             return;
         }
-        fetcher.readersDone(l.window().bloomFilters);
+        fetcher.readersDone(l.window().bloomFilters());
         awaitIndex(l.nothingToProbe());
     }
 
@@ -279,11 +316,11 @@ final class RowGroupPlanner {
     /// one they kept waits for its page index.
     private void probed(Unit.Probing p, RowGroupPruning.Arrival arrival) {
         WindowFetch w = p.listed().window();
-        fetcher.readersDone(w.bloomFilters);
+        fetcher.readersDone(w.bloomFilters());
         fetcher.readersDone(p.probed());
         if (arrival.dropped()) {
             set(p.dropped(arrival.dropEvent(), schemas.length));
-            batchPlanned(w.index);
+            batchPlanned(w.index());
             return;
         }
         awaitIndex(p.kept(arrival.dropEvent()));
@@ -294,14 +331,13 @@ final class RowGroupPlanner {
     private void awaitIndex(Unit.AwaitingIndex a) {
         set(a);
         WindowFetch w = a.listed().window();
-        if (w.indexArrived) {
+        if (w.hasIndex()) {
             plan(a);
         }
-        else if (!w.indexRead) {
-            w.indexRead = true;
-            fetch(units.get(w.first).listing(), w.index, () -> {
-                w.indexArrived = true;
-                for (int i = w.first; i < w.first + w.count; i++) {
+        else if (w.readIndex()) {
+            fetch(units.get(w.first()).listing(), w.index(), () -> {
+                w.indexArrived();
+                for (int i = w.first(); i < w.end(); i++) {
                     if (units.get(i) instanceof Unit.AwaitingIndex waiting) {
                         plan(waiting);
                     }
@@ -358,7 +394,7 @@ final class RowGroupPlanner {
     /// Plans `a` on a job, its page index arrived.
     private void plan(Unit.AwaitingIndex a) {
         UnitListing u = a.listing();
-        List<RangeFetch> index = a.listed().window().index;
+        List<RangeFetch> index = a.listed().window().index();
         scheduler.add(new JobScheduler.Job(u.base(), 0, planKind(u), null, buffers -> {
             List<Event> events = new ArrayList<>();
             UnitPlan plan = pages.plan(a, index, events);
@@ -453,7 +489,7 @@ final class RowGroupPlanner {
                 publisher.add(new Batch(first, batches.readRowsBefore() + first - u.base(), schemas.length));
             }
             first += batches.segmentRows(i);
-            publisher.last().endKey = first;
+            publisher.last().extendTo(first);
             for (int c = 0; c < schemas.length; c++) {
                 if (pages.skips(u, c)) {
                     publisher.skipLast(c);

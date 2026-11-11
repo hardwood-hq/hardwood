@@ -68,33 +68,29 @@ final class BatchPublisher {
     /// The column's placement opened `cell` at its next batch it is read in.
     void open(int column, BatchCell<?> cell) {
         Batch b = batches.get(opened[column]++);
-        while (b == null || skips(b, column)) {
+        while (b == null || b.skips(column)) {
             b = batches.get(opened[column]++);
         }
-        if (b.row != cell.firstRow()) {
+        if (b.row() != cell.firstRow()) {
             throw new IllegalStateException("Column " + column + " opens a batch at row " + cell.firstRow()
-                    + ", the plan at " + b.row);
+                    + ", the plan at " + b.row());
         }
-        b.cells[column] = cell;
+        b.open(column, cell);
     }
 
     /// The column is not read in the last batch added: a filter-only column where statistics
     /// proved every row matches, of which the consumers take no batch.
     void skipLast(int column) {
         Batch b = batches.getLast();
-        b.complete[column] = true;
+        b.completed(column);
         publishable.set(column);
-    }
-
-    private static boolean skips(Batch b, int column) {
-        return b.complete[column] && b.cells[column] == null;
     }
 
     /// The batch holding the column's `cell`: one of the last it opened.
     Batch of(int column, BatchCell<?> cell) {
         for (int i = opened[column] - 1; ; i--) {
             Batch b = batches.get(i);
-            if (b != null && b.cells[column] == cell) {
+            if (b != null && b.cell(column) == cell) {
                 return b;
             }
         }
@@ -105,8 +101,8 @@ final class BatchPublisher {
     void hold(int column, BatchCell<?> cell, List<RangeFetch> ranges) {
         for (int i = opened[column] - 1; i >= head; i--) {
             Batch b = batches.get(i);
-            if (b != null && b.cells[column] == cell) {
-                b.held.addAll(ranges);
+            if (b != null && b.cell(column) == cell) {
+                b.hold(ranges);
                 return;
             }
         }
@@ -115,7 +111,7 @@ final class BatchPublisher {
 
     /// The column's `cell` is complete: its batch can be published.
     void completed(int column, BatchCell<?> cell) {
-        of(column, cell).complete[column] = true;
+        of(column, cell).completed(column);
         publishable.set(column);
     }
 
@@ -188,7 +184,7 @@ final class BatchPublisher {
     private void publish(int c, long batchedTo, boolean allBatched) {
         BatchExchange<Object> exchange = cast(exchanges.get(c));
         for (int i = published[c]; ; i = ++published[c]) {
-            if (i == batches.size() ? batchedTo >= failedAt : batches.get(i).endKey > failedAt) {
+            if (i == batches.size() ? batchedTo >= failedAt : batches.get(i).endKey() > failedAt) {
                 if (!settled) {
                     return;
                 }
@@ -202,14 +198,14 @@ final class BatchPublisher {
                 return;
             }
             Batch b = batches.get(i);
-            if (skips(b, c)) {
+            if (b.skips(c)) {
                 passed(c, i);
                 continue;
             }
-            if (!b.complete[c] || !exchange.tryPublish(b.cells[c].batch())) {
+            if (!b.complete(c) || !exchange.tryPublish(b.cell(c).batch())) {
                 return;
             }
-            b.cells[c].release();
+            b.cell(c).release();
             passed(c, i);
         }
     }
@@ -217,9 +213,8 @@ final class BatchPublisher {
     /// `column` is done with batch `i`; the last column returns the ranges it holds and drops it.
     private void passed(int column, int i) {
         Batch b = batches.get(i);
-        b.cells[column] = null;
-        if (--b.columnsLeft == 0) {
-            fetcher.readersDone(b.held);
+        if (b.passed(column)) {
+            fetcher.readersDone(b.held());
             batches.set(i, null);
             while (head < batches.size() && batches.get(head) == null) {
                 head++;
@@ -242,7 +237,7 @@ final class BatchPublisher {
         long need = batchedTo + batchRows;
         if (furthest >= 0 && furthest < batches.size()) {
             Batch next = batches.get(furthest);
-            need = Math.max(next.endKey, next.key + batchRows);
+            need = Math.max(next.endKey(), next.key() + batchRows);
             if (furthest == batches.size() - 1) {
                 need = Math.max(need, batchedTo + 1);
             }
@@ -263,7 +258,7 @@ final class BatchPublisher {
 
     /// The key of the first row some column has not published.
     long firstUnpublished(long batchedTo) {
-        return head < batches.size() ? batches.get(head).key : batchedTo;
+        return head < batches.size() ? batches.get(head).key() : batchedTo;
     }
 
     /// Ends every exchange not ended, as the read closes: a consumer waiting for a batch finds the

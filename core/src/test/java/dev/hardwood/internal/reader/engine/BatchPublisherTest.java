@@ -31,7 +31,7 @@ class BatchPublisherTest {
     @Test
     void needReachesTheNextUnitWhileTheLastBatchMayGoOn() {
         Batch open = new Batch(1000, 0, 1);
-        open.endKey = 1020;
+        open.extendTo(1020);
         publisher.add(open);
 
         JobScheduler.Position at = publisher.position(5000);
@@ -46,7 +46,7 @@ class BatchPublisherTest {
         BatchPublisher wide = new BatchPublisher(new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
         }, 1, 1000)), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
         Batch open = new Batch(1000, 0, 1);
-        open.endKey = 1020;
+        open.extendTo(1020);
         wide.add(open);
 
         JobScheduler.Position at = wide.position(1020);
@@ -59,7 +59,7 @@ class BatchPublisherTest {
     @Test
     void needEndsWithAClosedBatch() {
         Batch closed = new Batch(1000, 0, 1);
-        closed.endKey = 1020;
+        closed.extendTo(1020);
         publisher.add(closed);
         publisher.add(new Batch(1020, 20, 1));
 
