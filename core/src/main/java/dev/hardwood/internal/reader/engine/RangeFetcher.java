@@ -8,9 +8,7 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.List;
-import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -29,24 +27,17 @@ final class RangeFetcher {
         this.scheduler = scheduler;
     }
 
-    /// Fetches `r` from `file` as a job keyed at `key`; `then` runs under the lock once it has
-    /// arrived, with `null`, or with its failure, its charge returned.
-    void fetch(InputFile file, RangeFetch r, long key, Consumer<Throwable> then) {
-        r.job(new JobScheduler.Job(key, r.range().length(), JobScheduler.Kind.FETCH, r.charge(), buffers -> {
-            ByteBuffer bytes;
+    /// Fetches `r` from `file` as a job keyed at `key`, ending its output ([RangeFetch#output]),
+    /// which pages, scans and the planner wait on; a fetch that fails returns its charge.
+    void fetch(InputFile file, RangeFetch r, long key) {
+        r.job(new JobScheduler.Job<>(key, r.range().length(), JobScheduler.Kind.FETCH, r.charge(), buffers -> {
             try (FetchReason.Scope ignored = FetchReason.set(r.range().reason())) {
-                bytes = ReadRanges.read(file, r.range().start(), r.range().length());
+                return ReadRanges.read(file, r.range().start(), r.range().length());
             }
-            return () -> {
-                r.arrived(bytes);
-                then.accept(null);
-            };
-        }, t -> () -> {
-            scheduler.release(r.charge());
-            then.accept(t instanceof Exception e ? new IOException(ExceptionContext.filePrefix(file.name())
-                    + "Failed to fetch data at offset " + r.range().start() + " (length " + r.range().length() + ")", e)
-                    : t);
-        }));
+        }, r.output()::arrived, t -> r.output().failed(t instanceof Exception e
+                ? new IOException(ExceptionContext.filePrefix(file.name()) + "Failed to fetch data at offset "
+                        + r.range().start() + " (length " + r.range().length() + ")", e)
+                : t)));
         scheduler.add(r.job());
     }
 

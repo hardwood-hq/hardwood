@@ -47,7 +47,6 @@ final class RowGroupPlanner {
         private final List<RangeFetch> bloomFilters;
         private final List<RangeFetch> index;
         private boolean indexRead;
-        private boolean indexArrived;
 
         WindowFetch(int first, int count, List<RangeFetch> bloomFilters, List<RangeFetch> index) {
             this.first = first;
@@ -82,16 +81,6 @@ final class RowGroupPlanner {
             boolean first = !indexRead;
             indexRead = true;
             return first;
-        }
-
-        /// Whether its page index has arrived.
-        boolean hasIndex() {
-            return indexArrived;
-        }
-
-        /// Its page index has arrived.
-        void indexArrived() {
-            indexArrived = true;
         }
     }
 
@@ -256,26 +245,30 @@ final class RowGroupPlanner {
         return ranges;
     }
 
-    /// Fetches those of `ranges` not held, at `u`'s key, then runs `then`; a range that cannot be
-    /// read fails the read at `u`.
+    /// Fetches those of `ranges` not held, at `u`'s key, then runs `then` once they have arrived; a
+    /// range that cannot be read fails the read at `u`.
     private void fetch(UnitListing u, List<RangeFetch> ranges, Runnable then) {
-        int[] missing = {0};
         for (RangeFetch r : ranges) {
             if (!r.hasArrived()) {
-                missing[0]++;
-                fetcher.fetch(u.file(), r, u.base(), t -> {
-                    if (t != null) {
-                        publisher.failAt(u.base(), t instanceof IOException e ? new IOException(ExceptionContext.filePrefix(
-                                u.file().name()) + "Failed to fetch metadata for row group " + u.rowGroup(), e) : t);
-                    }
-                    else if (--missing[0] == 0) {
-                        then.run();
-                    }
-                });
+                fetcher.fetch(u.file(), r, u.base());
             }
         }
-        if (missing[0] == 0) {
+        whenArrived(u, ranges, then);
+    }
+
+    /// Runs `then` once `ranges` have arrived: waits for the first it lacks and, woken, looks again.
+    private void whenArrived(UnitListing u, List<RangeFetch> ranges, Runnable then) {
+        RangeFetch missing = RangeFetch.firstMissing(ranges);
+        if (missing == null) {
             then.run();
+        }
+        else if (missing.failure() != null) {
+            publisher.failAt(u.base(), missing.failure() instanceof IOException e ? new IOException(
+                    ExceptionContext.filePrefix(u.file().name()) + "Failed to fetch metadata for row group "
+                            + u.rowGroup(), e) : missing.failure());
+        }
+        else {
+            missing.output().whenEnded(() -> whenArrived(u, ranges, then));
         }
     }
 
@@ -296,20 +289,19 @@ final class RowGroupPlanner {
         set(p);
         UnitListing u = p.listing();
         p.missing().clear();
-        scheduler.add(new JobScheduler.Job(u.base(), 0, planKind(u), null, buffers -> {
+        scheduler.add(new JobScheduler.Job<>(u.base(), 0, planKind(u), null, buffers -> {
             // its chunks lie in the file before a dictionary of them is read
             pages.extents(u);
-            RowGroupPruning.Arrival arrival = pruning.probeOnArrival(u, p.bytes(), p.bytes(), p.probe());
-            return () -> {
-                if (arrival.dropped() || p.missing().isEmpty()) {
-                    probed(p, arrival);
-                    return;
-                }
-                List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
-                p.fetching(more);
-                fetch(u, more, () -> probe(p));
-            };
-        }, t -> () -> publisher.failAt(u.base(), t)));
+            return pruning.probeOnArrival(u, p.bytes(), p.bytes(), p.probe());
+        }, arrival -> {
+            if (arrival.dropped() || p.missing().isEmpty()) {
+                probed(p, arrival);
+                return;
+            }
+            List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
+            p.fetching(more);
+            fetch(u, more, () -> probe(p));
+        }, t -> publisher.failAt(u.base(), t)));
     }
 
     /// `p`'s Bloom filters and dictionaries decided: a unit they dropped is planned with no row,
@@ -326,23 +318,16 @@ final class RowGroupPlanner {
         awaitIndex(p.kept(arrival.dropEvent()));
     }
 
-    /// `a` waits for its window's page index, which is read once a first unit of the window waits
-    /// for it, and is planned once it has arrived.
+    /// `a` waits for its window's page index, which the first unit of the window to wait for it
+    /// fetches, and is planned once it has arrived.
     private void awaitIndex(Unit.AwaitingIndex a) {
         set(a);
         WindowFetch w = a.listed().window();
-        if (w.hasIndex()) {
-            plan(a);
+        if (w.readIndex()) {
+            fetch(units.get(w.first()).listing(), w.index(), () -> plan(a));
         }
-        else if (w.readIndex()) {
-            fetch(units.get(w.first()).listing(), w.index(), () -> {
-                w.indexArrived();
-                for (int i = w.first(); i < w.end(); i++) {
-                    if (units.get(i) instanceof Unit.AwaitingIndex waiting) {
-                        plan(waiting);
-                    }
-                }
-            });
+        else {
+            whenArrived(a.listing(), w.index(), () -> plan(a));
         }
     }
 
@@ -395,18 +380,22 @@ final class RowGroupPlanner {
     private void plan(Unit.AwaitingIndex a) {
         UnitListing u = a.listing();
         List<RangeFetch> index = a.listed().window().index();
-        scheduler.add(new JobScheduler.Job(u.base(), 0, planKind(u), null, buffers -> {
-            List<Event> events = new ArrayList<>();
-            UnitPlan plan = pages.plan(a, index, events);
-            return () -> {
-                set(a.planned(plan, events));
-                batchPlanned(index);
-            };
-        }, t -> () -> {
+        // the page filtering events, filled by the job
+        List<Event> events = new ArrayList<>();
+        scheduler.add(new JobScheduler.Job<>(u.base(), 0, planKind(u), null, buffers -> {
+            try {
+                return pages.plan(a, index, events);
+            }
+            catch (Exception e) {
+                // met first by the first column, at no page
+                throw placer.placed(0, e, u.file().name(), u.rowGroup(), ExceptionContext.UNKNOWN_PAGE);
+            }
+        }, plan -> {
+            set(a.planned(plan, events));
+            batchPlanned(index);
+        }, t -> {
             fetcher.readersDone(index);
-            // met first by the first column, at no page
-            publisher.failAt(u.base(), t instanceof Exception e
-                    ? placer.placed(0, e, u.file().name(), u.rowGroup(), ExceptionContext.UNKNOWN_PAGE) : t);
+            publisher.failAt(u.base(), t);
         }));
     }
 

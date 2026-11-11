@@ -32,8 +32,7 @@ class RangeFetcherTest {
     @Test
     void theLastReaderReturnsAStartedFetchsCharge() {
         RangeFetch range = range(2);
-        fetcher.fetch(file, range, 10, t -> {
-        });
+        fetcher.fetch(file, range, 10);
         assertThat(scheduler.start(AT_START)).hasSize(1);
 
         fetcher.readersDone(List.of(range));
@@ -46,8 +45,7 @@ class RangeFetcherTest {
     @Test
     void theLastReaderTakesOutAFetchNotStarted() {
         RangeFetch range = range(1);
-        fetcher.fetch(file, range, 10, t -> {
-        });
+        fetcher.fetch(file, range, 10);
 
         fetcher.readersDone(List.of(range));
 

@@ -492,11 +492,11 @@ final class PagePlacer {
     @SuppressWarnings("unchecked")
     private void fill(int column, NestedCell cell) {
         long key = publisher.of(column, cell).key();
-        scheduler.add(new JobScheduler.Job(key, 0, JobScheduler.Kind.CPU, null, buffers -> {
+        scheduler.add(new JobScheduler.Job<Void>(key, 0, JobScheduler.Kind.CPU, null, buffers -> {
             cell.fill((BatchExchange<NestedBatch>) exchanges.get(column), schemas[column], layers.get(column),
                     indexMode, views[column], buffers, scratch.get(column));
-            return () -> publisher.completed(column, cell);
-        }, t -> () -> {
+            return null;
+        }, filled -> publisher.completed(column, cell), t -> {
             PageTask page = t instanceof SegmentFillException s ? s.page() : cell.lastPage();
             Throwable failure = t instanceof SegmentFillException s ? s.failure() : t;
             publisher.failAt(key, column, page != null && failure instanceof Exception e ? placed(column, e, page) : failure);

@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import dev.hardwood.internal.DecodeBuffers;
@@ -49,38 +50,37 @@ final class JobScheduler {
         CPU
     }
 
-    /// What a job runs outside the read's lock; returns what to apply under it.
-    interface Work {
+    /// A job's work outside the read's lock, producing its value.
+    interface Work<T> {
         /// @param buffers the decode buffers of the thread running a CPU job, `null` for a fetch
-        Runnable run(DecodeBuffers buffers) throws Exception;
+        T run(DecodeBuffers buffers) throws Exception;
     }
 
-    /// What a job applies under the lock where its work failed.
-    interface Failed {
-        Runnable at(Throwable t);
-    }
-
-    /// A ready job: `cost` bytes, taken by `charge` as it starts, then `work` outside the lock.
-    static final class Job {
+    /// A job: `cost` bytes, taken by `charge` as it starts, then `work` outside the lock; as it
+    /// ends, under the lock, `onValue` takes the value its work produced, or `onFailure` its failure.
+    static final class Job<T> {
         /// lowered while the job waits, where the read learns it serves an earlier row ([#lower])
         private long key;
         private final long cost;
         private final Kind kind;
         /// what holds the bytes once started; `null` for a job that holds none
         private final Charge charge;
-        private final Work work;
-        private final Failed failed;
+        private final Work<T> work;
+        private final Consumer<T> onValue;
+        private final Consumer<Throwable> onFailure;
         private long seq;
         /// keyed below need as it started
         private boolean needed;
 
-        Job(long key, long cost, Kind kind, Charge charge, Work work, Failed failed) {
+        Job(long key, long cost, Kind kind, Charge charge, Work<T> work, Consumer<T> onValue,
+            Consumer<Throwable> onFailure) {
             this.key = key;
             this.cost = cost;
             this.kind = kind;
             this.charge = charge;
             this.work = work;
-            this.failed = failed;
+            this.onValue = onValue;
+            this.onFailure = onFailure;
         }
 
         /// The first row of the read it serves.
@@ -102,13 +102,18 @@ final class JobScheduler {
             return charge;
         }
 
-        Work work() {
+        Work<T> work() {
             return work;
         }
 
-        /// What it applies under the lock where its work failed.
-        Failed onFailure() {
-            return failed;
+        /// Takes the value its work produced, under the lock.
+        Consumer<T> onValue() {
+            return onValue;
+        }
+
+        /// Takes its failure, under the lock.
+        Consumer<Throwable> onFailure() {
+            return onFailure;
         }
 
         /// The order it was added in, which breaks ties between equal keys.
@@ -151,7 +156,7 @@ final class JobScheduler {
         }
     }
 
-    private static final Comparator<Job> ORDER = (a, b) -> a.key() != b.key() ? Long.compare(a.key(), b.key())
+    private static final Comparator<Job<?>> ORDER = (a, b) -> a.key() != b.key() ? Long.compare(a.key(), b.key())
             : Long.compare(a.seq(), b.seq());
     private static final Kind[] KINDS = Kind.values();
     /// the kinds a refusal holds back: a bound's own kind, and for R every kind that charges
@@ -166,11 +171,11 @@ final class JobScheduler {
     private final long fetchAheadLimit;
 
     /// ready jobs by kind, each lowest key first
-    private final List<TreeSet<Job>> ready = Stream.of(KINDS).map(k -> new TreeSet<>(ORDER)).toList();
+    private final List<TreeSet<Job<?>>> ready = Stream.of(KINDS).map(k -> new TreeSet<>(ORDER)).toList();
     private long seq;
     private int cpuInFlight;
     /// the jobs started and not ended, lowest key first
-    private final TreeSet<Job> running = new TreeSet<>(ORDER);
+    private final TreeSet<Job<?>> running = new TreeSet<>(ORDER);
     /// started jobs keyed below need, not yet ended
     private int neededInFlight;
     private long fetchedAhead;
@@ -192,15 +197,15 @@ final class JobScheduler {
         this.fetchAheadLimit = fetchAheadLimit;
     }
 
-    void add(Job job) {
+    void add(Job<?> job) {
         job.added(seq++);
         ready.get(job.kind().ordinal()).add(job);
     }
 
     /// Keys `job` at `key` where that is lower and the job has not started: work the read keyed by
     /// an estimate turns out to serve an earlier row, which need must reach.
-    void lower(Job job, long key) {
-        TreeSet<Job> set = ready.get(job.kind().ordinal());
+    void lower(Job<?> job, long key) {
+        TreeSet<Job<?>> set = ready.get(job.kind().ordinal());
         if (key < job.key() && set.remove(job)) {
             job.keyAt(key);
             set.add(job);
@@ -208,18 +213,18 @@ final class JobScheduler {
     }
 
     /// Takes `job` out before it starts; returns whether it was waiting.
-    boolean remove(Job job) {
+    boolean remove(Job<?> job) {
         return ready.get(job.kind().ordinal()).remove(job);
     }
 
     /// Starts what the position and the bounds let start, lowest key first.
-    List<Job> start(Position at) {
-        List<Job> out = new ArrayList<>();
+    List<Job<?>> start(Position at) {
+        List<Job<?>> out = new ArrayList<>();
         int refused = 0;
         while (true) {
-            Job job = null;
+            Job<?> job = null;
             for (Kind k : KINDS) {
-                TreeSet<Job> set = ready.get(k.ordinal());
+                TreeSet<Job<?>> set = ready.get(k.ordinal());
                 boolean open = (refused & 1 << k.ordinal()) == 0 && (k == Kind.FETCH || k == Kind.FOOTER || cpuInFlight < cpuSlots);
                 if (open && !set.isEmpty() && set.first().key() <= at.end() && (job == null || before(set.first(), job))) {
                     job = set.first();
@@ -232,12 +237,12 @@ final class JobScheduler {
         }
     }
 
-    private static boolean before(Job a, Job b) {
+    private static boolean before(Job<?> a, Job<?> b) {
         return (a.kind() == Kind.PLAN) != (b.kind() == Kind.PLAN) ? a.kind() == Kind.PLAN : ORDER.compare(a, b) < 0;
     }
 
     /// Starts `job`, or returns the kinds the bound that refused it holds back.
-    private int tryStart(Job job, Position at, List<Job> out) {
+    private int tryStart(Job<?> job, Position at, List<Job<?>> out) {
         boolean needed = job.key() < at.need();
         if (job.kind() == Kind.DECODE && job.key() >= at.reach()) {
             return DECODES;
@@ -277,33 +282,35 @@ final class JobScheduler {
     }
 
     /// Runs a started job's work outside the lock; returns what to apply under it once the job has
-    /// ended. A fetch that fails with an exception is run once more: the one place a transient
-    /// fault is retried.
-    Runnable run(Job job, DecodeBuffers buffers) {
-        Runnable apply;
+    /// ended: its `onValue` takes the value its work produced, or its `onFailure` the failure. A fetch
+    /// that fails with an exception is run once more: the one place a transient fault is retried.
+    <T> Runnable run(Job<T> job, DecodeBuffers buffers) {
+        T value;
         try {
-            apply = job.cpu() ? job.work().run(buffers) : retried(job.work());
+            value = job.cpu() ? job.work().run(buffers) : retried(job.work());
         }
         catch (Throwable t) {
-            apply = job.onFailure().at(t);
+            return refused(job, t);
         }
-        Runnable then = apply;
         return () -> {
             ended(job);
-            then.run();
+            job.onValue().accept(value);
         };
     }
 
-    /// What to apply under the lock for a started job that never ran, failed with `t`.
-    Runnable refused(Job job, Throwable t) {
-        Runnable then = job.onFailure().at(t);
+    /// The action applied under the lock for a started job that failed with `t`, or never ran: it returns
+    /// its charge, and its `onFailure` takes the failure.
+    <T> Runnable refused(Job<T> job, Throwable t) {
         return () -> {
             ended(job);
-            then.run();
+            if (job.charge() != null) {
+                release(job.charge());
+            }
+            job.onFailure().accept(t);
         };
     }
 
-    private static Runnable retried(Work work) throws Exception {
+    private static <T> T retried(Work<T> work) throws Exception {
         try {
             return work.run(null);
         }
@@ -339,7 +346,7 @@ final class JobScheduler {
         }
     }
 
-    private void ended(Job job) {
+    private void ended(Job<?> job) {
         running.remove(job);
         if (job.needed()) {
             neededInFlight--;
@@ -364,7 +371,7 @@ final class JobScheduler {
         if (!running.isEmpty() && running.first().key() <= key) {
             return true;
         }
-        for (TreeSet<Job> set : ready) {
+        for (TreeSet<Job<?>> set : ready) {
             if (!set.isEmpty() && set.first().key() <= key) {
                 return true;
             }

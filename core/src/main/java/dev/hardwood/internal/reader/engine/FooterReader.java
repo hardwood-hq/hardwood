@@ -83,7 +83,7 @@ final class FooterReader {
         private Throwable failure;
         private Charge charge;
         /// the job reading or parsing the claimed load, until it has run
-        private JobScheduler.Job job;
+        private JobScheduler.Job<?> job;
 
         /// Whether its file or its failure is in.
         boolean done() {
@@ -122,11 +122,11 @@ final class FooterReader {
         }
 
         /// The job reading or parsing the load, until it has run.
-        JobScheduler.Job job() {
+        JobScheduler.Job<?> job() {
             return job;
         }
 
-        void job(JobScheduler.Job job) {
+        void job(JobScheduler.Job<?> job) {
             this.job = job;
         }
 
@@ -219,11 +219,11 @@ final class FooterReader {
             return;
         }
         f.charge(new Charge());
-        f.job(new JobScheduler.Job(planner.endKey(), TailedInputFile.tailBytes(), JobScheduler.Kind.FOOTER,
+        f.job(new JobScheduler.Job<Void>(planner.endKey(), TailedInputFile.tailBytes(), JobScheduler.Kind.FOOTER,
                 f.charge(), buffers -> {
             load.read();
-            return () -> addParse(f, load);
-        }, t -> () -> {
+            return null;
+        }, read -> addParse(f, load), t -> {
             // a failed read stays this read's; the next read of the file reads it again
             load.abandon();
             returnCharge(f);
@@ -240,14 +240,12 @@ final class FooterReader {
     }
 
     private void addParse(FooterLoad f, FileMetadataCache.ClaimedLoad load) {
-        f.job(new JobScheduler.Job(planner.endKey(), 0, JobScheduler.Kind.PLAN, null, buffers -> {
-            FileMetadataCache.PreparedFile file = load.parse();
-            return () -> loaded(f, file, null);
-        }, t -> () -> {
-            // a parse that never ran, refused by a closed context, completes the load too
-            load.fail(t);
-            loaded(f, null, t);
-        }));
+        f.job(new JobScheduler.Job<>(planner.endKey(), 0, JobScheduler.Kind.PLAN, null, buffers -> load.parse(),
+                file -> loaded(f, file, null), t -> {
+                    // a parse that never ran, refused by a closed context, completes the load too
+                    load.fail(t);
+                    loaded(f, null, t);
+                }));
         scheduler.add(f.job());
     }
 

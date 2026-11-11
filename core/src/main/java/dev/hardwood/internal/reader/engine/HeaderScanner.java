@@ -264,12 +264,12 @@ final class HeaderScanner {
         }
         for (RangeFetch r : overlapping) {
             r.addReader();
-            r.onArrival(() -> next(s));
         }
         next(s);
     }
 
-    /// Scans on where the bytes at the scan's position have arrived.
+    /// Scans on where the bytes at the scan's position have arrived; where no byte past those it
+    /// walked has arrived, waits for the first range it lacks and, woken, looks again.
     private void next(Scan s) {
         if (s.running() || s.ended()) {
             return;
@@ -295,7 +295,11 @@ final class HeaderScanner {
         }
         long arrivedTo = arrived.isEmpty() ? -1 : arrived.getLast().range().end();
         if (arrivedTo == s.scannedTo()) {
-            if (arrived.size() == s.held().size()) {
+            // nothing new to walk: it waits for the first range it lacks, or fetches the rest
+            if (arrived.size() < s.held().size()) {
+                s.held().get(arrived.size()).output().whenEnded(() -> next(s));
+            }
+            else {
                 fetchRest(s);
             }
             return;
@@ -306,10 +310,8 @@ final class HeaderScanner {
         // a page is handed on only where the ranges held reach its end
         long held = s.ranges().getLast().range().end();
         s.start(arrivedTo);
-        scheduler.add(new JobScheduler.Job(key(s), 0, JobScheduler.Kind.CPU, null, buffers -> {
-            Step step = walk(arrived, position, end, held, values);
-            return () -> scanned(s, step);
-        }, t -> () -> failed(s, t)));
+        scheduler.add(new JobScheduler.Job<>(key(s), 0, JobScheduler.Kind.CPU, null,
+                buffers -> walk(arrived, position, end, held, values), step -> scanned(s, step), t -> failed(s, t)));
     }
 
     /// Walks the headers from `position` as far as `arrived` reaches, up to `end` or `values`
@@ -343,7 +345,6 @@ final class HeaderScanner {
     /// Hands the pages a step found to the chunk, lets go of the ranges it passed, and scans on.
     private void scanned(Scan s, Step step) {
         s.idle();
-        List<TrackedPage> pages = new ArrayList<>();
         for (Found f : step.found()) {
             PageType type = f.header().type();
             if (type == PageType.DICTIONARY_PAGE && s.pages() == 0 && s.dictionary() == null) {
@@ -353,7 +354,7 @@ final class HeaderScanner {
                 TrackedPage dictionaryPage = new TrackedPage(s.unit(), s.column(), key(s),
                         NeededPage.dictionary(f.offset(), f.length()), within(s, f), dictionary, false);
                 fetcher.keyAt(dictionaryPage.ranges(), dictionaryPage.key());
-                pages.add(tracker.hold(dictionaryPage));
+                tracker.addDictionaryPage(dictionaryPage);
             }
             else if (type == PageType.DATA_PAGE || type == PageType.DATA_PAGE_V2) {
                 int values = type == PageType.DATA_PAGE ? f.header().dataPageHeader().numValues()
@@ -361,20 +362,19 @@ final class HeaderScanner {
                 // a page past the last row the column needs is passed, not placed, and its values
                 // still count toward the chunk's
                 if (!needsNoFurtherRow(s)) {
-                    placeScanned(s, f, values, pages);
+                    placeScanned(s, f, values);
                 }
                 s.passedDataPage(values);
             }
         }
         fetcher.readersDone(s.advanceTo(step.position()));
-        tracker.decodeReady(pages);
         next(s);
         tracker.placed(s.column());
     }
 
     /// Hands on a data page the scan found, masked by the page filter, unless the filter keeps
     /// none of its rows.
-    private void placeScanned(Scan s, Found f, int values, List<TrackedPage> pages) {
+    private void placeScanned(Scan s, Found f, int values) {
         // a flat page's rows are its values: a page filter masks them, and drops a page it keeps
         // no row of
         long row = row(s);
@@ -399,7 +399,7 @@ final class HeaderScanner {
         // the ranges were keyed by where they lie in the chunk; the page they hold serves its own
         // row, which may be lower
         fetcher.keyAt(tracked.ranges(), tracked.key());
-        pages.add(tracker.add(s.placement(), tracked));
+        tracker.add(s.placement(), tracked);
     }
 
     /// Whether the scan's column needs no further row of the chunk: a flat column's pages cover
@@ -439,13 +439,11 @@ final class HeaderScanner {
         RangeFetch r = RangeFetch.of(s.unit().listing().file(), new FileRange(from, length,
                 "rg=" + s.unit().listing().rowGroup() + " col=" + placer.schema(s.column()).name()));
         r.addReader();
-        r.onArrival(() -> next(s));
         s.add(r);
-        if (r.hasArrived()) {
-            next(s);
-            return;
+        if (!r.hasArrived()) {
+            fetcher.fetch(s.unit().listing().file(), r, key(s));
         }
-        tracker.addFetch(s.unit().listing().file(), r, key(s));
+        r.output().whenEnded(() -> next(s));
     }
 
     private static List<RangeFetch> within(Scan s, Found f) {

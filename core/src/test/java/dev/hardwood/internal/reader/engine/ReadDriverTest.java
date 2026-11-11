@@ -41,20 +41,20 @@ class ReadDriverTest {
         context.close();
     }
 
-    private JobScheduler.Job job(String name, long key, long cost, JobScheduler.Kind kind, Charge charge,
-                                 Runnable then) {
-        return new JobScheduler.Job(key, cost, kind, charge, buffers -> () -> {
-            applied.add(name);
+    private JobScheduler.Job<String> job(String name, long key, long cost, JobScheduler.Kind kind, Charge charge,
+                                         Runnable then) {
+        return new JobScheduler.Job<>(key, cost, kind, charge, buffers -> name, value -> {
+            applied.add(value);
             then.run();
-        }, t -> () -> applied.add(name + " failed: " + t.getMessage()));
+        }, t -> applied.add(name + " failed: " + t.getMessage()));
     }
 
     @Test
     void appliesAResultAndStartsWhatItMadePossible() {
         JobScheduler s = driver.scheduler();
-        JobScheduler.Job decode = job("decode", 10, 0, JobScheduler.Kind.DECODE, null, () -> {
+        JobScheduler.Job<?> decode = job("decode", 10, 0, JobScheduler.Kind.DECODE, null, () -> {
         });
-        JobScheduler.Job fetch = job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> s.add(decode));
+        JobScheduler.Job<?> fetch = job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> s.add(decode));
 
         driver.update(() -> s.add(fetch));
         assertThat(fetches).hasSize(1);
