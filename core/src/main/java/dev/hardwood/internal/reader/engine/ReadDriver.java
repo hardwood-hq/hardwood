@@ -25,8 +25,8 @@ import dev.hardwood.internal.reader.step.ReadTasks;
 /// Runs a read's jobs: fetches on the context's I/O executor, CPU jobs on its pool or, with
 /// zero threads, on the read's [ReadQueue], which the threads using the read run.
 ///
-/// A job's result is a closure, applied under the read's one lock and followed by a poll of the
-/// [JobScheduler] for what it made possible. No thread waits for the lock to apply a result: a
+/// A job's end is applied under the read's one lock, by its callbacks, and followed by a poll of
+/// the [JobScheduler] for the jobs it made possible. No thread waits for the lock to apply a result: a
 /// job that ends while another thread holds it queues its result, and the holder applies every
 /// queued result before it lets go. Once it has let go, it dispatches the jobs its polls started
 /// and returns to R what the results released, since R runs other reads' waiters on the releasing
@@ -37,7 +37,7 @@ final class ReadDriver {
     /// results of jobs that ended while another thread held the lock, for the holder to apply
     private final ConcurrentLinkedQueue<Runnable> results = new ConcurrentLinkedQueue<>();
     /// the jobs the holder's polls started, dispatched once it has let go of the lock
-    private final List<JobScheduler.Job> started = new ArrayList<>();
+    private final List<JobScheduler.Job<?>> started = new ArrayList<>();
     private final JobScheduler scheduler;
     private final Supplier<JobScheduler.Position> position;
     private final ReadAheadBuffer readAhead;
@@ -114,7 +114,7 @@ final class ReadDriver {
             }
         }
         if (!closed) {
-            List<JobScheduler.Job> jobs;
+            List<JobScheduler.Job<?>> jobs;
             try {
                 jobs = scheduler.start(position.get());
             }
@@ -122,7 +122,7 @@ final class ReadDriver {
                 broken.accept(e);
                 jobs = scheduler.start(position.get());
             }
-            for (JobScheduler.Job job : jobs) {
+            for (JobScheduler.Job<?> job : jobs) {
                 // counted under the lock, so that a close never finds the read idle with a job
                 // started and not yet dispatched
                 tasks.started();
@@ -137,7 +137,7 @@ final class ReadDriver {
     /// a release to R that throws, from another read's waiter, still counts and dispatches.
     private void unlock() {
         do {
-            List<JobScheduler.Job> dispatch;
+            List<JobScheduler.Job<?>> dispatch;
             long released;
             int ended;
             try {
@@ -160,14 +160,14 @@ final class ReadDriver {
                 for (; ended > 0; ended--) {
                     tasks.ended();
                 }
-                for (JobScheduler.Job job : dispatch) {
+                for (JobScheduler.Job<?> job : dispatch) {
                     dispatch(job);
                 }
             }
         } while (!results.isEmpty() && lock.tryLock());
     }
 
-    private void dispatch(JobScheduler.Job job) {
+    private void dispatch(JobScheduler.Job<?> job) {
         try {
             if (job.cpu()) {
                 if (queue != null) {
@@ -187,7 +187,7 @@ final class ReadDriver {
         }
     }
 
-    private void finish(JobScheduler.Job job, DecodeBuffers buffers) {
+    private void finish(JobScheduler.Job<?> job, DecodeBuffers buffers) {
         update(ended(scheduler.run(job, buffers)));
     }
 

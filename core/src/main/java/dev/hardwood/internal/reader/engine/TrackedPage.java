@@ -15,8 +15,8 @@ import dev.hardwood.internal.reader.pipeline.PageTask;
 import dev.hardwood.internal.reader.plan.NeededPage;
 
 /// A page of a batched unit, from the start of its tracking until it is decoded: the page, the ranges its bytes
-/// lie in, its chunk's dictionary (`null` for a chunk without one), how many of those it still
-/// waits for, and, once [PagePlacer] has given them, its decoder and task and whether it is ready
+/// lie in, its chunk's dictionary (`null` for a chunk without one), and, once [PagePlacer] has
+/// given them, its decoder and task and whether it is ready
 /// to be placed. A dictionary page (`data` false) produces its chunk's dictionary's values. Used
 /// under the read's lock.
 final class TrackedPage {
@@ -34,8 +34,8 @@ final class TrackedPage {
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
-    /// how many of its ranges, its dictionary and, for a flat page, its placement it still waits for
-    private int missing;
+    /// ended once its column has placed it, which a flat page decodes after
+    private final Output<Void> placement = new Output<>();
 
     TrackedPage(Unit.Batched unit, int column, long key, NeededPage page, List<RangeFetch> ranges,
                 ChunkDictionary dictionary, boolean data) {
@@ -115,19 +115,9 @@ final class TrackedPage {
         this.ready = true;
     }
 
-    /// It waits for one thing more.
-    void waitForOneMore() {
-        missing++;
-    }
-
-    /// One thing it waits for is there; returns whether it waits for nothing more.
-    boolean oneArrived() {
-        return --missing == 0;
-    }
-
-    /// Whether it waits for nothing.
-    boolean waitsForNothing() {
-        return missing == 0;
+    /// Its placement, which ends once its column has placed it, filling a cell.
+    Output<Void> placement() {
+        return placement;
     }
 
     /// The page's bytes, from its ranges: `null` where one has not arrived.

@@ -29,12 +29,18 @@ class JobSchedulerTest {
     private final List<String> applied = new ArrayList<>();
     private final AtomicInteger wakes = new AtomicInteger();
 
-    private JobScheduler.Job job(String name, long key, long cost, JobScheduler.Kind kind, Charge charge) {
-        return new JobScheduler.Job(key, cost, kind, charge, buffers -> () -> applied.add(name),
-                t -> () -> applied.add(name + " failed: " + t.getMessage()));
+    private JobScheduler.Job<String> job(String name, long key, long cost, JobScheduler.Kind kind, Charge charge) {
+        return job(name + " ", key, cost, kind, charge, buffers -> name);
     }
 
-    private static List<Long> keys(List<JobScheduler.Job> jobs) {
+    /// A job that, as it ends, records its value, or `prefix` and its failure.
+    private <T> JobScheduler.Job<T> job(String prefix, long key, long cost, JobScheduler.Kind kind, Charge charge,
+                                        JobScheduler.Work<T> work) {
+        return new JobScheduler.Job<>(key, cost, kind, charge, work, value -> applied.add(String.valueOf(value)),
+                t -> applied.add(prefix + "failed: " + t.getMessage()));
+    }
+
+    private static List<Long> keys(List<JobScheduler.Job<?>> jobs) {
         return jobs.stream().map(j -> j.key()).toList();
     }
 
@@ -77,7 +83,7 @@ class JobSchedulerTest {
     @Test
     void cpuJobsWaitForASlot() {
         JobScheduler s = scheduler(1000, 1, 1000);
-        JobScheduler.Job first = job("c1", 10, 0, JobScheduler.Kind.CPU, null);
+        JobScheduler.Job<?> first = job("c1", 10, 0, JobScheduler.Kind.CPU, null);
         s.add(first);
         s.add(job("c2", 20, 0, JobScheduler.Kind.CPU, null));
         s.add(job("f", 30, 0, JobScheduler.Kind.FETCH, null));
@@ -133,7 +139,7 @@ class JobSchedulerTest {
     void needStartsOneRefusedJobAtATimeUncharged() {
         ReadAheadBuffer r = new ReadAheadBuffer(10);
         JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 0);
-        JobScheduler.Job first = job("f1", 10, 50, JobScheduler.Kind.FETCH, new Charge());
+        JobScheduler.Job<?> first = job("f1", 10, 50, JobScheduler.Kind.FETCH, new Charge());
         s.add(first);
         s.add(job("f2", 20, 50, JobScheduler.Kind.FETCH, new Charge()));
         s.add(job("f3", 99, 50, JobScheduler.Kind.FETCH, new Charge()));
@@ -164,21 +170,23 @@ class JobSchedulerTest {
         ReadAheadBuffer r = new ReadAheadBuffer(1 + random.nextInt(200));
         JobScheduler s = new JobScheduler(r, NOTHING, 1 + random.nextInt(3), random.nextInt(150));
         JobScheduler.Kind[] kinds = JobScheduler.Kind.values();
-        List<JobScheduler.Job> left = new ArrayList<>();
+        List<JobScheduler.Job<?>> left = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
             JobScheduler.Kind kind = kinds[random.nextInt(kinds.length)];
             boolean fetch = kind == JobScheduler.Kind.FETCH || kind == JobScheduler.Kind.FOOTER;
             long cost = fetch ? random.nextInt(300) : 0;
-            JobScheduler.Job job = new JobScheduler.Job(random.nextInt(1000), cost, kind,
-                    cost > 0 ? new Charge() : null, buffers -> NOTHING, t -> NOTHING);
+            JobScheduler.Job<?> job = new JobScheduler.Job<>(random.nextInt(1000), cost, kind,
+                    cost > 0 ? new Charge() : null, buffers -> null, value -> {
+                    }, t -> {
+                    });
             s.add(job);
             left.add(job);
         }
-        List<JobScheduler.Job> running = new ArrayList<>();
-        List<JobScheduler.Job> holding = new ArrayList<>();
+        List<JobScheduler.Job<?>> running = new ArrayList<>();
+        List<JobScheduler.Job<?>> holding = new ArrayList<>();
         while (!left.isEmpty()) {
             long consumer = left.stream().mapToLong(j -> j.key()).min().getAsLong();
-            for (JobScheduler.Job held : List.copyOf(holding)) {
+            for (JobScheduler.Job<?> held : List.copyOf(holding)) {
                 if (held.key() < consumer) {
                     s.release(held.charge());
                     holding.remove(held);
@@ -191,7 +199,7 @@ class JobSchedulerTest {
             if (running.isEmpty()) {
                 fail("seed " + seed + ": nothing in flight, the job at row " + consumer + " waits");
             }
-            JobScheduler.Job ended = running.remove(random.nextInt(running.size()));
+            JobScheduler.Job<?> ended = running.remove(random.nextInt(running.size()));
             s.run(ended, null).run();
             left.remove(ended);
             if (ended.charge() != null) {
@@ -214,12 +222,12 @@ class JobSchedulerTest {
     void fetchIsRetriedOnce() {
         JobScheduler s = scheduler(1000, 4, 1000);
         AtomicInteger runs = new AtomicInteger();
-        JobScheduler.Job flaky = new JobScheduler.Job(10, 0, JobScheduler.Kind.FETCH, null, buffers -> {
+        JobScheduler.Job<String> flaky = job("", 10, 0, JobScheduler.Kind.FETCH, null, buffers -> {
             if (runs.incrementAndGet() == 1) {
                 throw new IOException("transient");
             }
-            return () -> applied.add("read");
-        }, t -> () -> applied.add("failed"));
+            return "read";
+        });
         s.add(flaky);
         s.start(new JobScheduler.Position(0, NONE, NONE));
 
@@ -233,9 +241,9 @@ class JobSchedulerTest {
     @Test
     void failedJobAppliesItsFailure() {
         JobScheduler s = scheduler(1000, 4, 1000);
-        JobScheduler.Job failing = new JobScheduler.Job(10, 0, JobScheduler.Kind.CPU, null, buffers -> {
+        JobScheduler.Job<String> failing = job("", 10, 0, JobScheduler.Kind.CPU, null, buffers -> {
             throw new IllegalStateException("boom");
-        }, t -> () -> applied.add("failed: " + t.getMessage()));
+        });
         s.add(failing);
         s.start(new JobScheduler.Position(0, NONE, NONE));
 
