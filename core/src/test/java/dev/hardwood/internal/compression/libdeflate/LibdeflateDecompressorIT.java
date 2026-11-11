@@ -76,8 +76,8 @@ class LibdeflateDecompressorIT {
         }
     }
 
-    /// A page above what a set of buffers keeps decompresses into native memory of its own, from
-    /// a heap page and a direct one alike.
+    /// A page above what a set of buffers keeps is inflated into its destination without a native
+    /// buffer of its size, from a heap page and a direct one alike.
     @ParameterizedTest
     @EnumSource(PageBuffer.class)
     void decompressesAPageAboveTheRetainedSize(PageBuffer kind) throws Exception {

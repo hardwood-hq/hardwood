@@ -14,6 +14,7 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
+import dev.hardwood.internal.compression.GzipDecompressor;
 import dev.hardwood.reader.ParquetReadException;
 
 /// High-performance GZIP decompressor using libdeflate via FFM API.
@@ -29,6 +30,10 @@ public final class LibdeflateDecompressor implements Decompressor {
     private static final DecodeBuffers.Slot<MemorySegment> IN_SIZE_PTR = DecodeBuffers.slot();
     private static final DecodeBuffers.Slot<MemorySegment> OUT_SIZE_PTR = DecodeBuffers.slot();
 
+    /// Inflates the pages above [DecodeBuffers#RETAINED_BYTES] from where they lie into their
+    /// destination.
+    private static final GzipDecompressor LARGE_PAGES = new GzipDecompressor();
+
     private final LibdeflatePool pool;
 
     public LibdeflateDecompressor(LibdeflatePool pool) {
@@ -37,12 +42,13 @@ public final class LibdeflateDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
+        if (Math.max(compressed.remaining(), uncompressedSize) > DecodeBuffers.RETAINED_BYTES) {
+            // libdeflate writes a page whole into native memory, which is then copied to `dest`; a
+            // page above what a set of buffers keeps is inflated into `dest` directly instead, so
+            // that it does not take a second buffer of its size
+            return LARGE_PAGES.decompress(compressed, uncompressedSize, dest, buffers);
+        }
         LibdeflatePool.DecompressorHandle decompressor = pool.acquire();
-        // A page above what a set of buffers keeps gets native memory of its own, freed when the
-        // page is done rather than when a collection finds it
-        Arena pageArena = Math.max(compressed.remaining(), uncompressedSize) > DecodeBuffers.RETAINED_BYTES
-                ? Arena.ofConfined()
-                : null;
         try {
             LibdeflateBindings bindings = LibdeflateBindings.get();
 
@@ -55,11 +61,11 @@ public final class LibdeflateDecompressor implements Decompressor {
             // native scratch segment first.
             MemorySegment input = MemorySegment.ofBuffer(compressed);
             if (!compressed.isDirect()) {
-                MemorySegment scratch = borrowNative(buffers, NATIVE_INPUT, compressedSize, pageArena);
+                MemorySegment scratch = borrowNative(buffers, NATIVE_INPUT, compressedSize);
                 MemorySegment.copy(input, 0, scratch, 0, compressedSize);
                 input = scratch;
             }
-            MemorySegment output = borrowNative(buffers, NATIVE_OUTPUT, uncompressedSize, pageArena);
+            MemorySegment output = borrowNative(buffers, NATIVE_OUTPUT, uncompressedSize);
             MemorySegment actualInSizePtr = borrowSizePtr(buffers, IN_SIZE_PTR);
             MemorySegment actualOutSizePtr = borrowSizePtr(buffers, OUT_SIZE_PTR);
 
@@ -111,19 +117,13 @@ public final class LibdeflateDecompressor implements Decompressor {
         }
         finally {
             pool.release(decompressor);
-            if (pageArena != null) {
-                pageArena.close();
-            }
         }
     }
 
-    /// The set's native buffer of `slot`'s kind, grown to at least `minSize` bytes, or one of
-    /// `pageArena` above [DecodeBuffers#RETAINED_BYTES].
+    /// The set's native buffer of `slot`'s kind, grown to at least `minSize` bytes, which is at
+    /// most [DecodeBuffers#RETAINED_BYTES].
     private static MemorySegment borrowNative(DecodeBuffers buffers, DecodeBuffers.Slot<MemorySegment> slot,
-                                              int minSize, Arena pageArena) {
-        if (minSize > DecodeBuffers.RETAINED_BYTES) {
-            return pageArena.allocate(minSize);
-        }
+                                              int minSize) {
         MemorySegment seg = buffers.get(slot);
         if (seg == null || seg.byteSize() < minSize) {
             seg = Arena.ofAuto().allocate(minSize);
