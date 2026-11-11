@@ -97,7 +97,7 @@ public class PageFilterEvaluator {
         }
 
         ColumnMetaData metaData = rowGroup.columns().get(columnIndex).metaData();
-        IndexPair indexPair = readIndexPair(colBuffers, columnIndex, metaData);
+        IndexPair indexPair = readIndexPair(colBuffers, columnIndex, rowGroup);
 
         LogContext columnContext = metaData == null ? logContext : logContext.withColumn(metaData.pathInSchema());
 
@@ -270,13 +270,13 @@ public class PageFilterEvaluator {
     /// [dev.hardwood.internal.reader.footer.ParquetMetadataReader] attributes, so failures are
     /// named here by the read pipeline, which names the file, row group and column on the way out;
     /// what this frame adds is which of the chunk's two indexes was being read.
-    static IndexPair readIndexPair(ColumnIndexBuffers colBuffers, int columnIndex,
-            ColumnMetaData metaData) {
+    static IndexPair readIndexPair(ColumnIndexBuffers colBuffers, int columnIndex, RowGroup rowGroup) {
         ColumnIndex columnIdx;
         OffsetIndex offsetIdx;
         try {
             columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
-            offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()), metaData);
+            offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()),
+                    rowGroup.columns().get(columnIndex), rowGroup.numRows());
         }
         catch (ParquetReadException e) {
             // The reader already says the failure is the file's; what it cannot

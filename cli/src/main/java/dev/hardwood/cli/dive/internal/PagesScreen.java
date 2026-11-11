@@ -142,7 +142,10 @@ public final class PagesScreen {
                 false, logical, newTop);
     }
 
-    public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Pages state) {
+    public static void render(Buffer buffer, Rect screenArea, ParquetModel model, ScreenState.Pages state) {
+        // The first rows come from the offset index as the file stores it.
+        Rect area = OffsetIndexFlag.above(buffer, screenArea,
+                model.offsetIndexViolation(state.rowGroupIndex(), state.columnIndex()));
         Keys.observeViewport(area.height() - 3);
         List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
         ColumnIndex columnIndex = model.columnIndex(state.rowGroupIndex(), state.columnIndex());

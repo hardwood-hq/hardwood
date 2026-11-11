@@ -15,6 +15,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
@@ -119,7 +120,7 @@ class OffsetIndexReaderTest {
         byte[] thrift = struct().field(1, FieldType.LIST).structList().stop().build();
 
         assertThatThrownBy(() -> OffsetIndexReader.read(
-                new ThriftCompactReader(ByteBuffer.wrap(thrift)), chunkWithValues(12)))
+                new ThriftCompactReader(ByteBuffer.wrap(thrift)), chunkWithValues(12), 12))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Malformed Parquet metadata: OffsetIndex.page_locations is empty but the"
                         + " column chunk has 12 values");
@@ -130,15 +131,31 @@ class OffsetIndexReaderTest {
         byte[] thrift = struct().field(1, FieldType.LIST).structList().stop().build();
 
         OffsetIndex index = OffsetIndexReader.read(
-                new ThriftCompactReader(ByteBuffer.wrap(thrift)), chunkWithValues(0));
+                new ThriftCompactReader(ByteBuffer.wrap(thrift)), chunkWithValues(0), 0);
 
         assertThat(index.pageLocations()).isEmpty();
     }
 
-    private static ColumnMetaData chunkWithValues(long numValues) {
-        return new ColumnMetaData(PhysicalType.INT64, List.of(Encoding.PLAIN), FieldPath.of("c"),
-                CompressionCodec.UNCOMPRESSED, numValues, 0, 0, Map.of(), 0, null, null, null, null, null,
-                List.of(), null);
+    @Test
+    void rejectsAChunkEndingPastTheLargestOffset() {
+        byte[] thrift = struct().field(1, FieldType.LIST).structList(pageLocation(Long.MAX_VALUE - 10, 100, 0))
+                .stop().build();
+        ColumnChunk chunk = chunk(1, Long.MAX_VALUE - 10, 100);
+
+        assertThatThrownBy(() -> OffsetIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)), chunk, 1))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed Parquet metadata: column chunk at offset 9223372036854775797 of 100 bytes"
+                        + " ends past the largest file offset");
+    }
+
+    private static ColumnChunk chunkWithValues(long numValues) {
+        return chunk(numValues, 0, 0);
+    }
+
+    private static ColumnChunk chunk(long numValues, long dataPageOffset, long totalCompressedSize) {
+        return new ColumnChunk(new ColumnMetaData(PhysicalType.INT64, List.of(Encoding.PLAIN), FieldPath.of("c"),
+                CompressionCodec.UNCOMPRESSED, numValues, 0, totalCompressedSize, Map.of(), dataPageOffset, null,
+                null, null, null, null, List.of(), null), null, null, null, null, null);
     }
 
     /// A `PageLocation` struct body: offset, compressed_page_size, first_row_index.

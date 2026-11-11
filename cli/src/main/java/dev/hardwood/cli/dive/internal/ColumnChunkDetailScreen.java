@@ -310,6 +310,12 @@ public final class ColumnChunkDetailScreen {
         lines.row(fact("Offset index offset", chunk.offsetIndexOffset() != null
                 ? Fmt.fmt("%,d", chunk.offsetIndexOffset())
                 : Strings.ABSENT_VALUE));
+        // The page count and the unencoded-size annotation come from the offset
+        // index as the file stores it.
+        String offsetIndexViolation = model.offsetIndexViolation(state.rowGroupIndex(), state.columnIndex());
+        if (offsetIndexViolation != null) {
+            lines.row(OffsetIndexFlag.line(offsetIndexViolation));
+        }
         return lines.build();
     }
 

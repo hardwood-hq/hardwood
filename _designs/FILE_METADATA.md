@@ -179,12 +179,18 @@ Consistency is checked at the parse boundary, so page filtering can walk every p
 | `ColumnIndex` and `OffsetIndex` describe the same number of pages | `PageFilterEvaluator.readIndexPair`, which parses the two together |
 | `PageLocation` offset, size and first row index are non-negative | `PageLocationReader` |
 | the `OffsetIndex` of a chunk with values lists at least one page | `OffsetIndexReader` |
+| each page has a positive `compressed_page_size`, starts no earlier than the previous page ends, and lies within its column chunk | `OffsetIndexReader` |
+| the first page's `first_row_index` is 0, each later page's is no less than the previous page's, and none exceeds the row group's `num_rows` | `OffsetIndexReader` |
+
+The checks against the chunk bound the index by the chunk's bytes: pages that hold bytes and do not overlap number at most the chunk's length, and chunks do not overlap ([FETCH_PLANNING.md](FETCH_PLANNING.md)), so the pages a row group's indexes list number at most the file's length, however many columns' footer entries point at one index region. The row checks give every page a row span of zero or more rows from the next page's first row, or from `num_rows` for the last; a span of zero is a page that begins and ends inside one record.
+
+The CLI and dive parse an offset index without these checks and run them separately, to list its pages and flag the contradiction rather than fail ([CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md#contradicted-offset-index)).
 
 A failure is a `ParquetReadException`. `readIndexPair` prefixes it with the chunk's column ordinal ("Failed to parse the page index of column N: …"), and the read pipeline adds the file, row group and column on the way out. The column ordinal stays in the message because a chunk may have no path the pipeline can name.
 
 `RowGroupIterator` also parses a column's `OffsetIndex` on its own to build the column's indexed fetch plan ([FETCH_PLANNING.md](FETCH_PLANNING.md)); the cross-check against `ColumnIndex` runs where page filtering parses the pair. The null-page placeholders in `min_values` / `max_values` are carried as read and not decoded.
 
-Tests: `ColumnIndexReaderTest`, `OffsetIndexReaderTest`, `MalformedMetadataValidationTest`, `PageFilterEvaluatorTest`, `ColumnIndexTest`, `EmptyOffsetIndexTest`.
+Tests: `ColumnIndexReaderTest`, `OffsetIndexReaderTest`, `MalformedMetadataValidationTest`, `PageFilterEvaluatorTest`, `ColumnIndexTest`, `EmptyOffsetIndexTest`, `OffsetIndexPageLocationsTest`.
 
 ## Bloom filter
 

@@ -25,6 +25,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Encodings;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.LevelSummary;
+import dev.hardwood.cli.internal.OffsetIndexCheck;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.table.RowTable;
@@ -84,9 +85,15 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                 if (column != null) {
                     return printColumnDetail(metadata, reader.getFileSchema(), inputFile);
                 }
-                List<ColumnSize> sizes = aggregateSizes(metadata, reader.getFileSchema(), inputFile);
+                List<String> violations = new ArrayList<>();
+                List<ColumnSize> sizes = aggregateSizes(metadata, reader.getFileSchema(), inputFile, violations);
                 sizes.sort(Comparator.comparingLong(ColumnSize::compressed).reversed());
                 printRanked(sizes);
+                // An offset index its chunk contradicts, which a read fails on, still has its pages
+                // counted; it is flagged under the table.
+                for (String violation : violations) {
+                    System.out.println("⚠ " + violation);
+                }
             }
             finally {
                 inputFile.close();
@@ -221,18 +228,24 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     }
 
     /// The number of pages the chunk's offset index lists, or -1 when the file
-    /// records no offset index. An offset index that cannot be read fails the
-    /// command, placed at the chunk, rather than reading as an absent one.
-    private static int countPages(ColumnChunk chunk, InputFile inputFile, int rowGroupIndex)
-            throws IOException {
+    /// records no offset index. An offset index that cannot be parsed fails the
+    /// command, placed at the chunk, rather than reading as an absent one; one
+    /// its chunk contradicts is counted and its contradiction added to
+    /// `violations`.
+    private static int countPages(ColumnChunk chunk, long rowGroupRows, InputFile inputFile, int rowGroupIndex,
+                                  List<String> violations) throws IOException {
         Long offset = chunk.offsetIndexOffset();
         Integer length = chunk.offsetIndexLength();
         if (offset == null || length == null || length <= 0) {
             return -1;
         }
         try {
-            OffsetIndex oi = OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)),
-                    chunk.metaData());
+            OffsetIndex oi = OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
+            String violation = OffsetIndexCheck.violation(oi, chunk, rowGroupRows);
+            if (violation != null) {
+                violations.add(Fmt.fmt("RG #%d  column '%s'  %s", rowGroupIndex, Sizes.columnPath(chunk.metaData()),
+                        violation));
+            }
             return oi.pageLocations().size();
         }
         catch (IOException e) {
@@ -289,7 +302,7 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     }
 
     private static List<ColumnSize> aggregateSizes(FileMetaData metadata, FileSchema schema,
-                                                   InputFile inputFile) throws IOException {
+                                                   InputFile inputFile, List<String> violations) throws IOException {
         // Keyed by column index, the chunk's position in its row group: two sibling columns may
         // share a path
         ColumnSize[] byColumn = new ColumnSize[schema.getColumnCount()];
@@ -301,7 +314,7 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                 ColumnSchema columnSchema = columnOf(schema, chunks, column, rg, inputFile);
                 ColumnMetaData cmd = cc.metaData();
                 String path = Sizes.columnPath(cmd);
-                int pageCount = countPages(cc, inputFile, rg);
+                int pageCount = countPages(cc, metadata.rowGroups().get(rg).numRows(), inputFile, rg, violations);
                 // One summary per chunk serves both the unencoded size and the
                 // dictionary's denominator. A column is reported as a whole
                 // only if every one of its chunks yields a figure: a partial

@@ -57,9 +57,12 @@ public final class OffsetIndexScreen {
                 newSelection, newTop);
     }
 
-    public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.OffsetIndexView state) {
-        Keys.observeViewport(area.height() - 3);
+    public static void render(Buffer buffer, Rect screenArea, ParquetModel model,
+                              ScreenState.OffsetIndexView state) {
         OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
+        Rect area = OffsetIndexFlag.above(buffer, screenArea,
+                model.offsetIndexViolation(state.rowGroupIndex(), state.columnIndex()));
+        Keys.observeViewport(area.height() - 3);
         if (oi == null) {
             Block emptyBlock = Block.builder()
                     .title(" Offset index ")

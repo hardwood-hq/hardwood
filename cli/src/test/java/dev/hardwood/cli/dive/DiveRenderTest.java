@@ -28,6 +28,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.cli.TestResources;
+import dev.hardwood.cli.command.DamagedFiles;
 import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.FooterScreen;
@@ -39,6 +40,7 @@ import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.Version;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
@@ -1504,6 +1506,70 @@ class DiveRenderTest {
         assertThat(((ScreenState.Pages) stack.top()).modalScroll()).isPositive();
         // The modal stays open: paging is not a way out of it.
         assertThat(((ScreenState.Pages) stack.top()).modalOpen()).isTrue();
+    }
+
+    private static final String CONTRADICTION =
+            "Malformed Parquet metadata: OffsetIndex page 0 has a first_row_index of 1, not 0";
+
+    /// An offset index its chunk contradicts, which a read fails on, is listed as the file stores
+    /// it, under a line naming the contradiction.
+    @Test
+    void offsetIndexScreenFlagsAnIndexItsChunkContradicts(@TempDir Path tempDir) throws Exception {
+        try (ParquetModel contradicted = openWithContradictedOffsetIndex(tempDir)) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.OffsetIndexView(0, 0, 0), contradicted);
+
+            assertThat(frame.lines().getFirst().stripTrailing()).isEqualTo(" ⚠ " + CONTRADICTION);
+            assertThat(frame.lines().get(1)).contains("Offset index");
+            assertThat(frame.lines().get(3)).startsWith("│▶ 0      4                 8.0 KiB       1 ");
+        }
+    }
+
+    /// The pages screen takes its first rows from the offset index, so it flags the index above
+    /// the page table.
+    @Test
+    void pagesScreenFlagsAnOffsetIndexItsChunkContradicts(@TempDir Path tempDir) throws Exception {
+        try (ParquetModel contradicted = openWithContradictedOffsetIndex(tempDir)) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.Pages(0, 0, 0, false, true), contradicted);
+
+            assertThat(frame.lines().getFirst().stripTrailing()).isEqualTo(" ⚠ " + CONTRADICTION);
+            assertThat(frame.lines().get(1)).contains("Pages");
+        }
+    }
+
+    /// The column chunk detail screen counts pages from the offset index, so its facts end with
+    /// the flag.
+    @Test
+    void columnChunkDetailFlagsAnOffsetIndexItsChunkContradicts(@TempDir Path tempDir) throws Exception {
+        try (ParquetModel contradicted = openWithContradictedOffsetIndex(tempDir)) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(new Rect(0, 0, 240, 60),
+                    new ScreenState.ColumnChunkDetail(0, 0, ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true,
+                            false), contradicted);
+
+            assertThat(frame.contains(" ⚠ " + CONTRADICTION + " ")).isTrue();
+        }
+    }
+
+    /// The column-across-row-groups screen counts each row group's pages from its offset index,
+    /// so it flags the row group whose index a read refuses above the table.
+    @Test
+    void columnAcrossRowGroupsFlagsAnOffsetIndexItsChunkContradicts(@TempDir Path tempDir) throws Exception {
+        try (ParquetModel contradicted = openWithContradictedOffsetIndex(tempDir)) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0), contradicted);
+
+            assertThat(frame.lines().getFirst().stripTrailing()).isEqualTo(" ⚠ RG #0  " + CONTRADICTION);
+        }
+    }
+
+    /// The fixture with the first chunk's offset index starting its first page at row 1.
+    private ParquetModel openWithContradictedOffsetIndex(Path tempDir) throws Exception {
+        Path source = TestResources.path("/column_index_pushdown.parquet");
+        ColumnChunk chunk = model.chunk(0, 0);
+        Path damaged = DamagedFiles.offsetIndexFromRowOne(source, chunk.offsetIndexOffset(),
+                chunk.offsetIndexLength(), tempDir);
+        return ParquetModel.open(InputFile.of(damaged), damaged.toString());
     }
 
     private static int kvIndexOf(ParquetModel model, String key) {

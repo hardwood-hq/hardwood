@@ -21,6 +21,7 @@ import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Encodings;
+import dev.hardwood.cli.internal.OffsetIndexCheck;
 import dev.hardwood.cli.internal.PageHeaderWalk;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
@@ -267,8 +268,10 @@ public final class ParquetModel implements AutoCloseable {
         return result;
     }
 
-    /// Reads the offset index for a chunk, caching the result for the session.
-    /// Returns `null` when the chunk has no offset index.
+    /// Reads the offset index for a chunk as the file stores it, caching the
+    /// result for the session. Returns `null` when the chunk has no offset
+    /// index. An index its chunk contradicts is returned as it is; see
+    /// [#offsetIndexViolation].
     public OffsetIndex offsetIndex(int rowGroupIndex, int columnIndex) {
         ChunkKey key = new ChunkKey(rowGroupIndex, columnIndex);
         if (offsetIndexCache.containsKey(key)) {
@@ -278,8 +281,7 @@ public final class ParquetModel implements AutoCloseable {
         OffsetIndex result = null;
         if (buffers.offsetIndex() != null) {
             try {
-                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()),
-                        chunk(rowGroupIndex, columnIndex).metaData());
+                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
             }
             catch (RuntimeException e) {
                 throw placed(e, rowGroupIndex, columnIndex);
@@ -287,6 +289,18 @@ public final class ParquetModel implements AutoCloseable {
         }
         offsetIndexCache.put(key, result);
         return result;
+    }
+
+    /// The message a read fails with on the chunk's offset index, which its
+    /// chunk or row group contradicts, or `null` when the chunk has no offset
+    /// index or a read accepts it.
+    public String offsetIndexViolation(int rowGroupIndex, int columnIndex) {
+        OffsetIndex offsetIndex = offsetIndex(rowGroupIndex, columnIndex);
+        if (offsetIndex == null) {
+            return null;
+        }
+        return OffsetIndexCheck.violation(offsetIndex, chunk(rowGroupIndex, columnIndex),
+                rowGroup(rowGroupIndex).numRows());
     }
 
     /// Lazy per-RG fetch of every column's offset and column index. A row group's
