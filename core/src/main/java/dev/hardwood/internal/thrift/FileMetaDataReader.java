@@ -51,6 +51,14 @@ public class FileMetaDataReader {
     /// comes near it.
     static final int MAX_SCHEMA_DEPTH = 500;
 
+    /// How many characters of column and group paths the schema may ask for per byte of footer.
+    /// Opening a file builds the dot-joined path of every column and every group, so a name counts
+    /// once for each of its descendants: a chain of groups nested to [#MAX_SCHEMA_DEPTH] counts a
+    /// name about half that depth times on average, for each footer byte the name takes, so the
+    /// multiple sits above half the depth. A wide schema under a struct counts the struct's name
+    /// once per column, against the few bytes each column's element takes, well below it.
+    static final int MAX_PATH_CHARS_PER_FOOTER_BYTE = 256;
+
     /// Ids of the fields the format requires of a `FileMetaData`.
     private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4 };
 
@@ -154,8 +162,10 @@ public class FileMetaDataReader {
         return Collections.unmodifiableList(schema);
     }
 
-    /// Rejects a schema whose elements do not form one tree under the root, or whose groups nest
-    /// deeper than [#MAX_SCHEMA_DEPTH], walking the flat element list without recursing. By the
+    /// Rejects a schema whose elements do not form one tree under the root, whose groups nest
+    /// deeper than [#MAX_SCHEMA_DEPTH], or whose column and group paths run to more characters
+    /// than [#MAX_PATH_CHARS_PER_FOOTER_BYTE] times the footer's bytes, walking the flat element
+    /// list without recursing and before any path is built. By the
     /// child counts of the groups before it, every element after the root is a descendant of the
     /// root, and the list holds every child a group counts.
     private static void checkSchemaShape(ThriftCompactReader reader, List<SchemaElement> schema) {
@@ -166,6 +176,10 @@ public class FileMetaDataReader {
         // the root is at depth 0
         int[] remaining = new int[MAX_SCHEMA_DEPTH + 1];
         SchemaElement[] groups = new SchemaElement[MAX_SCHEMA_DEPTH + 1];
+        // the length of the dot-joined path of each group on the path, the root's empty, and the
+        // sum of the paths of every element below the root
+        long[] pathLength = new long[MAX_SCHEMA_DEPTH + 1];
+        long pathChars = 0;
         int depth = 0;
         remaining[0] = childCount(schema.get(0));
         groups[0] = schema.get(0);
@@ -179,6 +193,8 @@ public class FileMetaDataReader {
             }
             remaining[depth]--;
             SchemaElement element = schema.get(i);
+            long length = (depth == 0 ? 0 : pathLength[depth] + 1) + element.name().length();
+            pathChars += length;
             if (!element.isPrimitive()) {
                 if (depth == MAX_SCHEMA_DEPTH) {
                     throw reader.malformed("groups must not nest deeper than " + MAX_SCHEMA_DEPTH
@@ -186,6 +202,7 @@ public class FileMetaDataReader {
                 }
                 remaining[++depth] = childCount(element);
                 groups[depth] = element;
+                pathLength[depth] = length;
             }
         }
         for (; depth >= 0; depth--) {
@@ -193,6 +210,19 @@ public class FileMetaDataReader {
                 throw reader.malformed("group '" + groups[depth].name() + "' declares " + childCount(groups[depth])
                         + " children, but the schema ends after " + (childCount(groups[depth]) - remaining[depth]));
             }
+        }
+        checkPathChars(reader, pathChars);
+    }
+
+    /// Rejects column and group paths of `pathChars` characters in all where they exceed
+    /// [#MAX_PATH_CHARS_PER_FOOTER_BYTE] times the length of the footer `reader` parses.
+    private static void checkPathChars(ThriftCompactReader reader, long pathChars) {
+        long footerBytes = reader.getBytesRead() + reader.remaining();
+        long bound = MAX_PATH_CHARS_PER_FOOTER_BYTE * footerBytes;
+        if (pathChars > bound) {
+            throw reader.malformed("the paths of the schema's columns and groups run to " + pathChars
+                    + " characters, more than " + MAX_PATH_CHARS_PER_FOOTER_BYTE + " times the footer's "
+                    + footerBytes + " bytes (" + bound + ")");
         }
     }
 
