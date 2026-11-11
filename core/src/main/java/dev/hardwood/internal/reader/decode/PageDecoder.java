@@ -37,7 +37,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// [#decodeFlat], [#decodeFlatBinary] and [#decodeNestedInPlace]. A page no reader takes is
 /// refused before it is decompressed.
 ///
-/// Page location is the read's ([dev.hardwood.internal.reader.engine.RowGroupIterator]), dictionary
+/// Page location is the read's ([dev.hardwood.internal.reader.engine.ReadEngine]), dictionary
 /// parsing [DictionaryParser]'s.
 public class PageDecoder {
 

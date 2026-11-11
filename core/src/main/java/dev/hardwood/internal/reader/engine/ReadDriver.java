@@ -62,7 +62,7 @@ final class ReadDriver {
     private int finished;
 
     /// @param fetchAheadBytes F
-    /// @param position settles the read and says where the consumer stands, at each poll
+    /// @param position reconciles the read's parts and says where the consumer stands, at each poll
     /// @param broken fails the read with what a result or a poll threw; under the lock
     /// @param queue the read's queue on a context of zero threads, `null` on one with a pool
     ReadDriver(HardwoodContextImpl context, ReadQueue queue, long fetchAheadBytes,

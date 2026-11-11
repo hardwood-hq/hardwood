@@ -76,7 +76,7 @@ public class Hardwood implements AutoCloseable {
 
     /// Open multiple Parquet files for reading with cross-file prefetching.
     /// The schema is read from the first file. Files are opened on demand
-    /// by the iterator. All files are closed when the returned reader is closed,
+    /// as the read reaches them. All files are closed when the returned reader is closed,
     /// or before the exception propagates when opening fails.
     ///
     /// @param inputFiles the input files to read (must not be empty)

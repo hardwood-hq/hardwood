@@ -25,7 +25,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
-import dev.hardwood.internal.reader.plan.RowGroupIterators;
+import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -60,12 +60,12 @@ class RowCapRetentionTest {
         System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, "16384");
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(file()));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2);
-             RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context, ColumnProjection.all(),
+             ReadEngine engine = ReadEngines.initialized(List.of(file), context, ColumnProjection.all(),
                      FilterPredicate.gtEq("v", 0L), 10)) {
             BatchExchange<?> exchange = BatchExchange.detachingFlat("v", BATCH_SIZE);
             List<NestedLevelComputer.Layers> layers = new ArrayList<>();
             layers.add(null);
-            iterator.start(ProjectedSchema.create(SCHEMA, ColumnProjection.all()), layers, NestedIndexMode.ALL_ITEMS,
+            engine.start(ProjectedSchema.create(SCHEMA, ColumnProjection.all()), layers, NestedIndexMode.ALL_ITEMS,
                     false, BATCH_SIZE, BATCH_SIZE, List.of(exchange), null);
             long rows = 0;
             Object batch;
@@ -75,7 +75,7 @@ class RowCapRetentionTest {
             exchange.checkError();
 
             assertThat(rows).isEqualTo(10);
-            iterator.awaitQuiescent();
+            engine.awaitQuiescent();
             assertThat(context.readAheadBuffer().held()).isZero();
         }
     }

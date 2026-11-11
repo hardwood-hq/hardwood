@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// A reader closed mid-file returns from its close, through both consumer shapes,
 /// [ColumnReaders#close()] and [RowReader#close()].
 ///
-/// [dev.hardwood.internal.reader.engine.RowGroupIterator#close()] stops every column of the read
+/// [dev.hardwood.internal.reader.engine.ReadEngine#close()] stops every column of the read
 /// and waits for its jobs. The wait is untimed, so a column whose stop does not end its work, or
 /// whose last job does not wake the close, leaves the close waiting forever, which the `@Timeout`
 /// catches.

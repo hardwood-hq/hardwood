@@ -63,7 +63,7 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// A read with a row limit lists row groups until the limit is covered and truncates the pages past
 /// it; once every column has placed its last row, the read plans nothing more.
-public final class RowGroupIterator implements Closeable {
+public final class ReadEngine implements Closeable {
 
     public static final String FETCH_AHEAD_BYTES_PROPERTY = "hardwood.internal.fetchAheadBytes";
 
@@ -99,8 +99,8 @@ public final class RowGroupIterator implements Closeable {
 
     /// @throws IllegalStateException on a thread of `context`'s own pool, whose read would wait for
     ///         the jobs it holds up
-    public RowGroupIterator(FileMetadataCache files, HardwoodContextImpl context,
-                            Consumer<RowGroupIterator> closeListener) {
+    public ReadEngine(FileMetadataCache files, HardwoodContextImpl context,
+                            Consumer<ReadEngine> closeListener) {
         context.requireOffPool();
         this.files = files;
         this.context = context;
@@ -227,7 +227,7 @@ public final class RowGroupIterator implements Closeable {
                     ? BatchExchange.detachingNested(name, batchSize) : BatchExchange.detachingFlat(name, batchSize));
         }
         driver = new ReadDriver(context, readQueue, defaultFetchAheadBytes(CoalescingPolicy.maxSpanBytes()),
-                this::settle, t -> publisher.failAt(0, t));
+                this::reconcile, t -> publisher.failAt(0, t));
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, started, batchSize, CAP_BUDGETS * budgetRows);
@@ -256,7 +256,7 @@ public final class RowGroupIterator implements Closeable {
 
     /// Ends or seals the columns' placement where the read has reached its end or a failure
     /// between units, publishes what can be, and says where the consumer stands; under the lock.
-    private JobScheduler.Position settle() {
+    private JobScheduler.Position reconcile() {
         long batchedTo = planner.batchedKey();
         if (planner.allBatched() && !publisher.failed()) {
             cells.end(planner.endKey());

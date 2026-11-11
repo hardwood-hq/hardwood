@@ -24,7 +24,7 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.ObservedPool;
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.engine.RowGroupIterator;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.plan.GatedReads.ReadGate;
 import dev.hardwood.internal.reader.plan.GatedReads.RemoteLike;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -49,7 +49,7 @@ class ReadAheadTest {
 
     @AfterEach
     void clearProperties() {
-        System.clearProperty(RowGroupIterator.FETCH_AHEAD_BYTES_PROPERTY);
+        System.clearProperty(ReadEngine.FETCH_AHEAD_BYTES_PROPERTY);
     }
 
     /// Four row groups of 50 rows, with a page index.
@@ -67,7 +67,7 @@ class ReadAheadTest {
     /// within the cap of the consumer's first unpublished row, the next unit, and F.
     @Test
     void aConsumerThatStopsReadingStopsTheFetching() throws Exception {
-        System.setProperty(RowGroupIterator.FETCH_AHEAD_BYTES_PROPERTY, Long.toString(FETCH_AHEAD));
+        System.setProperty(ReadEngine.FETCH_AHEAD_BYTES_PROPERTY, Long.toString(FETCH_AHEAD));
         byte[] bytes = constantRowGroups();
         CountingInputFile file = new CountingInputFile(new RemoteLike(InputFile.of(ByteBuffer.wrap(bytes))));
         ObservedPool pool = new ObservedPool(4, "read-ahead-test");
@@ -76,7 +76,7 @@ class ReadAheadTest {
              ParquetFileReader reader = ParquetFileReader.open(file, context)) {
             FileMetaData metaData = reader.getFileMetaData();
             assertThat(metaData.rowGroups()).hasSize(ROW_GROUPS);
-            long capRows = RowGroupIterator.CAP_BUDGETS * BatchSizing.readAheadBudgetRows(
+            long capRows = ReadEngine.CAP_BUDGETS * BatchSizing.readAheadBudgetRows(
                     ProjectedSchema.create(reader.getFileSchema(), ColumnProjection.all()), metaData.rowGroups());
             try (ColumnReader column = reader.buildColumnReader("v").batchSize(BATCH).build()) {
                 assertThat(column.nextBatch()).isTrue();

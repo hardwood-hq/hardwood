@@ -51,7 +51,7 @@ public final class CoalescingPolicy {
 
     /// The largest request, S: [#DEFAULT_MAX_SPAN_BYTES] unless overridden through
     /// [#MAX_SPAN_BYTES_PROPERTY]. Read on each call rather than cached, so that the override holds
-    /// whenever it is set; a read takes it once, when its iterator is built. A value that is not a
+    /// whenever it is set; a read takes it once, when its engine is built. A value that is not a
     /// positive byte count is rejected rather than replaced by the default: a span limit that does
     /// not take effect produces a plausible read with the wrong requests.
     public static int maxSpanBytes() {

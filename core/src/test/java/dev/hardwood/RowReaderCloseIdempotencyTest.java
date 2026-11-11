@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 /// repeatedly after a reader is depleted must not redo the pipeline teardown.
 ///
 /// `close()` stops every column — it waits for the read's jobs — plus, on the
-/// column path, tears down the iterator-local caches.
+/// column path, tears down the engine-local caches.
 /// Without an idempotency guard every redundant `close()` re-ran that work
 /// (issue #659).
 class RowReaderCloseIdempotencyTest {

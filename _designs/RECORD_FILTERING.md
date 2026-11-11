@@ -131,7 +131,7 @@ Tests: `BatchMatcherOracleTest`, `PredicatePathAgreementTest`.
 
 ## Column readers
 
-A filtered `ColumnReaders` is a grouped read over `decoded()` plus a per-batch **selection**; a single `ColumnReader` with a filter is a one-column group (`ParquetFileReader.buildSingleColumnReader`). `ColumnScan` owns one `ColumnCursor` per decoded column over one shared `RowGroupIterator`, which keeps all columns row-aligned regardless of each column's page-skip capability.
+A filtered `ColumnReaders` is a grouped read over `decoded()` plus a per-batch **selection**; a single `ColumnReader` with a filter is a one-column group (`ParquetFileReader.buildSingleColumnReader`). `ColumnScan` owns one `ColumnCursor` per decoded column over one shared `ReadEngine`, which keeps all columns row-aligned regardless of each column's page-skip capability.
 
 **Selection, once per batch.** On each advance `ColumnScan` polls the cursors, checks lockstep (every column produced a batch of the same record count, or `IllegalStateException`), and asks `SelectionEngine.computeSelection` for the ascending indices of the matching records. It returns `-1` when every record matches, and compaction is skipped. The selection is computed from the pre-compaction batches and applied to every payload cursor before the next advance; a payload column that is also a predicate column is read before it is compacted.
 
@@ -152,7 +152,7 @@ Tests: `ColumnReaderExactFilterTest`.
 
 ## Always-match row groups
 
-`RowGroupIterator` marks each surviving work item with `filterAlwaysMatches` when statistics decide `ALWAYS_MATCHES` for its row group (the decision is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)). The decision is consumed per row group and never asked of the read as a whole, which would require planning every file before the first row. The granularity is the row group.
+`ReadEngine` marks each surviving work item with `filterAlwaysMatches` when statistics decide `ALWAYS_MATCHES` for its row group (the decision is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)). The decision is consumed per row group and never asked of the read as a whole, which would require planning every file before the first row. The granularity is the row group.
 
 ### Homogeneous batches
 
@@ -200,7 +200,7 @@ Tests: `AlwaysMatchingRowGroupTest`, `BatchPlanTest`, `FilterOnlyColumnSkipTest`
 
 The **surviving relation** is the rows of the row groups kept by the `RowGroupPredicate`, intersected with the rows matching the `FilterPredicate`, in file order. `head`, `skip` and `tail` count over it (`LIMIT`, `OFFSET`, last `n`); there is no mode in which they count physical rows under a filter. The reader-facing explanation, including why physical positioning is `byteRange`'s job alone, is in [row-selection.md](../docs/content/concepts/row-selection.md).
 
-- **`byteRange`** keeps a row group when its midpoint (first chunk's start plus half the row group's compressed size) falls in `[start, end)`, so disjoint ranges partition a file's row groups. `ParquetFileReader` applies it before the iterator, so statistics are asked only of the kept row groups.
+- **`byteRange`** keeps a row group when its midpoint (first chunk's start plus half the row group's compressed size) falls in `[start, end)`, so disjoint ranges partition a file's row groups. `ParquetFileReader` applies it before the engine, so statistics are asked only of the kept row groups.
 - **`head(n)`** with a filter is the matching-row cap above.
 - **`skip(n)`** without a filter is a physical seek to the row group the offset lands in (see [ROW_READER.md](ROW_READER.md#skip)). With a filter, row-group statistics bound values and not match counts, so there is no seek: the reader is built over the whole kept relation with a matching-row cap of `n + head` (none without `head`) and discards the first `n` matches.
 - **`byteRange` with `skip`/`head`** counts within the kept row groups, so a resume point in a filtered split read is a `(byteRange, logical offset)` pair.

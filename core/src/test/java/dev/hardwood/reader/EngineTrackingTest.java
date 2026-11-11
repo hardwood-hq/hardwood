@@ -17,15 +17,15 @@ import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// A [ParquetFileReader] tracks the [dev.hardwood.internal.reader.engine.RowGroupIterator]s
+/// A [ParquetFileReader] tracks the [dev.hardwood.internal.reader.engine.ReadEngine]s
 /// it hands to child readers so that [ParquetFileReader#close()] can tear down an
-/// iterator whose child reader the caller never closed.
+/// engine whose child reader the caller never closed.
 ///
-/// Where a child exclusively owns its iterator — the single-column
+/// Where a child exclusively owns its engine — the single-column
 /// [ParquetFileReader#columnReader(int)] path — that tracking must not outlive the
 /// child, or a reader used for many sequential column reads retains every finished
 /// child's work list until it is itself closed.
-class IteratorTrackingTest {
+class EngineTrackingTest {
 
     private static final String FILE = "src/test/resources/page_index_test.parquet";
     /// A nested schema, so the row path routes through `NestedRowReader` rather
@@ -36,25 +36,25 @@ class IteratorTrackingTest {
     private static final long PRUNES_EVERY_ROW_GROUP = 100_000_000L;
 
     @Test
-    void closingAChildReaderStopsTrackingItsIterator() throws Exception {
+    void closingAChildReaderStopsTrackingItsEngine() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
-            assertThat(reader.trackedIteratorCount()).isZero();
+            assertThat(reader.trackedEngineCount()).isZero();
 
             for (int i = 0; i < 4; i++) {
                 ColumnReader columnReader = reader.columnReader(0);
-                assertThat(reader.trackedIteratorCount())
-                        .as("an open child reader's iterator is tracked")
+                assertThat(reader.trackedEngineCount())
+                        .as("an open child reader's engine is tracked")
                         .isEqualTo(1);
                 while (columnReader.nextBatch()) {
                     // drain
                 }
                 columnReader.close();
-                assertThat(reader.trackedIteratorCount())
-                        .as("iteration %d must not leave its iterator behind", i)
+                assertThat(reader.trackedEngineCount())
+                        .as("iteration %d must not leave its engine behind", i)
                         .isZero();
             }
 
-            // The row-reader and multi-column paths share one iterator across
+            // The row-reader and multi-column paths share one engine across
             // sibling readers. No individual child owns it, so the group that does
             // — the RowReader, the ColumnReaders — closes it.
             try (RowReader rows = reader.rowReader()) {
@@ -62,8 +62,8 @@ class IteratorTrackingTest {
                     rows.next();
                 }
             }
-            assertThat(reader.trackedIteratorCount())
-                    .as("a closed row reader must not leave its iterator behind")
+            assertThat(reader.trackedEngineCount())
+                    .as("a closed row reader must not leave its engine behind")
                     .isZero();
 
             try (ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id"))) {
@@ -71,8 +71,8 @@ class IteratorTrackingTest {
                     // drain
                 }
             }
-            assertThat(reader.trackedIteratorCount())
-                    .as("a closed column-readers group must not leave its iterator behind")
+            assertThat(reader.trackedEngineCount())
+                    .as("a closed column-readers group must not leave its engine behind")
                     .isZero();
         }
     }
@@ -81,7 +81,7 @@ class IteratorTrackingTest {
     /// reader driving many sequential reads holds every finished read's work list,
     /// page-index buffers and fetch plans until it is itself closed.
     @Test
-    void sequentialReadsDoNotAccumulateIterators() throws Exception {
+    void sequentialReadsDoNotAccumulateEngines() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
             for (int i = 0; i < 8; i++) {
                 try (RowReader rows = reader.rowReader()) {
@@ -93,17 +93,17 @@ class IteratorTrackingTest {
                 try (ColumnReader column = reader.columnReader(0)) {
                     column.nextBatch();
                 }
-                assertThat(reader.trackedIteratorCount())
-                        .as("iteration %d must not leave an iterator behind", i)
+                assertThat(reader.trackedEngineCount())
+                        .as("iteration %d must not leave an engine behind", i)
                         .isZero();
             }
         }
     }
 
     /// The filtered paths decode the payload and predicate columns through one
-    /// `ColumnScan`, whose close releases the shared iterator.
+    /// `ColumnScan`, whose close releases the shared engine.
     @Test
-    void closingAFilteredChildReaderStopsTrackingItsIterator() throws Exception {
+    void closingAFilteredChildReaderStopsTrackingItsEngine() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
             for (int i = 0; i < 4; i++) {
                 try (RowReader rows = reader.buildRowReader()
@@ -118,18 +118,18 @@ class IteratorTrackingTest {
                         .build()) {
                     columns.nextBatch();
                 }
-                assertThat(reader.trackedIteratorCount())
-                        .as("filtered iteration %d must not leave an iterator behind", i)
+                assertThat(reader.trackedEngineCount())
+                        .as("filtered iteration %d must not leave an engine behind", i)
                         .isZero();
             }
         }
     }
 
     /// A filtered single-column read decodes its predicate columns through the same
-    /// scan as its payload column, so closing the reader has to release the iterator
+    /// scan as its payload column, so closing the reader has to release the engine
     /// that scan was built around.
     @Test
-    void closingAFilteredSingleColumnReaderStopsTrackingItsIterator() throws Exception {
+    void closingAFilteredSingleColumnReaderStopsTrackingItsEngine() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
             for (int i = 0; i < 4; i++) {
                 try (ColumnReader column = reader.buildColumnReader(0)
@@ -137,33 +137,33 @@ class IteratorTrackingTest {
                         .build()) {
                     column.nextBatch();
                 }
-                assertThat(reader.trackedIteratorCount())
-                        .as("filtered single-column iteration %d must not leave an iterator behind", i)
+                assertThat(reader.trackedEngineCount())
+                        .as("filtered single-column iteration %d must not leave an engine behind", i)
                         .isZero();
             }
         }
     }
 
     /// The group owns the pipeline its readers view: closing one of the readers leaves
-    /// the iterator in use, and closing the group releases it.
+    /// the engine in use, and closing the group releases it.
     @Test
-    void closingTheGroupNotAReaderStopsTrackingItsIterator() throws Exception {
+    void closingTheGroupNotAReaderStopsTrackingItsEngine() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)));
              ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id", "value"))) {
             assertThat(columns.nextBatch()).isTrue();
 
             columns.getColumnReader("id").close();
-            assertThat(reader.trackedIteratorCount()).isEqualTo(1);
+            assertThat(reader.trackedEngineCount()).isEqualTo(1);
 
             columns.close();
-            assertThat(reader.trackedIteratorCount()).isZero();
+            assertThat(reader.trackedEngineCount()).isZero();
         }
     }
 
     /// The nested row path is a separate reader class with its own `close()`, so
     /// the flat fixture every other test uses would not catch a regression there.
     @Test
-    void closingANestedRowReaderStopsTrackingItsIterator() throws Exception {
+    void closingANestedRowReaderStopsTrackingItsEngine() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(NESTED_FILE)))) {
             for (int i = 0; i < 4; i++) {
                 try (RowReader rows = reader.rowReader()) {
@@ -171,17 +171,17 @@ class IteratorTrackingTest {
                         rows.next();
                     }
                 }
-                assertThat(reader.trackedIteratorCount())
-                        .as("nested iteration %d must not leave an iterator behind", i)
+                assertThat(reader.trackedEngineCount())
+                        .as("nested iteration %d must not leave an engine behind", i)
                         .isZero();
             }
         }
     }
 
     /// A read whose row groups are all pruned is served by a scan with no cursors.
-    /// The scan still holds the iterator, so closing the group releases it.
+    /// The scan still holds the engine, so closing the group releases it.
     @Test
-    void closingAPrunedColumnReadersGroupStopsTrackingItsIterator() throws Exception {
+    void closingAPrunedColumnReadersGroupStopsTrackingItsEngine() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
             for (int i = 0; i < 4; i++) {
                 try (ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
@@ -189,18 +189,18 @@ class IteratorTrackingTest {
                         .build()) {
                     assertThat(columns.nextBatch()).isFalse();
                 }
-                assertThat(reader.trackedIteratorCount())
-                        .as("pruned iteration %d must not leave an iterator behind", i)
+                assertThat(reader.trackedEngineCount())
+                        .as("pruned iteration %d must not leave an engine behind", i)
                         .isZero();
             }
         }
     }
 
     /// The pruned counterpart of
-    /// [#closingAFilteredSingleColumnReaderStopsTrackingItsIterator]: the caller holds
-    /// one exhausted reader, so closing that reader has to release the iterator.
+    /// [#closingAFilteredSingleColumnReaderStopsTrackingItsEngine]: the caller holds
+    /// one exhausted reader, so closing that reader has to release the engine.
     @Test
-    void closingAPrunedFilteredSingleColumnReaderStopsTrackingItsIterator() throws Exception {
+    void closingAPrunedFilteredSingleColumnReaderStopsTrackingItsEngine() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
             for (int i = 0; i < 4; i++) {
                 try (ColumnReader column = reader.buildColumnReader(0)
@@ -208,8 +208,8 @@ class IteratorTrackingTest {
                         .build()) {
                     assertThat(column.nextBatch()).isFalse();
                 }
-                assertThat(reader.trackedIteratorCount())
-                        .as("pruned single-column iteration %d must not leave an iterator behind", i)
+                assertThat(reader.trackedEngineCount())
+                        .as("pruned single-column iteration %d must not leave an engine behind", i)
                         .isZero();
             }
         }
@@ -222,13 +222,13 @@ class IteratorTrackingTest {
 
         ColumnReader leaked = reader.columnReader(0);
         assertThat(leaked.nextBatch()).isTrue();
-        assertThat(reader.trackedIteratorCount())
+        assertThat(reader.trackedEngineCount())
                 .as("the never-closed child is still tracked")
                 .isEqualTo(1);
 
         reader.close();
 
-        assertThat(reader.trackedIteratorCount()).isZero();
+        assertThat(reader.trackedEngineCount()).isZero();
         assertThat(file.closeCount())
                 .as("the parent still owns and closes the input")
                 .isEqualTo(1);

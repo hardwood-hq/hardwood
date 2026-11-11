@@ -7,7 +7,7 @@ Related documents:
 - [INPUT_FILES.md](INPUT_FILES.md): the `InputFile` contract and what a `readRange` costs on the mapped and in-memory backends
 - [S3_STORAGE.md](S3_STORAGE.md): the S3 backend and what a `readRange` costs there
 - [FILE_METADATA.md](FILE_METADATA.md): parsing the footer and the page index
-- [READ_PIPELINE.md](READ_PIPELINE.md): the read that runs the fetches (`RowGroupIterator`, its parts, the priority and bounds of its jobs, multi-file reads, the failure model)
+- [READ_PIPELINE.md](READ_PIPELINE.md): the read that runs the fetches (`ReadEngine`, its parts, the priority and bounds of its jobs, multi-file reads, the failure model)
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decisions that choose rows and pages
 - [THREADING.md](THREADING.md): the pool threads that run the read's plans and scans, and the virtual threads its requests run on
 
@@ -119,7 +119,7 @@ A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapp
 
 **Per-page masks apply to every decoded column of a row group or to none.** Columns have their own page boundaries; a column that ignored the masks its siblings applied would place rows its siblings dropped, and the batches would misalign. A flat column takes a mask whether or not it has an OffsetIndex: its OffsetIndex gives each page's first row, and a scan counts its rows from each page header's `num_values`. A nested column takes one only with an OffsetIndex, since only a page's repetition levels say where its records start.
 
-So a row group takes page masks when every nested decoded column has an OffsetIndex; otherwise its ranges are promoted to all rows, no page takes a mask, and the filter falls to row-group statistics and per-row evaluation. The gate needs no bytes: the OffsetIndex offsets in the footer decide it. A fast `tail` is taken only where every row group passes it (`canFastSkipAllRowGroups`, [ROW_READER.md](ROW_READER.md#tail)).
+So a row group takes page masks when every nested decoded column has an OffsetIndex; otherwise its ranges are promoted to all rows, no page takes a mask, and the filter falls to row-group statistics and per-row evaluation. The gate needs no bytes: the OffsetIndex offsets in the footer decide it. A fast `tail` is taken only where the first kept row group passes it (`ReadEngine.takesMask`, [ROW_READER.md](ROW_READER.md#tail)).
 
 Under a mask a scan asks `RowRanges.maskForPage` for each flat page's mask from the rows counted so far; a page with no match is skipped without reading its body, though its bytes may have been fetched with the chunk, so the saving is decompression and decode. A null placeholder under a partial mask stands for the masked record count, so sibling columns agree on row counts.
 

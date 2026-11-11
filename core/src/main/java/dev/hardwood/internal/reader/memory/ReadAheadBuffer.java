@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
 /// The memory a context's reads hold by choice rather than because a file forces it, R: the
-/// requests a read ([dev.hardwood.internal.reader.engine.RowGroupIterator]) starts ahead of its
+/// requests a read ([dev.hardwood.internal.reader.engine.ReadEngine]) starts ahead of its
 /// consumer, the footers a multi-file read reads ahead, each charged the tail it reads until
 /// the read is done with the file, and the buffers of a decode above
 /// [dev.hardwood.internal.DecodeBuffers#RETAINED_BYTES] it runs beside its own task, a probe's

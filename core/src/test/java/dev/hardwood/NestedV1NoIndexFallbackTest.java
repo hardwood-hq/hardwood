@@ -13,7 +13,7 @@ import java.nio.file.Paths;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.internal.reader.plan.RowGroupIterators;
+import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -59,7 +59,7 @@ class NestedV1NoIndexFallbackTest {
     void testMaskGateClosesForV1NestedColumn() throws Exception {
         // A nested column without an OffsetIndex closes the gate: its pages cannot be masked
         // without their records counted, so the row group is read whole and filtered per record
-        assertThat(RowGroupIterators.masksLeadingRows(InputFile.of(FIXTURE), ColumnProjection.all()))
+        assertThat(ReadEngines.masksLeadingRows(InputFile.of(FIXTURE), ColumnProjection.all()))
                 .as("mask gate must close on nested-v1-no-index fixture")
                 .isFalse();
     }

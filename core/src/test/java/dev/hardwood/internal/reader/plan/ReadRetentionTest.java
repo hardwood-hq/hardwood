@@ -20,7 +20,7 @@ import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.engine.RowGroupIterator;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.schema.ColumnProjection;
@@ -49,24 +49,24 @@ class ReadRetentionTest {
         }
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             FileMetadataCache cache = new FileMetadataCache(files, context);
-            try (RowGroupIterator iterator = RowGroupIterators.standalone(cache, context)) {
+            try (ReadEngine engine = ReadEngines.standalone(cache, context)) {
                 FileMetadataCache.PreparedFile first = cache.getFile(0);
                 ProjectedSchema decoded = ProjectedSchema.create(first.schema(), ColumnProjection.all());
-                iterator.initialize(first.schema(), first.rowGroups(), ReadProjection.of(decoded), null, true, 0, 0);
+                engine.initialize(first.schema(), first.rowGroups(), ReadProjection.of(decoded), null, true, 0, 0);
                 List<BatchExchange<?>> exchanges = new ArrayList<>();
                 List<NestedLevelComputer.Layers> flat = new ArrayList<>();
                 for (int column = 0; column < COLUMNS; column++) {
                     exchanges.add(BatchExchange.detachingFlat(first.schema().getColumn(column).name(), BATCH_SIZE));
                     flat.add(null);
                 }
-                iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, exchanges,
+                engine.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, exchanges,
                         null);
                 int read = 0;
                 while (takeBatch(exchanges)) {
                     // One batch per file: every column has published the batch of file `read`, so it
                     // has passed every file before it. The read drops a file's footer under the lock
                     // it publishes in, after the publish, so the check waits for the read to be idle
-                    iterator.awaitQuiescent();
+                    engine.awaitQuiescent();
                     for (int passed = 1; passed < read; passed++) {
                         assertThat(cache.holdsFooter(passed)).as("footer %d after file %d", passed, read).isFalse();
                     }

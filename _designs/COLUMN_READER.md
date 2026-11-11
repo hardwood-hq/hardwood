@@ -4,7 +4,7 @@ Describes what `ColumnReader` exposes and how a batch reaches it: the layer mode
 
 Related documents:
 
-- [READ_PIPELINE.md](READ_PIPELINE.md): how pages become published batches (the read's `RowGroupIterator`, the decoded columns, `BatchExchange`, batch sizing, `ReaderConfig`)
+- [READ_PIPELINE.md](READ_PIPELINE.md): how pages become published batches (the read's `ReadEngine`, the decoded columns, `BatchExchange`, batch sizing, `ReaderConfig`)
 - [NESTED_DECODE.md](NESTED_DECODE.md): how definition and repetition levels become nested batches (cells, index modes, the real view built before publish, the fixed-size-list fast path)
 - [VALUE_DECODE.md](VALUE_DECODE.md): value decoders and dictionaries
 - [RECORD_FILTERING.md](RECORD_FILTERING.md): exact filtering on the column readers (selection and compaction)
@@ -132,7 +132,7 @@ Tests: `ColumnReaderLayerModelTest`, `FixedSizeListFastPathReadTest`, `ColumnRea
 Every column-reader read (one `ColumnReader`, an unfiltered `ColumnReaders` group, a filtered group, a filtered single column) runs on one model in `dev.hardwood.reader`:
 
 - **`ColumnCursor`** (package-private) owns the `BatchExchange` one decoded column of the read publishes into and its current raw batch. `advance()` polls the exchange, rethrows the column's failure, and returns `false` at end of stream and on every call after it. It exposes the current batch, record count, file name and `filterAlwaysMatches`. It holds no accessor or cache state; the read's close stops its column.
-- **`ColumnScan`** (package-private) owns the cursors of every decoded column, in `ReadProjection.decoded()` order (payload columns first, then filter-only predicate columns), the shared `RowGroupIterator`, and for a filtered read the `SelectionEngine`. One read feeds every cursor, which is what keeps the columns row-aligned; the scan's close closes the read.
+- **`ColumnScan`** (package-private) owns the cursors of every decoded column, in `ReadProjection.decoded()` order (payload columns first, then filter-only predicate columns), the shared `ReadEngine`, and for a filtered read the `SelectionEngine`. One read feeds every cursor, which is what keeps the columns row-aligned; the scan's close closes the read.
 - **Views.** `ColumnReader` holds its scan and the index of its payload cursor plus per-batch caches (the real view, trimmed or gathered leaf arrays, trimmed binary views, materialised binaries and strings). `ColumnReaders` holds the scan and one `ColumnReader` per payload column. Views own no pipeline state.
 
 Each scan has one owner, which advances and closes it. A single `ColumnReader` owns a one-column scan (`ParquetFileReader.buildSingleColumnReader`) and is its only view; a filtered single column's scan also holds the predicate columns' cursors, which have no view. A `ColumnReaders` owns its scan, and its `ColumnReader`s are group members: views that neither advance nor close it. Single-column readers are single-file; `ColumnReaders` spans the files of an `openAll` reader.
@@ -155,9 +155,9 @@ Tests: `EmptyFilesReadTest`, `EmptyOffsetIndexTest`.
 
 Readers built separately, each from its own `buildColumnReader`, are separate scans with their own batch sizes; their nth batches cover different rows. Row-aligned multi-column access requires one `ColumnReaders`.
 
-**Closing.** Closing the owner closes the scan: it closes every cursor, then releases the iterator even when a cursor's teardown fails. Afterwards `nextBatch()` throws `IllegalStateException`. Closing a member has no effect. Close is idempotent, and a close on another thread while one runs, such as the parent reader's, waits for it to finish.
+**Closing.** Closing the owner closes the scan: it closes every cursor, then releases the engine even when a cursor's teardown fails. Afterwards `nextBatch()` throws `IllegalStateException`. Closing a member has no effect. Close is idempotent, and a close on another thread while one runs, such as the parent reader's, waits for it to finish.
 
-Tests: `ColumnReadersTest`, `IteratorTrackingTest`, `PrunedToEmptyReadTest`. The lockstep checks (early exhaustion, diverging record counts, a batch after the first cursor ended) are defensive guards. Untested.
+Tests: `ColumnReadersTest`, `EngineTrackingTest`, `PrunedToEmptyReadTest`. The lockstep checks (early exhaustion, diverging record counts, a batch after the first cursor ended) are defensive guards. Untested.
 
 ## Lifetime and ownership of batch buffers
 

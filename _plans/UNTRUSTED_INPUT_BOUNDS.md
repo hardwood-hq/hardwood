@@ -147,7 +147,7 @@ scratch, up to `MAX_INFLIGHT_PAGES` per nested column, is not measured.
 
 | Kind | What it holds | Decided by | Released when |
 | --- | --- | --- | --- |
-| Working set | per projected column: the entries of the dictionaries of every chunk the batch it fills has rows of, more than one where a batch spans row groups; the batches of the page holding the rows of the batch the column publishes next (`RowGroupIterator` decodes it past the read's cap), and for a nested column the page's decompressed bytes and levels; the fetched range that page is read from (a demanded request). Once per read: the buffers of one task decoding a page, its decompressed bytes and level and dictionary-id scratch | the file's declared sizes | the consumer takes the page's last batch; the column moves past the chunk or the range; the task ends |
+| Working set | per projected column: the entries of the dictionaries of every chunk the batch it fills has rows of, more than one where a batch spans row groups; the batches of the page holding the rows of the batch the column publishes next (`ReadEngine` decodes it past the read's cap), and for a nested column the page's decompressed bytes and levels; the fetched range that page is read from (a demanded request). Once per read: the buffers of one task decoding a page, its decompressed bytes and level and dictionary-id scratch | the file's declared sizes | the consumer takes the page's last batch; the column moves past the chunk or the range; the task ends |
 | Read-ahead | everything else: speculative requests (the next chunk, region, row group and file), pages inside the read's cap, the task buffers of pages decoded at once beyond the first, the next row group's dictionaries, dictionaries parsed only to prune | the reader | the read reaches it, which moves it into the working set, or abandons it |
 
 Safety is a bound on the working set, throughput a bound on read-ahead. The working set is not
@@ -257,7 +257,7 @@ nothing, such as a constant column RLE-encoded; the record target cuts those at 
 
 #### PRs
 
-1. **Working-set limit.** `WorkingSet` on the read's `RowGroupIterator`, charged by the fetch
+1. **Working-set limit.** `WorkingSet` on the read's `ReadEngine`, charged by the fetch
    plans' dictionaries and the columns' page decoders; code decoding outside a read charges a
    working set of its own per column, and a read charges a dictionary pruning parsed once its
    column takes it. Each column's dictionaries count per batch, from the batch plan. Retention
