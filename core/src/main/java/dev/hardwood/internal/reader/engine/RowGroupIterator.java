@@ -51,7 +51,9 @@ import dev.hardwood.schema.FileSchema;
 /// - [HeaderScanner] scans each column chunk without an OffsetIndex header by header.
 /// - [PageTracker] tracks each page of a batched unit ([TrackedPage]) until its bytes, its dictionary and
 ///   its placement are there, and starts its decode then.
-/// - [PagePlacer] places each column's pages in page order into the cells of the batch plan.
+/// - [CellWriter] writes each column's pages into the cells of the batch plan: places them in page
+///   order, decodes and fills them, and completes the cells into batches.
+/// - [ColumnContext] gives every part each decoded column's schema, working set and failure context.
 /// - [BatchPublisher] publishes each column's batches in row order and places the read's failure.
 /// - [JobScheduler] decides which job starts next, by one priority within three bounds.
 /// - [ReadDriver] runs the jobs and applies their results under the read's one lock.
@@ -79,7 +81,7 @@ public final class RowGroupIterator implements Closeable {
     private BatchPublisher publisher;
     private RowGroupPlanner planner;
     private FooterReader footers;
-    private PagePlacer placer;
+    private CellWriter cells;
     private ResolvedPredicate filter;
     /// the read's row limit, `0` for none: under a filter it counts matching rows
     private long limit;
@@ -229,13 +231,13 @@ public final class RowGroupIterator implements Closeable {
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, started, batchSize, CAP_BUDGETS * budgetRows);
-        placer = new PagePlacer(scheduler, publisher, schemas, started, layers, indexMode, fixedListFastPathEnabled,
-                batchSize, context.decompressorFactory(), files.footersSupplied(),
-                new WorkingSet(n), filters);
-        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, placer, context);
-        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, placer, publisher,
+        ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), files.footersSupplied());
+        cells = new CellWriter(scheduler, publisher, columns, started, indexMode, fixedListFastPathEnabled,
+                batchSize, context.decompressorFactory(), filters);
+        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, cells, columns, context);
+        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, cells, columns, publisher,
                 pruning.prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
-        planner = new RowGroupPlanner(scheduler, fetcher, publisher, tracker, scanner, placer, new BatchPlan(batchSize,
+        planner = new RowGroupPlanner(scheduler, fetcher, publisher, tracker, scanner, columns, new BatchPlan(batchSize,
                 BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()), filter != null,
                 limit == 0 ? 0 : limit + leadingRows()), schemas, filterOnly, pruning,
                 limit > 0 ? limit : Long.MAX_VALUE, filter != null, skip, masked ? leading : 0);
@@ -257,7 +259,7 @@ public final class RowGroupIterator implements Closeable {
     private JobScheduler.Position settle() {
         long batchedTo = planner.batchedKey();
         if (planner.allBatched() && !publisher.failed()) {
-            placer.end(planner.endKey());
+            cells.end(planner.endKey());
         }
         // the failure stands once no work at or before its row is left; only then do the columns
         // seal or abandon their open cells at it, which can move it to a lower row
@@ -266,11 +268,11 @@ public final class RowGroupIterator implements Closeable {
             if (!publisher.settled()) {
                 break;
             }
-            placer.sealAt(publisher.failure(), publisher.failedAt(), batchedTo >= publisher.failedAt());
+            cells.sealAt(publisher.failure(), publisher.failedAt(), batchedTo >= publisher.failedAt());
         }
         publisher.publish(batchedTo, planner.allBatched());
         JobScheduler.Position at = publisher.position(batchedTo);
-        if (placer.allPlacementEnded()) {
+        if (cells.allPlacementEnded()) {
             // no column takes a further page: nothing of a unit not batched starts, neither its
             // probe, plan and index fetches nor a footer past it
             at = new JobScheduler.Position(at.need(), at.reach(), Math.min(at.end(), batchedTo - 1));

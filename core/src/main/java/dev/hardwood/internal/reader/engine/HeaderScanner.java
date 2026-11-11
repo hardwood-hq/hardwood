@@ -45,7 +45,7 @@ final class HeaderScanner {
     private static final class Scan {
         private final Unit.Batched unit;
         private final int column;
-        private final PagePlacer.ChunkPlacement placement;
+        private final CellWriter.ChunkPlacement placement;
         private final List<RangeFetch> ranges;
         private final long end;
         private final long values;
@@ -64,7 +64,7 @@ final class HeaderScanner {
         private boolean running;
         private boolean ended;
 
-        Scan(Unit.Batched unit, int column, PagePlacer.ChunkPlacement placement, List<RangeFetch> ranges,
+        Scan(Unit.Batched unit, int column, CellWriter.ChunkPlacement placement, List<RangeFetch> ranges,
              long start, long end, ChunkDictionary dictionary) {
             this.unit = unit;
             this.column = column;
@@ -84,7 +84,7 @@ final class HeaderScanner {
             return column;
         }
 
-        PagePlacer.ChunkPlacement placement() {
+        CellWriter.ChunkPlacement placement() {
             return placement;
         }
 
@@ -215,29 +215,31 @@ final class HeaderScanner {
     private final JobScheduler scheduler;
     private final RangeFetcher fetcher;
     private final PageTracker tracker;
-    private final PagePlacer placer;
+    private final CellWriter cells;
+    private final ColumnContext columns;
     private final BatchPublisher publisher;
     /// per reference column, the leaves a page's inline statistics are decided by; empty without
     /// a filter or where metadata filtering is off
     private final Map<Integer, List<ResolvedPredicate>> dropLeaves;
     private final int maxSpan = CoalescingPolicy.maxSpanBytes();
 
-    HeaderScanner(JobScheduler scheduler, RangeFetcher fetcher, PageTracker tracker, PagePlacer placer, BatchPublisher publisher,
-                  Map<Integer, List<ResolvedPredicate>> dropLeaves) {
+    HeaderScanner(JobScheduler scheduler, RangeFetcher fetcher, PageTracker tracker, CellWriter cells, ColumnContext columns,
+                  BatchPublisher publisher, Map<Integer, List<ResolvedPredicate>> dropLeaves) {
         this.scheduler = scheduler;
         this.fetcher = fetcher;
         this.tracker = tracker;
-        this.placer = placer;
+        this.cells = cells;
+        this.columns = columns;
         this.publisher = publisher;
         this.dropLeaves = dropLeaves;
     }
 
     /// Scans `column`'s chunk of `u`, whose bytes lie in those of `ranges` it overlaps, into
     /// `chunk`.
-    void scan(Unit.Batched u, int column, PagePlacer.ChunkPlacement placement, List<RangeFetch> ranges) {
+    void scan(Unit.Batched u, int column, CellWriter.ChunkPlacement placement, List<RangeFetch> ranges) {
         ColumnChunk meta = u.listing().chunks()[column];
         long start = meta.chunkStartOffset();
-        long end = start + CoalescingPolicy.chunkLength(meta, u.listing().rowGroup(), u.listing().file().name(), placer.schema(column));
+        long end = start + CoalescingPolicy.chunkLength(meta, u.listing().rowGroup(), u.listing().file().name(), columns.schema(column));
         ChunkDictionary dictionary = null;
         if (u.plan().preloaded()[column] != null) {
             // decoded by the unit's probe: the scan starts at the first data page
@@ -255,7 +257,7 @@ final class HeaderScanner {
         // in an order this reader cannot read drops no page; the leaves are in the reference file's
         // ordinals, so the column's order travels with them
         FileColumnOrdinals ordinals = u.listing().columnOrdinals();
-        int referenceOrdinal = placer.schema(column).columnIndex();
+        int referenceOrdinal = columns.schema(column).columnIndex();
         int fileOrdinal = ordinals.fileOrdinal(referenceOrdinal);
         if (ordinals.boundsReadability().readable(fileOrdinal)) {
             s.dropsBy(dropLeaves.getOrDefault(referenceOrdinal, List.of()),
@@ -377,14 +379,14 @@ final class HeaderScanner {
         // a flat page's rows are its values: a page filter masks them, and drops a page it keeps
         // no row of
         long row = row(s);
-        PageRowMask mask = placer.nested(s.column()) ? PageRowMask.ALL
+        PageRowMask mask = columns.nested(s.column()) ? PageRowMask.ALL
                 : s.unit().plan().matching().maskForPage(row, row + values);
         if (mask == null) {
             return;
         }
-        boolean nulls = PageDropPredicates.canDropPage(s.leaves(), f.header(), placer.schema(s.column()),
+        boolean nulls = PageDropPredicates.canDropPage(s.leaves(), f.header(), columns.schema(s.column()),
                 s.readability(), new LogContext(s.unit().listing().file().name(), s.unit().listing().rowGroup(),
-                        placer.schema(s.column()).fieldPath(), s.pages()));
+                        columns.schema(s.column()).fieldPath(), s.pages()));
         // a page of nulls reads no bytes and no dictionary, and stands for the rows its mask
         // keeps, so its siblings agree on the rows
         NeededPage page = new NeededPage(new PageLocation(f.offset(), f.length(), row),
@@ -405,10 +407,10 @@ final class HeaderScanner {
     /// the row limit's share of the unit or pass the last row its page filter keeps, or the
     /// column's placement has placed its last row.
     private boolean needsNoFurtherRow(Scan s) {
-        if (placer.placementEnded(s.column())) {
+        if (cells.placementEnded(s.column())) {
             return true;
         }
-        if (placer.nested(s.column())) {
+        if (columns.nested(s.column())) {
             return false;
         }
         return row(s) >= s.unit().listing().limit()
@@ -419,7 +421,7 @@ final class HeaderScanner {
     /// while a column decoded through levels stays at its unit's first, whose rows a header does
     /// not give.
     private long row(Scan s) {
-        return placer.nested(s.column()) ? 0 : s.valuesRead();
+        return columns.nested(s.column()) ? 0 : s.valuesRead();
     }
 
     /// The key of the first row the scan has not passed.
@@ -436,7 +438,7 @@ final class HeaderScanner {
         }
         int length = Math.toIntExact(Math.min(maxSpan, s.end() - from));
         RangeFetch r = RangeFetch.of(s.unit().listing().file(), new FileRange(from, length,
-                "rg=" + s.unit().listing().rowGroup() + " col=" + placer.schema(s.column()).name()));
+                "rg=" + s.unit().listing().rowGroup() + " col=" + columns.schema(s.column()).name()));
         r.addReader();
         s.add(r);
         if (!r.output().hasValue()) {
@@ -467,7 +469,7 @@ final class HeaderScanner {
 
     /// The scan is done with its chunk, at its end or where its column needs no further row.
     private void finish(Scan s) {
-        PageTracker.reportPagesLocated(s.unit().listing().file().name(), s.unit().listing().rowGroup(), placer.schema(s.column()), s.pages(),
+        PageTracker.reportPagesLocated(s.unit().listing().file().name(), s.unit().listing().rowGroup(), columns.schema(s.column()), s.pages(),
                 RowGroupScannedEvent.STRATEGY_SEQUENTIAL);
         release(s);
         tracker.placed(s.column());
@@ -477,10 +479,10 @@ final class HeaderScanner {
     /// was on.
     private void failed(Scan s, Throwable t) {
         s.idle();
-        Throwable placed = t instanceof Exception e
-                ? placer.placed(s.column(), e, s.unit().listing().file().name(), s.unit().listing().rowGroup(), s.pages()) : t;
-        publisher.failAt(key(s), s.column(), placed);
-        s.placement().failed(placed);
+        Throwable failure = t instanceof Exception e
+                ? columns.withContext(s.column(), e, s.unit().listing().file().name(), s.unit().listing().rowGroup(), s.pages()) : t;
+        publisher.failAt(key(s), s.column(), failure);
+        s.placement().failed(failure);
         release(s);
         tracker.placed(s.column());
     }
