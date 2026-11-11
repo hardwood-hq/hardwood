@@ -32,7 +32,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.engine.RowGroupIterator;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.plan.BatchSizing;
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -202,13 +202,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// The read this reader consumes. No column reader owns it — they all draw from the one read —
     /// so this reader releases it, which is also what stops the owning
     /// [dev.hardwood.reader.ParquetFileReader] tracking it.
-    private final RowGroupIterator read;
+    private final ReadEngine read;
 
     private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges,
                          FileSchema fileSchema, ProjectedSchema payload, FlatStructs structs,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
                          RowMatcher recordMatcher, PredicateView predicateView, RecordFilterTally tally,
-                         RowGroupIterator read) {
+                         ReadEngine read) {
         this.read = read;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
@@ -266,13 +266,13 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     // ==================== Factory ====================
 
-    /// Creates a [RowReader] over a read the [RowGroupIterator] drives: the read's flat columns publish
+    /// Creates a [RowReader] over a read the [ReadEngine] drives: the read's flat columns publish
     /// into the reader's recycling exchanges and run its filter fragments, and the reader is
     /// initialized. A filter is installed on whichever path can carry it — per batch by the batch
     /// matchers, per record otherwise — which is decided by the predicate's shape alone, never by
     /// what a file holds.
     ///
-    /// @param iterator the read, initialized
+    /// @param engine the read, initialized
     /// @param schema the file schema
     /// @param projection the exposed and decoded columns
     /// @param context the hardwood context
@@ -286,7 +286,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// @param budgetRows the rows of the read's batch byte budget, which bound its read-ahead
     ///                   ([BatchSizing#readAheadBudgetRows])
     /// @return a [FlatRowReader]
-    public static RowReader create(RowGroupIterator iterator,
+    public static RowReader create(ReadEngine engine,
                                    FileSchema schema,
                                    ReadProjection projection,
                                    HardwoodContextImpl context,
@@ -372,7 +372,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             buffers[i] = buffer;
         }
         List<NestedLevelComputer.Layers> flat = Collections.nCopies(buffers.length, null);
-        iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, batchSize, budgetRows,
+        engine.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, batchSize, budgetRows,
                 new ArrayList<>(Arrays.asList(buffers)), columnFilters);
 
         // The merger *is* the batch-matcher path in the reader: present exactly when the
@@ -382,7 +382,7 @@ public final class FlatRowReader implements FileAwareRowReader {
                 : null;
 
         FlatRowReader reader = new FlatRowReader(buffers, schema, projection.payload(), structs,
-                matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, iterator);
+                matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, engine);
         reader.initialize();
         return reader;
     }

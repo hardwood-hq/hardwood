@@ -26,8 +26,8 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.engine.RowGroupIterator;
-import dev.hardwood.internal.reader.plan.RowGroupIterators;
+import dev.hardwood.internal.reader.engine.ReadEngine;
+import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -103,7 +103,7 @@ class FlatBinaryViewsTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            try (RowGroupIterator iterator = RowGroupIterators.initialized(List.of(inputFile), context,
+            try (ReadEngine engine = ReadEngines.initialized(List.of(inputFile), context,
                     ColumnProjection.all(), null, 0)) {
                 BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
                         schema.getColumn(0).name(), () -> {
@@ -114,7 +114,7 @@ class FlatBinaryViewsTest {
                 ProjectedSchema decoded = ProjectedSchema.create(schema, ColumnProjection.all());
                 List<NestedLevelComputer.Layers> flat = new ArrayList<>();
                 flat.add(null);
-                iterator.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 10, List.of(exchange),
+                engine.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 10, List.of(exchange),
                         new ColumnBatchMatcher[]{ filter });
                 List<BinaryBatchValues> batches = new ArrayList<>();
                 BatchExchange.Batch batch;

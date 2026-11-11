@@ -1,6 +1,6 @@
 # Read pipeline
 
-Describes how a read turns the row groups of its files into published batches: the parts of a read's `RowGroupIterator`, the jobs they run and the one rule that orders them, the bounds on how far a read runs ahead, the lifetimes of what it holds, how pages are placed, decoded and published, batch sizing and the batch plan, multi-file reads, row limits, the failure model, close and `ReaderConfig`.
+Describes how a read turns the row groups of its files into published batches: the parts of a read's `ReadEngine`, the jobs they run and the one rule that orders them, the bounds on how far a read runs ahead, the lifetimes of what it holds, how pages are placed, decoded and published, batch sizing and the batch plan, multi-file reads, row limits, the failure model, close and `ReaderConfig`.
 
 Related documents:
 
@@ -18,7 +18,7 @@ Related documents:
 
 Every data reader (`FlatRowReader`, `NestedRowReader`, a `ColumnReaders` group, and a single `ColumnReader`, which is a group of one) runs the same read, for flat and nested schemas and for one file or many. A single-file read is a multi-file read of one file.
 
-A read is a `RowGroupIterator` (`internal.reader.engine`), one per data reader, built from parts that each own their state. Dependencies run one way, from the footers to the batches:
+A read is a `ReadEngine` (`internal.reader.engine`), one per data reader, built from parts that each own their state. Dependencies run one way, from the footers to the batches:
 
 | Part | Does | Owns |
 |---|---|---|
@@ -49,9 +49,9 @@ The parts pass items between them, each holding the state of one thing the read 
 
 The decoded columns are the projection plus any filter-only predicate columns (`ReadProjection.decoded()`, see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)). Every decoded column publishes batches cut by the read's one batch plan into its `BatchExchange`. A column is an index into the parts' arrays; no part keeps an object per column.
 
-**Ownership.** `ParquetFileReader` reads the first file's footer at `open`/`openAll` and owns the input files and a `FileMetadataCache` of parsed footers. When that fails, it closes every input file, and the context when the call created it, before the exception propagates, attaching close failures as suppressed. Each data reader it builds gets its own `RowGroupIterator` sharing that cache; the parent tracks the child until the child closes the iterator, and closing a child releases the iterator's state and its tracking entry but leaves the files to the parent. Closing the parent closes every child still open, then the metadata cache, an owned context and the files, so no job of a child's read reads a file after it is closed; it attempts every input file, throws the first close failure and suppresses the later ones under it. The parent's close runs once: a later or concurrent close waits for the exclusive side of the lifecycle lock and returns without closing anything again or rethrowing the first close's failure. A child build holds the shared side of the parent's lifecycle lock and the parent's close the exclusive side: the close waits for the builds under way, each of which, finding the parent closed, closes the child it made and fails, and a build started after the close fails at once.
+**Ownership.** `ParquetFileReader` reads the first file's footer at `open`/`openAll` and owns the input files and a `FileMetadataCache` of parsed footers. When that fails, it closes every input file, and the context when the call created it, before the exception propagates, attaching close failures as suppressed. Each data reader it builds gets its own `ReadEngine` sharing that cache; the parent tracks the child until the child closes the engine, and closing a child releases the engine's state and its tracking entry but leaves the files to the parent. Closing the parent closes every child still open, then the metadata cache, an owned context and the files, so no job of a child's read reads a file after it is closed; it attempts every input file, throws the first close failure and suppresses the later ones under it. The parent's close runs once: a later or concurrent close waits for the exclusive side of the lifecycle lock and returns without closing anything again or rethrowing the first close's failure. A child build holds the shared side of the parent's lifecycle lock and the parent's close the exclusive side: the close waits for the builds under way, each of which, finding the parent closed, closes the child it made and fails, and a build started after the close fails at once.
 
-Tests: `MultiFileRowReaderTest`, `IteratorTrackingTest`, `ParentCloseTest`, `ParquetFileReaderCloseTest`.
+Tests: `MultiFileRowReaderTest`, `EngineTrackingTest`, `ParentCloseTest`, `ParquetFileReaderCloseTest`.
 
 ## Scheduling
 
@@ -73,7 +73,7 @@ A read's work leaves its lock as jobs. A job's work runs outside the lock, and i
 |---|---|---|
 | R, the context's read-ahead buffer | everything the read holds by its choice, across every read of the context: the bytes it fetches ahead, and the buffers of each decode whose task exceeds `DecodeBuffers.RETAINED_BYTES` beside the one need forces, sized from the page's header as the working set sizes a task ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)); a probe's pass is charged so for each dictionary it may parse, those of the filter's columns whose pages it holds and has not parsed, from their headers | no read on a context starves another, and a read's large decodes and probes do not run at once on every thread, since its working set counts one task's buffers; a charge that does not fit waits for R's next release, and a refused decode or probe also for the next job of the read to end; a refused probe holds back the plans after it |
 | F (`hardwood.internal.fetchAheadBytes`, twice S by default) | fetches ahead of the consumer's need: a fetch starts while less than F is fetched ahead, so a request larger than F still runs one at a time | the requests in flight decide a remote read's throughput |
-| The look-ahead (`RowGroupIterator.CAP_BUDGETS` batch byte budgets, in rows), counted from the first row a column has not published | decodes | a buffer that absorbs the consumer's pauses once the CPU is saturated; decoding further holds memory for nothing |
+| The look-ahead (`ReadEngine.CAP_BUDGETS` batch byte budgets, in rows), counted from the first row a column has not published | decodes | a buffer that absorbs the consumer's pauses once the CPU is saturated; decoding further holds memory for nothing |
 | Files ahead (`hardwood.internal.maxFilesAhead`) | footers | F and R do not bound the footers of many small files ([multi-file reads](#multi-file-reads)) |
 | CPU slots, twice the decode threads | CPU jobs | the pool |
 
@@ -323,11 +323,11 @@ Tests: `ReadFailureTypingTest`, `ReadFailurePositionTest`, `SpeculativeErrorTest
 
 ### Cancellation and close
 
-`RowGroupIterator.close()` stops the read under its lock: no job starts after it, no publish runs, and each exchange is finished, so a consumer waiting for a batch finds the end. The close then waits until every job the read started has ended and its result is applied, running the read's queue meanwhile on a context of zero threads, returns every charge still held to R, gives up the footer loads it claimed and did not complete, a footer whose read completed and whose parse had not started among them, so that the next request for such a file loads it afresh, and stops the parent's tracking of the read. Another read's footer load that ends after the close starts nothing in it. A failed read likewise gives up the claimed footer loads past its failure, which no job of it reads, so that the reader's other reads load those files themselves.
+`ReadEngine.close()` stops the read under its lock: no job starts after it, no publish runs, and each exchange is finished, so a consumer waiting for a batch finds the end. The close then waits until every job the read started has ended and its result is applied, running the read's queue meanwhile on a context of zero threads, returns every charge still held to R, gives up the footer loads it claimed and did not complete, a footer whose read completed and whose parse had not started among them, so that the next request for such a file loads it afresh, and stops the parent's tracking of the read. Another read's footer load that ends after the close starts nothing in it. A failed read likewise gives up the claimed footer loads past its failure, which no job of it reads, so that the reader's other reads load those files themselves.
 
 The close returns only once the read is quiescent, so the caller can release what the `InputFile` owns (mapped buffers, direct buffers, connections) without a job reading freed memory. It interrupts no thread. A file is therefore never closed under a read in flight, whichever reader closes it. A row reader closes its read before it returns its held and queued batches to the pool (recycling mode), and a column read's scan closes its read likewise. Each reader's close is claimed by one thread (`CloseClaim`), and a closer on another thread, such as the parent reader's, waits until the claimed close has completed.
 
-Tests: `ReaderCloseMidReadTest`, `RowReaderCloseIdempotencyTest`, `ReadYieldTest`, `FilesAheadTest`, `IteratorTrackingTest`, `ParentCloseTest`, `ParquetFileReaderCloseTest`, `S3SelectiveReadJfrIT` (s3).
+Tests: `ReaderCloseMidReadTest`, `RowReaderCloseIdempotencyTest`, `ReadYieldTest`, `FilesAheadTest`, `EngineTrackingTest`, `ParentCloseTest`, `ParquetFileReaderCloseTest`, `S3SelectiveReadJfrIT` (s3).
 
 ## Configuration (`ReaderConfig`)
 

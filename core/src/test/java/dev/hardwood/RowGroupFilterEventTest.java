@@ -37,10 +37,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Asserts the two row-group filtering stages each emit their own JFR event exactly once
 /// for a single-file read: `dev.hardwood.RowGroupByteRangeFilter` for byte-range split
 /// selection (emitted by [ParquetFileReader]) and `dev.hardwood.RowGroupFilter` for
-/// statistics predicate push-down (emitted by the row-group iterator).
+/// statistics predicate push-down (emitted by the read engine).
 ///
 /// Regression guard for #718: the column-readers path used to evaluate the first file's
-/// statistics twice — once eagerly in [ParquetFileReader] and again in the iterator —
+/// statistics twice — once eagerly in [ParquetFileReader] and again in the read engine —
 /// emitting two `RowGroupFilter` events whose second `totalRowGroups` reported the
 /// already-pruned count rather than the file's real total.
 class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
@@ -239,7 +239,7 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
     }
 
     /// Builds a [ColumnReaders] over the fixture via `build`, then stops the recording.
-    /// Single-file row-group filtering (both the byte-range pre-filter and the iterator's
+    /// Single-file row-group filtering (both the byte-range pre-filter and the engine's
     /// statistics push-down) runs eagerly during `build`, so no read is needed to emit the
     /// events.
     private void readIdColumn(ColumnReadersFactory build) throws Exception {

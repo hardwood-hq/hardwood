@@ -10,7 +10,7 @@ each one costs, and the order in which they are merged.
 
 | Layer | Flat | Nested | Shared |
 | --- | --- | --- | --- |
-| Fetch, scheduling, page read | — | — | `RowGroupIterator`, `PageWalk`, `PageDecoder`, `FlatPageValues`, `BinaryPageValues` |
+| Fetch, scheduling, page read | — | — | `ReadEngine`, `PageWalk`, `PageDecoder`, `FlatPageValues`, `BinaryPageValues` |
 | Decoded column | `FlatColumn` (`Cell`, `FlatFill`) | `NestedColumn` (`NestedCell`, `PageMeasure`, `NestedFill`) | `DecodedColumn`, `Placer` |
 | Batch | `BatchExchange.Batch` | `NestedBatch` | `BatchExchange`, `BinaryBatchValues` |
 | Reader | `FlatRowReader` | `NestedRowReader` → `NestedBatchDataView` | `StructAccessor` |

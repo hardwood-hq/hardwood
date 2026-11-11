@@ -11,7 +11,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
 
-/// Closes the input files a reader or iterator owns, or the child readers a reader closes with
+/// Closes the input files a reader or read engine owns, or the child readers a reader closes with
 /// it, attempting every one even when an earlier one fails to close.
 public final class InputFileCloser {
 

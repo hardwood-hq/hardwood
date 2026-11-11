@@ -25,7 +25,7 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.plan.RowGroupIterators;
+import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -49,14 +49,14 @@ class SpeculativeErrorTest {
     void anErrorReadAheadFailsTheReadAtOnce(int threads) throws Exception {
         LastRowGroupErrorFile file = new LastRowGroupErrorFile(InputFile.of(FILE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
-            RowGroupIterator iterator = RowGroupIterators.initialized(List.of(file), context, ROW, null, 0);
-            BatchExchange<BatchExchange.Batch> exchange = start(iterator);
-            iterator.awaitQuiescent();
+            ReadEngine engine = ReadEngines.initialized(List.of(file), context, ROW, null, 0);
+            BatchExchange<BatchExchange.Batch> exchange = start(engine);
+            engine.awaitQuiescent();
             assertThat(file.failed.getCount()).as("the last row group's request failed").isZero();
 
             // fewer than the 150 rows before the last row group
             assertThat(rowsUntilThrown(exchange, file.error)).isLessThan(150);
-            iterator.close();
+            engine.close();
         }
     }
 
@@ -66,20 +66,20 @@ class SpeculativeErrorTest {
     void anErrorOfAFooterReadAheadFailsTheReadAtOnce(int threads) throws Exception {
         FooterErrorFile third = new FooterErrorFile(InputFile.of(FILE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
-            RowGroupIterator iterator = RowGroupIterators.initialized(
+            ReadEngine engine = ReadEngines.initialized(
                     List.of(InputFile.of(FILE), InputFile.of(FILE), third), context, ROW, null, 0);
-            BatchExchange<BatchExchange.Batch> exchange = start(iterator);
-            iterator.awaitQuiescent();
+            BatchExchange<BatchExchange.Batch> exchange = start(engine);
+            engine.awaitQuiescent();
             assertThat(third.failed.getCount()).as("the third file's footer read failed").isZero();
 
             // fewer than the 400 rows of the files before the third
             assertThat(rowsUntilThrown(exchange, third.error)).isLessThan(400);
-            iterator.close();
+            engine.close();
         }
     }
 
     /// Starts a read of the row number in batches of 10 rows, a read-ahead of one row.
-    private static BatchExchange<BatchExchange.Batch> start(RowGroupIterator iterator) throws IOException {
+    private static BatchExchange<BatchExchange.Batch> start(ReadEngine engine) throws IOException {
         FileSchema schema;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
             schema = reader.getFileSchema();
@@ -87,7 +87,7 @@ class SpeculativeErrorTest {
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("__row__", 10);
         List<NestedLevelComputer.Layers> flat = new ArrayList<>();
         flat.add(null);
-        iterator.start(ProjectedSchema.create(schema, ROW), flat, NestedIndexMode.ALL_ITEMS, false, 10, 1,
+        engine.start(ProjectedSchema.create(schema, ROW), flat, NestedIndexMode.ALL_ITEMS, false, 10, 1,
                 List.of(exchange), null);
         return exchange;
     }

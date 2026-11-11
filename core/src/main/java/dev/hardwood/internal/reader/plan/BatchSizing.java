@@ -81,7 +81,7 @@ public final class BatchSizing {
     }
 
     /// The rows whose decoded values fill one batch byte budget, which bound a read's read-ahead
-    /// ([dev.hardwood.internal.reader.engine.RowGroupIterator]) in bytes. As [#budgetRows], except
+    /// ([dev.hardwood.internal.reader.engine.ReadEngine]) in bytes. As [#budgetRows], except
     /// that a `BYTE_ARRAY` column costs what its chunks over `rowGroups` hold per value once
     /// decompressed, plus the start and end offset a batch keeps per value, where [#budgetRows]
     /// assumes 16 bytes. A batch of a PLAIN-encoded column copies its values' bytes, which its
@@ -276,7 +276,7 @@ public final class BatchSizing {
             // interned-String reuse — but the byte-array estimate is intentionally
             // approximate.
             case BYTE_ARRAY -> 16;
-            // The width is present and positive: RowGroupIterator#initialize validates every
+            // The width is present and positive: ReadEngine#initialize validates every
             // projected column before a batch size is ever computed for it.
             case FIXED_LEN_BYTE_ARRAY -> col.typeLength();
         };

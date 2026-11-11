@@ -28,7 +28,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.engine.RowGroupIterator;
+import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.RowReader;
@@ -67,7 +67,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// The read this reader consumes. No column reader owns it — they all draw from the one read —
     /// so this reader releases it, which is also what stops the owning
     /// [dev.hardwood.reader.ParquetFileReader] tracking it.
-    private final RowGroupIterator read;
+    private final ReadEngine read;
 
     // Iteration state
     private NestedBatch[] previousBatches;
@@ -107,7 +107,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     NestedRowReader(BatchExchange<NestedBatch>[] exchanges,
                     FileSchema fileSchema, ProjectedSchema payload, NestedBatchDataView dataView,
                     long maxMatchedRows, RowMatcher recordMatcher, PredicateView predicateView,
-                    RecordFilterTally tally, RowGroupIterator read) {
+                    RecordFilterTally tally, ReadEngine read) {
         this.read = read;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
@@ -136,11 +136,11 @@ public final class NestedRowReader implements FileAwareRowReader {
 
     // ==================== Factory ====================
 
-    /// Creates a [RowReader] over a read the [RowGroupIterator] drives: the read's columns, each decoded
+    /// Creates a [RowReader] over a read the [ReadEngine] drives: the read's columns, each decoded
     /// through levels, publish into the reader's recycling exchanges, and the reader is
     /// initialized. When a filter is present, the reader evaluates it a record at a time.
     ///
-    /// @param iterator the read, initialized
+    /// @param engine the read, initialized
     /// @param schema the file schema
     /// @param projection the exposed and decoded columns
     /// @param context the hardwood context
@@ -155,7 +155,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// @param budgetRows the rows of the read's batch byte budget
     ///         ([dev.hardwood.internal.reader.plan.BatchSizing#readAheadBudgetRows])
     /// @return a [NestedRowReader]
-    public static RowReader create(RowGroupIterator iterator,
+    public static RowReader create(ReadEngine engine,
                             FileSchema schema,
                             ReadProjection projection,
                             HardwoodContextImpl context,
@@ -182,7 +182,7 @@ public final class NestedRowReader implements FileAwareRowReader {
                     : null;
         }
         catch (RuntimeException e) {
-            throw ExceptionContext.addFileContext(iterator.referenceFileName(), e);
+            throw ExceptionContext.addFileContext(engine.referenceFileName(), e);
         }
         RowMatcher recordMatcher = predicateView != null
                 ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
@@ -208,11 +208,11 @@ public final class NestedRowReader implements FileAwareRowReader {
             buffers[i] = BatchExchange.recycling(schema.getColumn(originalIndex).name(), NestedBatch::new);
             columnLayers.add(layers[originalIndex]);
         }
-        iterator.start(decoded, columnLayers, NestedIndexMode.ALL_ITEMS, fixedListFastPathEnabled, batchSize,
+        engine.start(decoded, columnLayers, NestedIndexMode.ALL_ITEMS, fixedListFastPathEnabled, batchSize,
                 budgetRows, new ArrayList<>(Arrays.asList(buffers)), null);
 
         NestedRowReader reader = new NestedRowReader(buffers, schema, projection.payload(), dataView,
-                readerMatchLimit, recordMatcher, predicateView, tally, iterator);
+                readerMatchLimit, recordMatcher, predicateView, tally, engine);
         reader.initialize();
         return reader;
     }

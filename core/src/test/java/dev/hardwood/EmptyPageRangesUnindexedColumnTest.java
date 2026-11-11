@@ -14,7 +14,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.io.CountingInputFile;
-import dev.hardwood.internal.reader.plan.RowGroupIterators;
+import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
@@ -39,8 +39,8 @@ class EmptyPageRangesUnindexedColumnTest {
 
     @Test
     void theNestedV1ColumnClosesTheMaskGate() throws Exception {
-        assertThat(RowGroupIterators.masksLeadingRows(InputFile.of(FIXTURE), FLAT)).isTrue();
-        assertThat(RowGroupIterators.masksLeadingRows(InputFile.of(FIXTURE), ColumnProjection.all())).isFalse();
+        assertThat(ReadEngines.masksLeadingRows(InputFile.of(FIXTURE), FLAT)).isTrue();
+        assertThat(ReadEngines.masksLeadingRows(InputFile.of(FIXTURE), ColumnProjection.all())).isFalse();
     }
 
     @Test

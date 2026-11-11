@@ -4,7 +4,7 @@ Describes which thread runs each piece of work a read or a write does on a `Hard
 
 Related documents:
 
-- [READ_PIPELINE.md](READ_PIPELINE.md): the read whose jobs this document places on threads (`RowGroupIterator`, its parts, its lock and the priority of its jobs, `BatchExchange`), its bounds and the look-ahead
+- [READ_PIPELINE.md](READ_PIPELINE.md): the read whose jobs this document places on threads (`ReadEngine`, its parts, its lock and the priority of its jobs, `BatchExchange`), its bounds and the look-ahead
 - [FETCH_PLANNING.md](FETCH_PLANNING.md): the chunk scans a scan job runs, and the requests and footer reads the read starts on virtual threads
 - [VALUE_DECODE.md](VALUE_DECODE.md#decode-buffers): the `DecodeBuffers` sets that confine decode code to the pool
 - [FILE_METADATA.md](FILE_METADATA.md#per-file-metadata): footer loads, and the parse a load off the pool hands to it
@@ -64,7 +64,7 @@ Decode runs only on the context's fixed platform-thread pool (`HardwoodContext.c
 
 ## A context of zero threads
 
-`HardwoodContext.create(0)` and `builder().threads(0)` create a context without a pool. Each read on it keeps its CPU jobs in a queue of its own (`ReadQueue`), created by its `RowGroupIterator`. The read's driver hands its CPU jobs to the queue where it would hand them to the pool, and the queue runs its jobs in the order the read's scheduler starts them. Every queue item is one the pool would run, so nothing of the read changes but the thread: placement, cells, fills, publishing, the order of the jobs and the bounds run as [READ_PIPELINE.md](READ_PIPELINE.md#scheduling) describes, the thread driving the read counting as one decode thread. The read's requests and footer reads still run on virtual threads.
+`HardwoodContext.create(0)` and `builder().threads(0)` create a context without a pool. Each read on it keeps its CPU jobs in a queue of its own (`ReadQueue`), created by its `ReadEngine`. The read's driver hands its CPU jobs to the queue where it would hand them to the pool, and the queue runs its jobs in the order the read's scheduler starts them. Every queue item is one the pool would run, so nothing of the read changes but the thread: placement, cells, fills, publishing, the order of the jobs and the bounds run as [READ_PIPELINE.md](READ_PIPELINE.md#scheduling) describes, the thread driving the read counting as one decode thread. The read's requests and footer reads still run on virtual threads.
 
 The threads using the read run the queue. A poll that finds no batch (`BatchExchange.poll`) runs the item at the head and looks again; the read's close runs it while it waits. A thread that finds the queue empty parks until the read signals (`ReadTasks`), which every item queued, the end of its last job in flight and every publish, finish or failure of its exchanges does. `BatchWait` spans the park, which waits for a read in flight. The read counts every job it emitted, its reads included, until the job's result is applied. A poll that finds no batch and no job of the read in flight fails with an `IllegalStateException` instead of parking: nothing could publish a batch any more, which only a lost wake-up in Hardwood brings about.
 

@@ -29,7 +29,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.plan.RowGroupIterators;
+import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.ColumnChunk;
@@ -138,13 +138,13 @@ class ColumnFailureTest {
     }
 
     /// A read of both columns of a file, through the context it creates and closes.
-    private record Read(HardwoodContextImpl context, RowGroupIterator iterator, List<BatchExchange<?>> exchanges)
+    private record Read(HardwoodContextImpl context, ReadEngine engine, List<BatchExchange<?>> exchanges)
             implements AutoCloseable {
 
         /// Starts a read of `file`, its columns flat or decoded through levels.
         static Read start(ByteBuffer file, int threads, boolean throughLevels) throws Exception {
             HardwoodContextImpl context = HardwoodContextImpl.create(threads);
-            RowGroupIterator iterator = RowGroupIterators.initialized(List.of(InputFile.of(file)), context,
+            ReadEngine engine = ReadEngines.initialized(List.of(InputFile.of(file)), context,
                     ColumnProjection.all(), null, 0);
             ProjectedSchema decoded = ProjectedSchema.create(SCHEMA, ColumnProjection.all());
             NestedLevelComputer.Layers[] allLayers = NestedLevelComputer.computeLayers(SCHEMA);
@@ -157,15 +157,15 @@ class ColumnFailureTest {
                         : BatchExchange.detachingFlat(name, BATCH_SIZE));
                 layers.add(throughLevels ? allLayers[column] : null);
             }
-            iterator.start(decoded, layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE,
+            engine.start(decoded, layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE,
                     exchanges, null);
-            return new Read(context, iterator, exchanges);
+            return new Read(context, engine, exchanges);
         }
 
         @Override
         public void close() throws Exception {
             try (HardwoodContextImpl closing = context) {
-                iterator.close();
+                engine.close();
             }
         }
     }

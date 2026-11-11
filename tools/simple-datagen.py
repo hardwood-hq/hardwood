@@ -4843,8 +4843,8 @@ for _name, _version, _patch, _described, _row_group_size in (
 # the compressed area on a v1 page, so counting top-level records would
 # require decompression — which defeats the skip-without-decompress
 # optimisation. Drives the gate-closed branch in
-# RowGroupIterator.computeFetchPlans (matchingRows promoted to ALL) and
-# the tail-read fallback path that decode-and-discards leading rows
+# PagePlanner.matching (the matching rows promoted to ALL) and, through
+# ReadEngine.takesMask, the tail-read fallback path that decode-and-discards leading rows
 # instead of using per-page masks.
 # =====================================================================
 
