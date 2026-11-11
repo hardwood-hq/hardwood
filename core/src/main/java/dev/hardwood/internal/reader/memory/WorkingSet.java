@@ -29,7 +29,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// set would exceed the limit fails with a [ParquetReadException] before the allocation.
 ///
 /// Each column counts the dictionaries one batch holds and the largest page it has met in the read,
-/// and the read the largest task buffers any page has needed; the working set is their sum. A
+/// or, where it keeps its pages, the most its open batch has held across the pages it has values of
+/// ([Column#openBatch]), and the read the largest task buffers any page has needed; the working set
+/// is their sum. A
 /// batch holds the dictionary of every chunk it has rows of, as its pages decode with it: one for
 /// a batch within a row group, more for one that spans row groups. A column counts the most any of
 /// its batches holds, from where the read's batch plan places the chunks' rows. The task
@@ -207,18 +209,46 @@ public final class WorkingSet {
         /// @throws ParquetReadException if the read's working set would exceed its limit
         public void page(int numValues, int uncompressedSize, long decodedBytes, Encoding encoding, boolean kept,
                          long valueBytes) {
-            long batches = (long) numValues * valueWidth(schema.type()) + valueBytes;
-            if (!isNumeric(schema.type())) {
-                batches += uncompressedSize;
-            }
+            long batches = batches(numValues, uncompressedSize, kept) + valueBytes;
             long buffers = pageBuffers(schema, numValues, decodedBytes, encoding) + valueBytes;
             if (kept) {
-                batches += (long) numValues * Integer.BYTES * NESTED_BATCH_INTS;
                 set.charge(set.pages, index, batches + buffers, 0, batches + buffers, "Data page");
             }
             else {
                 set.charge(set.pages, index, batches, buffers, batches + buffers, "Data page");
             }
+        }
+
+        /// What a page of a column that keeps its pages' bytes and levels takes while the column
+        /// keeps it, as [#page(int, int, long, Encoding, boolean)] charges it with every byte of the
+        /// page decompressed: its batches with their levels and offsets, and its buffers.
+        public long keptPage(int numValues, int uncompressedSize, Encoding encoding) {
+            return batches(numValues, uncompressedSize, true) + pageBuffers(schema, numValues, uncompressedSize, encoding);
+        }
+
+        /// Charges the open batch of a column that keeps its pages' bytes and levels, which holds
+        /// `keptBytes`, the [#keptPage] of every page it has values of: the column keeps each until
+        /// the batch fills, and the batch takes the values of all of them. Counts as one of the
+        /// column's pages, so that a record spread over many pages counts all of them, not its
+        /// largest alone.
+        ///
+        /// @param pages the pages the batch has values of
+        /// @throws ParquetReadException if the read's working set would exceed its limit
+        public void openBatch(long keptBytes, int pages) {
+            set.charge(set.pages, index, keptBytes, 0, keptBytes, "Batch of values from " + pages + " pages");
+        }
+
+        /// The bytes a page's batches hold: a value width per value and, for a binary column, its
+        /// bytes; with the levels and offsets each batch keeps where the column keeps the page.
+        private long batches(int numValues, int uncompressedSize, boolean kept) {
+            long batches = (long) numValues * valueWidth(schema.type());
+            if (!isNumeric(schema.type())) {
+                batches += uncompressedSize;
+            }
+            if (kept) {
+                batches += (long) numValues * Integer.BYTES * NESTED_BATCH_INTS;
+            }
+            return batches;
         }
 
         /// The buffers the task decoding a data page of `schema`'s column takes: the `decodedBytes`

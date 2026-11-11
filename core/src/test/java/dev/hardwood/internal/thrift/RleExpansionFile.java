@@ -79,14 +79,7 @@ public final class RleExpansionFile {
                 new SchemaElement("r", null, null, null, 1, null, null, null, null, null),
                 new SchemaElement("b", PhysicalType.INT64, null, RepetitionType.REQUIRED, null, null, null, null,
                         null, null));
-        ThriftCompactWriter footer = new ThriftCompactWriter();
-        FileMetaDataWriter.write(footer, new FileMetaData(1, schema, numRows, rowGroups, Map.of(), null, List.of()));
-        byte[] footerBytes = footer.toByteArray();
-        out.writeBytes(footerBytes);
-        out.writeBytes(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(footerBytes.length).array());
-        out.writeBytes(MAGIC);
-        return out.toByteArray();
+        return finish(out, new FileMetaData(1, schema, numRows, rowGroups, Map.of(), null, List.of()));
     }
 
     /// `rowGroups` row groups of `columns` required `INT64` columns `c0`, `c1`, …, compressed with
@@ -164,9 +157,83 @@ public final class RleExpansionFile {
             schema.add(new SchemaElement("c" + c, PhysicalType.INT64, null, RepetitionType.REQUIRED, null, null,
                     null, null, null, null));
         }
+        return finish(out, new FileMetaData(1, schema, (long) pageValues * rowGroups, groups, Map.of(), null,
+                List.of()));
+    }
+
+    /// One row group of one record: a `repeated INT64` column `b` whose one record holds
+    /// `pageValues * pageCount` values over `pageCount` uncompressed `V1` pages, every value entry 0
+    /// of a one-entry dictionary. Each page holds its levels and values in a few RLE runs, so the
+    /// file takes a few bytes per page whatever it declares.
+    public static byte[] buildOneRecord(int pageValues, int pageCount) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.writeBytes(MAGIC);
+        long dictionaryOffset = out.size();
+        byte[] dictionary = new byte[Long.BYTES];
+        ThriftCompactWriter dictionaryHeader = new ThriftCompactWriter();
+        PageHeaderWriter.writeDictionaryPageV1(dictionaryHeader, 1, dictionary.length, dictionary.length,
+                crc(dictionary), Encoding.PLAIN);
+        out.writeBytes(dictionaryHeader.toByteArray());
+        out.writeBytes(dictionary);
+
+        long dataOffset = out.size();
+        for (int p = 0; p < pageCount; p++) {
+            // the record starts on the first page and continues on every other one
+            ByteArrayOutputStream repetition = new ByteArrayOutputStream();
+            if (p == 0) {
+                writeRun(repetition, 1, 0);
+            }
+            writeRun(repetition, p == 0 ? pageValues - 1 : pageValues, 1);
+            ByteArrayOutputStream definition = new ByteArrayOutputStream();
+            writeRun(definition, pageValues, 1);
+            ByteArrayOutputStream body = new ByteArrayOutputStream();
+            writeSection(body, repetition.toByteArray());
+            writeSection(body, definition.toByteArray());
+            body.writeBytes(dataPageBody(pageValues));
+            byte[] page = body.toByteArray();
+            ThriftCompactWriter header = new ThriftCompactWriter();
+            PageHeaderWriter.writeDataPageV1(header, pageValues, page.length, page.length, crc(page),
+                    Encoding.RLE_DICTIONARY);
+            out.writeBytes(header.toByteArray());
+            out.writeBytes(page);
+        }
+        long chunkSize = out.size() - dictionaryOffset;
+        long values = (long) pageValues * pageCount;
+        ColumnMetaData metaData = new ColumnMetaData(PhysicalType.INT64,
+                List.of(Encoding.PLAIN, Encoding.RLE, Encoding.RLE_DICTIONARY), FieldPath.of("b"),
+                CompressionCodec.UNCOMPRESSED, values, chunkSize, chunkSize, Map.of(), dataOffset, dictionaryOffset,
+                null, null, null, null, List.of(), null);
+        RowGroup rowGroup = new RowGroup(List.of(new ColumnChunk(metaData, null, null, null, null, null)), chunkSize, 1);
+
+        List<SchemaElement> schema = List.of(
+                new SchemaElement("r", null, null, null, 1, null, null, null, null, null),
+                new SchemaElement("b", PhysicalType.INT64, null, RepetitionType.REPEATED, null, null, null, null,
+                        null, null));
+        return finish(out, new FileMetaData(1, schema, 1, List.of(rowGroup), Map.of(), null, List.of()));
+    }
+
+    /// One RLE run of `count` copies of `value` at bit width 1: its count shifted left past the
+    /// run-kind bit as a ULEB128 varint, and the value in one byte.
+    private static void writeRun(ByteArrayOutputStream out, int count, int value) {
+        long header = (long) count << 1;
+        while ((header & ~0x7FL) != 0) {
+            out.write((int) ((header & 0x7F) | 0x80));
+            header >>>= 7;
+        }
+        out.write((int) header);
+        out.write(value);
+    }
+
+    /// A level section: its length as a 4-byte little-endian prefix, then its bytes.
+    private static void writeSection(ByteArrayOutputStream out, byte[] section) {
+        out.writeBytes(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(section.length).array());
+        out.writeBytes(section);
+    }
+
+    /// Writes the footer of `metaData`, its length and the closing magic after `out`'s pages.
+    private static byte[] finish(ByteArrayOutputStream out, FileMetaData metaData) {
         ThriftCompactWriter footer = new ThriftCompactWriter();
-        FileMetaDataWriter.write(footer, new FileMetaData(1, schema, (long) pageValues * rowGroups, groups, Map.of(),
-                null, List.of()));
+        FileMetaDataWriter.write(footer, metaData);
         byte[] footerBytes = footer.toByteArray();
         out.writeBytes(footerBytes);
         out.writeBytes(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN)
@@ -259,18 +326,11 @@ public final class RleExpansionFile {
         writer.writeFieldStop();
     }
 
-    /// Bit width 1, then one RLE run: its count shifted left past the run-kind bit as a ULEB128
-    /// varint, and the repeated id 0 in one byte.
+    /// Bit width 1, then one RLE run of id 0 ([#writeRun]).
     private static byte[] dataPageBody(int values) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.write(1);
-        long header = (long) values << 1;
-        while ((header & ~0x7FL) != 0) {
-            body.write((int) ((header & 0x7F) | 0x80));
-            header >>>= 7;
-        }
-        body.write((int) header);
-        body.write(0);
+        writeRun(body, values, 0);
         return body.toByteArray();
     }
 

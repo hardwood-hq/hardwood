@@ -13,6 +13,7 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.schema.ColumnSchema;
 
 /// A page's bytes, header and body as stored, with its header parsed, so that whoever parsed it to
@@ -47,6 +48,32 @@ public record DataPage(PageHeader header, int headerSize, ByteBuffer bytes) {
                     header.uncompressedPageSize(), header.dataPageHeaderV2().encoding());
             default -> 0;
         };
+    }
+
+    /// The values a data page's header declares.
+    ///
+    /// @throws IllegalStateException for a page that is not a data page
+    public int numValues() {
+        return switch (header.type()) {
+            case DATA_PAGE -> header.dataPageHeader().numValues();
+            case DATA_PAGE_V2 -> header.dataPageHeaderV2().numValues();
+            default -> throw notDataPage();
+        };
+    }
+
+    /// The encoding of a data page's values.
+    ///
+    /// @throws IllegalStateException for a page that is not a data page
+    public Encoding encoding() {
+        return switch (header.type()) {
+            case DATA_PAGE -> header.dataPageHeader().encoding();
+            case DATA_PAGE_V2 -> header.dataPageHeaderV2().encoding();
+            default -> throw notDataPage();
+        };
+    }
+
+    private IllegalStateException notDataPage() {
+        return new IllegalStateException("A " + header.type() + " page is not a data page");
     }
 
     /// The page's body as stored, after its header.
