@@ -12,9 +12,9 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.compression.CodecExpansion;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
-import dev.hardwood.internal.compression.UncompressedDecompressor;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
@@ -479,6 +479,8 @@ public class PageDecoder {
     private InPlacePage readV1InPlace(DataPageHeader header, ByteBuffer pageData, int limit, int compressedSize,
                                       PageDecodedEvent event, LevelScratch scratch, boolean ownBytes,
                                       DecodeBuffers buffers) {
+        CodecExpansion.requireWithinExpansion("Data page's uncompressed_page_size", columnMetaData.codec(),
+                pageData.remaining(), limit);
         boolean stored = columnMetaData.codec() == CompressionCodec.UNCOMPRESSED
                 && readsStoredValues(header.encoding(), pageData);
         if (!stored) {
@@ -488,7 +490,6 @@ public class PageDecoder {
         byte[] data;
         ByteBuffer body;
         if (stored) {
-            UncompressedDecompressor.requireStoredSize(pageData.remaining(), limit);
             data = null;
             body = pageData.order(ByteOrder.LITTLE_ENDIAN);
         }
@@ -549,6 +550,16 @@ public class PageDecoder {
                 && (!compressed || columnMetaData.codec() == CompressionCodec.UNCOMPRESSED);
         boolean storedInPlace = !valuesInPlace && !compressed && !ownBytes && pageData.hasArray();
         int valuesLength = uncompressedPageSize - repLength - defLength;
+        if (compressed) {
+            if (valuesLength < 0) {
+                throw new ParquetReadException("DATA_PAGE_V2 level sections of " + repLength + " and " + defLength
+                        + " bytes exceed its uncompressed_page_size of " + uncompressedPageSize);
+            }
+            // Only the value section is compressed; it is decompressed to the size the header leaves it
+            CodecExpansion.requireWithinExpansion(
+                    "DATA_PAGE_V2 value section's uncompressed size (uncompressed_page_size less its level sections)",
+                    columnMetaData.codec(), storedValuesLength, valuesLength);
+        }
         // The levels are copied; the values decompressed or copied, unless read where they lie
         long decodedBytes = valuesOffset
                 + (valuesInPlace || storedInPlace ? 0 : compressed ? Math.max(0, valuesLength) : storedValuesLength);
@@ -563,10 +574,8 @@ public class PageDecoder {
         int limit;
         ByteBuffer storedValues = null;
         if (valuesInPlace) {
-            if (compressed) {
-                // Flagged compressed in a chunk without a codec, as parquet-java writes it
-                UncompressedDecompressor.requireStoredSize(storedValuesLength, uncompressedPageSize - valuesOffset);
-            }
+            // Flagged compressed in a chunk without a codec, as parquet-java writes it, the values
+            // hold the size the header leaves them ([CodecExpansion#requireWithinExpansion])
             storedValues = pageData.slice(valuesOffset, storedValuesLength);
             data = null;
             offset = 0;

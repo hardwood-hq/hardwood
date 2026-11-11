@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.compression.CodecExpansion;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -274,6 +275,8 @@ public final class DictionaryParser {
             CrcValidator.assertCorrectCrc(header.crc(), compressedData);
         }
 
+        CodecExpansion.requireWithinExpansion("Dictionary page's uncompressed_page_size", metaData.codec(),
+                compressedSize, header.uncompressedPageSize());
         workingSet.dictionary(numValues, header.uncompressedPageSize());
         return decompress(compressedData, numValues, header.uncompressedPageSize(),
                 columnSchema, metaData.codec(), context, buffers);
