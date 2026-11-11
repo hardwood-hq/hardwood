@@ -91,7 +91,7 @@ final class RowGroupPlanner {
     private final RangeFetcher fetcher;
     private final PageTracker tracker;
     private final HeaderScanner scanner;
-    private final PagePlacer placer;
+    private final ColumnContext columns;
     private final BatchPlan batchPlan;
     private final ColumnSchema[] schemas;
     private final List<Unit> units = new ArrayList<>();
@@ -119,7 +119,7 @@ final class RowGroupPlanner {
     private long skip;
 
     RowGroupPlanner(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, PageTracker tracker, HeaderScanner scanner,
-                    PagePlacer placer, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
+                    ColumnContext columns, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
                     long budget, boolean filteredRead, long skip, long maskedRows) {
         this.budget = budget;
         this.filteredRead = filteredRead;
@@ -131,7 +131,7 @@ final class RowGroupPlanner {
         this.fetcher = fetcher;
         this.tracker = tracker;
         this.scanner = scanner;
-        this.placer = placer;
+        this.columns = columns;
         this.batchPlan = batchPlan;
         this.schemas = schemas;
     }
@@ -406,7 +406,7 @@ final class RowGroupPlanner {
             }
             catch (Exception e) {
                 // the row group's, at no column and no page
-                throw placer.placed(e, u.file().name(), u.rowGroup());
+                throw columns.withContext(e, u.file().name(), u.rowGroup());
             }
         }, plan -> {
             set(a.planned(plan, events));
@@ -453,13 +453,13 @@ final class RowGroupPlanner {
     /// batches `u` places; a charge over the read's limit fails the read at the unit.
     private void chargePreloaded(Unit.Batched u, int column) {
         try {
-            placer.chargeDictionary(column, u, () -> {
-                placer.workingSet(column).dictionary(u.plan().preloaded()[column]);
+            columns.chargeDictionary(column, u, () -> {
+                columns.workingSet(column).dictionary(u.plan().preloaded()[column]);
                 return null;
             });
         }
         catch (RuntimeException e) {
-            publisher.failAt(u.listing().base(), column, placer.placed(column, e, u.listing().file().name(),
+            publisher.failAt(u.listing().base(), column, columns.withContext(column, e, u.listing().file().name(),
                     u.listing().rowGroup(), ExceptionContext.UNKNOWN_PAGE));
         }
     }

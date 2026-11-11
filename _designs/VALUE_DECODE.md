@@ -71,7 +71,7 @@ Tests: `StoredValuesInPlaceTest`, `InPlaceReaderOracleTest` (direct-buffer forms
 
 The fixed-size-list fast path reads a page with `null` level arrays and gives it `fixedListK` ([NESTED_DECODE.md](NESTED_DECODE.md)).
 
-A reader failure is a `RuntimeException` on a decode job; the read's placement (`PagePlacer.placed`) classifies it into `ParquetReadException` and names the file, row group, column and page ([READ_PIPELINE.md](READ_PIPELINE.md#failures)).
+A reader failure is a `RuntimeException` on a decode job; the read (`ColumnContext.withContext`) classifies it into `ParquetReadException` and names the file, row group, column and page ([READ_PIPELINE.md](READ_PIPELINE.md#failures)).
 
 Tests: `CrcValidationTest`, `RleBitPackingHybridDecoderSingleRunTest`, `DecompressorCallerBufferTest`, `InPlaceReaderOracleTest`.
 

@@ -47,20 +47,23 @@ final class PageTracker {
     private final JobScheduler scheduler;
     private final RangeFetcher fetcher;
     private final BatchPublisher publisher;
-    private final PagePlacer placer;
+    private final CellWriter cells;
+    private final ColumnContext columns;
     private final HardwoodContextImpl context;
 
-    PageTracker(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, PagePlacer placer, HardwoodContextImpl context) {
+    PageTracker(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, CellWriter cells,
+                ColumnContext columns, HardwoodContextImpl context) {
         this.scheduler = scheduler;
         this.fetcher = fetcher;
         this.publisher = publisher;
-        this.placer = placer;
+        this.cells = cells;
+        this.columns = columns;
         this.context = context;
     }
 
     /// What the scans of a batched unit's chunks without an OffsetIndex read: its ranges and
     /// each column's chunk of the placement.
-    record ScanInput(List<RangeFetch> ranges, PagePlacer.ChunkPlacement[] placements) {
+    record ScanInput(List<RangeFetch> ranges, CellWriter.ChunkPlacement[] placements) {
     }
 
     /// Starts tracking the pages of `u`, once it is batched: places its planned pages,
@@ -71,7 +74,7 @@ final class PageTracker {
     /// [#handedToScans] lets go of it.
     ScanInput track(Unit.Batched u) {
         List<RangeFetch> ranges = new ArrayList<>();
-        PagePlacer.ChunkPlacement[] placements = new PagePlacer.ChunkPlacement[u.plan().pages().length];
+        CellWriter.ChunkPlacement[] placements = new CellWriter.ChunkPlacement[u.plan().pages().length];
         for (FileRange range : u.plan().ranges()) {
             RangeFetch r = RangeFetch.of(u.listing().file(), range);
             r.addReader();
@@ -82,7 +85,7 @@ final class PageTracker {
         Arrays.fill(keys, Long.MAX_VALUE);
         for (int c = 0; c < u.plan().pages().length; c++) {
             List<NeededPage> needed = u.plan().pages()[c];
-            PagePlacer.ChunkPlacement placement = placer.placement(c, u);
+            CellWriter.ChunkPlacement placement = cells.placement(c, u);
             placements[c] = placement;
             if (needed != null) {
                 placement.allAdded();
@@ -102,7 +105,7 @@ final class PageTracker {
                 addDictionaryPage(new TrackedPage(u, c, firstKey, NeededPage.dictionary(u.plan().dictionaryStart()[c], length),
                         overlapping(ranges, keys, firstKey, u.plan().dictionaryStart()[c], length), dictionary, false));
             }
-            reportPagesLocated(u.listing().file().name(), u.listing().rowGroup(), placer.schema(c), needed.size(),
+            reportPagesLocated(u.listing().file().name(), u.listing().rowGroup(), columns.schema(c), needed.size(),
                     RowGroupScannedEvent.STRATEGY_OFFSET_INDEX);
             for (NeededPage page : needed) {
                 int length = page.location().compressedPageSize();
@@ -152,17 +155,17 @@ final class PageTracker {
 
     /// Adds `tracked`, a data page of `chunk`, to its column's placement. A page decoded through
     /// levels decodes before it is placed, a flat page once placed too ([#placed]).
-    void add(PagePlacer.ChunkPlacement placement, TrackedPage tracked) {
+    void add(CellWriter.ChunkPlacement placement, TrackedPage tracked) {
         hold(tracked);
-        placer.add(tracked.column(), placement, tracked);
+        cells.add(tracked.column(), placement, tracked);
         decodeWhenReady(tracked);
     }
 
     /// Places the pages `column` can place, ending each flat page's placement, which its decode waits
     /// on; a page that fills no cell is done and never decodes.
     void placed(int column) {
-        for (TrackedPage tracked : placer.place(column)) {
-            if (placer.nested(column)) {
+        for (TrackedPage tracked : cells.place(column)) {
+            if (columns.nested(column)) {
                 continue;
             }
             if (tracked.task().segments().isEmpty()) {
@@ -206,7 +209,7 @@ final class PageTracker {
         else if (!dictionaryThere(tracked)) {
             awaitOrFail(tracked, tracked.dictionary().output());
         }
-        else if (tracked.data() && !placer.nested(tracked.column()) && !tracked.placement().ended()) {
+        else if (tracked.data() && !columns.nested(tracked.column()) && !tracked.placement().ended()) {
             awaitOrFail(tracked, tracked.placement());
         }
         else {
@@ -235,7 +238,7 @@ final class PageTracker {
             addDictionaryDecode(tracked);
             return;
         }
-        if (placer.nested(tracked.column())) {
+        if (columns.nested(tracked.column())) {
             addMeasure(tracked);
             return;
         }
@@ -243,7 +246,7 @@ final class PageTracker {
         // buffers beside the decode need forces
         scheduler.add(decodeJob(tracked, buffers -> {
             Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().output().value();
-            return placer.decode(tracked.column(), tracked.task(),
+            return cells.decode(tracked.column(), tracked.task(),
                     tracked.placeholder() > 0 ? null : tracked.bytes(), dictionary, buffers);
         }, completed -> {
             // its ranges are held by the batch of its last row until every column has published it,
@@ -258,14 +261,14 @@ final class PageTracker {
     /// Decodes and measures a page decoded through levels, which can then be placed.
     private void addMeasure(TrackedPage tracked) {
         scheduler.add(decodeJob(tracked, buffers -> {
-            NestedPageTask task = placer.nestedTask(tracked,
+            NestedPageTask task = cells.nestedTask(tracked,
                     tracked.placeholder() > 0 ? null : DataPage.parse(tracked.bytes()),
                     tracked.dictionary() == null ? null : tracked.dictionary().output().value());
             try {
                 task.decodeAndMeasure(buffers);
             }
             catch (RuntimeException e) {
-                throw placer.placed(tracked.column(), e, task);
+                throw columns.withContext(tracked.column(), e, task);
             }
             return task;
         }, task -> {
@@ -292,7 +295,7 @@ final class PageTracker {
     /// its bytes are parsed, and copied where the page straddles two ranges, under the read's lock.
     /// `0` for a page whose header does not parse: its decode fails on it.
     private long taskBytes(TrackedPage tracked) {
-        ColumnSchema schema = placer.schema(tracked.column());
+        ColumnSchema schema = columns.schema(tracked.column());
         if (tracked.placeholder() > 0) {
             return WorkingSet.Column.pageBuffers(schema, tracked.placeholder(), 0, Encoding.PLAIN);
         }
@@ -323,7 +326,7 @@ final class PageTracker {
                 return parseDictionary(tracked, buffers);
             }
             catch (Exception e) {
-                throw placer.placed(tracked.column(), e, tracked.unit().listing().file().name(),
+                throw columns.withContext(tracked.column(), e, tracked.unit().listing().file().name(),
                         tracked.unit().listing().rowGroup(), ExceptionContext.DICTIONARY_PAGE);
             }
         }, values -> {
@@ -346,9 +349,9 @@ final class PageTracker {
             throw new ParquetReadException("Malformed Parquet metadata: the dictionary page header declares "
                     + pageLength + " bytes but only " + region.remaining() + " bytes lie before the first data page");
         }
-        return placer.chargeDictionary(tracked.column(), tracked.unit(), () -> DictionaryParser.parsePage(page.header(), page.body(),
-                placer.schema(tracked.column()), tracked.unit().listing().chunks()[tracked.column()].metaData(), context,
-                placer.workingSet(tracked.column()), buffers));
+        return columns.chargeDictionary(tracked.column(), tracked.unit(), () -> DictionaryParser.parsePage(page.header(), page.body(),
+                columns.schema(tracked.column()), tracked.unit().listing().chunks()[tracked.column()].metaData(), context,
+                columns.workingSet(tracked.column()), buffers));
     }
 
     /// A page is done with its ranges; the last reader of each returns it.

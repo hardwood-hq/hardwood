@@ -15,7 +15,7 @@ import dev.hardwood.internal.reader.pipeline.PageTask;
 import dev.hardwood.internal.reader.plan.NeededPage;
 
 /// A page of a batched unit, from the start of its tracking until it is decoded: the page, the ranges its bytes
-/// lie in, its chunk's dictionary (`null` for a chunk without one), and, once [PagePlacer] has
+/// lie in, its chunk's dictionary (`null` for a chunk without one), and, once [CellWriter] has
 /// given them, its decoder and task and whether it is ready
 /// to be placed. A dictionary page (`data` false) produces its chunk's dictionary's values. Used
 /// under the read's lock.
@@ -90,7 +90,7 @@ final class TrackedPage {
         placeholder = rows;
     }
 
-    /// Its chunk's decoder, once [PagePlacer] has given it.
+    /// Its chunk's decoder, once [CellWriter] has given it.
     PageDecoder decoder() {
         return decoder;
     }
