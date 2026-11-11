@@ -153,6 +153,16 @@ public final class DataPages {
                              CompressionCodec codec, boolean compressed) {
         byte[] stored = compressed ? new CompressorFactory().getCompressor(codec).compress(values, 0, values.length)
                 : values;
+        return storedPageV2(encoding, numValues, numRows, repetitionLevels, definitionLevels, declaredDefinitionLength,
+                stored, repetitionLevels.length + definitionLevels.length + values.length, compressed);
+    }
+
+    /// A `DATA_PAGE_V2` of `numValues` values in `numRows` rows, its level sections and its value
+    /// section `stored` as given, whose header declares `uncompressedPageSize` and the value
+    /// section compressed when `compressed`.
+    static ByteBuffer storedPageV2(Encoding encoding, int numValues, int numRows, byte[] repetitionLevels,
+                                   byte[] definitionLevels, int declaredDefinitionLength, byte[] stored,
+                                   int uncompressedPageSize, boolean compressed) {
         byte[] body = concat(repetitionLevels, definitionLevels, stored);
         CRC32 crc = new CRC32();
         crc.update(body);
@@ -161,7 +171,7 @@ public final class DataPages {
         header.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
         header.writeI32(DATA_PAGE_V2);
         header.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
-        header.writeI32(repetitionLevels.length + definitionLevels.length + values.length);
+        header.writeI32(uncompressedPageSize);
         header.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
         header.writeI32(body.length);
         header.writeFieldBegin(4, ThriftCompactConstants.FieldType.I32);
