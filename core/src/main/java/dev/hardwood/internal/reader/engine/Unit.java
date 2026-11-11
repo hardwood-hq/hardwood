@@ -42,9 +42,9 @@ sealed interface Unit {
             List<RangeFetch> probed = new ArrayList<>();
             List<FileRange> missing = new ArrayList<>();
             String reason = "rg=" + listing.rowGroup() + " pruning";
+            ByteSource held = held(window.bloomFilters(), probed);
             ByteSource bytes = (offset, length) -> {
-                ByteBuffer found = RangeFetch.read(window.bloomFilters(), offset, length);
-                found = found != null ? found : RangeFetch.read(probed, offset, length);
+                ByteBuffer found = held.read(offset, length);
                 if (found == null) {
                     missing.add(new FileRange(offset, length, reason));
                 }
@@ -59,6 +59,14 @@ sealed interface Unit {
         }
     }
 
+    /// What a probe reads from: its window's Bloom filters, then the dictionary bytes it fetched.
+    private static ByteSource held(List<RangeFetch> bloomFilters, List<RangeFetch> probed) {
+        return (offset, length) -> {
+            ByteBuffer found = RangeFetch.read(bloomFilters, offset, length);
+            return found != null ? found : RangeFetch.read(probed, offset, length);
+        };
+    }
+
     /// Probing: its Bloom filters and dictionaries are probed, a pass at a time, from `bytes`. The
     /// probe outlives its passes and keeps reading the source it was first given, so the state
     /// accumulates in place: `probe` holds what the passes so far decided and decoded, `probed` the
@@ -70,6 +78,11 @@ sealed interface Unit {
         @Override
         public UnitListing listing() {
             return listed.listing();
+        }
+
+        /// The bytes its passes read, without recording what they lack.
+        ByteSource held() {
+            return Unit.held(listed.window().bloomFilters(), probed);
         }
 
         /// A pass lacked bytes, `more`, which the next reads once fetched.

@@ -14,10 +14,12 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /// The memory a context's reads hold by choice rather than because a file forces it, R: the
 /// requests a read ([dev.hardwood.internal.reader.engine.RowGroupIterator]) starts ahead of its
-/// consumer, and the footers a multi-file read reads ahead, each charged the tail it reads until
-/// the read is done with the file.
+/// consumer, the footers a multi-file read reads ahead, each charged the tail it reads until
+/// the read is done with the file, and the buffers of a decode above
+/// [dev.hardwood.internal.DecodeBuffers#RETAINED_BYTES] it runs beside its own task, a probe's
+/// dictionary parses included, charged while the decode or probe runs.
 ///
-/// Such a request or footer read starts only while it fits; one that does not fit is
+/// Such a request, footer read or decode starts only while it fits; one that does not fit is
 /// not started and is considered again on a later release, whose waiters run in registration order.
 /// Nothing waits for the buffer, so the reads of a context can share it: a read's own task, its
 /// demanded requests, its next unit and its next file are never charged here, and every

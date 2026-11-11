@@ -7,10 +7,12 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.ExceptionContext;
@@ -18,11 +20,16 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.fetch.FileRange;
+import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.pipeline.Cell;
 import dev.hardwood.internal.reader.pipeline.NestedPageTask;
 import dev.hardwood.internal.reader.plan.NeededPage;
+import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.jfr.RowGroupScannedEvent;
+import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
@@ -232,8 +239,9 @@ final class PageTracker {
             addMeasure(tracked);
             return;
         }
-        // its values are the read's working set's, which the decode charges, not R's
-        scheduler.add(new JobScheduler.Job<>(tracked.key(), 0, JobScheduler.Kind.DECODE, null, buffers -> {
+        // its values are the read's working set's, which the decode charges; R holds its task's
+        // buffers beside the decode need forces
+        scheduler.add(decodeJob(tracked, buffers -> {
             Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().output().value();
             return placer.decode(tracked.column(), tracked.task(),
                     tracked.placeholder() > 0 ? null : tracked.bytes(), dictionary, buffers);
@@ -249,7 +257,7 @@ final class PageTracker {
 
     /// Decodes and measures a page decoded through levels, which can then be placed.
     private void addMeasure(TrackedPage tracked) {
-        scheduler.add(new JobScheduler.Job<>(tracked.key(), 0, JobScheduler.Kind.DECODE, null, buffers -> {
+        scheduler.add(decodeJob(tracked, buffers -> {
             NestedPageTask task = placer.nestedTask(tracked,
                     tracked.placeholder() > 0 ? null : DataPage.parse(tracked.bytes()),
                     tracked.dictionary() == null ? null : tracked.dictionary().output().value());
@@ -267,6 +275,39 @@ final class PageTracker {
         }, t -> failed(tracked, t)));
     }
 
+    /// The job decoding `tracked`, charged its task's buffers where they exceed
+    /// [DecodeBuffers#RETAINED_BYTES] ([#taskBytes]): R holds them while it runs, unless need forces
+    /// it, so that a read decodes such pages beside the one its working set counts only within R.
+    /// A smaller task is not charged, as a context keeps that much per thread anyway.
+    private <T> JobScheduler.Job<T> decodeJob(TrackedPage tracked, JobScheduler.Work<T> work, Consumer<T> onValue,
+                                              Consumer<Throwable> onFailure) {
+        long bytes = taskBytes(tracked);
+        long cost = bytes > DecodeBuffers.RETAINED_BYTES ? bytes : 0;
+        return new JobScheduler.Job<>(tracked.key(), cost, JobScheduler.Kind.DECODE, cost > 0 ? new Charge() : null,
+                work, onValue, onFailure);
+    }
+
+    /// The buffers the task decoding `tracked` holds, from its header ([DataPage#taskBytes]), or a
+    /// null placeholder's levels. The header is read from a peek at the page's start, so that only
+    /// its bytes are parsed, and copied where the page straddles two ranges, under the read's lock.
+    /// `0` for a page whose header does not parse: its decode fails on it.
+    private long taskBytes(TrackedPage tracked) {
+        ColumnSchema schema = placer.schema(tracked.column());
+        if (tracked.placeholder() > 0) {
+            return WorkingSet.Column.pageBuffers(schema, tracked.placeholder(), 0, Encoding.PLAIN);
+        }
+        PageLocation location = tracked.page().location();
+        try {
+            Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
+                    (offset, length) -> RangeFetch.read(tracked.ranges(), offset, length), location.offset(),
+                    location.compressedPageSize(), PageFormatProbe.INITIAL_PEEK_SIZE, "");
+            return read.needsBytes() ? 0 : DataPage.taskBytes(read.value().header(), schema);
+        }
+        catch (IOException | RuntimeException e) {
+            return 0;
+        }
+    }
+
     /// `tracked`'s decode failed with `t`: the read fails at the page, which is done.
     private void failed(TrackedPage tracked, Throwable t) {
         publisher.failAt(tracked.key(), tracked.column(), t);
@@ -277,7 +318,7 @@ final class PageTracker {
     /// pages wait on.
     private void addDictionaryDecode(TrackedPage tracked) {
         Output<Dictionary> output = tracked.dictionary().output();
-        scheduler.add(new JobScheduler.Job<>(tracked.key(), 0, JobScheduler.Kind.DECODE, null, buffers -> {
+        scheduler.add(decodeJob(tracked, buffers -> {
             try {
                 return parseDictionary(tracked, buffers);
             }

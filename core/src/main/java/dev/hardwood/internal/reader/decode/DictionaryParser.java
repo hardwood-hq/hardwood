@@ -117,6 +117,22 @@ public final class DictionaryParser {
         return header.type() == PageType.DICTIONARY_PAGE ? header : null;
     }
 
+    /// As [#readPageHeader(InputFile, ColumnChunk, String)], over the bytes `bytes` holds, read from
+    /// the opening read [#readPage] makes: the header, `null` when the chunk's first page is not a
+    /// dictionary page, or the range it needs.
+    public static Parsed<PageHeader> readPageHeader(ByteSource bytes, ColumnChunk columnChunk, String messagePrefix)
+            throws IOException {
+        Extent extent = extent(columnChunk, messagePrefix);
+        int openingRead = Math.toIntExact(Math.min(extent.openingRead(), extent.availableBytes()));
+        Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(bytes, extent.start(),
+                extent.availableBytes(), openingRead, messagePrefix);
+        if (read.needsBytes()) {
+            return read.asNeed();
+        }
+        PageHeader header = read.value().header();
+        return Parsed.of(header.type() == PageType.DICTIONARY_PAGE ? header : null);
+    }
+
     /// Where a chunk's first page starts, how many bytes the chunk leaves it, and how much to read
     /// first to take in the whole of a dictionary page there.
     ///
