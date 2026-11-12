@@ -88,6 +88,7 @@ final class RowGroupPlanner {
 
     private final JobScheduler scheduler;
     private final BatchPublisher publisher;
+    private final ReadFailure readFailure;
     private final RangeFetcher fetcher;
     private final PageTracker tracker;
     private final HeaderScanner scanner;
@@ -118,8 +119,8 @@ final class RowGroupPlanner {
     private final boolean filteredRead;
     private long skip;
 
-    RowGroupPlanner(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, PageTracker tracker, HeaderScanner scanner,
-                    ColumnContext columns, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
+    RowGroupPlanner(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, ReadFailure readFailure,
+                    PageTracker tracker, HeaderScanner scanner, ColumnContext columns, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
                     long budget, boolean filteredRead, long skip, long maskedRows) {
         this.budget = budget;
         this.filteredRead = filteredRead;
@@ -128,6 +129,7 @@ final class RowGroupPlanner {
         this.pruning = pruning;
         this.scheduler = scheduler;
         this.publisher = publisher;
+        this.readFailure = readFailure;
         this.fetcher = fetcher;
         this.tracker = tracker;
         this.scanner = scanner;
@@ -265,7 +267,7 @@ final class RowGroupPlanner {
             then.run();
         }
         else if (missing.output().failure() != null) {
-            publisher.failAt(u.base(), missing.output().failure() instanceof IOException e ? new IOException(
+            readFailure.failAt(u.base(), missing.output().failure() instanceof IOException e ? new IOException(
                     ExceptionContext.filePrefix(u.file().name()) + "Failed to fetch metadata for row group "
                             + u.rowGroup(), e) : missing.output().failure());
         }
@@ -305,7 +307,7 @@ final class RowGroupPlanner {
             List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
             p.fetching(more);
             fetch(u, more, () -> probe(p));
-        }, t -> publisher.failAt(u.base(), t)));
+        }, t -> readFailure.failAt(u.base(), t)));
     }
 
     /// The buffers of the dictionary parses `p`'s next pass may run, from the headers of the
@@ -413,7 +415,7 @@ final class RowGroupPlanner {
             batchPlanned(index);
         }, t -> {
             fetcher.readersDone(index);
-            publisher.failAt(u.base(), t);
+            readFailure.failAt(u.base(), t);
         }));
     }
 
@@ -459,7 +461,7 @@ final class RowGroupPlanner {
             });
         }
         catch (RuntimeException e) {
-            publisher.failAt(u.listing().base(), column, columns.withContext(column, e, u.listing().file().name(),
+            readFailure.failAt(u.listing().base(), column, columns.withContext(column, e, u.listing().file().name(),
                     u.listing().rowGroup(), ExceptionContext.UNKNOWN_PAGE));
         }
     }
@@ -469,7 +471,7 @@ final class RowGroupPlanner {
     private void batchPlanned(List<RangeFetch> index) {
         fetcher.readersDone(index);
         while (nextBatched < units.size() && units.get(nextBatched) instanceof Unit.Planned p
-                && p.listing().base() < publisher.failedAt()) {
+                && p.listing().base() < readFailure.row()) {
             nextBatched++;
             takeBatches(p);
         }

@@ -126,6 +126,7 @@ final class CellWriter {
 
     private final JobScheduler scheduler;
     private final BatchPublisher publisher;
+    private final ReadFailure readFailure;
     private final ColumnContext columns;
     private final List<BatchExchange<?>> exchanges;
     private final NestedIndexMode indexMode;
@@ -141,12 +142,13 @@ final class CellWriter {
     /// per column, the last page it placed, which a shortfall at the read's end is placed with
     private final PageTask[] last;
 
-    CellWriter(JobScheduler scheduler, BatchPublisher publisher, ColumnContext columns, List<BatchExchange<?>> exchanges,
-               NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchCapacity,
+    CellWriter(JobScheduler scheduler, BatchPublisher publisher, ReadFailure readFailure, ColumnContext columns,
+               List<BatchExchange<?>> exchanges, NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchCapacity,
                DecompressorFactory decompressors, ColumnBatchMatcher[] filters) {
         this.scheduler = scheduler;
         this.filters = filters;
         this.publisher = publisher;
+        this.readFailure = readFailure;
         this.columns = columns;
         this.exchanges = exchanges;
         this.indexMode = indexMode;
@@ -265,7 +267,7 @@ final class CellWriter {
         catch (RuntimeException e) {
             // at the open cell, which is abandoned: the segments placed before it still fill theirs
             BatchCell<?> open = placers.get(column).abandonOpenCell();
-            publisher.failAt(open != null ? open.firstRow() : Math.max(tracked.key(), placers.get(column).nextRow()), column,
+            readFailure.failAt(open != null ? open.firstRow() : Math.max(tracked.key(), placers.get(column).nextRow()), column,
                     columns.withContext(column, e, task));
         }
         if (task instanceof NestedPageTask n && n.allSegmentsFilled()) {
@@ -289,7 +291,7 @@ final class CellWriter {
                 }
                 catch (RuntimeException e) {
                     BatchCell<?> abandoned = placers.get(c).abandonOpenCell();
-                    publisher.failAt(abandoned != null ? abandoned.firstRow() : endKey, c,
+                    readFailure.failAt(abandoned != null ? abandoned.firstRow() : endKey, c,
                             last[c] == null ? e : columns.withContext(c, e, last[c]));
                 }
             }
@@ -317,7 +319,7 @@ final class CellWriter {
     private void stop(int column, Throwable failure) {
         BatchCell<?> abandoned = placers.get(column).sealOpenCell(failure, columns.schema(column).fieldPath().toString());
         if (abandoned != null) {
-            publisher.failAt(abandoned.firstRow(), column, failure);
+            readFailure.failAt(abandoned.firstRow(), column, failure);
         }
     }
 
@@ -431,7 +433,7 @@ final class CellWriter {
         }, filled -> publisher.completed(column, cell), t -> {
             PageTask page = t instanceof SegmentFillException s ? s.page() : cell.lastPage();
             Throwable failure = t instanceof SegmentFillException s ? s.failure() : t;
-            publisher.failAt(key, column, page != null && failure instanceof Exception e ? columns.withContext(column, e, page) : failure);
+            readFailure.failAt(key, column, page != null && failure instanceof Exception e ? columns.withContext(column, e, page) : failure);
         }));
     }
 

@@ -54,12 +54,13 @@ import dev.hardwood.schema.FileSchema;
 /// - [CellWriter] writes each column's pages into the cells of the batch plan: places them in page
 ///   order, decodes and fills them, and completes the cells into batches.
 /// - [ColumnContext] gives every part each decoded column's schema, working set and failure context.
-/// - [BatchPublisher] publishes each column's batches in row order and places the read's failure.
+/// - [BatchPublisher] publishes each column's batches in row order, and its end or the read's failure.
 /// - [JobScheduler] decides which job starts next, by one priority within three bounds.
 /// - [ReadDriver] runs the jobs and applies their results under the read's one lock.
 ///
 /// A failure, of a footer, a file's listing, a row group's planning or a page, is placed at its
-/// row: each column publishes every batch before it and then ends with it.
+/// row in the read's one [ReadFailure], an item the parts report to; `reconcile()` settles it, and
+/// each column publishes every batch before it and then ends with it.
 ///
 /// A read with a row limit lists row groups until the limit is covered and truncates the pages past
 /// it; once every column has placed its last row, the read plans nothing more.
@@ -82,6 +83,7 @@ public final class ReadEngine implements Closeable {
     private RowGroupPlanner planner;
     private FooterReader footers;
     private CellWriter cells;
+    private final ReadFailure readFailure = new ReadFailure();
     private ResolvedPredicate filter;
     /// the read's row limit, `0` for none: under a filter it counts matching rows
     private long limit;
@@ -227,21 +229,21 @@ public final class ReadEngine implements Closeable {
                     ? BatchExchange.detachingNested(name, batchSize) : BatchExchange.detachingFlat(name, batchSize));
         }
         driver = new ReadDriver(context, readQueue, defaultFetchAheadBytes(CoalescingPolicy.maxSpanBytes()),
-                this::reconcile, t -> publisher.failAt(0, t));
+                this::reconcile, t -> readFailure.failAt(0, t));
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
-        publisher = new BatchPublisher(fetcher, started, batchSize, CAP_BUDGETS * budgetRows);
+        publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
         ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), files.footersSupplied());
-        cells = new CellWriter(scheduler, publisher, columns, started, indexMode, fixedListFastPathEnabled,
+        cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
                 batchSize, context.decompressorFactory(), filters);
-        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, cells, columns, context);
-        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, cells, columns, publisher,
+        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context);
+        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, cells, columns, readFailure,
                 pruning.prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
-        planner = new RowGroupPlanner(scheduler, fetcher, publisher, tracker, scanner, columns, new BatchPlan(batchSize,
-                BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()), filter != null,
-                limit == 0 ? 0 : limit + leadingRows()), schemas, filterOnly, pruning,
+        planner = new RowGroupPlanner(scheduler, fetcher, publisher, readFailure, tracker, scanner, columns,
+                new BatchPlan(batchSize, BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()),
+                        filter != null, limit == 0 ? 0 : limit + leadingRows()), schemas, filterOnly, pruning,
                 limit > 0 ? limit : Long.MAX_VALUE, filter != null, skip, masked ? leading : 0);
-        footers = new FooterReader(files, scheduler, planner, publisher, compatibility, filter, limit > 0,
+        footers = new FooterReader(files, scheduler, planner, readFailure, compatibility, filter, limit > 0,
                 driver::update);
         for (int c = 0; c < n; c++) {
             int column = c;
@@ -258,17 +260,18 @@ public final class ReadEngine implements Closeable {
     /// between units, publishes what can be, and says where the consumer stands; under the lock.
     private JobScheduler.Position reconcile() {
         long batchedTo = planner.batchedKey();
-        if (planner.allBatched() && !publisher.failed()) {
+        if (planner.allBatched() && !readFailure.failed()) {
             cells.end(planner.endKey());
         }
         // the failure stands once no work at or before its row is left; only then do the columns
         // seal or abandon their open cells at it, which can move it to a lower row
-        while (publisher.failed() && !publisher.settled()) {
-            publisher.settle(driver.scheduler().pendingThrough(publisher.failedAt()));
-            if (!publisher.settled()) {
+        while (readFailure.failed() && !readFailure.settled()) {
+            if (!readFailure.settle(driver.scheduler().pendingThrough(readFailure.row()))) {
                 break;
             }
-            cells.sealAt(publisher.failure(), publisher.failedAt(), batchedTo >= publisher.failedAt());
+            // every column meets it now
+            publisher.allPublishable();
+            cells.sealAt(readFailure.cause(), readFailure.row(), batchedTo >= readFailure.row());
         }
         publisher.publish(batchedTo, planner.allBatched());
         JobScheduler.Position at = publisher.position(batchedTo);

@@ -47,15 +47,17 @@ final class PageTracker {
     private final JobScheduler scheduler;
     private final RangeFetcher fetcher;
     private final BatchPublisher publisher;
+    private final ReadFailure readFailure;
     private final CellWriter cells;
     private final ColumnContext columns;
     private final HardwoodContextImpl context;
 
-    PageTracker(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, CellWriter cells,
-                ColumnContext columns, HardwoodContextImpl context) {
+    PageTracker(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, ReadFailure readFailure,
+                CellWriter cells, ColumnContext columns, HardwoodContextImpl context) {
         this.scheduler = scheduler;
         this.fetcher = fetcher;
         this.publisher = publisher;
+        this.readFailure = readFailure;
         this.cells = cells;
         this.columns = columns;
         this.context = context;
@@ -221,7 +223,7 @@ final class PageTracker {
     /// otherwise.
     private void awaitOrFail(TrackedPage tracked, Output<?> output) {
         if (output.failure() != null) {
-            publisher.failAt(tracked.key(), tracked.column(), output.failure());
+            readFailure.failAt(tracked.key(), tracked.column(), output.failure());
         }
         else {
             output.whenEnded(() -> decodeWhenReady(tracked));
@@ -313,7 +315,7 @@ final class PageTracker {
 
     /// `tracked`'s decode failed with `t`: the read fails at the page, which is done.
     private void failed(TrackedPage tracked, Throwable t) {
-        publisher.failAt(tracked.key(), tracked.column(), t);
+        readFailure.failAt(tracked.key(), tracked.column(), t);
         done(tracked);
     }
 

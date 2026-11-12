@@ -17,10 +17,8 @@ import dev.hardwood.internal.reader.pipeline.BatchCell;
 /// Keeps a read's batches in plan order and publishes them: it records where each column's
 /// placement opens its next cell, publishes each column's completed batches into its exchange in
 /// row order, holds the ranges a batch's pages were decoded from until every column has published
-/// it, and places the read's failure, which every column meets in place. A failure is placed at the
-/// first row the failed work served; the lowest placed wins, and a column meets it at the first
-/// batch whose rows reach it. An `Error` is met at every column's next batch. Used under the read's
-/// lock.
+/// it, and ends each column with the read's failure ([ReadFailure]) once settled, at the first batch
+/// whose rows reach the failure's row. Used under the read's lock.
 final class BatchPublisher {
 
     private final RangeFetcher fetcher;
@@ -37,18 +35,12 @@ final class BatchPublisher {
     private final BitSet publishable = new BitSet();
     /// the first batch some column has not published
     private int head;
-    private Throwable failure;
-    private long failedAt = Long.MAX_VALUE;
-    /// the column the failure was met in, `-1` for none: of two failures at one row, the lower
-    /// column's is the one a lockstep reader meets
-    private int failedColumn = -1;
-    /// whether no work that may fail at or before the failure's row is left: until then a lower
-    /// failure can still take its place, and no column meets it
-    private boolean settled;
+    private final ReadFailure readFailure;
 
-    BatchPublisher(RangeFetcher fetcher, List<BatchExchange<?>> exchanges, int batchRows,
+    BatchPublisher(RangeFetcher fetcher, ReadFailure readFailure, List<BatchExchange<?>> exchanges, int batchRows,
                long capRows) {
         this.fetcher = fetcher;
+        this.readFailure = readFailure;
         this.exchanges = exchanges;
         this.batchRows = batchRows;
         this.capRows = capRows;
@@ -135,51 +127,6 @@ final class BatchPublisher {
         publishable.set(0, published.length);
     }
 
-    /// The read fails at `key`, the first row the failed work served: the one place a failure is
-    /// placed.
-    void failAt(long key, Throwable t) {
-        failAt(key, -1, t);
-    }
-
-    /// The read fails at `key`, met in `column`; at once for an `Error`, which is the JVM's and no
-    /// row's.
-    void failAt(long key, int column, Throwable t) {
-        if (t instanceof Error) {
-            key = Long.MIN_VALUE;
-        }
-        if (key < failedAt || key == failedAt && column < failedColumn) {
-            failedAt = key;
-            failedColumn = column;
-            failure = t;
-            settled = false;
-        }
-    }
-
-    /// Settles the failure once `pending` says no work at or before its row is left, so that every
-    /// column meets it.
-    void settle(boolean pending) {
-        if (failure != null && !settled && !pending) {
-            settled = true;
-            allPublishable();
-        }
-    }
-
-    boolean settled() {
-        return settled;
-    }
-
-    boolean failed() {
-        return failure != null;
-    }
-
-    long failedAt() {
-        return failedAt;
-    }
-
-    Throwable failure() {
-        return failure;
-    }
-
     /// Publishes each column's completed batches in order as far as its exchange takes them,
     /// then its failure once it reaches it, or its end once `allBatched` and every batch is
     /// published. `batchedTo` is the key below which every batch has been added.
@@ -195,11 +142,11 @@ final class BatchPublisher {
     private void publish(int c, long batchedTo, boolean allBatched) {
         BatchExchange<Object> exchange = cast(exchanges.get(c));
         for (int i = published[c]; ; i = ++published[c]) {
-            if (i == batches.size() ? batchedTo >= failedAt : batches.get(i).endKey() > failedAt) {
-                if (!settled) {
+            if (i == batches.size() ? batchedTo >= readFailure.row() : batches.get(i).endKey() > readFailure.row()) {
+                if (!readFailure.settled()) {
                     return;
                 }
-                exchange.signalError(failure);
+                exchange.signalError(readFailure.cause());
                 return;
             }
             if (i == batches.size()) {
@@ -253,7 +200,7 @@ final class BatchPublisher {
                 need = Math.max(need, batchedTo + 1);
             }
         }
-        return new JobScheduler.Position(need, firstUnpublished(batchedTo) + capRows, failedAt);
+        return new JobScheduler.Position(need, firstUnpublished(batchedTo) + capRows, readFailure.row());
     }
 
     /// The next batch of the column furthest ahead, `-1` where every column has ended.
