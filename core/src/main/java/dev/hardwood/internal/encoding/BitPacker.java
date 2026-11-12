@@ -19,8 +19,8 @@ import java.nio.ByteOrder;
 /// [DeltaBinaryPackedDecoder] and [AlpDecoder] unpack. A group whose bits end inside a byte
 /// writes that byte too, its bits above the group's left zero.
 ///
-/// Values collect in a `long` that is stored whole, little-endian, each time it fills; only the
-/// last fewer than eight bytes are written one at a time.
+/// Values collect in a `long` that is stored whole, little-endian, each time it fills; the bytes
+/// left at the end, at most eight, are written one at a time.
 public final class BitPacker {
 
     private static final VarHandle LONG_LE =
