@@ -26,6 +26,7 @@ import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.PreparedRead;
 import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.footer.FileFooter;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
@@ -111,13 +112,26 @@ public class ParquetFileReader implements Closeable {
     private final boolean metadataFilteringEnabled;
     private final boolean ownsContext;
     private final boolean ownsInputFiles;
-    /// Child readers that have not been closed yet, keyed by the engine each reads
-    /// through, so [#close()] can close a child the caller never closed. The value is
-    /// the engine itself until the child around it is built. Each engine drops its
-    /// entry once it is closed, so a long-lived reader does not accumulate the work
-    /// lists of finished children. Concurrent because a child reader may be closed
-    /// from another thread.
-    private final Map<Closeable, Closeable> openChildren = new ConcurrentHashMap<>();
+    /// Child readers that have not been closed yet, keyed by the read each reads through,
+    /// so [#close()] can close a child the caller never closed. A read is tracked from the
+    /// start of its engine, with the engine as the value until the child around it is
+    /// built; a read whose build fails before it starts holds nothing and is never
+    /// tracked. Each engine drops its read's entry once it is closed, so a long-lived
+    /// reader does not accumulate the work lists of finished children. Concurrent
+    /// because a child reader may be closed from another thread.
+    private final Map<PreparedRead, Closeable> openChildren = new ConcurrentHashMap<>();
+    /// Tracks each read's engine in [#openChildren] from its start until it closes.
+    private final PreparedRead.Tracking tracking = new PreparedRead.Tracking() {
+        @Override
+        public void started(PreparedRead read, ReadEngine engine) {
+            openChildren.put(read, engine);
+        }
+
+        @Override
+        public void closed(PreparedRead read) {
+            openChildren.remove(read);
+        }
+    };
     /// Held shared for the whole of each child build and exclusively by [#close()], so a
     /// close waits for the builds under way before it closes anything, and a build that
     /// finishes after a close began sees `closed` set. See [#buildChild].
@@ -507,10 +521,9 @@ public class ParquetFileReader implements Closeable {
         long skip = Math.max(0, rowsInSubset - tailRows);
 
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
-        ReadEngine engine = trackedEngine();
-        engine.initialize(schema, subset, ReadProjection.of(projectedSchema), null, true, 0, skip);
-        RowReader reader = createRowReader(engine, schema, ReadProjection.of(projectedSchema), null, 0, subset);
-        return discardLeadingRows(reader, engine.leadingRows());
+        PreparedRead read = prepare(subset, ReadProjection.of(projectedSchema), null, true, 0, skip);
+        RowReader reader = createRowReader(read, schema, ReadProjection.of(projectedSchema), null, 0, subset);
+        return discardLeadingRows(reader, read.leadingRows());
     }
 
     /// Resolves a user-facing predicate against the reference schema, or returns `null`
@@ -553,31 +566,30 @@ public class ParquetFileReader implements Closeable {
                 : ReadProjection.withPredicateColumns(schema, ColumnRequests.of(projection),
                         SelectionEngine.predicateColumns(resolved), true);
 
-        ReadEngine engine = trackedEngine();
-        engine.initialize(schema, firstFileRowGroups, readProjection, resolved, metadataFilteringEnabled, maxRows,
+        PreparedRead read = prepare(firstFileRowGroups, readProjection, resolved, metadataFilteringEnabled, maxRows,
                 physicalSkip);
         // The rows before the skip's end in the row group it lands in, where the read cannot mask
         // them out: the read returns them, counted against its limit, and the reader drops them.
         // None for a read without a skip or with a filter, whose skip counts matching rows.
-        RowReader reader = createRowReader(engine, schema, readProjection, resolved, maxRows, firstFileRowGroups);
-        return discardLeadingRows(reader, engine.leadingRows());
+        RowReader reader = createRowReader(read, schema, readProjection, resolved, maxRows, firstFileRowGroups);
+        return discardLeadingRows(reader, read.leadingRows());
     }
 
-    /// Creates a [RowReader] over `engine`'s read.
+    /// Creates a [RowReader] over `read`.
     ///
     /// Selects [FlatRowReader] when [#isFlatProjection] holds for the decoded columns and the filter,
     /// and [NestedRowReader] otherwise. Columns the predicate adds and the caller did
     /// not project count toward that choice. Either reader evaluates a filter per batch
     /// by the batch matchers or per record in the reader, by the predicate's shape.
     ///
-    /// @param engine the initialized read
+    /// @param read the prepared read
     /// @param schema file schema
     /// @param projection the exposed and decoded columns
     /// @param filter resolved predicate, or `null` for no filtering
     /// @param maxRows maximum rows (0 = unlimited)
     /// @param rowGroups first-file row groups, from which [#resolveBatchSize] derives the list
     ///        fan-out and the bound on the rows the read can produce
-    private RowReader createRowReader(ReadEngine engine, FileSchema schema, ReadProjection projection,
+    private RowReader createRowReader(PreparedRead read, FileSchema schema, ReadProjection projection,
                                       ResolvedPredicate filter, long maxRows, List<RowGroup> rowGroups)
             throws IOException {
         // Both readers size their batches through the one funnel the column readers use, so a
@@ -585,10 +597,10 @@ public class ParquetFileReader implements Closeable {
         int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
         long budgetRows = readAheadBudgetRows(projection.decoded(), rowGroups);
         RowReader reader = isFlatProjection(schema, projection.decoded(), filter)
-                ? FlatRowReader.create(engine, schema, projection, context, filter, maxRows, batchSize, budgetRows)
-                : NestedRowReader.create(engine, schema, projection, context, fixedListFastPathEnabled, filter,
+                ? FlatRowReader.create(read, schema, projection, context, filter, maxRows, batchSize, budgetRows)
+                : NestedRowReader.create(read, schema, projection, context, fixedListFastPathEnabled, filter,
                         maxRows, batchSize, budgetRows);
-        return trackedChild(engine, reader);
+        return trackedChild(read, reader);
     }
 
     /// Whether [FlatRowReader] can read `decoded` under `filter`.
@@ -731,39 +743,38 @@ public class ParquetFileReader implements Closeable {
     private ColumnRead openRead(ReadProjection projection, ResolvedPredicate resolved,
                                       List<RowGroup> rowGroups, NestedLevelComputer.Layers[] layers, int batchSize)
             throws IOException {
-        ReadEngine engine = trackedEngine();
-        engine.initialize(schema, rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled, 0, 0);
+        PreparedRead read = prepare(rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled, 0, 0);
         ProjectedSchema decoded = projection.decoded();
-        ColumnScan scan = trackedChild(engine, ColumnScan.open(engine, fixedListFastPathEnabled, schema, layers,
+        ColumnScan scan = trackedChild(read, ColumnScan.open(read, fixedListFastPathEnabled, schema, layers,
                 projection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
                 readAheadBudgetRows(decoded, rowGroups)));
         return new ColumnRead(scan, projection.payload(), layers);
     }
 
-    /// Engines still tracked for teardown by [#close()]. Visible for testing.
+    /// Reads still tracked for teardown by [#close()]. Visible for testing.
     int trackedEngineCount() {
         return openChildren.size();
     }
 
     /// Replaces each tracked child with what `wrapper` makes of it. Visible for testing.
     void wrapTrackedChildren(UnaryOperator<Closeable> wrapper) {
-        openChildren.replaceAll((engine, child) -> wrapper.apply(child));
+        openChildren.replaceAll((read, child) -> wrapper.apply(child));
     }
 
-    /// Creates a [ReadEngine] read over this reader's files and tracks it until it is closed. See
-    /// [#openChildren].
-    private ReadEngine trackedEngine() {
-        ReadEngine engine = new ReadEngine(fileMetadataCache, context, openChildren::remove);
-        openChildren.put(engine, engine);
-        return engine;
+    /// Prepares a read over this reader's files, whose engine is tracked from its start until it
+    /// closes. See [#openChildren] and [PreparedRead#prepare] for the parameters.
+    private PreparedRead prepare(List<RowGroup> rowGroups, ReadProjection projection, ResolvedPredicate filter,
+                                 boolean metadataFiltering, long limit, long skip) throws IOException {
+        return PreparedRead.prepare(fileMetadataCache, context, tracking, schema, rowGroups, projection, filter,
+                metadataFiltering, limit, skip);
     }
 
-    /// Records `child` as what [#close()] closes in place of `engine`, whose reader it is.
-    /// A child already closed has dropped its engine's entry and is not recorded again.
+    /// Records `child` as what [#close()] closes in place of the engine of `read`, whose reader it
+    /// is. A child already closed has dropped its read's entry and is not recorded again.
     /// When a close began while the child was being built, closes the child and fails.
     ///
     /// @throws IllegalStateException if this reader is closed
-    private <C extends Closeable> C trackedChild(Closeable engine, C child) throws IOException {
+    private <C extends Closeable> C trackedChild(PreparedRead read, C child) throws IOException {
         if (closed) {
             IllegalStateException failure = closedFailure();
             try {
@@ -774,7 +785,7 @@ public class ParquetFileReader implements Closeable {
             }
             throw failure;
         }
-        openChildren.replace(engine, child);
+        openChildren.replace(read, child);
         return child;
     }
 

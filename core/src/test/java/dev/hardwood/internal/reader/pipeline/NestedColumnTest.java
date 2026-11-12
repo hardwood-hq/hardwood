@@ -36,6 +36,7 @@ import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.decode.ChunkPages;
 import dev.hardwood.internal.reader.decode.PageInfo;
 import dev.hardwood.internal.reader.decode.ReferencePageDecoder;
+import dev.hardwood.internal.reader.engine.PreparedRead;
 import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.plan.ReadEngines;
@@ -224,11 +225,11 @@ class NestedColumnTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             InputFile inputFile = InputFile.of(file);
             inputFile.open();
-            try (ReadEngine engine = ReadEngines.initialized(List.of(inputFile), context,
-                    ignored -> ReadProjection.of(decoded), null, maxRows)) {
-                BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
-                engine.start(decoded, List.of(layers), mode, true, batchSize, batchSize,
-                        List.of(exchange), null);
+            BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
+            PreparedRead prepared = ReadEngines.prepared(List.of(inputFile), context,
+                    ignored -> ReadProjection.of(decoded), null, maxRows);
+            try (ReadEngine engine = prepared.start(decoded, List.of(layers), mode, true, batchSize, batchSize,
+                    List.of(exchange), null)) {
                 List<NestedBatch> batches = new ArrayList<>();
                 NestedBatch batch;
                 while ((batch = exchange.poll()) != null && batch.recordCount > 0) {

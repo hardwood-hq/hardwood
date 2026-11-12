@@ -59,14 +59,13 @@ class RowCapRetentionTest {
         // pieces of 16 KiB, so that the one chunk is many requests
         System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, "16384");
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(file()));
+        BatchExchange<?> exchange = BatchExchange.detachingFlat("v", BATCH_SIZE);
+        List<NestedLevelComputer.Layers> layers = new ArrayList<>();
+        layers.add(null);
         try (HardwoodContextImpl context = HardwoodContextImpl.create(2);
-             ReadEngine engine = ReadEngines.initialized(List.of(file), context, ColumnProjection.all(),
-                     FilterPredicate.gtEq("v", 0L), 10)) {
-            BatchExchange<?> exchange = BatchExchange.detachingFlat("v", BATCH_SIZE);
-            List<NestedLevelComputer.Layers> layers = new ArrayList<>();
-            layers.add(null);
-            engine.start(ProjectedSchema.create(SCHEMA, ColumnProjection.all()), layers, NestedIndexMode.ALL_ITEMS,
-                    false, BATCH_SIZE, BATCH_SIZE, List.of(exchange), null);
+             ReadEngine engine = ReadEngines.prepared(List.of(file), context, ColumnProjection.all(),
+                     FilterPredicate.gtEq("v", 0L), 10).start(ProjectedSchema.create(SCHEMA, ColumnProjection.all()),
+                     layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, List.of(exchange), null)) {
             long rows = 0;
             Object batch;
             while ((batch = exchange.poll()) != null && ((BatchExchange.Batch) batch).recordCount > 0) {

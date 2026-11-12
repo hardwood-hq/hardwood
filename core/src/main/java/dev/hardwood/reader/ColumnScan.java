@@ -22,6 +22,7 @@ import dev.hardwood.internal.reader.batch.LeafCompaction;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.PreparedRead;
 import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.row.CloseClaim;
 import dev.hardwood.internal.reader.row.RecordFilterTally;
@@ -76,27 +77,22 @@ final class ColumnScan implements Closeable {
     private static SelectionEngine createSelectionEngine(FileSchema schema, ProjectedSchema decoded,
                                                          ResolvedPredicate filter, CompiledBatchFilter compiled,
                                                          ColumnCursor[] cursors, int batchSize,
-                                                         ReadEngine read) {
+                                                         PreparedRead read, ReadEngine engine) {
         try {
             return SelectionEngine.create(schema, decoded, filter, compiled, cursors, batchSize);
         }
         catch (RuntimeException e) {
             RuntimeException placed = ExceptionContext.addFileContext(read.referenceFileName(), e);
-            try {
-                read.close();
-            }
-            catch (RuntimeException | Error closeFailure) {
-                placed.addSuppressed(closeFailure);
-            }
+            engine.closeAfter(placed);
             throw placed;
         }
     }
 
-    /// A scan over every decoded column of `projection`, driven by `read`. With a `filter`, the
+    /// A scan over every decoded column of `projection`, driven by the engine `read` starts. With a `filter`, the
     /// filter-only columns past the payload carry the predicate and are decoded to evaluate it; the
     /// payload columns are compacted to the matching records. `layers` holds the layers of every
     /// column of `schema`, indexed by column index.
-    static ColumnScan open(ReadEngine read, boolean fixedListFastPathEnabled, FileSchema schema,
+    static ColumnScan open(PreparedRead read, boolean fixedListFastPathEnabled, FileSchema schema,
                                  NestedLevelComputer.Layers[] layers, ReadProjection projection,
                                  ResolvedPredicate filter, int batchSize, long budgetRows) {
         NestedIndexMode indexMode = filter == null
@@ -110,10 +106,11 @@ final class ColumnScan implements Closeable {
             nestedLayers.add(ColumnCursor.isNested(columnLayers, column) ? columnLayers : null);
         }
         CompiledBatchFilter compiled = filter == null ? null : SelectionEngine.compile(schema, decoded, filter);
-        List<BatchExchange<?>> exchanges = compiled == null
+        ReadEngine engine = compiled == null
                 ? read.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled, batchSize, budgetRows)
                 : read.start(decoded, nestedLayers, indexMode, fixedListFastPathEnabled, batchSize, budgetRows,
                         exchanges(schema, decoded, nestedLayers, compiled, batchSize), compiled.columnMatchers());
+        List<BatchExchange<?>> exchanges = engine.exchanges();
         ColumnCursor[] cursors = new ColumnCursor[exchanges.size()];
         for (int i = 0; i < cursors.length; i++) {
             cursors[i] = ColumnCursor.of(schema.getColumn(decoded.toOriginalIndex(i)), exchanges.get(i),
@@ -121,8 +118,8 @@ final class ColumnScan implements Closeable {
         }
         SelectionEngine selection = filter == null
                 ? null
-                : createSelectionEngine(schema, decoded, filter, compiled, cursors, batchSize, read);
-        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, read);
+                : createSelectionEngine(schema, decoded, filter, compiled, cursors, batchSize, read, engine);
+        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, engine);
     }
 
     /// The detaching exchange of each decoded column, in decoded order, for a read whose filter

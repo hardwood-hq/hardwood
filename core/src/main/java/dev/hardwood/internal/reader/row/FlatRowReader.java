@@ -32,6 +32,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.PreparedRead;
 import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.plan.BatchSizing;
 import dev.hardwood.internal.schema.AnnotationKind;
@@ -202,14 +203,14 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// The read this reader consumes. No column reader owns it — they all draw from the one read —
     /// so this reader releases it, which is also what stops the owning
     /// [dev.hardwood.reader.ParquetFileReader] tracking it.
-    private final ReadEngine read;
+    private final ReadEngine engine;
 
     private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges,
                          FileSchema fileSchema, ProjectedSchema payload, FlatStructs structs,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
                          RowMatcher recordMatcher, PredicateView predicateView, RecordFilterTally tally,
-                         ReadEngine read) {
-        this.read = read;
+                         ReadEngine engine) {
+        this.engine = engine;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
         this.predicateView = predicateView;
@@ -272,7 +273,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// matchers, per record otherwise — which is decided by the predicate's shape alone, never by
     /// what a file holds.
     ///
-    /// @param engine the read, initialized
+    /// @param read the prepared read, which this starts
     /// @param schema the file schema
     /// @param projection the exposed and decoded columns
     /// @param context the hardwood context
@@ -286,7 +287,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// @param budgetRows the rows of the read's batch byte budget, which bound its read-ahead
     ///                   ([BatchSizing#readAheadBudgetRows])
     /// @return a [FlatRowReader]
-    public static RowReader create(ReadEngine engine,
+    public static RowReader create(PreparedRead read,
                                    FileSchema schema,
                                    ReadProjection projection,
                                    HardwoodContextImpl context,
@@ -372,19 +373,25 @@ public final class FlatRowReader implements FileAwareRowReader {
             buffers[i] = buffer;
         }
         List<NestedLevelComputer.Layers> flat = Collections.nCopies(buffers.length, null);
-        engine.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, batchSize, budgetRows,
+        ReadEngine engine = read.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, batchSize, budgetRows,
                 new ArrayList<>(Arrays.asList(buffers)), columnFilters);
+        // a build that fails once the read has started, its first batch's included, closes the read
+        try {
+            // The merger *is* the batch-matcher path in the reader: present exactly when the
+            // predicate compiled to one, absent when the record matcher takes over.
+            BatchMatchMerger matchMerger = batchMatchers
+                    ? new BatchMatchMerger(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
+                    : null;
 
-        // The merger *is* the batch-matcher path in the reader: present exactly when the
-        // predicate compiled to one, absent when the record matcher takes over.
-        BatchMatchMerger matchMerger = batchMatchers
-                ? new BatchMatchMerger(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
-                : null;
-
-        FlatRowReader reader = new FlatRowReader(buffers, schema, projection.payload(), structs,
-                matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, engine);
-        reader.initialize();
-        return reader;
+            FlatRowReader reader = new FlatRowReader(buffers, schema, projection.payload(), structs,
+                    matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, engine);
+            reader.initialize();
+            return reader;
+        }
+        catch (IOException | RuntimeException | Error e) {
+            engine.closeAfter(e);
+            throw e;
+        }
     }
 
     // ==================== Iteration ====================
@@ -1187,12 +1194,12 @@ public final class FlatRowReader implements FileAwareRowReader {
         // run its close body again, so skipping the release would leave the work list
         // reachable for the parent reader's whole lifetime. A failure to release is
         // suppressed beneath the original.
-        try (read) {
+        try (engine) {
             if (tally != null) {
                 tally.close();
             }
             // Stops the read's columns and waits for its jobs before their holders are recycled
-            read.close();
+            engine.close();
             for (int i = 0; i < columnCount; i++) {
                 if (previousBatches[i] != null) {
                     exchanges[i].recycle(previousBatches[i]);
