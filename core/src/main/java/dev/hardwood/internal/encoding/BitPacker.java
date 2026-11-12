@@ -7,35 +7,33 @@
  */
 package dev.hardwood.internal.encoding;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
+
 /// Packs fixed-width values LSB-first, the bit layout shared by the RLE/bit-packing hybrid's
 /// eight-value groups, DELTA_BINARY_PACKED's 32-value miniblocks and ALP's vectors.
 ///
 /// Value `i` of a group occupies bits `[i·bitWidth, (i+1)·bitWidth)` counted from the least
 /// significant bit of the first byte, which is what [RleBitPackingHybridDecoder],
-/// [DeltaBinaryPackedDecoder] and [AlpDecoder] unpack. Every caller packs a whole number of
-/// bytes, so no caller has a partial trailing byte to carry: eight values and 32 values at any
-/// width are each a multiple of eight bits, and [AlpEncoder] pads a short last vector with zeros
-/// to a multiple of eight values, keeping only the bytes the format counts.
+/// [DeltaBinaryPackedDecoder] and [AlpDecoder] unpack. A group whose bits end inside a byte
+/// writes that byte too, its bits above the group's left zero.
+///
+/// Values collect in a `long` that is stored whole, little-endian, each time it fills; only the
+/// last fewer than eight bytes are written one at a time.
 public final class BitPacker {
+
+    private static final VarHandle LONG_LE =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
 
     private BitPacker() {
     }
 
-    /// Rejects a group this packer cannot write whole.
-    ///
-    /// Only whole bytes are flushed, so a group whose bits do not divide by eight would leave up
-    /// to seven of them in the accumulator: the packed values would be short by a byte and
-    /// unreadable, with nothing to say so. Every caller packs a multiple of eight bits at every
-    /// width — that is a property of their group sizes, not of this method — so the check costs
-    /// nothing and turns a future caller's silent truncation into a failure at the call.
-    private static void checkGroup(int count, int bitWidth, int maxBitWidth) {
+    /// Rejects a width the value type cannot hold.
+    private static void checkWidth(int bitWidth, int maxBitWidth) {
         if (bitWidth < 0 || bitWidth > maxBitWidth) {
             throw new IllegalArgumentException(
                     "bitWidth must be between 0 and " + maxBitWidth + " but was " + bitWidth);
-        }
-        if ((long) count * bitWidth % Byte.SIZE != 0) {
-            throw new IllegalArgumentException("Packing " + count + " values at " + bitWidth
-                    + " bits does not fill a whole number of bytes; this packer writes whole bytes only");
         }
     }
 
@@ -50,10 +48,6 @@ public final class BitPacker {
 
     /// Packs `count` `int` values into `out`, starting at `outOffset`.
     ///
-    /// A width of at most 32 keeps the whole of one value plus the at most seven bits carried
-    /// over from the last inside a `long`, so this needs none of the boundary handling the
-    /// `long` form does.
-    ///
     /// @param values the values to pack
     /// @param offset index of the first value
     /// @param count how many values to pack
@@ -62,7 +56,7 @@ public final class BitPacker {
     /// @param outOffset where to write the first byte
     /// @return the number of bytes written
     public static int pack(int[] values, int offset, int count, int bitWidth, byte[] out, int outOffset) {
-        checkGroup(count, bitWidth, Integer.SIZE);
+        checkWidth(bitWidth, Integer.SIZE);
         if (bitWidth == 0) {
             return 0;
         }
@@ -71,24 +65,23 @@ public final class BitPacker {
         int bits = 0;
         int pos = outOffset;
         for (int i = 0; i < count; i++) {
-            accumulator |= (values[offset + i] & mask) << bits;
+            long value = values[offset + i] & mask;
+            accumulator |= value << bits;
             bits += bitWidth;
-            while (bits >= 8) {
-                out[pos++] = (byte) accumulator;
-                accumulator >>>= 8;
-                bits -= 8;
+            if (bits >= Long.SIZE) {
+                LONG_LE.set(out, pos, accumulator);
+                pos += Long.BYTES;
+                bits -= Long.SIZE;
+                accumulator = carry(value, bitWidth, bits);
             }
         }
-        return pos - outOffset;
+        return writeTail(accumulator, bits, out, pos) - outOffset;
     }
 
     /// Packs `count` `long` values into `out`, starting at `outOffset`.
     ///
-    /// Widths above 57 can carry more of a value than the accumulator has room for once the
-    /// leftover bits of the previous value are in it, so a value that does not fit is split: the
-    /// low bits complete the accumulator, which is flushed whole, and the rest starts the next
-    /// one. An `INT64` column whose deltas span the type reaches width 64, which is why this
-    /// exists rather than the `int` form serving both.
+    /// An `INT64` column whose deltas span the type reaches width 64, which is why this exists
+    /// rather than the `int` form serving both.
     ///
     /// @param values the values to pack
     /// @param offset index of the first value
@@ -98,7 +91,7 @@ public final class BitPacker {
     /// @param outOffset where to write the first byte
     /// @return the number of bytes written
     public static int pack(long[] values, int offset, int count, int bitWidth, byte[] out, int outOffset) {
-        checkGroup(count, bitWidth, Long.SIZE);
+        checkWidth(bitWidth, Long.SIZE);
         if (bitWidth == 0) {
             return 0;
         }
@@ -108,27 +101,35 @@ public final class BitPacker {
         int pos = outOffset;
         for (int i = 0; i < count; i++) {
             long value = values[offset + i] & mask;
-            // Java discards the bits shifted past bit 63, so this places exactly the low
-            // `room` bits of the value whether or not the whole of it fits.
             accumulator |= value << bits;
-            int room = 64 - bits;
-            if (bitWidth > room) {
-                for (int b = 0; b < Long.BYTES; b++) {
-                    out[pos++] = (byte) accumulator;
-                    accumulator >>>= 8;
-                }
-                accumulator = value >>> room;
-                bits = bitWidth - room;
-            }
-            else {
-                bits += bitWidth;
-            }
-            while (bits >= 8) {
-                out[pos++] = (byte) accumulator;
-                accumulator >>>= 8;
-                bits -= 8;
+            bits += bitWidth;
+            if (bits >= Long.SIZE) {
+                LONG_LE.set(out, pos, accumulator);
+                pos += Long.BYTES;
+                bits -= Long.SIZE;
+                accumulator = carry(value, bitWidth, bits);
             }
         }
-        return pos - outOffset;
+        return writeTail(accumulator, bits, out, pos) - outOffset;
+    }
+
+    /// The high `overflow` bits of a `bitWidth`-bit value, the part a full accumulator had no room
+    /// for. Java discards the bits shifted past bit 63, so the accumulator took exactly the rest.
+    /// None when the value ended the accumulator exactly, where a shift by `bitWidth` would wrap
+    /// at width 64.
+    private static long carry(long value, int bitWidth, int overflow) {
+        return overflow == 0 ? 0 : value >>> (bitWidth - overflow);
+    }
+
+    /// Writes the accumulator's `bits` remaining bits byte by byte, the last byte zero-padded, so
+    /// the destination needs no room past the packed length.
+    ///
+    /// @return the position after the last byte written
+    private static int writeTail(long accumulator, int bits, byte[] out, int pos) {
+        for (; bits > 0; bits -= Byte.SIZE) {
+            out[pos++] = (byte) accumulator;
+            accumulator >>>= Byte.SIZE;
+        }
+        return pos;
     }
 }

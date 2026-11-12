@@ -56,8 +56,8 @@ public final class AlpEncoder {
     private byte[] out = new byte[INITIAL_CAPACITY];
     private int pos;
 
-    /// A vector's integers, then the distances above its minimum. Its length is a multiple of
-    /// eight, the zeros past a short last vector padding the packer's whole bytes.
+    /// A vector's integers, then the distances above its minimum. A short last vector is packed
+    /// with zeros after it up to a multiple of eight values.
     private final long[] deltas = new long[VECTOR_SIZE];
     private final int[] exceptionPositions = new int[VECTOR_SIZE];
     private final long[] exceptionBits = new long[VECTOR_SIZE];

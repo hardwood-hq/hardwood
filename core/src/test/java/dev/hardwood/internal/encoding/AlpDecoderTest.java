@@ -12,9 +12,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Random;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.metadata.PhysicalType;
@@ -164,9 +166,11 @@ class AlpDecoderTest {
     }
 
     /// Every DOUBLE bit width, with the last vector ending the page so its tail reads go through
-    /// the padded copy. At (0, 0) a value is its encoded integer.
+    /// the padded copy. At (0, 0) a value is its encoded integer. The sweep covers both sides of
+    /// the width up to which a delta is read with one eight-byte read: past it, a value starting
+    /// 7 bits into a byte (first at the odd widths 59 and 61) needs the second read.
     @ParameterizedTest
-    @ValueSource(ints = { 1, 7, 8, 9, 13, 31, 32, 33, 47, 56, 57, 63, 64 })
+    @MethodSource("doubleBitWidths")
     void decodesDoublesAtBitWidth(int bitWidth) {
         Random random = new Random(bitWidth);
         long frame = -123_456_789L;
@@ -180,8 +184,16 @@ class AlpDecoderTest {
         }
     }
 
+    static IntStream doubleBitWidths() {
+        return IntStream.rangeClosed(1, Long.SIZE);
+    }
+
+    static IntStream floatBitWidths() {
+        return IntStream.rangeClosed(1, Integer.SIZE);
+    }
+
     @ParameterizedTest
-    @ValueSource(ints = { 1, 7, 8, 9, 13, 24, 25, 31, 32 })
+    @MethodSource("floatBitWidths")
     void decodesFloatsAtBitWidth(int bitWidth) {
         Random random = new Random(bitWidth);
         int frame = -1_000_000;
