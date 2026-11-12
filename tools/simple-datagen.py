@@ -4844,7 +4844,7 @@ for _name, _version, _patch, _described, _row_group_size in (
 # require decompression — which defeats the skip-without-decompress
 # optimisation. Drives the gate-closed branch in
 # PagePlanner.matching (the matching rows promoted to ALL) and, through
-# ReadEngine.takesMask, the tail-read fallback path that decode-and-discards leading rows
+# PreparedRead.takesMask, the tail-read fallback path that decode-and-discards leading rows
 # instead of using per-page masks.
 # =====================================================================
 

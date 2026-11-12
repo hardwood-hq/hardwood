@@ -20,6 +20,7 @@ import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.PreparedRead;
 import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
@@ -49,18 +50,18 @@ class ReadRetentionTest {
         }
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             FileMetadataCache cache = new FileMetadataCache(files, context);
-            try (ReadEngine engine = ReadEngines.standalone(cache, context)) {
-                FileMetadataCache.PreparedFile first = cache.getFile(0);
-                ProjectedSchema decoded = ProjectedSchema.create(first.schema(), ColumnProjection.all());
-                engine.initialize(first.schema(), first.rowGroups(), ReadProjection.of(decoded), null, true, 0, 0);
-                List<BatchExchange<?>> exchanges = new ArrayList<>();
-                List<NestedLevelComputer.Layers> flat = new ArrayList<>();
-                for (int column = 0; column < COLUMNS; column++) {
-                    exchanges.add(BatchExchange.detachingFlat(first.schema().getColumn(column).name(), BATCH_SIZE));
-                    flat.add(null);
-                }
-                engine.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, exchanges,
-                        null);
+            FileMetadataCache.PreparedFile first = cache.getFile(0);
+            ProjectedSchema decoded = ProjectedSchema.create(first.schema(), ColumnProjection.all());
+            PreparedRead prepared = ReadEngines.prepare(cache, context, first.schema(), first.rowGroups(),
+                    ReadProjection.of(decoded), null, true, 0, 0);
+            List<BatchExchange<?>> exchanges = new ArrayList<>();
+            List<NestedLevelComputer.Layers> flat = new ArrayList<>();
+            for (int column = 0; column < COLUMNS; column++) {
+                exchanges.add(BatchExchange.detachingFlat(first.schema().getColumn(column).name(), BATCH_SIZE));
+                flat.add(null);
+            }
+            try (ReadEngine engine = prepared.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE,
+                    BATCH_SIZE, exchanges, null)) {
                 int read = 0;
                 while (takeBatch(exchanges)) {
                     // One batch per file: every column has published the batch of file `read`, so it

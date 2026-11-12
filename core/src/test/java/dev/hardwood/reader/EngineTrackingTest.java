@@ -7,15 +7,22 @@
  */
 package dev.hardwood.reader;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A [ParquetFileReader] tracks the [dev.hardwood.internal.reader.engine.ReadEngine]s
 /// it hands to child readers so that [ParquetFileReader#close()] can tear down an
@@ -34,6 +41,38 @@ class EngineTrackingTest {
     /// Higher than any `id` in [#FILE], so statistics pruning drops every row
     /// group and the read is served by an all-exhausted group.
     private static final long PRUNES_EVERY_ROW_GROUP = 100_000_000L;
+
+    /// A build that fails before its read starts, here on the footer of the later file a skip
+    /// reaches, leaves nothing tracked: a long-lived reader whose builds keep failing does not
+    /// accumulate entries.
+    @Test
+    void aBuildFailingBeforeItsReadStartsLeavesNothingTracked() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.openAll(
+                List.of(InputFile.of(Paths.get(FILE)), new UnreadableInputFile()))) {
+            long firstFileRows = reader.getFileMetaData().numRows();
+            for (int i = 0; i < 3; i++) {
+                assertThatThrownBy(() -> reader.buildRowReader().skip(firstFileRows + 1).build())
+                        .isInstanceOf(IOException.class)
+                        .hasMessage("[unreadable.parquet] Failed to read metadata");
+            }
+            assertThat(reader.trackedEngineCount()).isZero();
+        }
+    }
+
+    /// A row reader whose first batch fails, here on a corrupt first page, fails its build after its
+    /// read has started; the build closes the read, so nothing stays tracked or running.
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', value = {
+            FILE + "|[<memory>: row group 0, column 'id', page 0] PageHeader has unknown page type: -1408",
+            NESTED_FILE + "|[<memory>: row group 0, column 'customer_id', page 0] PageHeader has unknown page type: -1408" })
+    void aRowReaderFailingItsFirstBatchLeavesNothingTracked(String file, String message) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(withCorruptFirstPage(file)))) {
+            for (int i = 0; i < 3; i++) {
+                assertThatThrownBy(reader::rowReader).hasMessage(message);
+            }
+            assertThat(reader.trackedEngineCount()).isZero();
+        }
+    }
 
     @Test
     void closingAChildReaderStopsTrackingItsEngine() throws Exception {
@@ -232,5 +271,43 @@ class EngineTrackingTest {
         assertThat(file.closeCount())
                 .as("the parent still owns and closes the input")
                 .isEqualTo(1);
+    }
+
+    /// `file` with the header of its first column's first data page corrupted.
+    private static ByteBuffer withCorruptFirstPage(String file) throws IOException {
+        byte[] bytes = Files.readAllBytes(Paths.get(file));
+        long offset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            offset = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData().dataPageOffset() + 1;
+        }
+        bytes[Math.toIntExact(offset)] = (byte) 0xFF;
+        return ByteBuffer.wrap(bytes);
+    }
+
+    /// Opens, but fails every read, so its footer cannot be loaded.
+    private static final class UnreadableInputFile implements InputFile {
+
+        @Override
+        public void open() {
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            throw new IOException("Device not ready");
+        }
+
+        @Override
+        public long length() {
+            return 1024;
+        }
+
+        @Override
+        public String name() {
+            return "unreadable.parquet";
+        }
+
+        @Override
+        public void close() {
+        }
     }
 }

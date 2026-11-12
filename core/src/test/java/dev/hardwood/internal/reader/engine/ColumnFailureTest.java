@@ -144,7 +144,7 @@ class ColumnFailureTest {
         /// Starts a read of `file`, its columns flat or decoded through levels.
         static Read start(ByteBuffer file, int threads, boolean throughLevels) throws Exception {
             HardwoodContextImpl context = HardwoodContextImpl.create(threads);
-            ReadEngine engine = ReadEngines.initialized(List.of(InputFile.of(file)), context,
+            PreparedRead prepared = ReadEngines.prepared(List.of(InputFile.of(file)), context,
                     ColumnProjection.all(), null, 0);
             ProjectedSchema decoded = ProjectedSchema.create(SCHEMA, ColumnProjection.all());
             NestedLevelComputer.Layers[] allLayers = NestedLevelComputer.computeLayers(SCHEMA);
@@ -157,8 +157,8 @@ class ColumnFailureTest {
                         : BatchExchange.detachingFlat(name, BATCH_SIZE));
                 layers.add(throughLevels ? allLayers[column] : null);
             }
-            engine.start(decoded, layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE,
-                    exchanges, null);
+            ReadEngine engine = prepared.start(decoded, layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE,
+                    BATCH_SIZE, exchanges, null);
             return new Read(context, engine, exchanges);
         }
 

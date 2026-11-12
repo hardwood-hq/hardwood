@@ -26,6 +26,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
+import dev.hardwood.internal.reader.engine.PreparedRead;
 import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -103,19 +104,18 @@ class FlatBinaryViewsTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            try (ReadEngine engine = ReadEngines.initialized(List.of(inputFile), context,
-                    ColumnProjection.all(), null, 0)) {
-                BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
-                        schema.getColumn(0).name(), () -> {
-                            BatchExchange.Batch b = new BatchExchange.Batch();
-                            b.matches = new long[1];
-                            return b;
-                        }, batch -> batch.capacity, 10);
-                ProjectedSchema decoded = ProjectedSchema.create(schema, ColumnProjection.all());
-                List<NestedLevelComputer.Layers> flat = new ArrayList<>();
-                flat.add(null);
-                engine.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 10, List.of(exchange),
-                        new ColumnBatchMatcher[]{ filter });
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+                    schema.getColumn(0).name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.matches = new long[1];
+                        return b;
+                    }, batch -> batch.capacity, 10);
+            ProjectedSchema decoded = ProjectedSchema.create(schema, ColumnProjection.all());
+            List<NestedLevelComputer.Layers> flat = new ArrayList<>();
+            flat.add(null);
+            PreparedRead prepared = ReadEngines.prepared(List.of(inputFile), context, ColumnProjection.all(), null, 0);
+            try (ReadEngine engine = prepared.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 10,
+                    List.of(exchange), new ColumnBatchMatcher[]{ filter })) {
                 List<BinaryBatchValues> batches = new ArrayList<>();
                 BatchExchange.Batch batch;
                 while ((batch = exchange.poll()) != null) {

@@ -8,13 +8,10 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
-import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.PageDropPredicates;
@@ -23,22 +20,16 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
-import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.plan.BatchPlan;
-import dev.hardwood.internal.reader.plan.FileMetadataCache;
-import dev.hardwood.internal.reader.plan.RowGroupPruning;
-import dev.hardwood.internal.reader.plan.SchemaCompatibility;
 import dev.hardwood.internal.reader.step.ReadQueue;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.ReadProjection;
-import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 /// Runs one read of a [dev.hardwood.reader.ParquetFileReader], for its column reads and its row
-/// reads: builds the read's parts, which plan, fetch and decode the row groups of its files and
+/// reads, started by its [PreparedRead] once the reader's columns exist: builds the read's parts, which plan, fetch and decode the row groups of its files and
 /// publish them into its columns' exchanges, hands the consumer's polls to them, and closes them.
 /// The parts each own their state:
 ///
@@ -72,41 +63,71 @@ public final class ReadEngine implements Closeable {
     /// the look-ahead).
     public static final int CAP_BUDGETS = 8;
 
-    private final FileMetadataCache files;
-    private final HardwoodContextImpl context;
-    private final Runnable closeListener;
-    private FileSchema schema;
-    /// the file, as the reader holds it: with its tail
-    private InputFile file;
-    private ReadDriver driver;
-    private BatchPublisher publisher;
-    private RowGroupPlanner planner;
-    private FooterReader footers;
-    private CellWriter cells;
+    private final ReadDriver driver;
+    private final BatchPublisher publisher;
+    private final RowGroupPlanner planner;
+    private final FooterReader footers;
+    private final CellWriter cells;
     private final ReadFailure readFailure = new ReadFailure();
-    private ResolvedPredicate filter;
-    /// the read's row limit, `0` for none: under a filter it counts matching rows
-    private long limit;
-    private long skip;
-    /// the rows of the row group the skip lands in that precede it, and whether that row group's
-    /// plan masks them out; where it cannot, the reader drops them ([#leadingRows])
-    private long leading;
-    private boolean masked;
-    private ReadProjection projection;
-    private RowGroupPruning pruning;
-    private SchemaCompatibility compatibility;
-    private FileColumnOrdinals firstOrdinals;
-    /// the first file's row groups its statistics keep
-    private RowGroupPruning.FilteredRowGroups firstKept;
+    /// each decoded column's exchange, in decoded order
+    private final List<BatchExchange<?>> exchanges;
+    private final Runnable closeListener;
 
-    /// @throws IllegalStateException on a thread of `context`'s own pool, whose read would wait for
-    ///         the jobs it holds up
-    public ReadEngine(FileMetadataCache files, HardwoodContextImpl context,
-                            Consumer<ReadEngine> closeListener) {
-        context.requireOffPool();
-        this.files = files;
-        this.context = context;
-        this.closeListener = () -> closeListener.accept(this);
+    /// Starts `read`'s decoded columns; see [PreparedRead#start]. Closes what it started where its
+    /// first file's listing fails, before the failure propagates.
+    ReadEngine(PreparedRead read, ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
+               NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize, long budgetRows,
+               List<BatchExchange<?>> exchanges, ColumnBatchMatcher[] filters, Runnable closeListener) {
+        this.closeListener = closeListener;
+        HardwoodContextImpl context = read.context();
+        FileSchema schema = read.schema();
+        ResolvedPredicate filter = read.filter();
+        long limit = read.limit();
+        // a context of zero threads runs the read's CPU jobs on a queue of its own
+        ReadQueue readQueue = context.hasPool() ? null : new ReadQueue(context);
+        int n = decoded.getProjectedColumnCount();
+        ColumnSchema[] schemas = new ColumnSchema[n];
+        boolean[] filterOnly = new boolean[n];
+        List<BatchExchange<?>> started = new ArrayList<>(n);
+        for (int c = 0; c < n; c++) {
+            schemas[c] = schema.getColumn(decoded.toOriginalIndex(c));
+            filterOnly[c] = read.projection().isFilterOnly(c);
+            String name = schemas[c].name();
+            started.add(exchanges != null ? exchanges.get(c) : layers.get(c) != null
+                    ? BatchExchange.detachingNested(name, batchSize) : BatchExchange.detachingFlat(name, batchSize));
+        }
+        this.exchanges = List.copyOf(started);
+        driver = new ReadDriver(context, readQueue, defaultFetchAheadBytes(CoalescingPolicy.maxSpanBytes()),
+                this::reconcile, t -> readFailure.failAt(0, t));
+        JobScheduler scheduler = driver.scheduler();
+        RangeFetcher fetcher = new RangeFetcher(scheduler);
+        publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
+        ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), read.files().footersSupplied());
+        cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
+                batchSize, context.decompressorFactory(), filters);
+        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context);
+        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, cells, columns, readFailure,
+                read.pruning().prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
+        planner = new RowGroupPlanner(scheduler, fetcher, publisher, readFailure, tracker, scanner, columns,
+                new BatchPlan(batchSize, BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()),
+                        filter != null, limit == 0 ? 0 : limit + read.leadingRows()), schemas, filterOnly,
+                read.pruning(), limit > 0 ? limit : Long.MAX_VALUE, filter != null, read.skip(), read.maskedRows());
+        footers = new FooterReader(read.files(), scheduler, planner, readFailure, read.compatibility(), filter,
+                limit > 0, driver::update);
+        for (int c = 0; c < n; c++) {
+            int column = c;
+            if (readQueue != null) {
+                started.get(c).setQueue(readQueue);
+            }
+            started.get(c).setRoomListener(() -> driver.update(() -> publisher.publishable(column)));
+        }
+        try {
+            driver.locked(() -> footers.start(read.file(), schema, read.firstKept(), read.firstOrdinals()));
+        }
+        catch (RuntimeException | Error e) {
+            closeAfter(e);
+            throw e;
+        }
     }
 
     /// F for a read whose largest request is `maxSpanBytes`: twice that unless overridden through
@@ -117,143 +138,9 @@ public final class ReadEngine implements Closeable {
                 "a non-negative byte count");
     }
 
-    /// Sets up the read's planning, before its columns start.
-    ///
-    /// @param rowGroups the first file's row groups, `null` for all of them
-    /// @param filter the read's resolved filter, `null` for none
-    /// @param metadataFiltering whether the filter takes metadata-derived shortcuts
-    /// @param limit the read's row limit, `0` for none; under a filter it counts matching rows, and
-    ///        bounds the listing only over row groups statistics prove to match
-    /// @param skip the read's leading rows it does not return, `0` for none; a read with a filter
-    ///        skips none, its reader skipping matching rows
-    /// @throws IOException the failure of a footer of a file the skip reaches, read on the caller's
-    ///         thread
-    public void initialize(FileSchema schema, List<RowGroup> rowGroups, ReadProjection projection,
-                           ResolvedPredicate filter, boolean metadataFiltering, long limit, long skip)
-            throws IOException {
-        this.schema = schema;
-        List<RowGroup> first = rowGroups != null ? rowGroups : files.getFileMetaData(0).rowGroups();
-        this.file = files.preparedInputFile(0);
-        SchemaCompatibility.validateFirstFile(file, schema, projection.decoded(), first);
-        this.filter = filter;
-        this.projection = projection;
-        this.limit = limit;
-        this.skip = skip;
-        this.pruning = new RowGroupPruning(context, filter, metadataFiltering);
-        this.compatibility = new SchemaCompatibility(schema, projection.decoded(), filter);
-        this.firstOrdinals = FileColumnOrdinals.identity(schema.getColumnCount(), filter,
-                files.getFile(0).boundsReadability());
-        this.firstKept = pruning.filterRowGroups(first, file, firstOrdinals);
-        landSkip(first);
-    }
-
-    /// Finds the row group the skip lands in, past the row groups it drops whole, and the rows of
-    /// it before the skip's end; reads the footers of the files it reaches on the caller's thread.
-    /// The plan of a row group of the first file masks those rows out where every nested decoded
-    /// column has an OffsetIndex, which a page mask needs.
-    private void landSkip(List<RowGroup> first) throws IOException {
-        long left = skip;
-        for (int i = 0; i < files.inputFiles().size() && left > 0; i++) {
-            for (RowGroup rg : i == 0 ? first : files.getFileMetaData(i).rowGroups()) {
-                if (left < rg.numRows()) {
-                    leading = left;
-                    masked = i == 0 && takesMask(rg);
-                    return;
-                }
-                left -= rg.numRows();
-            }
-        }
-    }
-
-    private boolean takesMask(RowGroup rg) {
-        ProjectedSchema decoded = projection.decoded();
-        for (int c = 0; c < decoded.getProjectedColumnCount(); c++) {
-            ColumnSchema column = schema.getColumn(decoded.toOriginalIndex(c));
-            if (column.maxRepetitionLevel() > 0 && rg.columns().get(column.columnIndex()).offsetIndexOffset() == null) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /// The leading rows the reader drops itself before it returns a row: those of the row group the
-    /// skip lands in that precede it, where its plan cannot mask them out; `0` otherwise. The read
-    /// returns them, and counts them against its limit.
-    public long leadingRows() {
-        return masked ? 0 : leading;
-    }
-
-    public String referenceFileName() {
-        return files.inputFiles().getFirst().name();
-    }
-
-    /// Starts the read's decoded columns, publishing into detaching exchanges without filter
-    /// fragments, as a column read without batch matchers does, and returns each one's exchange,
-    /// in decoded order.
-    ///
-    /// @param layers the layers of each decoded column decoded through levels, `null` for a flat
-    ///        one, in decoded order
-    /// @param indexMode what the batches of a column decoded through levels carry for their reader
-    public List<BatchExchange<?>> start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
-                                        NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize,
-                                        long budgetRows) {
-        return start(decoded, layers, indexMode, fixedListFastPathEnabled, batchSize, budgetRows, null, null);
-    }
-
-    /// Starts the read's decoded columns and returns each one's exchange, in decoded order.
-    ///
-    /// @param layers the layers of each decoded column decoded through levels, `null` for a flat
-    ///        one, in decoded order
-    /// @param indexMode what the batches of a column decoded through levels carry for their reader
-    /// @param budgetRows the rows of the read's batch byte budget, which bound its look-ahead
-    /// @param exchanges the exchange each decoded column publishes into, in decoded order: a flat
-    ///        column's of [BatchExchange.Batch], one decoded through levels of [NestedBatch];
-    ///        `null` for detaching exchanges
-    /// @param filters the filter fragment of each flat decoded column, `null` for a column without
-    ///        one; `null` for none
-    public List<BatchExchange<?>> start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
-                                        NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize,
-                                        long budgetRows, List<BatchExchange<?>> exchanges,
-                                        ColumnBatchMatcher[] filters) {
-        // a context of zero threads runs the read's CPU jobs on a queue of its own
-        ReadQueue readQueue = context.hasPool() ? null : new ReadQueue(context);
-        int n = decoded.getProjectedColumnCount();
-        ColumnSchema[] schemas = new ColumnSchema[n];
-        boolean[] filterOnly = new boolean[n];
-        List<BatchExchange<?>> started = new ArrayList<>(n);
-        for (int c = 0; c < n; c++) {
-            schemas[c] = schema.getColumn(decoded.toOriginalIndex(c));
-            filterOnly[c] = projection.isFilterOnly(c);
-            String name = schemas[c].name();
-            started.add(exchanges != null ? exchanges.get(c) : layers.get(c) != null
-                    ? BatchExchange.detachingNested(name, batchSize) : BatchExchange.detachingFlat(name, batchSize));
-        }
-        driver = new ReadDriver(context, readQueue, defaultFetchAheadBytes(CoalescingPolicy.maxSpanBytes()),
-                this::reconcile, t -> readFailure.failAt(0, t));
-        JobScheduler scheduler = driver.scheduler();
-        RangeFetcher fetcher = new RangeFetcher(scheduler);
-        publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
-        ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), files.footersSupplied());
-        cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
-                batchSize, context.decompressorFactory(), filters);
-        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context);
-        HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, cells, columns, readFailure,
-                pruning.prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
-        planner = new RowGroupPlanner(scheduler, fetcher, publisher, readFailure, tracker, scanner, columns,
-                new BatchPlan(batchSize, BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()),
-                        filter != null, limit == 0 ? 0 : limit + leadingRows()), schemas, filterOnly, pruning,
-                limit > 0 ? limit : Long.MAX_VALUE, filter != null, skip, masked ? leading : 0);
-        footers = new FooterReader(files, scheduler, planner, readFailure, compatibility, filter, limit > 0,
-                driver::update);
-        for (int c = 0; c < n; c++) {
-            int column = c;
-            if (readQueue != null) {
-                started.get(c).setQueue(readQueue);
-            }
-            started.get(c).setRoomListener(() -> driver.update(() -> publisher.publishable(column)));
-        }
-        driver.locked(() -> footers.start(file, schema, firstKept, firstOrdinals));
-        return started;
+    /// Each decoded column's exchange, in decoded order.
+    public List<BatchExchange<?>> exchanges() {
+        return exchanges;
     }
 
     /// Ends or seals the columns' placement where the read has reached its end or a failure
@@ -295,20 +182,27 @@ public final class ReadEngine implements Closeable {
     /// Interrupts nothing. Idempotent.
     @Override
     public void close() {
-        if (driver != null) {
-            driver.locked(publisher::stop);
-            driver.close();
-            // under the lock, beside another read's load ending, which then starts nothing
-            driver.locked(footers::close);
-        }
+        driver.locked(publisher::stop);
+        driver.close();
+        // under the lock, beside another read's load ending, which then starts nothing
+        driver.locked(footers::close);
         closeListener.run();
+    }
+
+    /// Closes the read after `failure` ended its start or the build of its reader, adding a failure
+    /// of the close to `failure` as suppressed.
+    public void closeAfter(Throwable failure) {
+        try {
+            close();
+        }
+        catch (RuntimeException | Error closeFailure) {
+            failure.addSuppressed(closeFailure);
+        }
     }
 
     /// Waits until no job of the read is in flight, running the read's queue meanwhile on a context
     /// of zero threads, for tests.
     public void awaitQuiescent() {
-        if (driver != null) {
-            driver.awaitIdle();
-        }
+        driver.awaitIdle();
     }
 }
