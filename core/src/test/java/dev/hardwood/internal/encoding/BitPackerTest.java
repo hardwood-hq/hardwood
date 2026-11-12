@@ -9,26 +9,29 @@ package dev.hardwood.internal.encoding;
 
 import java.util.Arrays;
 import java.util.Random;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// [BitPacker] against an independent bit reader, at every width both callers can ask for.
+/// [BitPacker] against an independent bit reader, at every width its callers can ask for.
 ///
 /// The reader here reads one bit at a time from the LSB of the first byte upwards, which is the
 /// layout stated rather than the one the packer happens to produce — so a packer and a reader
 /// that agreed on the wrong order would still fail here.
 class BitPackerTest {
 
-    /// Eight values is the RLE hybrid's group; 32 is a delta miniblock.
-    private static final int[] GROUP_SIZES = { 8, 32 };
+    /// Eight values is the RLE hybrid's group, 32 a delta miniblock and 1024 an ALP vector: at
+    /// most widths the packer fills and stores its accumulator several times within the larger
+    /// two, and ends on a part-filled one.
+    private static final int[] GROUP_SIZES = { 8, 32, 1024 };
 
     @ParameterizedTest(name = "width {0}")
-    @ValueSource(ints = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 24, 31, 32 })
+    @MethodSource("intWidths")
     void packsIntsAtEveryWidthTheRleEncoderUses(int bitWidth) {
         long mask = bitWidth == 32 ? 0xFFFFFFFFL : (1L << bitWidth) - 1;
         Random random = new Random(bitWidth);
@@ -52,10 +55,10 @@ class BitPackerTest {
     }
 
     @ParameterizedTest(name = "width {0}")
-    @ValueSource(ints = { 1, 7, 8, 32, 33, 48, 56, 57, 58, 63, 64 })
+    @MethodSource("longWidths")
     void packsLongsAtEveryWidthADeltaMiniblockUses(int bitWidth) {
-        // Widths past 57 take the split path, where one value's bits finish the accumulator and
-        // the rest start the next — the case an INT64 column with type-spanning deltas reaches.
+        // At a width that does not divide 64, a value straddles each full accumulator: its low
+        // bits finish it and the rest start the next. At 64, every value fills one exactly.
         long mask = bitWidth == 64 ? -1L : (1L << bitWidth) - 1;
         Random random = new Random(bitWidth);
         for (int count : GROUP_SIZES) {
@@ -75,6 +78,14 @@ class BitPackerTest {
                         .isEqualTo(values[i]);
             }
         }
+    }
+
+    static IntStream intWidths() {
+        return IntStream.rangeClosed(1, Integer.SIZE);
+    }
+
+    static IntStream longWidths() {
+        return IntStream.rangeClosed(1, Long.SIZE);
     }
 
     @Test
@@ -100,18 +111,22 @@ class BitPackerTest {
     }
 
     @Test
-    void refusesAGroupItCannotWriteWhole() {
-        // Only whole bytes are flushed, so a group whose bits do not divide by eight would be
-        // short by a byte and unreadable. Both real callers are safe at every width by virtue of
-        // their group sizes; the guard is what stops a future one truncating silently.
-        assertThatThrownBy(() -> BitPacker.pack(new int[5], 0, 5, 3, new byte[8], 0))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Packing 5 values at 3 bits does not fill a whole number of bytes; this packer "
-                         + "writes whole bytes only");
-        assertThatThrownBy(() -> BitPacker.pack(new long[5], 0, 5, 3, new byte[8], 0))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Packing 5 values at 3 bits does not fill a whole number of bytes; this packer "
-                         + "writes whole bytes only");
+    void packsAGroupThatEndsInsideAByte() {
+        // Five values at 3 bits are 15 bits: the second byte holds one bit of padding, left zero.
+        int[] ints = { 7, 0, 5, 2, 6 };
+        long[] longs = { 7, 0, 5, 2, 6 };
+        byte[] fromInts = new byte[BitPacker.packedLength(5, 3)];
+        byte[] fromLongs = new byte[BitPacker.packedLength(5, 3)];
+
+        assertThat(BitPacker.pack(ints, 0, 5, 3, fromInts, 0)).isEqualTo(2);
+        assertThat(BitPacker.pack(longs, 0, 5, 3, fromLongs, 0)).isEqualTo(2);
+
+        BitReader reader = new BitReader(fromInts, 0);
+        for (int value : ints) {
+            assertThat(reader.read(3)).isEqualTo(value);
+        }
+        assertThat(reader.read(1)).as("padding bit").isZero();
+        assertThat(fromLongs).isEqualTo(fromInts);
     }
 
     @Test

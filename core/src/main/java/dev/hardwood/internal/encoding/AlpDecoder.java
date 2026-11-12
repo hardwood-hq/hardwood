@@ -43,6 +43,9 @@ public class AlpDecoder {
     private static final VarHandle SHORT_LE =
             MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.LITTLE_ENDIAN);
 
+    /// The widest delta that, starting at most 7 bits into a byte, ends inside one eight-byte read.
+    private static final int MAX_ONE_READ_WIDTH = Long.SIZE - 7;
+
     private final byte[] data;
     private final int limit;
     /// Bytes per value: 4 for FLOAT, 8 for DOUBLE. Also the width of the frame of reference.
@@ -220,11 +223,12 @@ public class AlpDecoder {
 
     /// Unpacks the vector's deltas and decodes them in one pass.
     ///
-    /// Value `i` starts at bit `i * bitWidth` and is at most 64 bits long, so beginning at most 7
-    /// bits into a byte it reaches at most 71: two overlapping reads cover every width, the
-    /// doubled shift on the second one shifting the byte out entirely at a bit offset of zero. The
-    /// same technique as `DeltaBinaryPackedDecoder`, which fuses a prefix sum in place of the
-    /// decimal decode.
+    /// Value `i` starts at bit `i * bitWidth`, at most 7 bits into a byte. Up to a width of 57 it
+    /// therefore ends inside one eight-byte read. A wider value reaches at most bit 71: two
+    /// overlapping reads cover it, the doubled shift on the second one shifting the byte out
+    /// entirely at a bit offset of zero. The same technique as `DeltaBinaryPackedDecoder`, which
+    /// fuses a prefix sum in place of the decimal decode. The one-read loop is kept separate
+    /// because the second read, needed only past 57 bits, roughly doubles the work per value.
     private void decodeDoubles(double[] output, int first, int count) {
         double scale = AlpFormat.DOUBLE_POW10[factor];
         double unscale = AlpFormat.DOUBLE_NEG_POW10[exponent];
@@ -237,6 +241,14 @@ public class AlpDecoder {
         int base = src == data ? packedStart : 0;
         long mask = bitWidth == Long.SIZE ? -1L : (1L << bitWidth) - 1;
         int bitPos = 0;
+        if (bitWidth <= MAX_ONE_READ_WIDTH) {
+            for (int i = 0; i < count; i++) {
+                long delta = ((long) LONG_LE.get(src, base + (bitPos >>> 3)) >>> (bitPos & 7)) & mask;
+                output[first + i] = (double) (frame + delta) * scale * unscale;
+                bitPos += bitWidth;
+            }
+            return;
+        }
         for (int i = 0; i < count; i++) {
             int byteOffset = base + (bitPos >>> 3);
             int shift = bitPos & 7;
