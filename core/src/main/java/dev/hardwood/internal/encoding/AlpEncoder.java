@@ -56,8 +56,7 @@ public final class AlpEncoder {
     private byte[] out = new byte[INITIAL_CAPACITY];
     private int pos;
 
-    /// A vector's integers, then the distances above its minimum. A short last vector is packed
-    /// with zeros after it up to a multiple of eight values.
+    /// A vector's integers, then the distances above its minimum.
     private final long[] deltas = new long[VECTOR_SIZE];
     private final int[] exceptionPositions = new int[VECTOR_SIZE];
     private final long[] exceptionBits = new long[VECTOR_SIZE];
@@ -460,18 +459,14 @@ public final class AlpEncoder {
 
     private void writeVector(int exponent, int factor, long frameOfReference, int bitWidth, int count,
             int numExceptions) {
-        int paddedCount = (count + 7) & ~7;
-        Arrays.fill(deltas, count, paddedCount, 0);
-        ensureCapacity(AlpFormat.vectorHeaderSize(valueWidth) + BitPacker.packedLength(paddedCount, bitWidth)
+        ensureCapacity(AlpFormat.vectorHeaderSize(valueWidth) + BitPacker.packedLength(count, bitWidth)
                 + numExceptions * (AlpFormat.POSITION_SIZE + valueWidth));
         out[pos++] = (byte) exponent;
         out[pos++] = (byte) factor;
         writeLittleEndian(numExceptions, AlpFormat.POSITION_SIZE);
         writeLittleEndian(frameOfReference, valueWidth);
         out[pos++] = (byte) bitWidth;
-        // The padding packs to zero bits after the vector's own, which the next field overwrites
-        BitPacker.pack(deltas, 0, paddedCount, bitWidth, out, pos);
-        pos += Math.toIntExact(AlpFormat.packedBytes(count, bitWidth));
+        pos += BitPacker.pack(deltas, 0, count, bitWidth, out, pos);
         for (int j = 0; j < numExceptions; j++) {
             writeLittleEndian(exceptionPositions[j], AlpFormat.POSITION_SIZE);
         }
