@@ -120,7 +120,7 @@ final class PageTracker {
             }
         }
         for (int c = 0; c < u.plan().pages().length; c++) {
-            placed(c);
+            place(c);
         }
         return new ScanInput(ranges, placements);
     }
@@ -154,7 +154,7 @@ final class PageTracker {
     }
 
     /// Adds `tracked`, a data page of `chunk`, to its column's placement. A page decoded through
-    /// levels decodes before it is placed, a flat page once placed too ([#placed]).
+    /// levels decodes before it is placed, a flat page once placed too ([#place]).
     void add(CellWriter.ChunkPlacement placement, TrackedPage tracked) {
         hold(tracked);
         cells.add(tracked.column(), placement, tracked);
@@ -163,7 +163,7 @@ final class PageTracker {
 
     /// Places the pages `column` can place, ending each flat page's placement, which its decode waits
     /// on; a page that fills no cell is done and never decodes.
-    void placed(int column) {
+    void place(int column) {
         for (TrackedPage tracked : cells.place(column)) {
             if (columns.nested(column)) {
                 continue;
@@ -274,7 +274,7 @@ final class PageTracker {
         }, task -> {
             tracked.ready(task);
             done(tracked);
-            placed(tracked.column());
+            place(tracked.column());
         }, t -> failed(tracked, t)));
     }
 

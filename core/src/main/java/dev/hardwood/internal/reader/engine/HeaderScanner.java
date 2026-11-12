@@ -370,7 +370,7 @@ final class HeaderScanner {
         }
         fetcher.readersDone(s.advanceTo(step.position()));
         next(s);
-        tracker.placed(s.column());
+        tracker.place(s.column());
     }
 
     /// Hands on a data page the scan found, masked by the page filter, unless the filter keeps
@@ -472,7 +472,7 @@ final class HeaderScanner {
         PageTracker.reportPagesLocated(s.unit().listing().file().name(), s.unit().listing().rowGroup(), columns.schema(s.column()), s.pages(),
                 RowGroupScannedEvent.STRATEGY_SEQUENTIAL);
         release(s);
-        tracker.placed(s.column());
+        tracker.place(s.column());
     }
 
     /// A scan failed: the failure is placed at the first row it has not passed, and at the page it
@@ -484,7 +484,7 @@ final class HeaderScanner {
         publisher.failAt(key(s), s.column(), failure);
         s.placement().failed(failure);
         release(s);
-        tracker.placed(s.column());
+        tracker.place(s.column());
     }
 
     /// Lets go of what the scan holds, and ends its chunk.
