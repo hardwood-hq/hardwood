@@ -37,13 +37,14 @@ import dev.hardwood.internal.encoding.AlpEncoder;
 ///
 /// | Benchmark | What it runs |
 /// |---|---|
-/// | `chunkDoubleHardwood`, `chunkDoubleParquetJava` | a column chunk of [#CHUNK_VALUES] doubles, cut into pages of [AlpBenchmarkData#PAGE_VALUES] values, through a writer created for the chunk: preset search, encode and page copy |
+/// | `chunkDoubleHardwood`, `chunkDoubleParquetJava` | a column chunk of `chunkValues` doubles, cut into pages of [AlpBenchmarkData#PAGE_VALUES] values, through a writer created for the chunk: preset search, encode and page copy |
 /// | `presetDoubleHardwood` | Hardwood's preset search over that chunk alone |
 /// | `pageDoubleHardwood`, `pageFloatHardwood` | one page, preset already built |
 /// | `pageDoubleParquetJava`, `pageFloatParquetJava` | one page from a writer whose preset is already built, i.e. past its exhaustive search |
 ///
-/// The chunk benchmarks include parquet-java's exhaustive search, whose share falls as a chunk
-/// grows.
+/// The chunk benchmarks report microseconds per chunk; divide by `chunkValues` for a per-value
+/// cost. They include parquet-java's exhaustive search, which covers a fixed number of vectors
+/// at the start of each chunk, so its share falls as a chunk grows.
 ///
 /// Run with:
 /// ```shell
@@ -51,13 +52,12 @@ import dev.hardwood.internal.encoding.AlpEncoder;
 /// ```
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-@Fork(value = 2, jvmArgsAppend = { "-Xms2g", "-Xmx2g" })
+@Fork(value = 2, jvmArgsAppend = { "-Xms3g", "-Xmx3g" })
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
 public class AlpEncodeBenchmark {
 
     private static final int PAGE_VALUES = AlpBenchmarkData.PAGE_VALUES;
-    private static final int CHUNK_VALUES = 1 << 20;
 
     @State(Scope.Benchmark)
     public static class Chunk {
@@ -65,12 +65,17 @@ public class AlpEncodeBenchmark {
         @Param({ "decimal", "price", "random" })
         private String data;
 
+        /// Values per column chunk: 128Ki; 1Mi, the default row group of Hardwood and pyarrow;
+        /// 8Mi, the scale of a narrow table under parquet-java's 128 MB row groups.
+        @Param({ "131072", "1048576", "8388608" })
+        private int chunkValues;
+
         private double[] doubles;
         private final AlpEncoder encoder = new AlpEncoder(Double.BYTES);
 
         @Setup(Level.Trial)
         public void setUp() {
-            doubles = AlpBenchmarkData.doubles(data, CHUNK_VALUES);
+            doubles = AlpBenchmarkData.doubles(data, chunkValues);
         }
     }
 
@@ -113,21 +118,21 @@ public class AlpEncodeBenchmark {
     }
 
     @Benchmark
-    @OperationsPerInvocation(CHUNK_VALUES)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
     public long chunkDoubleHardwood(Chunk chunk) {
         return AlpBenchmarkData.hardwoodChunk(chunk.encoder, chunk.doubles);
     }
 
     @Benchmark
-    @OperationsPerInvocation(CHUNK_VALUES)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
     public long chunkDoubleParquetJava(Chunk chunk) throws IOException {
         return AlpBenchmarkData.parquetJavaChunk(chunk.doubles);
     }
 
     @Benchmark
-    @OperationsPerInvocation(CHUNK_VALUES)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
     public int[] presetDoubleHardwood(Chunk chunk) {
-        return AlpEncoder.presetDoubles(chunk.doubles, 0, CHUNK_VALUES);
+        return AlpEncoder.presetDoubles(chunk.doubles, 0, chunk.chunkValues);
     }
 
     @Benchmark
