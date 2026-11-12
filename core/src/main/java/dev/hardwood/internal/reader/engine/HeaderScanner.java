@@ -217,20 +217,20 @@ final class HeaderScanner {
     private final PageTracker tracker;
     private final CellWriter cells;
     private final ColumnContext columns;
-    private final BatchPublisher publisher;
+    private final ReadFailure readFailure;
     /// per reference column, the leaves a page's inline statistics are decided by; empty without
     /// a filter or where metadata filtering is off
     private final Map<Integer, List<ResolvedPredicate>> dropLeaves;
     private final int maxSpan = CoalescingPolicy.maxSpanBytes();
 
     HeaderScanner(JobScheduler scheduler, RangeFetcher fetcher, PageTracker tracker, CellWriter cells, ColumnContext columns,
-                  BatchPublisher publisher, Map<Integer, List<ResolvedPredicate>> dropLeaves) {
+                  ReadFailure readFailure, Map<Integer, List<ResolvedPredicate>> dropLeaves) {
         this.scheduler = scheduler;
         this.fetcher = fetcher;
         this.tracker = tracker;
         this.cells = cells;
         this.columns = columns;
-        this.publisher = publisher;
+        this.readFailure = readFailure;
         this.dropLeaves = dropLeaves;
     }
 
@@ -481,7 +481,7 @@ final class HeaderScanner {
         s.idle();
         Throwable failure = t instanceof Exception e
                 ? columns.withContext(s.column(), e, s.unit().listing().file().name(), s.unit().listing().rowGroup(), s.pages()) : t;
-        publisher.failAt(key(s), s.column(), failure);
+        readFailure.failAt(key(s), s.column(), failure);
         s.placement().failed(failure);
         release(s);
         tracker.place(s.column());

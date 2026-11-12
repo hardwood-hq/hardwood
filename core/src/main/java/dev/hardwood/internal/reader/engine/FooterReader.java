@@ -45,7 +45,7 @@ final class FooterReader {
     private final FileMetadataCache files;
     private final JobScheduler scheduler;
     private final RowGroupPlanner planner;
-    private final BatchPublisher publisher;
+    private final ReadFailure readFailure;
     private final SchemaCompatibility compatibility;
     private final ResolvedPredicate filter;
     /// applies a result under the read's lock: the end of another read's load of a footer
@@ -59,13 +59,13 @@ final class FooterReader {
     /// once set, another read's load ending starts nothing: the read is done with its footers
     private boolean closed;
 
-    FooterReader(FileMetadataCache files, JobScheduler scheduler, RowGroupPlanner planner, BatchPublisher publisher,
+    FooterReader(FileMetadataCache files, JobScheduler scheduler, RowGroupPlanner planner, ReadFailure readFailure,
                  SchemaCompatibility compatibility, ResolvedPredicate filter, boolean limited,
                  Consumer<Runnable> results) {
         this.files = files;
         this.scheduler = scheduler;
         this.planner = planner;
-        this.publisher = publisher;
+        this.readFailure = readFailure;
         this.compatibility = compatibility;
         this.filter = filter;
         this.results = results;
@@ -274,7 +274,7 @@ final class FooterReader {
                 }
             }
             if (f.failure() != null) {
-                publisher.failAt(planner.endKey(), f.failure());
+                readFailure.failAt(planner.endKey(), f.failure());
                 planner.listed();
                 return;
             }

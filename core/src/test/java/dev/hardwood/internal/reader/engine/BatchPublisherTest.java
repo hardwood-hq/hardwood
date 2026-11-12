@@ -22,7 +22,7 @@ class BatchPublisherTest {
 
     private final BatchPublisher publisher = new BatchPublisher(
             new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
-            }, 1, 1000)),
+            }, 1, 1000)), new ReadFailure(),
             List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 50);
 
     /// The last batch the plan has added may go on into the units not yet batched, such as
@@ -44,7 +44,7 @@ class BatchPublisherTest {
     @Test
     void lookAheadReachesTheCapPastTheFirstUnpublishedRow() {
         BatchPublisher wide = new BatchPublisher(new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
-        }, 1, 1000)), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
+        }, 1, 1000)), new ReadFailure(), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
         Batch open = new Batch(1000, 0, 1);
         open.extendTo(1020);
         wide.add(open);
