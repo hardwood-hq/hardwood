@@ -66,8 +66,10 @@ public final class FlatPageValues {
     /// a decoder of its own; `alpLimit` is `0` for any other encoding.
     private final int alpLimit;
     private final int alpValues;
-    /// `ALP` only: this view's decoder, the vector it decoded last and that vector's values.
+    /// `ALP` only: this view's decoder, `log2` of its vector size (a power of two, so that a
+    /// value's vector is a shift), the vector in the vector buffer and the buffer itself.
     private AlpDecoder alp;
+    private int alpLogVectorSize;
     private int alpVector = -1;
     private float[] alpFloats;
     private double[] alpDoubles;
@@ -396,8 +398,39 @@ public final class FlatPageValues {
     /// Writes the non-null values `[src, src + length)` of an `ALP` page from the vectors that hold
     /// them, each decoded once into this view's vector buffer.
     private void copyAlp(Object out, int destPos, int src, int length) {
+        int vectorSize = alpDecoder().vectorSize();
+        while (length > 0) {
+            int vector = src >>> alpLogVectorSize;
+            bufferAlpVector(vector);
+            int at = src - (vector << alpLogVectorSize);
+            int n = Math.min(length, vectorSize - at);
+            System.arraycopy(alpDoubles != null ? alpDoubles : alpFloats, at, out, destPos, n);
+            src += n;
+            destPos += n;
+            length -= n;
+        }
+    }
+
+    /// Writes the non-null `ALP` value `src` to `out[dest]` from its vector, decoded once into this
+    /// view's vector buffer.
+    private void copyAlpOne(Object out, int dest, int src) {
+        alpDecoder();
+        int vector = src >>> alpLogVectorSize;
+        bufferAlpVector(vector);
+        int at = src - (vector << alpLogVectorSize);
+        if (alpDoubles != null) {
+            ((double[]) out)[dest] = alpDoubles[at];
+        }
+        else {
+            ((float[]) out)[dest] = alpFloats[at];
+        }
+    }
+
+    /// This view's `ALP` decoder, made with its vector buffer on first use.
+    private AlpDecoder alpDecoder() {
         if (alp == null) {
             alp = new AlpDecoder(plain, plainOffset, alpLimit, alpValues, type);
+            alpLogVectorSize = Integer.numberOfTrailingZeros(alp.vectorSize());
             if (type == PhysicalType.DOUBLE) {
                 alpDoubles = new double[alp.vectorSize()];
             }
@@ -405,19 +438,14 @@ public final class FlatPageValues {
                 alpFloats = new float[alp.vectorSize()];
             }
         }
-        int vectorSize = alp.vectorSize();
-        while (length > 0) {
-            int vector = src / vectorSize;
-            if (vector != alpVector) {
-                alp.decodeVector(vector, alpFloats, alpDoubles);
-                alpVector = vector;
-            }
-            int at = src - vector * vectorSize;
-            int n = Math.min(length, vectorSize - at);
-            System.arraycopy(alpDoubles != null ? alpDoubles : alpFloats, at, out, destPos, n);
-            src += n;
-            destPos += n;
-            length -= n;
+        return alp;
+    }
+
+    /// Decodes `vector` into this view's vector buffer unless it is the vector already there.
+    private void bufferAlpVector(int vector) {
+        if (vector != alpVector) {
+            alp.decodeVector(vector, alpFloats, alpDoubles);
+            alpVector = vector;
         }
     }
 
@@ -446,7 +474,7 @@ public final class FlatPageValues {
             return;
         }
         if (alpLimit > 0) {
-            copyAlp(out, dest, src, 1);
+            copyAlpOne(out, dest, src);
             return;
         }
         if (deltaLimit > 0) {
