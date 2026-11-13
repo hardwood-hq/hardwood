@@ -1160,9 +1160,10 @@ public class ParquetFileReader implements Closeable {
         /// When unset, the batch size is chosen adaptively from the column's
         /// physical width so the per-batch arrays stay within a fixed memory
         /// budget — the same sizing the [RowReader] path uses — rather than a
-        /// fixed record count. It is at most 131,066 records, and for a binary
-        /// list column at most 131,066 divided by the column's average list
-        /// length. Set this explicitly to override.
+        /// fixed record count. It is at most 131,066 records, 65,533 for an
+        /// `INT64` or `DOUBLE` column, and for a list column at most that
+        /// divided by the column's average list length. Set this explicitly to
+        /// override.
         public ColumnReaderBuilder batchSize(int batchSize) {
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
@@ -1235,9 +1236,10 @@ public class ParquetFileReader implements Closeable {
         /// When unset, the batch size is chosen adaptively from the projected
         /// columns' physical widths so the per-batch arrays stay within a fixed
         /// memory budget — the same sizing the [RowReader] path uses — rather
-        /// than a fixed record count. It is at most 131,066 records, and for a
-        /// projection with a binary list column at most 131,066 divided by that
-        /// column's average list length. Set this explicitly to override.
+        /// than a fixed record count. It is at most 131,066 records, 65,533 for
+        /// a projection with an `INT64` or `DOUBLE` column, and for a projection
+        /// with a list column at most that column's bound divided by its average
+        /// list length. Set this explicitly to override.
         public ColumnReadersBuilder batchSize(int batchSize) {
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
