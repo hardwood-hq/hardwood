@@ -25,6 +25,7 @@
   <properties>
     <jmh.version>1.37</jmh.version>
     <uberjar.name>benchmarks</uberjar.name>
+    <parquet-java-alp.version>1.19.0-SNAPSHOT</parquet-java-alp.version>
   </properties>
 
   <dependencies>
@@ -61,6 +62,28 @@
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-hadoop</artifactId>
+    </dependency>
+    <!-- parquet-java's ALP codec, on its master branch only: the contender in the ALP benchmarks.
+         Build parquet-java and install it to the local repository first. -->
+    <dependency>
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-column</artifactId>
+      <version>${parquet-java-alp.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-common</artifactId>
+      <version>${parquet-java-alp.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-encoding</artifactId>
+      <version>${parquet-java-alp.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-format-structures</artifactId>
+      <version>${parquet-java-alp.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>

@@ -263,8 +263,11 @@ The module is built only under `-Pperformance-test`. JMH 1.37 runs as an annotat
 | `dev.hardwood.benchmarks.nested` | `LIST<primitive>` and `LIST<annotated>` read benchmarks, their corpus generators and correctness gates |
 | `dev.hardwood.benchmarks.mixed` | Schema-composition read benchmarks (scalars beside lists, structs, multi-layer repetition), generator and gate |
 | `dev.hardwood.benchmarks.wide` | Wide-schema footer and schema-construction benchmarks, with a parquet-java counterpart |
+| `dev.hardwood.benchmarks.alp` | ALP page decode and encode against parquet-java's ALP codec, and an end-to-end `DOUBLE` column read with `ALP` against `PLAIN`; their data sets live in `AlpBenchmarkData` |
 
 parquet-java (`parquet-avro`, `parquet-hadoop`, with `hadoop-common` and `hadoop-mapreduce-client-core`) is on the module's classpath for two purposes only: the corpus generators write fixtures with it, and it is the contender in the benchmarks that compare against it. A Hardwood read benchmark reads through Hardwood alone.
+
+The ALP benchmarks need parquet-java's ALP codec, which only its master branch has. The module depends on `parquet-column`, `parquet-common`, `parquet-encoding` and `parquet-format-structures` at `1.19.0-SNAPSHOT` (property `parquet-java-alp.version`), so parquet-java must be built and installed to the local Maven repository (`./mvnw install -DskipTests` in a parquet-java checkout) before the module builds.
 
 ### Harness Settings
 
@@ -294,7 +297,7 @@ A benchmark gets its data in one of five ways:
 | Downloaded taxi and Overture files | `AvroRowReaderBenchmark` | below `performance-testing/test-data-setup/target`, overridable with `-p dataRoot=...` |
 | Generated corpus files | the nested, mixed and wide benchmarks; some single-class benchmarks through the `performance-testing/generate_*.py` scripts | `performance-testing/test-data-setup/target/benchmark-data`, overridable with `-Dperf.dataDir` |
 | Files the benchmark writes on first use | `NamedWideReadBenchmark` | `performance-testing/test-data-setup/target/benchmark-data`, overridable with `-p dataDir=...` |
-| In-memory fixture | `FlatWriteBenchmark`, `WriteEncodingBenchmark`, `InternedNameMapBenchmark` | built per trial, by `FlatWriteFixture` for the write benchmarks and from `FieldNames` for `InternedNameMapBenchmark` |
+| In-memory fixture | `FlatWriteBenchmark`, `WriteEncodingBenchmark`, `InternedNameMapBenchmark`, the ALP benchmarks, `BitPackerBenchmark` | built per trial, by `FlatWriteFixture` for the write benchmarks, from `FieldNames` for `InternedNameMapBenchmark` and by `AlpBenchmarkData` for the ALP benchmarks |
 
 Generated data is deterministic: every generator draws from a `java.util.Random` with a fixed seed, so every machine measures the same bytes and a number from one month is comparable with one from the next.
 
