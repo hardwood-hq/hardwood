@@ -79,8 +79,6 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
 
     private void writeMatches(BinaryBatchValues values, int[] dictionaryIndices,
                               long[] validity, int recordCount, long[] outWords) {
-        byte[] entryBytes = cachedDictionary.entryBytes();
-        int[] entryOffsets = cachedDictionary.entryOffsets();
         int activeWords = (recordCount + 63) >>> 6;
         for (int wordIndex = 0; wordIndex < activeWords; wordIndex++) {
             int base = wordIndex << 6;
@@ -100,8 +98,7 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
                 else {
                     byte state = entryStates[dictionaryIndex];
                     if (state == UNKNOWN) {
-                        state = delegate.testValue(entryBytes, entryOffsets[dictionaryIndex],
-                                entryOffsets[dictionaryIndex + 1]) ? MATCH : NO_MATCH;
+                        state = cachedDictionary.testEntry(dictionaryIndex, delegate) ? MATCH : NO_MATCH;
                         entryStates[dictionaryIndex] = state;
                     }
                     matches = state == MATCH;

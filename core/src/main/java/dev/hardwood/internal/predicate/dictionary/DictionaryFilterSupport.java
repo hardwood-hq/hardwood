@@ -104,16 +104,8 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        byte[] bytes = dict.entryBytes();
-        int[] offsets = dict.entryOffsets();
-        for (int i = 0; i < dict.size(); i++) {
-            int from = offsets[i];
-            if (offsets[i + 1] - from == FixedWidths.FLOAT16
-                    && Float.compare(LogicalTypeConverter.float16At(bytes, from), value) == 0) {
-                return false;
-            }
-        }
-        return true;
+        return !dict.anyEntry((bytes, from, to) -> to - from == FixedWidths.FLOAT16
+                && Float.compare(LogicalTypeConverter.float16At(bytes, from), value) == 0);
     }
 
     /// Whether every probe of a `FLOAT16` membership test is provably absent, each compared with
@@ -122,35 +114,15 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        byte[] bytes = dict.entryBytes();
-        int[] offsets = dict.entryOffsets();
-        for (int i = 0; i < dict.size(); i++) {
-            int from = offsets[i];
-            if (offsets[i + 1] - from != FixedWidths.FLOAT16) {
-                continue;
-            }
-            float stored = LogicalTypeConverter.float16At(bytes, from);
-            for (float value : values) {
-                if (Float.compare(stored, value) == 0) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        return !dict.anyEntry((bytes, from, to) -> to - from == FixedWidths.FLOAT16
+                && containsFloat(values, LogicalTypeConverter.float16At(bytes, from)));
     }
 
     public static boolean valueAbsent(Dictionary dictionary, byte[] value) {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        byte[] bytes = dict.entryBytes();
-        int[] offsets = dict.entryOffsets();
-        for (int i = 0; i < dict.size(); i++) {
-            if (BinaryComparator.sliceEquals(bytes, offsets[i], offsets[i + 1], value)) {
-                return false;
-            }
-        }
-        return true;
+        return !dict.anyEntry((bytes, from, to) -> BinaryComparator.sliceEquals(bytes, from, to, value));
     }
 
     public static boolean absentAll(Dictionary dictionary, int[] values) {
@@ -192,14 +164,17 @@ public final class DictionaryFilterSupport {
         // applies.
         byte[][] probes = values.clone();
         Arrays.sort(probes, BinaryComparator::compareUnsigned);
-        byte[] bytes = dict.entryBytes();
-        int[] offsets = dict.entryOffsets();
-        for (int i = 0; i < dict.size(); i++) {
-            if (containsSorted(probes, bytes, offsets[i], offsets[i + 1])) {
-                return false;
+        return !dict.anyEntry((bytes, from, to) -> containsSorted(probes, bytes, from, to));
+    }
+
+    /// Whether `values` holds `stored`, compared with [Float#compare].
+    private static boolean containsFloat(float[] values, float stored) {
+        for (float value : values) {
+            if (Float.compare(stored, value) == 0) {
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     /// Whether `sortedProbes`, in unsigned lexicographic order, holds the bytes `[from, to)`.

@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader.plan;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.reader.batch.ArrayBound;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
@@ -20,14 +21,10 @@ import dev.hardwood.schema.ColumnSchema;
 /// Computes optimal batch sizes for column data assembly.
 public final class BatchSizing {
 
-    /// The largest array a batch allocates per column: half of G1's smallest region (1 MB) less a
-    /// 24-byte allowance for the array header (16 bytes by default, 12 with compact object
-    /// headers). G1 allocates an object larger than half a heap region as a humongous object, in
-    /// whole old-generation regions; G1 picks 1 MB regions for every heap below 4 GB, and
-    /// allocating such an array per batch starts concurrent cycles and fills the old generation
-    /// with them. A column's values per batch are capped so that each of its per-value arrays
-    /// stays within this bound ([#arrayBoundRows]).
-    public static final int MAX_ARRAY_BYTES = 512 * 1024 - 24;
+    /// The largest array a batch allocates per column ([ArrayBound#MAX_BYTES]). A column's values
+    /// per batch are capped so that each of its per-value arrays stays within this bound
+    /// ([#arrayBoundRows]).
+    public static final int MAX_ARRAY_BYTES = ArrayBound.MAX_BYTES;
 
     /// Hard upper bound on the batch size returned by
     /// [#computeOptimalBatchSize(ProjectedSchema, double[], long)]: the values of a column whose

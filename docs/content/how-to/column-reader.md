@@ -134,7 +134,7 @@ Three returned objects are shared across batches instead of allocated per batch:
 
 - `Validity.NO_NULLS` is one immutable instance.
 - The `BinaryDictionary` from `getBinaryDictionary()` is the column chunk's dictionary, whose entries never change (see [Dictionary-Encoded Columns](#dictionary-encoded-columns)).
-- For a dictionary-encoded value, `getBinaryValues().buffer(i)` returns the array holding the dictionary's entries, which every batch using that dictionary shares. Do not write to it.
+- For a dictionary-encoded value, `getBinaryValues().buffer(i)` returns one of the arrays holding the dictionary's entries, the one holding the value's entry, which every batch using that dictionary shares. Do not write to it.
 
 ### Dictionary-Encoded Columns
 

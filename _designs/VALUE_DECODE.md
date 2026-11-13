@@ -122,7 +122,7 @@ A column chunk has at most one dictionary page, ahead of its first data page. `D
 
 `DictionaryParser.parsePage` is the one place a dictionary page's own claims are checked, whichever entry point reaches it: the page type is `DICTIONARY_PAGE`, the body is exactly the header's compressed size, the dictionary page header is present, its value count is not negative, and the CRC matches when present. The body is decompressed and read as `num_values` `PLAIN` values, which must fill it exactly. A failure while decompressing or parsing becomes `ParquetReadException` carrying type, counts, sizes and codec, except `UnsupportedOperationException` (an unavailable codec), which leaves as raised.
 
-`Dictionary` is sealed, one variant per storage: `IntDictionary`, `LongDictionary`, `FloatDictionary`, `DoubleDictionary` over primitive arrays, and `ByteArrayDictionary` for `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96`, which holds its entries back to back in one `byte[]` with an `int[]` of entry offsets, the form a batch copies in and points its values at. A `BOOLEAN` dictionary raises `UnsupportedOperationException`. An id outside the dictionary raises `ArrayIndexOutOfBoundsException` in the page's reader and is classified as a read failure.
+`Dictionary` is sealed, one variant per storage: `IntDictionary`, `LongDictionary`, `FloatDictionary`, `DoubleDictionary` over primitive arrays, and `ByteArrayDictionary` for `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96`, which holds its entries back to back in chunks, each a `byte[]` with an `int[]` of entry offsets, the form a batch takes in and points its values at. An entry lies whole in one chunk, and a chunk's bytes and offsets each stay within `ArrayBound.MAX_BYTES`, half of G1's smallest region less an allowance for the array header, so a dictionary held for its column chunk is never a humongous object; only an entry larger than the bound takes a chunk of its own size. A `BOOLEAN` dictionary raises `UnsupportedOperationException`. An id outside the dictionary raises `ArrayIndexOutOfBoundsException` in the page's reader and is classified as a read failure.
 
 A chunk may mix dictionary and `PLAIN` data pages (a writer that fell back part-way); each page is decoded by its own encoding.
 
@@ -134,7 +134,7 @@ The mechanism has three parts:
 
 | Part | Where | Statement |
 |---|---|---|
-| Per-chunk cache | `ByteArrayDictionary.internedString(i)` | A lazily allocated `String[]` parallel to the entries; entry `i` is decoded as UTF-8 on first request and cached. |
+| Per-chunk cache | `ByteArrayDictionary.internedString(i)` | A lazily allocated `String[]` per chunk, parallel to its entries; entry `i` is decoded as UTF-8 on first request and cached. |
 | Ids on the page | `BinaryPageValues.dictionary()` | A dictionary-encoded byte-array page's reader carries its `ByteArrayDictionary` and one id per non-null value, and these are its only representation of the values. A plain or delta page's reader has neither. |
 | Index on the batch | `BinaryBatchValues.dictionary` / `dictIndices` | For a string column the batch records, per value, the entry index or `-1`. `stringAt(i)` returns the cached `String` when the batch has a dictionary and the index is non-negative, and decodes from the value's bytes otherwise. A dictionary-aware binary matcher reads the same index to reuse its cached predicate outcome. |
 

@@ -31,10 +31,31 @@ class BinaryBatchValuesTest {
 
         assertThat(strings(values, 6)).containsExactly("Oslo", "Hamburg", "Oslo", "Abha", "Oslo", "Hamburg");
         for (int i = 0; i < 6; i++) {
-            assertThat(values.buffer(i)).as("value %d", i).isSameAs(STATIONS.entryBytes());
+            assertThat(values.buffer(i)).as("value %d", i).isSameAs(STATIONS.chunkBytes(0));
         }
         assertThat(values.starts()[0]).isEqualTo(values.starts()[2]).isEqualTo(values.starts()[4]);
         assertThat(values.bufferCount()).isEqualTo(2);
+    }
+
+    /// A dictionary in several chunks becomes as many buffers of the batch, each value viewing its
+    /// entry in the chunk that holds it.
+    @Test
+    void dictionaryValuesPointIntoTheChunkHoldingTheirEntry() {
+        String[] entries = new String[3000];
+        for (int i = 0; i < entries.length; i++) {
+            entries[i] = String.valueOf(i).repeat(1000).substring(0, 1000);
+        }
+        Dictionary.ByteArrayDictionary dictionary = dictionary(entries);
+        assertThat(dictionary.chunkCount()).isGreaterThan(2);
+
+        BinaryBatchValues values = filled(dictionary, null, 2999, 0, -1, 1500, "Tunis", 600);
+
+        assertThat(strings(values, 6)).containsExactly(entries[2999], entries[0], "", entries[1500], "Tunis",
+                entries[600]);
+        assertThat(values.buffer(0)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(2999)));
+        assertThat(values.buffer(3)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(1500)));
+        assertThat(values.buffer(5)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(600)));
+        assertThat(values.stringAt(0)).isEqualTo(entries[2999]);
     }
 
     @Test
@@ -52,8 +73,8 @@ class BinaryBatchValuesTest {
 
         assertThat(strings(values, 8)).containsExactly("Hamburg", "Oslo", "Hamburg", "Tunis", "Oslo", "Abha", "Abha", "Abha");
         assertThat(values.dictIndices).containsExactly(0, 1, 0, -1, 1, 2, 2, 2);
-        assertThat(values.buffer(0)).isSameAs(STATIONS.entryBytes());
-        assertThat(values.buffer(3)).isNotSameAs(STATIONS.entryBytes());
+        assertThat(values.buffer(0)).isSameAs(STATIONS.chunkBytes(0));
+        assertThat(values.buffer(3)).isNotSameAs(STATIONS.chunkBytes(0));
     }
 
     @Test
@@ -76,8 +97,33 @@ class BinaryBatchValuesTest {
         fill(values, next, null, 1, 1, 0, 1);
 
         assertThat(strings(values, 4)).containsExactly("Lima", "Lima", "Accra", "Lima");
-        assertThat(values.buffer(0)).isSameAs(next.entryBytes());
+        assertThat(values.buffer(0)).isSameAs(next.chunkBytes(0));
         assertThat(values.bufferCount()).isEqualTo(2);
+    }
+
+    /// A dictionary chunk the size of a full plain chunk is still the dictionary's: a holder that
+    /// keeps its full chunks for its next fill does not take it as a spare and write plain bytes
+    /// over its entries.
+    @Test
+    void aKeptHolderDoesNotReuseADictionaryChunkAsASpare() {
+        String first = "a".repeat(BinaryBatchValues.CHUNK_BYTES);
+        String second = "b".repeat(BinaryBatchValues.CHUNK_BYTES);
+        Dictionary.ByteArrayDictionary dictionary = dictionary(first, second);
+        assertThat(dictionary.chunkCount()).isEqualTo(2);
+        assertThat(dictionary.chunkBytes(0)).hasSize(BinaryBatchValues.CHUNK_BYTES);
+        BinaryBatchValues values = new BinaryBatchValues(3);
+        values.keepChunks();
+        fill(values, dictionary, null, 0, 1, "Tunis");
+        assertThat(strings(values, 3)).containsExactly(first, second, "Tunis");
+
+        // Enough plain bytes that the fill takes a full chunk, a spare where the last fill kept one
+        String plain = "c".repeat(BinaryBatchValues.CHUNK_BYTES / 2 + 1);
+        fill(values, null, null, plain, "Oslo", "Abha");
+
+        assertThat(strings(values, 3)).containsExactly(plain, "Oslo", "Abha");
+        assertThat(values.buffer(0)).isNotSameAs(dictionary.chunkBytes(0)).isNotSameAs(dictionary.chunkBytes(1));
+        assertThat(dictionary.entry(0)).isEqualTo(utf8(first));
+        assertThat(dictionary.entry(1)).isEqualTo(utf8(second));
     }
 
     @Test
@@ -101,7 +147,7 @@ class BinaryBatchValuesTest {
         values.ensureViews();
 
         assertThat(strings(values, 4)).containsExactly("Hamburg", "Oslo", "Abha", "Hamburg");
-        assertThat(values.buffer(3)).isSameAs(STATIONS.entryBytes());
+        assertThat(values.buffer(3)).isSameAs(STATIONS.chunkBytes(0));
     }
 
     @Test
@@ -165,7 +211,7 @@ class BinaryBatchValuesTest {
 
         assertThat(strings(kept, 3)).containsExactly("Tunis", "Oslo", "Abha");
         assertThat(kept.buffer(0)).isSameAs(raw.buffer(0));
-        assertThat(kept.buffer(2)).isSameAs(STATIONS.entryBytes());
+        assertThat(kept.buffer(2)).isSameAs(STATIONS.chunkBytes(0));
         assertThat(kept.bufferCount()).isEqualTo(raw.bufferCount());
     }
 

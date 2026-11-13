@@ -180,7 +180,7 @@ public final class WorkingSet {
         /// @throws ParquetReadException if the read's working set would exceed its limit
         public void dictionary(Dictionary dictionary) {
             long entries = dictionary instanceof Dictionary.ByteArrayDictionary binary
-                    ? binary.entryBytes().length + Integer.BYTES * (dictionary.size() + 1L)
+                    ? binary.byteCount() + Integer.BYTES * ((long) dictionary.size() + binary.chunkCount())
                     : (long) dictionary.size() * valueWidth(schema.type());
             set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), 0, entries, "Dictionary page");
         }
