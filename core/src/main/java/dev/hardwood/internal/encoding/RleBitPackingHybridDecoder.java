@@ -31,6 +31,8 @@ public class RleBitPackingHybridDecoder {
     // Run state
     private int currentValue;
     private int remainingInRun;
+    /// The values the current run's header declares.
+    private int runLength;
     private boolean isRleRun;
 
     // Bit buffer for packed values
@@ -89,7 +91,9 @@ public class RleBitPackingHybridDecoder {
             remainingInRun -= decoded;
             remaining -= decoded;
             if (decoded < toRead) {
-                break;
+                throw new ParquetReadException("Insufficient RLE/Bit-Packing data: a bit-packed run declares "
+                        + runLength + " values, but the data ends after " + (runLength - remainingInRun)
+                        + " of them; decoded " + (count - remaining) + " of " + count + " requested values");
             }
         }
 
@@ -247,6 +251,7 @@ public class RleBitPackingHybridDecoder {
 
         long header = readUnsignedVarInt();
         remainingInRun = runValues(header);
+        runLength = remainingInRun;
         isRleRun = (header & 1) == 0;
         if (isRleRun) {
             currentValue = readRleValue();
