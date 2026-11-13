@@ -32,7 +32,8 @@ import dev.hardwood.row.PqInterval;
 /// The batch allocates no buffer larger than [#CHUNK_BYTES] unless one value is, so its bytes never
 /// need an array whose size grows with the batch: G1 allocates an array larger than half a heap
 /// region as a humongous object, and the smallest region is 1 MB. A dictionary's bytes are the
-/// column chunk's, held once for every batch that draws on it.
+/// column chunk's, held once for every batch that draws on it, in chunks of their own within the
+/// same bound ([Dictionary.ByteArrayDictionary]).
 ///
 /// A batch is filled positionally by the segments of a decoded column's cell ([#prepareForFill],
 /// [dev.hardwood.internal.reader.pipeline.BinaryFill],
@@ -76,7 +77,8 @@ public final class BinaryBatchValues {
     private byte[][] spare = new byte[0][];
     private int spareCount;
 
-    /// The buffer id of [#dictionary]'s bytes once a view points into them, `-1` until then.
+    /// The buffer id of [#dictionary]'s first chunk once a view points into its entries, `-1` until
+    /// then; chunk `c` is buffer `dictionaryBuffer + c`.
     private int dictionaryBuffer = -1;
 
     /// The chunk dictionary backing [#dictIndices], or `null` when no dictionary
@@ -266,13 +268,18 @@ public final class BinaryBatchValues {
         spareCount = 0;
         for (int b = 1; b < bufferCount; b++) {
             byte[] buffer = buffers[b];
-            if (buffer.length == CHUNK_BYTES && b != dictionaryBuffer) {
+            if (buffer.length == CHUNK_BYTES && !isDictionaryBuffer(b)) {
                 if (spareCount == spare.length) {
                     spare = Arrays.copyOf(spare, Math.max(4, spareCount * 2));
                 }
                 spare[spareCount++] = buffer;
             }
         }
+    }
+
+    /// Whether buffer `b` is one of the dictionary's chunks.
+    private boolean isDictionaryBuffer(int b) {
+        return dictionaryBuffer >= 0 && b >= dictionaryBuffer && b < dictionaryBuffer + dictionary.chunkCount();
     }
 
     /// Adds a full chunk to the batch's buffers, a spare one where the last fill left one, and
@@ -338,7 +345,7 @@ public final class BinaryBatchValues {
     }
 
     /// Builds the deferred views: each dictionary value points at its entry in the dictionary's
-    /// own bytes, which the batch takes as one of its buffers. Synchronized, so that two threads
+    /// own chunks, which the batch takes as buffers of its own. Synchronized, so that two threads
     /// reading one batch build them once.
     private synchronized void buildViews() {
         if (!viewsPending) {
@@ -351,20 +358,46 @@ public final class BinaryBatchValues {
             }
             int end = deferredEnd;
             deferredEnd = 0;
-            int[] entryOffsets = dictionary.entryOffsets();
+            Dictionary.ByteArrayDictionary dict = dictionary;
             if (dictionaryBuffer < 0) {
-                dictionaryBuffer = addBuffer(dictionary.entryBytes());
-            }
-            for (int i = 0; i < end; i++) {
-                int entry = dictIndices[i];
-                if (entry >= 0) {
-                    bufferIds[i] = dictionaryBuffer;
-                    starts[i] = entryOffsets[entry];
-                    ends[i] = entryOffsets[entry + 1];
+                dictionaryBuffer = addBuffer(dict.chunkBytes(0));
+                for (int c = 1; c < dict.chunkCount(); c++) {
+                    addBuffer(dict.chunkBytes(c));
                 }
+            }
+            if (dict.chunkCount() == 1) {
+                buildSingleChunkViews(dict.chunkOffsets(0), end);
+            }
+            else {
+                buildChunkedViews(dict, end);
             }
         }
         viewsPending = false;
+    }
+
+    private void buildSingleChunkViews(int[] entryOffsets, int end) {
+        for (int i = 0; i < end; i++) {
+            int entry = dictIndices[i];
+            if (entry >= 0) {
+                bufferIds[i] = dictionaryBuffer;
+                starts[i] = entryOffsets[entry];
+                ends[i] = entryOffsets[entry + 1];
+            }
+        }
+    }
+
+    private void buildChunkedViews(Dictionary.ByteArrayDictionary dict, int end) {
+        for (int i = 0; i < end; i++) {
+            int entry = dictIndices[i];
+            if (entry >= 0) {
+                int chunk = dict.chunkOf(entry);
+                int[] offsets = dict.chunkOffsets(chunk);
+                int k = entry - dict.firstEntry(chunk);
+                bufferIds[i] = dictionaryBuffer + chunk;
+                starts[i] = offsets[k];
+                ends[i] = offsets[k + 1];
+            }
+        }
     }
 
     /// The values at `map[0, count)` as a batch of their own, with their dictionary and entry

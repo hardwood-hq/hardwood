@@ -8,9 +8,11 @@
 package dev.hardwood.internal.reader.batch;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.reader.decode.TestDictionaries;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -58,7 +60,7 @@ class DictionaryTest {
         assertThat(dict.entry(0)).containsExactly('A', 'B');
         assertThat(dict.entry(1)).isEmpty();
         assertThat(dict.entry(2)).containsExactly('X', 'Y', 'Z');
-        assertThat(dict.entryOffsets()).containsExactly(0, 2, 2, 5);
+        assertThat(dict.chunkOffsets(0)).containsExactly(0, 2, 2, 5);
     }
 
     @Test
@@ -213,5 +215,116 @@ class DictionaryTest {
         assertThat(byteArrays.size()).isEqualTo(2);
         assertThat(byteArrays.entry(0)).containsExactly(4, 0, 0, 0);
         assertThat(byteArrays.entry(1)).containsExactly('A', 'B', 'C', 'D');
+    }
+
+    /// A dictionary whose bytes exceed the bound spreads its entries over chunks within it, each
+    /// entry whole in one chunk.
+    @Test
+    void byteArrayEntriesBeyondTheBoundSpreadOverChunks() {
+        byte[][] entries = new byte[3000][];
+        for (int i = 0; i < entries.length; i++) {
+            entries[i] = new byte[1000];
+            Arrays.fill(entries[i], (byte) i);
+        }
+
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(entries);
+
+        assertThat(dict.chunkCount()).isEqualTo(6);
+        assertThat(dict.byteCount()).isEqualTo(3_000_000);
+        assertChunksWithinBound(dict);
+        assertEntries(dict, entries);
+    }
+
+    /// An id outside a dictionary of several chunks fails as it does on one chunk, below the first
+    /// chunk and past the last.
+    @Test
+    void anIdOutsideAChunkedDictionaryIsRejected() {
+        byte[][] entries = new byte[3000][];
+        for (int i = 0; i < entries.length; i++) {
+            entries[i] = new byte[1000];
+        }
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(entries);
+
+        assertThatThrownBy(() -> dict.entry(-1))
+                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .hasMessage("Index -1 out of bounds for length 525");
+        assertThatThrownBy(() -> dict.entry(3000))
+                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .hasMessage("Index 381 out of bounds for length 381");
+        assertThatThrownBy(() -> dict.internedString(-1))
+                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .hasMessage("Index -1 out of bounds for length 524");
+        assertThatThrownBy(() -> dict.internedString(3000))
+                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .hasMessage("Index 380 out of bounds for length 380");
+    }
+
+    /// Short entries close a chunk at its entry count, so that its offsets stay within the bound.
+    @Test
+    void manyShortEntriesSpreadOverChunks() {
+        byte[][] entries = new byte[300_000][];
+        for (int i = 0; i < entries.length; i++) {
+            entries[i] = new byte[] { (byte) i, (byte) (i >> 8), (byte) (i >> 16) };
+        }
+
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(entries);
+
+        assertThat(dict.chunkCount()).isEqualTo(3);
+        assertThat(dict.firstEntry(1)).isEqualTo(Dictionary.ByteArrayDictionary.MAX_CHUNK_ENTRIES);
+        assertChunksWithinBound(dict);
+        assertEntries(dict, entries);
+    }
+
+    /// An entry larger than the bound takes a chunk of its own, between chunks of the others.
+    @Test
+    void anEntryBeyondTheBoundTakesAChunkOfItsOwn() {
+        byte[][] entries = { { 1 }, new byte[ArrayBound.MAX_BYTES + 1], { 2 }, { 3 } };
+
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(entries);
+
+        assertThat(dict.chunkCount()).isEqualTo(3);
+        assertThat(dict.chunkBytes(1)).hasSize(ArrayBound.MAX_BYTES + 1);
+        assertThat(dict.firstEntry(2)).isEqualTo(2);
+        assertEntries(dict, entries);
+    }
+
+    @Test
+    void fixedWidthEntriesBeyondTheBoundSpreadOverChunks() {
+        int width = 16;
+        int count = 100_000;
+        byte[] data = new byte[width * count];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = (byte) (i / width);
+        }
+
+        Dictionary.ByteArrayDictionary dict = (Dictionary.ByteArrayDictionary) Dictionary.parse(
+                data, data.length, count, PhysicalType.FIXED_LEN_BYTE_ARRAY, width);
+
+        assertThat(dict.chunkCount()).isEqualTo(4);
+        assertChunksWithinBound(dict);
+        for (int i = 0; i < count; i++) {
+            assertThat(dict.entry(i)).as("entry %d", i).isEqualTo(Arrays.copyOfRange(data, i * width, (i + 1) * width));
+        }
+    }
+
+    private static void assertChunksWithinBound(Dictionary.ByteArrayDictionary dict) {
+        for (int c = 0; c < dict.chunkCount(); c++) {
+            assertThat(dict.chunkBytes(c).length).as("bytes of chunk %d", c).isLessThanOrEqualTo(ArrayBound.MAX_BYTES);
+            assertThat((long) dict.chunkOffsets(c).length * Integer.BYTES).as("offsets of chunk %d", c)
+                    .isLessThanOrEqualTo(ArrayBound.MAX_BYTES);
+        }
+    }
+
+    private static void assertEntries(Dictionary.ByteArrayDictionary dict, byte[][] entries) {
+        assertThat(dict.size()).isEqualTo(entries.length);
+        for (int i = 0; i < entries.length; i++) {
+            if (!Arrays.equals(dict.entry(i), entries[i])) {
+                assertThat(dict.entry(i)).as("entry %d", i).isEqualTo(entries[i]);
+            }
+            byte[] expected = entries[i];
+            if (!dict.testEntry(i, (bytes, from, to) -> Arrays.equals(bytes, from, to, expected, 0, expected.length))) {
+                throw new AssertionError("testEntry of entry " + i);
+            }
+        }
     }
 }

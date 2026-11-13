@@ -244,8 +244,10 @@ class RowGroupDictionaryFilterSourceTest {
         assertThat(actual).isNotNull();
         Dictionary.ByteArrayDictionary actualEntries = (Dictionary.ByteArrayDictionary) actual;
         Dictionary.ByteArrayDictionary expectedEntries = (Dictionary.ByteArrayDictionary) expected;
-        assertThat(actualEntries.entryOffsets()).isEqualTo(expectedEntries.entryOffsets());
-        assertThat(actualEntries.entryBytes()).isEqualTo(expectedEntries.entryBytes());
+        assertThat(actualEntries.size()).isEqualTo(expectedEntries.size());
+        for (int i = 0; i < expectedEntries.size(); i++) {
+            assertThat(actualEntries.entry(i)).as("entry %d", i).isEqualTo(expectedEntries.entry(i));
+        }
     }
 
     private static void withFixture(Path path, FixtureTest test) throws Exception {
