@@ -53,6 +53,26 @@ class RleBitPackingHybridDecoderRunHeaderTest {
     }
 
     @Test
+    void bitPackedRunDeclaringMoreGroupsThanItsDataHoldsFails() {
+        // Five groups declared, one group's byte present
+        byte[] data = run(5, true, 0b0101_0101);
+
+        assertThatThrownBy(() -> new RleBitPackingHybridDecoder(data, 1).readInts(new int[16], 0, 16))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Insufficient RLE/Bit-Packing data: a bit-packed run declares 40 values, but the "
+                        + "data ends after 8 of them; decoded 8 of 16 requested values");
+    }
+
+    @Test
+    void dataEndingBetweenRunsFails() {
+        byte[] data = run(3, false, 1);
+
+        assertThatThrownBy(() -> new RleBitPackingHybridDecoder(data, 1).readInts(new int[5], 0, 5))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Insufficient RLE/Bit-Packing data: decoded 3 of 5 requested values");
+    }
+
+    @Test
     void headerVarintPastSixtyFourBitsIsRefused() {
         // Eleven bytes: the bits of the last fall past a long
         byte[] data = { (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,

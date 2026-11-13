@@ -107,7 +107,8 @@ class PageBodyBoundTest {
 
         assertThatThrownBy(() -> decoder.read(shortPage, dictionary))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Insufficient RLE/Bit-Packing data: decoded 8 of 100 requested values");
+                .hasMessage("Insufficient RLE/Bit-Packing data: a bit-packed run declares 104 values, but the "
+                        + "data ends after 8 of them; decoded 8 of 100 requested values");
     }
 
     @Test
