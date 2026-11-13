@@ -29,7 +29,7 @@ public class BrotliDecompressor implements Decompressor {
         // classpath just to unwrap the bytes.
         int decompressedLength;
         boolean trailingBytes;
-        try (BrotliInputStream in = new BrotliInputStream(inputStream(compressed))) {
+        try (BrotliInputStream in = new BrotliInputStream(inputStream(compressed, buffers))) {
             decompressedLength = in.readNBytes(dest, 0, uncompressedSize);
             trailingBytes = in.read() != -1;
         }
@@ -57,15 +57,13 @@ public class BrotliDecompressor implements Decompressor {
     }
 
     /// Brotli4j has no direct ByteBuffer API: a heap buffer is read where it lies, a direct one is
-    /// extracted to a byte array first.
-    private static ByteArrayInputStream inputStream(ByteBuffer compressed) {
+    /// copied to the task's buffer first ([HeapCopies]).
+    private static ByteArrayInputStream inputStream(ByteBuffer compressed, DecodeBuffers buffers) {
         if (compressed.hasArray()) {
             return new ByteArrayInputStream(compressed.array(), compressed.arrayOffset() + compressed.position(),
                     compressed.remaining());
         }
-        byte[] compressedBytes = new byte[compressed.remaining()];
-        compressed.duplicate().get(compressedBytes);
-        return new ByteArrayInputStream(compressedBytes);
+        return new ByteArrayInputStream(HeapCopies.copy(compressed, buffers), 0, compressed.remaining());
     }
 
     @Override

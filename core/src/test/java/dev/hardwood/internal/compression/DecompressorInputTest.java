@@ -130,4 +130,26 @@ class DecompressorInputTest {
             assertThat(compressed.limit()).as("%s limit", buffer).isEqualTo(limit);
         }
     }
+
+    /// A set of buffers serves page after page: a page smaller than the one before decompresses
+    /// from the bytes it holds, not from what the larger one left in a kept copy.
+    @ParameterizedTest
+    @EnumSource(PageBuffer.class)
+    void aSmallerPageAfterALargerOneDecompressesOnTheSameBuffers(PageBuffer buffer) {
+        byte[] large = body();
+        byte[] small = Arrays.copyOf(body(), 1_000);
+        DecodeBuffers buffers = TestDecodeBuffers.create();
+        Decompressor brotli = new DecompressorFactory(null).getDecompressor(CompressionCodec.BROTLI);
+        Decompressor lz4 = new DecompressorFactory(null).getDecompressor(CompressionCodec.LZ4);
+
+        for (byte[] body : new byte[][] { large, small }) {
+            ByteBuffer brotliPage = buffer.wrap(compress(CompressionCodec.BROTLI, body));
+            assertThat(brotli.decompress(brotliPage, body.length, new byte[body.length], buffers))
+                    .as("Brotli %s, %d bytes", buffer, body.length).isEqualTo(body);
+
+            ByteBuffer lz4Page = buffer.wrap(Lz4HadoopFrames.frame(body, 1_500));
+            assertThat(lz4.decompress(lz4Page, body.length, new byte[body.length], buffers))
+                    .as("Hadoop LZ4 %s, %d bytes", buffer, body.length).isEqualTo(body);
+        }
+    }
 }
