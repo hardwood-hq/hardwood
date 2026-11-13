@@ -10,7 +10,6 @@ package dev.hardwood.internal.reader.plan;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.FixedWidths;
-import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
@@ -21,20 +20,24 @@ import dev.hardwood.schema.ColumnSchema;
 /// Computes optimal batch sizes for column data assembly.
 public final class BatchSizing {
 
+    /// The largest array a batch allocates per column: half of G1's smallest region (1 MB) less a
+    /// 24-byte allowance for the array header (16 bytes by default, 12 with compact object
+    /// headers). G1 allocates an object larger than half a heap region as a humongous object, in
+    /// whole old-generation regions; G1 picks 1 MB regions for every heap below 4 GB, and
+    /// allocating such an array per batch starts concurrent cycles and fills the old generation
+    /// with them. A column's values per batch are capped so that each of its per-value arrays
+    /// stays within this bound ([#arrayBoundRows]).
+    public static final int MAX_ARRAY_BYTES = 512 * 1024 - 24;
+
     /// Hard upper bound on the batch size returned by
-    /// [#computeOptimalBatchSize(ProjectedSchema, double[], long)], and on the values per batch
-    /// of a binary column. Other components that pre-size structures around the worst-case
-    /// batch size (e.g. the `ALL_PRESENT` sentinel in `FlatRowReader`) read this constant.
+    /// [#computeOptimalBatchSize(ProjectedSchema, double[], long)]: the values of a column whose
+    /// widest per-value array has 4-byte elements (an `int` level, a reference of
+    /// `ColumnReader.getStrings()`) that fit in [#MAX_ARRAY_BYTES]. Other components that pre-size
+    /// structures around the worst-case batch size (e.g. the `ALL_PRESENT` sentinel in
+    /// `FlatRowReader`) read this constant.
     ///
-    /// `ColumnReader.getStrings()` and `getBinaries()` build one reference array per batch,
-    /// holding a binary column's values. G1 allocates an object larger than half a heap region
-    /// as a humongous object, in whole old-generation regions, and allocating one per batch
-    /// makes garbage collection take most of the process CPU. This is the longest reference
-    /// array that stays an ordinary object at G1's smallest region (1 MB) with compressed
-    /// references: half a region less a 24-byte allowance for the array header (16 bytes by
-    /// default, 12 with compact object headers), over 4 bytes per reference.
-    /// Batches from about 128K rows up read equally fast, so the bound costs no throughput.
-    public static final int MAX_BATCH = (512 * 1024 - 24) / 4;
+    /// Batches from about 64K rows up read equally fast, so the bound costs no throughput.
+    public static final int MAX_BATCH = MAX_ARRAY_BYTES / Integer.BYTES;
 
     /// Passed as `availableRows` where the rows a read can produce are not known ahead of it,
     /// as for a multi-file read whose later files have not been planned. The batch then follows
@@ -144,17 +147,26 @@ public final class BatchSizing {
         return values == 0 ? -1 : (double) bytes / values + 2 * Integer.BYTES;
     }
 
-    /// Returns the most rows whose values fit in [#MAX_BATCH] for every projected binary column,
-    /// at least 1, or [#MAX_BATCH] where no column is binary. A primitive column's values are
-    /// bounded by the byte budget alone, so a wide list of numbers keeps its full batch.
-    private static int binaryValueRows(ProjectedSchema projectedSchema, double[] valuesPerRow) {
+    /// Returns the most rows whose values keep every per-value array of every projected column
+    /// within [#MAX_ARRAY_BYTES], at least 1. A column's values are its rows times its fan-out,
+    /// and its widest array element is [#arrayElementBytes].
+    private static int arrayBoundRows(ProjectedSchema projectedSchema, double[] valuesPerRow) {
         long rows = MAX_BATCH;
         for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {
-            if (BinaryBatchValues.holds(projectedSchema.getProjectedColumn(i).type())) {
-                rows = Math.min(rows, (long) (MAX_BATCH / fanout(valuesPerRow, i)));
-            }
+            int elementBytes = arrayElementBytes(projectedSchema.getProjectedColumn(i));
+            rows = Math.min(rows, (long) (MAX_ARRAY_BYTES / (elementBytes * fanout(valuesPerRow, i))));
         }
         return (int) Math.max(1, rows);
+    }
+
+    /// The element width of a column's widest per-value array in a batch: its value array for an
+    /// 8-byte type, and otherwise four bytes, which its `int` levels, its binary views and the
+    /// reference array of `ColumnReader.getStrings()` take.
+    private static int arrayElementBytes(ColumnSchema column) {
+        return switch (column.type()) {
+            case INT64, DOUBLE -> Long.BYTES;
+            case INT32, FLOAT, BOOLEAN, BYTE_ARRAY, INT96, FIXED_LEN_BYTE_ARRAY -> Integer.BYTES;
+        };
     }
 
     /// Returns projected column `i`'s list fan-out, falling back to `1.0` for a `null` or short
@@ -166,13 +178,13 @@ public final class BatchSizing {
     }
 
     /// Computes a batch size that keeps all column arrays for one batch within a fixed byte
-    /// budget and a binary column's values per batch within [#MAX_BATCH], capped at
+    /// budget and each of them within [#MAX_ARRAY_BYTES], capped at
     /// `availableRows`, the rows the read can produce, or [#ROWS_UNKNOWN] where that
     /// is not known.
     ///
     /// The byte budget sizes a batch from the projected columns' widths alone, so a read
-    /// shorter than one batch would carry arrays for rows that cannot arrive: a single `INT64`
-    /// column over a 600-row file budgets [#MAX_BATCH], a 1 MB array per batch to hold 600
+    /// shorter than one batch would carry arrays for rows that cannot arrive: a single `INT32`
+    /// column over a 600-row file budgets [#MAX_BATCH], a 512 KB array per batch to hold 600
     /// values. The cap binds only in that case. Where the read is longer than a batch the
     /// budgeted size is returned unchanged, so batches stay as full as they were.
     ///
@@ -187,7 +199,7 @@ public final class BatchSizing {
     public static int computeOptimalBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow,
             long availableRows) {
         int budgeted = Math.min(budgetedBatchSize(projectedSchema, valuesPerRow),
-                binaryValueRows(projectedSchema, valuesPerRow));
+                arrayBoundRows(projectedSchema, valuesPerRow));
         if (availableRows == ROWS_UNKNOWN) {
             return budgeted;
         }

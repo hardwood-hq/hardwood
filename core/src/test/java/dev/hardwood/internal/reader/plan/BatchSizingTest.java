@@ -35,8 +35,8 @@ import static org.assertj.core.api.Assertions.withinPercentage;
 
 /// Verifies the byte-budgeted batch sizing the column- and row-reader paths
 /// share: the size depends on the projected columns' physical widths scaled by
-/// their list fan-out, clamped to at most `MAX_BATCH`, rather than being a fixed
-/// record count.
+/// their list fan-out, clamped so that no per-value array of a column exceeds `MAX_ARRAY_BYTES`,
+/// rather than being a fixed record count.
 class BatchSizingTest {
 
     /// `int_col` (INT32), `long_col` (INT64), `float_col` (FLOAT),
@@ -50,8 +50,10 @@ class BatchSizingTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
             // A single 1-byte column would compute 6 Mi rows; the clamp caps it.
             assertThat(sizeFor(reader, "bool_col")).isEqualTo(BatchSizing.MAX_BATCH);
-            // A single 8-byte column computes 786 432 rows, still above the clamp.
-            assertThat(sizeFor(reader, "long_col")).isEqualTo(BatchSizing.MAX_BATCH);
+            // A single 4-byte column computes 1.5 Mi rows; its values fill the bound at MAX_BATCH.
+            assertThat(sizeFor(reader, "int_col")).isEqualTo(BatchSizing.MAX_BATCH);
+            // A single 8-byte column computes 786 432 rows; its values fill the bound at half that.
+            assertThat(sizeFor(reader, "long_col")).isEqualTo(BatchSizing.MAX_ARRAY_BYTES / Long.BYTES);
         }
     }
 
@@ -66,7 +68,7 @@ class BatchSizingTest {
 
             assertThat(BatchSizing.budgetRows(narrow, null)).isEqualTo(TARGET_BYTES / 8);
             assertThat(BatchSizing.computeOptimalBatchSize(narrow, null, BatchSizing.ROWS_UNKNOWN))
-                    .isEqualTo(BatchSizing.MAX_BATCH);
+                    .isEqualTo(BatchSizing.MAX_ARRAY_BYTES / Long.BYTES);
             assertThat(BatchSizing.budgetRows(wide, new double[] { 4.0, 4.0, 4.0, 4.0 })).isEqualTo(TARGET_BYTES / 96);
         }
     }
@@ -98,34 +100,35 @@ class BatchSizingTest {
         }
     }
 
+    /// A projection of few columns is bound by its widest array, a wide one by the byte budget:
+    /// twenty `DOUBLE` columns cost 160 bytes a row, so the budget's rows hold fewer values per
+    /// column than the bound.
     @Test
-    void batchSizeShrinksAsProjectionWidens() throws Exception {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
-            ProjectedSchema single = ProjectedSchema.create(reader.getFileSchema(),
-                    ColumnProjection.columns("long_col"));
-            ProjectedSchema wide = ProjectedSchema.create(reader.getFileSchema(),
-                    ColumnProjection.columns("int_col", "long_col", "float_col", "double_col"));
-
-            // Lists of four numbers per row: 4 * 8 = 32 bytes/row budgets above the clamp,
-            // 4 * (4 + 8 + 4 + 8) = 96 bytes/row below it, so the wider projection sizes smaller
-            // — the whole point of byte budgeting over a fixed record count.
-            assertThat(BatchSizing.computeOptimalBatchSize(single, new double[] { 4.0 }, BatchSizing.ROWS_UNKNOWN))
-                    .isEqualTo(BatchSizing.MAX_BATCH);
-            assertThat(BatchSizing.computeOptimalBatchSize(wide, new double[] { 4.0, 4.0, 4.0, 4.0 },
-                    BatchSizing.ROWS_UNKNOWN))
-                    .isEqualTo((int) (TARGET_BYTES / 96));
+    void batchSizeShrinksAsProjectionWidens() {
+        FileSchema.Builder builder = FileSchema.builder("doubles");
+        for (int i = 0; i < 20; i++) {
+            builder.addColumn("d" + i, PhysicalType.DOUBLE, RepetitionType.REQUIRED);
         }
+        FileSchema schema = builder.build();
+        ProjectedSchema single = ProjectedSchema.create(schema, ColumnProjection.columns("d0"));
+        ProjectedSchema wide = ProjectedSchema.create(schema, ColumnProjection.all());
+
+        assertThat(BatchSizing.computeOptimalBatchSize(single, null, BatchSizing.ROWS_UNKNOWN))
+                .isEqualTo(BatchSizing.MAX_ARRAY_BYTES / Double.BYTES);
+        assertThat(BatchSizing.computeOptimalBatchSize(wide, null, BatchSizing.ROWS_UNKNOWN))
+                .isEqualTo((int) (TARGET_BYTES / (20 * Double.BYTES)));
     }
 
     @Test
-    void aBinaryColumnsValuesPerBatchStayWithinMaxBatch() throws Exception {
+    void aColumnsValuesPerBatchStayWithinTheArrayBound() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
             ProjectedSchema withString = ProjectedSchema.create(reader.getFileSchema(),
                     ColumnProjection.columns("long_col", "double_col", "string_col"));
 
-            // A flat string column: 8 + 8 + 16 = 32 bytes/row budgets above the clamp.
+            // A flat string column: 8 + 8 + 16 = 32 bytes/row budgets above the bound, and the
+            // 8-byte columns' values fill it first.
             assertThat(BatchSizing.computeOptimalBatchSize(withString, null, BatchSizing.ROWS_UNKNOWN))
-                    .isEqualTo(BatchSizing.MAX_BATCH);
+                    .isEqualTo(BatchSizing.MAX_ARRAY_BYTES / Long.BYTES);
 
             // A list of four strings per row: 8 + 8 + 64 = 80 bytes/row budgets 78 643 rows,
             // but those rows would hold 314 572 strings; the batch holds MAX_BATCH of them.
@@ -133,13 +136,13 @@ class BatchSizingTest {
                     BatchSizing.ROWS_UNKNOWN))
                     .isEqualTo(BatchSizing.MAX_BATCH / 4);
 
-            // A list of four numbers per row keeps the byte budget's rows: only binary
-            // columns build reference arrays.
+            // A list of sixteen ints per row: 64 + 8 + 8 = 80 bytes/row budgets 78 643 rows, but
+            // those rows would hold 1 258 291 ints; the batch holds MAX_BATCH of them.
             ProjectedSchema numbers = ProjectedSchema.create(reader.getFileSchema(),
                     ColumnProjection.columns("int_col", "long_col", "double_col"));
             assertThat(BatchSizing.computeOptimalBatchSize(numbers, new double[] { 16.0, 1.0, 1.0 },
                     BatchSizing.ROWS_UNKNOWN))
-                    .isEqualTo((int) (TARGET_BYTES / (16 * 4 + 8 + 8)));
+                    .isEqualTo(BatchSizing.MAX_BATCH / 16);
         }
     }
 
@@ -154,14 +157,15 @@ class BatchSizingTest {
             assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 1.0 }, BatchSizing.ROWS_UNKNOWN))
                     .isEqualTo(BatchSizing.MAX_BATCH);
 
-            // Fan-out 768 (a 768-wide LIST<float32>): each row is 768 * 4 = 3072 bytes,
-            // so the batch follows the byte budget down to 2 048 rows — far below the
-            // 16 384 rows a fan-out-blind sizing would have forced, which would have made
-            // the value array ~768x the byte budget.
+            // Fan-out 768 (a 768-wide LIST<float32>): each row is 768 * 4 = 3072 bytes, so the
+            // byte budget holds 2 048 rows and the array bound 170, far below the 16 384 rows a
+            // fan-out-blind sizing would have forced, which would have made the value array
+            // ~768x the byte budget.
+            assertThat(BatchSizing.budgetRows(projected, new double[] { 768.0 }))
+                    .isEqualTo(TARGET_BYTES / (768 * 4));
             assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 768.0 }, BatchSizing.ROWS_UNKNOWN))
-                    .isEqualTo((int) (TARGET_BYTES / (768 * 4)))
-                    .isEqualTo(2048)
-                    .isLessThan(16_384);
+                    .isEqualTo(BatchSizing.MAX_ARRAY_BYTES / (768 * 4))
+                    .isEqualTo(170);
         }
     }
 
@@ -169,7 +173,7 @@ class BatchSizingTest {
     void theRowsAvailableCapTheBatch() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
             ProjectedSchema projected = ProjectedSchema.create(
-                    reader.getFileSchema(), ColumnProjection.columns("long_col"));
+                    reader.getFileSchema(), ColumnProjection.columns("int_col"));
 
             // The byte budget alone clamps this projection to MAX_BATCH. A read that cannot
             // produce that many rows sizes to what it holds, because the rest of the array
@@ -203,7 +207,7 @@ class BatchSizingTest {
     @Test
     void aReaderSizesItsBatchToTheFileItReads() throws Exception {
         // The file holds three rows. Sized by the byte budget alone, a single INT64 column
-        // would carry a MAX_BATCH-long array, 1 MB to hold three values.
+        // would carry a 512 KB array to hold three values.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES));
              ColumnReader column = reader.buildColumnReader("long_col").build()) {
             assertThat(column.nextBatch()).isTrue();
