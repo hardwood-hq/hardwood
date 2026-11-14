@@ -33,13 +33,15 @@ sealed interface Unit {
 
     /// Listed: its file's footer is parsed and its statistics keep it. `offsetIndexes` and
     /// `columnIndexes` are the file ordinals of the columns whose OffsetIndex and ColumnIndex its
-    /// plan reads, from `window`, which also holds its Bloom filters.
+    /// plan reads, from `window`, which also holds its Bloom filters; `dictionaries` are the
+    /// dictionary pages its probe reads whose extent the footer gives, fetched with the window's
+    /// Bloom filters and held by it alone.
     record Listed(UnitListing listing, BitSet offsetIndexes, BitSet columnIndexes,
-                  RowGroupPlanner.WindowFetch window) implements Unit {
+                  RowGroupPlanner.WindowFetch window, List<RangeFetch> dictionaries) implements Unit {
 
-        /// Its Bloom filters have arrived and it has a leaf they or its dictionaries may decide.
+        /// Its Bloom filters and dictionary pages have arrived and it has a leaf they may decide.
         Probing probing() {
-            List<RangeFetch> probed = new ArrayList<>();
+            List<RangeFetch> probed = new ArrayList<>(dictionaries);
             List<FileRange> missing = new ArrayList<>();
             String reason = "rg=" + listing.rowGroup() + " pruning";
             ByteSource held = held(window.bloomFilters(), probed);
@@ -67,22 +69,16 @@ sealed interface Unit {
         };
     }
 
-    /// Probing: its Bloom filters and dictionaries are probed, a pass at a time, from `bytes`. The
-    /// probe outlives its passes and keeps reading the source it was first given, so the state
-    /// accumulates in place: `probe` holds what the passes so far decided and decoded, `probed` the
-    /// dictionary bytes they fetched, in file order, and `missing` what the last pass lacked. Only
-    /// the planner sees it.
+    /// Probing: its Bloom filters and dictionary pages are read from `bytes`, a read step at a time
+    /// until none lacks anything, then evaluated once. `probe` holds what the steps read, `probed`
+    /// the dictionary bytes fetched for it, in file order, and `missing` what the last step lacked.
+    /// Only the planner sees it.
     record Probing(Listed listed, RowGroupPruning.Probe probe, List<RangeFetch> probed, List<FileRange> missing,
                    ByteSource bytes) implements Unit {
 
         @Override
         public UnitListing listing() {
             return listed.listing();
-        }
-
-        /// The bytes its passes read, without recording what they lack.
-        ByteSource held() {
-            return Unit.held(listed.window().bloomFilters(), probed);
         }
 
         /// A pass lacked bytes, `more`, which the next reads once fetched.
@@ -93,7 +89,7 @@ sealed interface Unit {
 
         /// The probe kept it, reporting `event` unless it is `null`: its page index is waited for.
         AwaitingIndex kept(Event event) {
-            return new AwaitingIndex(listed, probe.dictionaries(), event == null ? List.of() : List.of(event));
+            return new AwaitingIndex(listed, probe.decoded(), event == null ? List.of() : List.of(event));
         }
 
         /// The probe dropped it, reporting `event` unless it is `null`: it is planned with no row
@@ -106,7 +102,7 @@ sealed interface Unit {
 
     /// Awaiting its page index: kept by its probe, whose decoded `dictionaries` its pages decode
     /// with (`null` for none), with the `events` its pruning reports so far.
-    record AwaitingIndex(Listed listed, RowGroupDictionaryFilterSource dictionaries, List<Event> events)
+    record AwaitingIndex(Listed listed, RowGroupDictionaryFilterSource.DecodedDictionaries dictionaries, List<Event> events)
             implements Unit {
 
         @Override

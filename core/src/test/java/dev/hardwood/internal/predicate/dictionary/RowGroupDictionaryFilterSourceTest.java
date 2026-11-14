@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate.dictionary;
 
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -18,6 +19,8 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.step.ByteSource;
+import dev.hardwood.internal.thrift.RleExpansionFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
@@ -42,6 +45,50 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// The offsets locate the page and size the opening read; the page header states its own length and
 /// is the authority on it. Offsets that cannot be read at all are rejected.
 class RowGroupDictionaryFilterSourceTest {
+
+    /// A page read ahead of its parse carries its parsed header, sizes nothing until read, and is
+    /// let go once its dictionary is decoded.
+    @Test
+    void aPageReadAheadIsParsedOnceItsDictionaryIsAskedFor() throws Exception {
+        int dictionaryBytes = 1024;
+        InputFile inputFile = InputFile.of(ByteBuffer.wrap(RleExpansionFile.buildWide(1, 1, dictionaryBytes, 16)));
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile);
+             HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            RowGroup rowGroup = reader.getFileMetaData().rowGroups().getFirst();
+            RowGroupDictionaryFilterSource source = new RowGroupDictionaryFilterSource(inputFile,
+                    ByteSource.of(inputFile), rowGroup, reader.getFileSchema(), context);
+            assertThatThrownBy(() -> source.readAhead(0))
+                    .isExactlyInstanceOf(IllegalStateException.class)
+                    .hasMessage("The dictionary page of column 0 was not read ahead");
+
+            assertThat(source.page(0).get().header().type()).isEqualTo(PageType.DICTIONARY_PAGE);
+            assertThat(source.readAhead(0).header().uncompressedPageSize()).isEqualTo(dictionaryBytes);
+
+            assertThat(source.forColumn(0).size()).isEqualTo(dictionaryBytes / Long.BYTES);
+            assertThat(source.readAhead(0)).isNull();
+        }
+    }
+
+    /// Once reading ahead has ended, a dictionary whose page was not read ahead fails its
+    /// evaluation rather than being read and decoded unsized.
+    @Test
+    void aPageNotReadAheadFailsOnceReadsHaveEnded() throws Exception {
+        InputFile inputFile = InputFile.of(ByteBuffer.wrap(RleExpansionFile.buildWide(2, 1, 1024, 16)));
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile);
+             HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            RowGroupDictionaryFilterSource source = new RowGroupDictionaryFilterSource(inputFile,
+                    ByteSource.of(inputFile), reader.getFileMetaData().rowGroups().getFirst(),
+                    reader.getFileSchema(), context);
+            source.page(0);
+
+            source.readsEnded();
+
+            assertThat(source.forColumn(0)).isNotNull();
+            assertThatThrownBy(() -> source.forColumn(1))
+                    .isExactlyInstanceOf(IllegalStateException.class)
+                    .hasMessage("The dictionary page of column 1 was not read ahead of its evaluation");
+        }
+    }
 
     /// One row group, 10 000 rows; `category` cycles 10 distinct values, so its dictionary page is
     /// far smaller than the probe.

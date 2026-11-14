@@ -13,6 +13,7 @@ import java.util.function.Predicate;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.predicate.DictionarySource;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
@@ -23,15 +24,14 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageEncodingStats;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 /// Lazily reads and caches a row group's dictionary pages so predicate evaluation can use them to
 /// prove a value absent from a column chunk.
 ///
-/// Dictionaries are read on demand: a row group dropped by statistics or a bloom filter never pays
-/// for the dictionary page I/O.
-public final class RowGroupDictionaryFilterSource {
+/// Dictionaries are read from `bytes` as an evaluation asks for them, or ahead of it ([#page]), so
+/// that a page's header sizes its parse before the parse runs.
+public final class RowGroupDictionaryFilterSource implements DictionarySource {
 
     private final InputFile inputFile;
     /// Where the dictionary pages are read from.
@@ -43,6 +43,12 @@ public final class RowGroupDictionaryFilterSource {
     private final boolean[] read;
     /// Where each read dictionary page ends, `0` for a column whose dictionary is not read.
     private final long[] pageEnds;
+    /// per column, its dictionary page once read ahead of its parse, until parsed
+    private final DataPage[] pages;
+    /// per column, whether its page was read ahead, found or found not to exist
+    private final boolean[] pageRead;
+    /// whether reading ahead has ended ([#readsEnded]): no page is read from then on
+    private boolean readsEnded;
 
     public RowGroupDictionaryFilterSource(InputFile inputFile, RowGroup rowGroup,
                                           FileSchema fileSchema, HardwoodContextImpl context) {
@@ -62,6 +68,8 @@ public final class RowGroupDictionaryFilterSource {
         this.dictionaries = new Dictionary[columnCount];
         this.read = new boolean[columnCount];
         this.pageEnds = new long[columnCount];
+        this.pages = new DataPage[columnCount];
+        this.pageRead = new boolean[columnCount];
     }
 
     public Dictionary forColumn(int columnIndex) throws IOException {
@@ -70,42 +78,96 @@ public final class RowGroupDictionaryFilterSource {
         }
 
         if (!read[columnIndex]) {
-            Parsed<Dictionary> dictionary = readDictionary(columnIndex);
-            if (dictionary.needsBytes()) {
+            Parsed<DataPage> page = page(columnIndex);
+            if (page.needsBytes()) {
                 // No dictionary for this evaluation, and none recorded: once `bytes` holds it, the
                 // next evaluation reads it
                 return null;
             }
-            dictionaries[columnIndex] = dictionary.value();
+            dictionaries[columnIndex] = page.value() == null ? null : parse(columnIndex, page.value());
+            pages[columnIndex] = null;
             read[columnIndex] = true;
         }
         return dictionaries[columnIndex];
     }
 
-    /// Whether the column's dictionary has been read, or found not to exist, so that a decision
-    /// made with it is final.
-    public boolean decided(int columnIndex) {
-        return columnIndex < 0 || columnIndex >= read.length || read[columnIndex];
+    /// The column's dictionary page, header parsed, read from `bytes` and kept for its parse
+    /// ([#forColumn]); `null` as its value where the column has no dictionary this source can use,
+    /// or the range it needs.
+    public Parsed<DataPage> page(int columnIndex) throws IOException {
+        if (columnIndex < 0 || columnIndex >= dictionaries.length) {
+            return Parsed.of(null);
+        }
+        if (!pageRead[columnIndex]) {
+            if (readsEnded) {
+                if (!isFullyDictionaryEncoded(rowGroup.columns().get(columnIndex).metaData())) {
+                    // a chunk whose dictionary cannot prove absence has none to read
+                    return Parsed.of(null);
+                }
+                throw new IllegalStateException("The dictionary page of column " + columnIndex
+                        + " was not read ahead of its evaluation");
+            }
+            Parsed<DataPage> found = readPage(columnIndex);
+            if (found.needsBytes()) {
+                return found;
+            }
+            pages[columnIndex] = found.value();
+            pageRead[columnIndex] = true;
+        }
+        return Parsed.of(pages[columnIndex]);
     }
+
+    /// No page is read from now on: an evaluation decodes the pages read ahead, and fails on one
+    /// that was not, whose parse nothing sized.
+    public void readsEnded() {
+        readsEnded = true;
+    }
+
+    /// The column's dictionary page [#page] read, `null` where the column has none this source can
+    /// use; reads nothing.
+    ///
+    /// @throws IllegalStateException if [#page] has not read it
+    public DataPage readAhead(int columnIndex) {
+        if (columnIndex < 0 || columnIndex >= pageRead.length || !pageRead[columnIndex]) {
+            throw new IllegalStateException("The dictionary page of column " + columnIndex + " was not read ahead");
+        }
+        return pages[columnIndex];
+    }
+
 
     /// Whether `check` proves a literal absent from the column's dictionary, reading the
     /// dictionary first; `false` where the column has none it can use.
+    @Override
     public boolean absent(int columnIndex, Predicate<Dictionary> check) throws IOException {
         Dictionary dictionary = forColumn(columnIndex);
         return dictionary != null && check.test(dictionary);
     }
 
-    /// The column's dictionary if [#forColumn] has read it, or `null` without reading anything.
-    /// A fetch plan takes it from here so a dictionary pruning has read is not read again.
-    public Dictionary loaded(int columnIndex) {
-        return columnIndex >= 0 && columnIndex < dictionaries.length ? dictionaries[columnIndex] : null;
+    /// The dictionaries this source decoded, and where their pages end, without what it read to
+    /// decode them.
+    public DecodedDictionaries decoded() {
+        return new DecodedDictionaries(dictionaries.clone(), pageEnds.clone());
     }
 
-    /// Where the column's dictionary page ends if [#forColumn] has read it — the file offset the
-    /// chunk's first data page starts at — or `0`.
-    public long loadedPageEnd(int columnIndex) {
-        return columnIndex >= 0 && columnIndex < pageEnds.length ? pageEnds[columnIndex] : 0;
+    /// A row group's dictionaries a probe decoded, for its plan to decode its pages with.
+    ///
+    /// @param dictionaries per column, its decoded dictionary, `null` for none
+    /// @param pageEnds per column, where its decoded dictionary's page ends, `0` for none
+    public record DecodedDictionaries(Dictionary[] dictionaries, long[] pageEnds) {
+
+        /// The column's decoded dictionary, `null` for none.
+        public Dictionary loaded(int columnIndex) {
+            return columnIndex >= 0 && columnIndex < dictionaries.length ? dictionaries[columnIndex] : null;
+        }
+
+        /// Where the column's decoded dictionary's page ends, the offset its chunk's first data
+        /// page starts at, `0` for none.
+        public long loadedPageEnd(int columnIndex) {
+            return columnIndex >= 0 && columnIndex < pageEnds.length ? pageEnds[columnIndex] : 0;
+        }
     }
+
+
 
     /// Whether every value in the column chunk is dictionary-encoded, so its dictionary page
     /// enumerates all of the chunk's non-null values — the precondition for proving a value absent
@@ -117,7 +179,7 @@ public final class RowGroupDictionaryFilterSource {
     /// grows too large; such a chunk reports `false`, since its dictionary covers only part of the
     /// data. Returns `false` when `encodingStats` is empty and likewise for a data page whose
     /// encoding isn't a dictionary.
-    private static boolean isFullyDictionaryEncoded(ColumnMetaData metaData) {
+    public static boolean isFullyDictionaryEncoded(ColumnMetaData metaData) {
         boolean hasDictionaryPage = false;
         boolean hasDataPage = false;
 
@@ -139,7 +201,9 @@ public final class RowGroupDictionaryFilterSource {
         return hasDictionaryPage && hasDataPage;
     }
 
-    private Parsed<Dictionary> readDictionary(int columnIndex) throws IOException {
+    /// The column's dictionary page, `null` where it has none this source can use, or the range it
+    /// needs.
+    private Parsed<DataPage> readPage(int columnIndex) throws IOException {
         ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
         ColumnMetaData metaData = columnChunk.metaData();
 
@@ -157,19 +221,16 @@ public final class RowGroupDictionaryFilterSource {
         // `dictionary_page_offset` points it at the dictionary page instead, which the page's own
         // header tells apart. A first data page preceding the dictionary page cannot be read at
         // all, so that fails rather than degrading to "no dictionary".
-        Parsed<DataPage> read = DictionaryParser.readPage(bytes, columnChunk, columnPrefix(metaData));
-        if (read.needsBytes()) {
-            return read.asNeed();
-        }
-        DataPage page = read.value();
-        if (page == null) {
-            return Parsed.of(null);
-        }
-        ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
-        long pageEnd = columnChunk.chunkStartOffset() + page.bytes().remaining();
-        Dictionary dictionary = DictionaryParser.parse(page, columnSchema, metaData, context);
-        pageEnds[columnIndex] = pageEnd;
-        return Parsed.of(dictionary);
+        return DictionaryParser.readPage(bytes, columnChunk, columnPrefix(metaData));
+    }
+
+    /// The dictionary `page`, the column's dictionary page, holds.
+    private Dictionary parse(int columnIndex, DataPage page) {
+        ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
+        Dictionary dictionary = DictionaryParser.parse(page, fileSchema.getColumn(columnIndex), columnChunk.metaData(),
+                context);
+        pageEnds[columnIndex] = columnChunk.chunkStartOffset() + page.bytes().remaining();
+        return dictionary;
     }
 
     /// Fails unless this chunk stores its data in the file being read.

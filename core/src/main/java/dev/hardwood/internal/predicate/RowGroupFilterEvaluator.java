@@ -14,7 +14,6 @@ import java.util.function.Predicate;
 
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
-import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.util.Geospatial;
 import dev.hardwood.metadata.BoundingBox;
@@ -55,7 +54,7 @@ public class RowGroupFilterEvaluator {
     ///        statistics bounds turn out to be unusable
     /// @return the statistics decision for the row group
     public static FilterDecision decideRowGroup(ResolvedPredicate predicate, RowGroup rowGroup,
-            BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
+            BloomFilterSource bloomFilters, DictionarySource dictionaries,
             LogContext logContext, BoundsReadability readability) throws IOException {
         LeafDecisions leafDecisions = new LeafDecisions();
         FilterDecision planned = planRowGroup(predicate, rowGroup, bloomFilters, logContext, readability,
@@ -119,31 +118,12 @@ public class RowGroupFilterEvaluator {
     /// dictionary is read only for a leaf that decision leaves open: one proved to match in full
     /// holds its literal in every row, so its dictionary cannot prove the literal absent.
     public static FilterDecision refineWithDictionaries(ResolvedPredicate predicate, RowGroup rowGroup,
-            LeafDecisions leafDecisions, RowGroupDictionaryFilterSource dictionaries) throws IOException {
-        return refineWithDictionaries(predicate, rowGroup, leafDecisions, dictionaries, new LeafDecisions());
-    }
-
-    /// As [#refineWithDictionaries(ResolvedPredicate, RowGroup, LeafDecisions, RowGroupDictionaryFilterSource)],
-    /// keeping in `decided` each leaf's decision once final, its dictionary read or found absent
-    /// ([RowGroupDictionaryFilterSource#decided]), and starting from those it holds, so a
-    /// refinement run again once a dictionary its source lacked has been fetched checks no
-    /// dictionary twice.
-    public static FilterDecision refineWithDictionaries(ResolvedPredicate predicate, RowGroup rowGroup,
-            LeafDecisions leafDecisions, RowGroupDictionaryFilterSource dictionaries, LeafDecisions decided)
-            throws IOException {
+            LeafDecisions leafDecisions, DictionarySource dictionaries) throws IOException {
         return fold(predicate, rowGroup, leaf -> {
-            FilterDecision known = decided.decisions.get(leaf);
-            if (known != null) {
-                return known;
-            }
             FilterDecision planned = leafDecisions.get(leaf);
-            FilterDecision decision = planned == FilterDecision.MIGHT_MATCH && absent(leaf, null, dictionaries)
+            return planned == FilterDecision.MIGHT_MATCH && absent(leaf, null, dictionaries)
                     ? FilterDecision.CANNOT_MATCH
                     : planned;
-            if (planned != FilterDecision.MIGHT_MATCH || dictionaries.decided(ResolvedPredicate.leafColumnIndex(leaf))) {
-                decided.put(leaf, decision);
-            }
-            return decision;
         });
     }
 
@@ -230,7 +210,7 @@ public class RowGroupFilterEvaluator {
     /// Every leaf type is named rather than reached by a `default`, so a new one does not compile
     /// until it states what proves its literal absent, `false` where nothing does.
     private static boolean absent(ResolvedPredicate leaf, BloomFilterSource bloomFilters,
-            RowGroupDictionaryFilterSource dictionaries) throws IOException {
+            DictionarySource dictionaries) throws IOException {
         return switch (leaf) {
             // Signed and unsigned columns probe alike: both shortcuts test stored bits, and the
             // bits of a literal do not depend on how the column orders them.
@@ -352,7 +332,7 @@ public class RowGroupFilterEvaluator {
 
     /// Resolves the column's dictionary, or `null` when no source is supplied or the chunk has
     /// none. See [#bloom] for why the read is here.
-    private static boolean dictionaryAbsent(RowGroupDictionaryFilterSource dictionaries, int columnIndex,
+    private static boolean dictionaryAbsent(DictionarySource dictionaries, int columnIndex,
             Predicate<Dictionary> check) throws IOException {
         return dictionaries != null && dictionaries.absent(columnIndex, check);
     }

@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.plan;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.params.ParameterizedTest;
@@ -17,6 +18,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -97,17 +99,31 @@ class BloomFilterWindowIoTest {
 
     @ParameterizedTest
     @EnumSource(ReadKind.class)
-    void rowGroupsTheirBloomFiltersDropReadNoDictionaryAndNoPageIndex(ReadKind kind) throws Exception {
+    void rowGroupsTheirBloomFiltersDropReadTheirDictionariesWithTheirBloomFiltersAndNoPageIndex(ReadKind kind)
+            throws Exception {
         // The same rows, dictionary-encoded and with a page index: `code`'s dictionary could
-        // drop every row group too, and the read would need the page index of a kept one.
+        // drop every row group too, and the read would need the page index of a kept one. The
+        // dictionaries are requested with the bloom filters, before those decide, each page on its
+        // own, as the chunk data between them is read with the row group.
         CountingInputFile file = countingFile(DICT_INDEX_FIXTURE);
 
         long rows = count(kind, file, FilterPredicate.eq("code", 5));
 
         assertThat(rows).isZero();
+        List<CountingInputFile.Read> expected = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(DICT_INDEX_FIXTURE))) {
+            List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
+            for (int rg = 0; rg < rowGroups.size(); rg++) {
+                ColumnMetaData code = rowGroups.get(rg).columns().get(CODE).metaData();
+                expected.add(new CountingInputFile.Read(code.dictionaryPageOffset(),
+                        Math.toIntExact(code.dataPageOffset() - code.dictionaryPageOffset()), "rg=" + rg + " pruning"));
+            }
+        }
+        assertThat(file.reads()).filteredOn(read -> read.reason().startsWith("rg=") && !read.reason().startsWith("rg=0-4"))
+                .containsExactlyInAnyOrderElementsOf(expected);
         assertThat(file.reads()).extracting(CountingInputFile.Read::reason)
                 .filteredOn(reason -> reason.startsWith("rg="))
-                .containsExactly("rg=0-4 pruning");
+                .allMatch(reason -> reason.endsWith(" pruning"));
     }
 
     /// Listing a file reads no Bloom filter; the read's first question about its work items reads
