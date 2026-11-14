@@ -683,4 +683,81 @@ class DictionaryFilterSupportTest {
                     halves(INDEXED, 10f))).isFalse();
         }
     }
+
+    /// Dictionaries large enough to be held in several chunks, with the one matching entry at the
+    /// start of a later chunk or at the very end, so each byte-string kernel is seen to cross
+    /// chunk boundaries.
+    @Nested
+    class ChunkedByteArrayDictionaries {
+
+        /// Enough entries to fill more than two chunks by count alone; [#chunked] checks that they do.
+        private static final int ENTRIES = 300_000;
+
+        /// Distinct 8-byte entries `0, 1, 2, …` as big-endian longs, with `target` at `position`.
+        private static Dictionary.ByteArrayDictionary binaries(int position, byte[] target) {
+            byte[][] entries = new byte[ENTRIES][];
+            for (int i = 0; i < ENTRIES; i++) {
+                entries[i] = ByteBuffer.allocate(Long.BYTES).putLong(i).array();
+            }
+            entries[position] = target;
+            return chunked(entries);
+        }
+
+        /// `FLOAT16` entries all `1.0`, with `target`'s two bytes at `position`.
+        private static Dictionary.ByteArrayDictionary halves(int position, byte[] target) {
+            byte[][] entries = new byte[ENTRIES][];
+            byte[] one = { (byte) Float.floatToFloat16(1.0f), (byte) (Float.floatToFloat16(1.0f) >>> 8) };
+            for (int i = 0; i < ENTRIES; i++) {
+                entries[i] = one;
+            }
+            entries[position] = target;
+            return chunked(entries);
+        }
+
+        private static Dictionary.ByteArrayDictionary chunked(byte[][] entries) {
+            Dictionary.ByteArrayDictionary dict = (Dictionary.ByteArrayDictionary) byteArrayDictionary(entries);
+            assertThat(dict.chunkCount()).as("chunks").isGreaterThan(2);
+            return dict;
+        }
+
+        /// The first entry of the last chunk, and the dictionary's last entry.
+        private static int[] positions() {
+            Dictionary.ByteArrayDictionary probe = binaries(0, new byte[Long.BYTES]);
+            return new int[]{ probe.firstEntry(probe.chunkCount() - 1), ENTRIES - 1 };
+        }
+
+        @Test
+        void byteStringPassesAndTheSetCrossChunks() {
+            byte[] target = "target!!".getBytes(StandardCharsets.UTF_8);
+            byte[][] absentPass = { "absent_1".getBytes(StandardCharsets.UTF_8) };
+            byte[][] absentSet = new byte[BINARY_PASS_LIMIT + 1][];
+            for (int i = 0; i < absentSet.length; i++) {
+                absentSet[i] = ("absent_" + i).getBytes(StandardCharsets.UTF_8);
+            }
+            for (int position : positions()) {
+                Dictionary.ByteArrayDictionary dict = binaries(position, target);
+                assertThat(DictionaryFilterSupport.absentAll(dict, absentPass)).as("pass at %d", position).isTrue();
+                assertThat(DictionaryFilterSupport.absentAll(dict, new byte[][]{ target })).as("pass at %d", position).isFalse();
+                assertThat(DictionaryFilterSupport.absentAll(dict, absentSet)).as("set at %d", position).isTrue();
+                byte[][] presentSet = absentSet.clone();
+                presentSet[0] = target;
+                assertThat(DictionaryFilterSupport.absentAll(dict, presentSet)).as("set at %d", position).isFalse();
+            }
+        }
+
+        @Test
+        void float16BitmaskAndNaNScanCrossChunks() {
+            short half = Float.floatToFloat16(4.5f);
+            byte[] target = { (byte) half, (byte) (half >>> 8) };
+            byte[] nan = { 0x01, 0x7e };
+            for (int position : positions()) {
+                Dictionary.ByteArrayDictionary values = halves(position, target);
+                assertThat(DictionaryFilterSupport.absentAllFloat16(values, new float[]{ 2.0f })).as("at %d", position).isTrue();
+                assertThat(DictionaryFilterSupport.absentAllFloat16(values, new float[]{ 2.0f, 4.5f })).as("at %d", position).isFalse();
+                Dictionary.ByteArrayDictionary withNaN = halves(position, nan);
+                assertThat(DictionaryFilterSupport.absentAllFloat16(withNaN, new float[]{ Float.NaN })).as("NaN at %d", position).isFalse();
+                assertThat(DictionaryFilterSupport.absentAllFloat16(values, new float[]{ Float.NaN })).as("no NaN, target at %d", position).isTrue();
+            }
+        }
+    }
 }
