@@ -10,7 +10,9 @@ package dev.hardwood.internal.reader.plan;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.UnaryOperator;
 
@@ -26,10 +28,13 @@ import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.thrift.FooterRewriter;
+import dev.hardwood.internal.thrift.OffsetIndexReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -111,6 +116,34 @@ class ReadRequestsTest {
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(bytes));
         file.open();
         assertThat(readAll(file)).isEqualTo(20 * 50_000);
+    }
+
+    /// An unfiltered read of a chunk with an OffsetIndex cuts its requests between pages, never
+    /// through one: under an S of two and a half pages, each request holds two whole pages.
+    @Test
+    void requestsOfAChunkWithAnOffsetIndexHoldWholePages() throws Exception {
+        int rows = 200_000;
+        // pages of 10,000 plain longs, 80,000 bytes and a header each
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(200_000));
+        byte[] bytes = write(rows, rows, "a");
+        ColumnChunk chunk = chunks(bytes)[0];
+        List<PageLocation> pages = OffsetIndexReader.read(new ThriftCompactReader(
+                ByteBuffer.wrap(bytes, Math.toIntExact(chunk.offsetIndexOffset()), chunk.offsetIndexLength()).slice()))
+                .pageLocations();
+        Set<Long> pageStarts = new HashSet<>();
+        Set<Long> pageEnds = new HashSet<>();
+        for (PageLocation page : pages) {
+            pageStarts.add(page.offset());
+            pageEnds.add(page.offset() + page.compressedPageSize());
+        }
+
+        List<CountingInputFile.Read> data = dataReads(bytes, chunk, rows);
+
+        assertThat(data).hasSize(pages.size() / 2);
+        assertThat(data).allSatisfy(read -> {
+            assertThat(pageStarts).contains(read.offset());
+            assertThat(pageEnds).contains(read.end());
+        });
     }
 
     @Test

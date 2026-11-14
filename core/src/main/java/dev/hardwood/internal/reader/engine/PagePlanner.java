@@ -107,8 +107,10 @@ final class PagePlanner {
     }
 
     /// Plans each decoded column's pages and dictionary page from its OffsetIndex, kept by the
-    /// rows its filter matches, and the unit's ranges: its chunks' extents, or under page
-    /// filtering the pages kept, adding to `events` what page filtering reports; on a job.
+    /// rows its filter matches, and the unit's ranges, adding to `events` what page filtering
+    /// reports; on a job. A chunk with an OffsetIndex is read as its dictionary page and the pages
+    /// kept, so that no range cuts through a page but where the file's tail starts; a chunk a scan
+    /// reads as its extent, in pieces of at most S.
     @SuppressWarnings("unchecked")
     UnitPlan plan(Unit.AwaitingIndex p, List<RangeFetch> index, List<Event> events)
             throws IOException {
@@ -127,8 +129,6 @@ final class PagePlanner {
         Dictionary[] preloaded = new Dictionary[n];
         long[] dictionaryEnd = new long[n];
         List<CoalescingPolicy.Need> needs = new ArrayList<>();
-        // pages are read alone where a filter or the row limit leaves some of them out
-        boolean pageRanges = !matching.isAll() || u.limit() < u.metaData().numRows();
         CoalescingPolicy.Extent[] extents = new CoalescingPolicy.Extent[n];
         String[] names = new String[n];
         for (int c = 0; c < n; c++) {
@@ -167,16 +167,13 @@ final class PagePlanner {
                     firstDataPage[c] = all.getFirst().offset();
                     dictionaryStart[c] = preloaded[c] != null ? 0
                             : DictionaryParser.dictionaryPageStart(chunk, firstDataPage[c]);
-                    if (pageRanges && dictionaryStart[c] > 0 && !pages[c].isEmpty()) {
+                    if (dictionaryStart[c] > 0 && !pages[c].isEmpty()) {
                         needs.add(new CoalescingPolicy.Need(c, dictionaryStart[c], firstDataPage[c]));
                     }
                 }
                 for (NeededPage page : pages[c]) {
                     long start = page.location().offset();
-                    long end = start + page.location().compressedPageSize();
-                    if (pageRanges) {
-                        needs.add(new CoalescingPolicy.Need(c, start, end));
-                    }
+                    needs.add(new CoalescingPolicy.Need(c, start, start + page.location().compressedPageSize()));
                 }
             }
             catch (ParquetReadException e) {
@@ -186,7 +183,7 @@ final class PagePlanner {
         }
         extents = extents(u, extents);
         for (CoalescingPolicy.Extent extent : extents) {
-            if (skips(u, extent.column()) || pageRanges && pages[extent.column()] != null) {
+            if (skips(u, extent.column()) || pages[extent.column()] != null) {
                 continue;
             }
             long end = extent.end();
