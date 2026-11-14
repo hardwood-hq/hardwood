@@ -40,12 +40,19 @@ public final class PlainInt64File {
     }
 
     /// A data page of `values` consecutive values from `first`, whose header declares
-    /// `compressedPageSize` as the size of its body, or the body's own size when `null`.
-    public record Page(long first, int values, Integer compressedPageSize) {
+    /// `compressedPageSize` as the size of its body, or the body's own size when `null`, and
+    /// carries an unknown binary field of `headerPadding` bytes, which a reader skips, where it is
+    /// positive.
+    public record Page(long first, int values, Integer compressedPageSize, int headerPadding) {
 
         /// A page whose header states its body's size.
         public Page(long first, int values) {
-            this(first, values, null);
+            this(first, values, null, 0);
+        }
+
+        /// A page whose header declares `compressedPageSize` as the size of its body.
+        public Page(long first, int values, Integer compressedPageSize) {
+            this(first, values, compressedPageSize, 0);
         }
     }
 
@@ -69,7 +76,7 @@ public final class PlainInt64File {
             PageHeaderWriter.writeDataPageV1(header, page.values(), body.length, declared, crc(body),
                     Encoding.PLAIN);
             long offset = out.size();
-            out.writeBytes(header.toByteArray());
+            out.writeBytes(padded(header.toByteArray(), page.headerPadding()));
             out.writeBytes(body);
             locations.add(new PageLocation(offset, Math.toIntExact(out.size() - offset), rows));
             rows += page.values();
@@ -118,5 +125,22 @@ public final class PlainInt64File {
         CRC32 crc = new CRC32();
         crc.update(bytes);
         return (int) crc.getValue();
+    }
+
+    /// `header` with an unknown binary field of `padding` bytes before its closing stop byte, or as
+    /// it is where `padding` is `0`.
+    private static byte[] padded(byte[] header, int padding) {
+        if (padding == 0) {
+            return header;
+        }
+        ThriftCompactWriter field = new ThriftCompactWriter();
+        field.writeFieldBegin(99, ThriftCompactConstants.FieldType.BINARY);
+        field.writeBinary(new byte[padding]);
+        byte[] added = field.toByteArray();
+        byte[] padded = new byte[header.length + added.length];
+        System.arraycopy(header, 0, padded, 0, header.length - 1);
+        System.arraycopy(added, 0, padded, header.length - 1, added.length);
+        padded[padded.length - 1] = header[header.length - 1];
+        return padded;
     }
 }

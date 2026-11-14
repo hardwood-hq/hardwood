@@ -150,7 +150,7 @@ public class DictionaryPageParseBenchmark {
                 throw new IOException("CRC mismatch");
             }
         }
-        return DictionaryParser.parse(DataPage.parse(region), columnSchema, metaData, context);
+        return DictionaryParser.parse(DataPage.parse(region, 0), columnSchema, metaData, context);
     }
 
     /// The floor the two sit above: the header already in hand, leaving the one checksum a

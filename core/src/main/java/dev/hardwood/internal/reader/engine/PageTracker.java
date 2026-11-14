@@ -249,7 +249,8 @@ final class PageTracker {
         scheduler.add(decodeJob(tracked, buffers -> {
             Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().output().value();
             return cells.decode(tracked.column(), tracked.task(),
-                    tracked.placeholder() > 0 ? null : tracked.bytes(), dictionary, buffers);
+                    tracked.placeholder() > 0 ? null : tracked.bytes(), tracked.page().location().offset(), dictionary,
+                    buffers);
         }, completed -> {
             // its ranges are held by the batch of its last row until every column has published it,
             // as R holds the bytes fetched ahead of the consumer
@@ -264,7 +265,7 @@ final class PageTracker {
     private void addMeasure(TrackedPage tracked) {
         scheduler.add(decodeJob(tracked, buffers -> {
             NestedPageTask task = cells.nestedTask(tracked,
-                    tracked.placeholder() > 0 ? null : DataPage.parse(tracked.bytes()),
+                    tracked.placeholder() > 0 ? null : DataPage.parse(tracked.bytes(), tracked.page().location().offset()),
                     tracked.dictionary() == null ? null : tracked.dictionary().output().value());
             try {
                 task.decodeAndMeasure(buffers);
@@ -305,7 +306,7 @@ final class PageTracker {
         try {
             Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
                     (offset, length) -> RangeFetch.read(tracked.ranges(), offset, length), location.offset(),
-                    location.compressedPageSize(), PageFormatProbe.INITIAL_PEEK_SIZE, "");
+                    location.compressedPageSize(), PageFormatProbe.Extent.PAGE, PageFormatProbe.INITIAL_PEEK_SIZE, "");
             return read.needsBytes() ? 0 : DataPage.taskBytes(read.value().header(), schema);
         }
         catch (IOException | RuntimeException e) {
@@ -342,7 +343,7 @@ final class PageTracker {
 
     private Dictionary parseDictionary(TrackedPage tracked, DecodeBuffers buffers) {
         ByteBuffer region = tracked.bytes();
-        DataPage page = DataPage.parse(region);
+        DataPage page = DataPage.parse(region, tracked.page().location().offset());
         int pageLength = page.headerSize() + page.header().compressedPageSize();
         if (page.header().type() != PageType.DICTIONARY_PAGE) {
             return null;

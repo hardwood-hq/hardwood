@@ -103,7 +103,7 @@ class DeclaredUncompressedSizeTest {
         ByteBuffer page = withBody(header.toByteArray(), STORED);
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            assertThatThrownBy(() -> DictionaryParser.parse(DataPage.parse(page), COLUMN,
+            assertThatThrownBy(() -> DictionaryParser.parse(DataPage.parse(page, 0), COLUMN,
                     metaData(CompressionCodec.GZIP), context))
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("Dictionary page's uncompressed_page_size of 2000000000 bytes exceeds the 34056 "

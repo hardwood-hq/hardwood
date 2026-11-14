@@ -323,9 +323,10 @@ final class CellWriter {
         }
     }
 
-    /// Decodes a placed flat page whose bytes are `page` and fills its segments, on a job; returns
-    /// the cells whose last fill it was, completed.
-    List<Cell> decode(int column, PageTask task, ByteBuffer page, Dictionary dictionary, DecodeBuffers buffers)
+    /// Decodes a placed flat page whose bytes are `page`, at `offset` of its file, and fills its
+    /// segments, on a job; returns the cells whose last fill it was, completed.
+    List<Cell> decode(int column, PageTask task, ByteBuffer page, long offset, Dictionary dictionary,
+                      DecodeBuffers buffers)
             throws Exception {
         PageDecoder.LevelScratch levels = FlatFill.scratch(buffers);
         try {
@@ -334,7 +335,7 @@ final class CellWriter {
             // a page its inline statistics drop decodes as nulls, without bytes
             PageDecoder.InPlaceNestedPage nulls = info.isNullPlaceholder()
                     ? task.decoder().nullsInPlace(info.placeholderNumValues(), levels, false) : null;
-            DataPage dataPage = nulls == null ? DataPage.parse(page) : null;
+            DataPage dataPage = nulls == null ? DataPage.parse(page, offset) : null;
             FlatPageValues fixed = binary ? null : nulls != null ? nulls.flat()
                     : task.decoder().decodeFlat(dataPage, dictionary, levels, buffers);
             BinaryPageValues bytes = !binary ? null : nulls != null ? nulls.binary()

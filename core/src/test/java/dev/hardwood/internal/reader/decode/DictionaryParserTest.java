@@ -95,21 +95,33 @@ class DictionaryParserTest {
                         + " starts at offset 60, before its column chunk starts at offset 61");
     }
 
-    /// A header probe grows while the header does not fit, but not without bound: a header that
-    /// runs past [PageFormatProbe#MAX_PEEK_SIZE], as a corrupt length makes one, fails as a
-    /// corrupt file rather than being read to the end of a chunk that may span gigabytes.
+    /// A header probe grows while the header does not fit, up to the end of the chunk: a header of
+    /// a few mebibytes inside its chunk is read, and its page with it.
     @Test
-    void aDictionaryPageHeaderProbeStopsAtTheMaximumPeekSize() throws IOException {
-        int chunkSize = 3 * PageFormatProbe.MAX_PEEK_SIZE;
-        ByteBuffer bytes = ByteBuffer.allocate(chunkSize);
-        bytes.put(oversizedPageHeader(2 * PageFormatProbe.MAX_PEEK_SIZE)).rewind();
-        try (InputFile file = InputFile.of(bytes)) {
+    void aLongDictionaryPageHeaderInsideItsChunkIsRead() throws IOException {
+        byte[] header = oversizedPageHeader(2 * 1024 * 1024);
+        try (InputFile file = InputFile.of(ByteBuffer.wrap(header))) {
+            file.open();
+            ColumnChunk chunk = chunk(0, null, header.length);
+
+            assertThat(DictionaryParser.readPageHeader(file, chunk, "[f] ").type()).isEqualTo(PageType.DICTIONARY_PAGE);
+            assertThat(DictionaryParser.readPage(file, chunk, "[f] ").headerSize()).isEqualTo(header.length);
+        }
+    }
+
+    /// A header that runs past the end of its chunk, as a corrupt length makes one, fails as a
+    /// corrupt file once the probe takes in the whole chunk.
+    @Test
+    void aDictionaryPageHeaderPastItsChunkFails() throws IOException {
+        byte[] header = oversizedPageHeader(2 * 1024 * 1024);
+        int chunkSize = header.length - 1;
+        try (InputFile file = InputFile.of(ByteBuffer.wrap(header))) {
             file.open();
 
             assertThatThrownBy(() -> DictionaryParser.readPageHeader(file, chunk(0, null, chunkSize), "[f] "))
                     .isExactlyInstanceOf(ParquetReadException.class)
-                    .hasMessage("[f] Page header at offset 0 exceeds maximum peek size ("
-                            + PageFormatProbe.MAX_PEEK_SIZE + " bytes)");
+                    .hasMessage("[f] Page header at offset 0 does not fit in the " + chunkSize
+                            + " bytes left in its column chunk — the file is likely corrupt");
         }
     }
 
@@ -152,7 +164,7 @@ class DictionaryParserTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             Dictionary fromHeaderAndBody = DictionaryParser.parsePage(page.header(), page.body(),
                     page.columnSchema(), page.metaData(), context);
-            Dictionary fromWholeRegion = DictionaryParser.parse(DataPage.parse(page.region()),
+            Dictionary fromWholeRegion = DictionaryParser.parse(DataPage.parse(page.region(), 0),
                     page.columnSchema(), page.metaData(), context);
 
             assertThat(fromHeaderAndBody.size())
