@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.plan;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
@@ -170,10 +171,14 @@ class DictionaryPushDownIoTest {
             // not started by then has returned without reading.
 
             assertThat(rows).isZero();
-            assertThat(file.reads())
-                    .filteredOn(fetch -> fetch.reason().endsWith(" pruning"))
-                    .as("one dictionary read per row group, read %d", read)
-                    .hasSize(4);
+            for (ColumnMetaData dictionary : dictionaryChunks(FOUR_ROW_GROUPS, "i64")) {
+                long start = dictionary.dictionaryPageOffset();
+                long end = dictionary.dataPageOffset();
+                assertThat(file.reads())
+                        .filteredOn(fetch -> fetch.offset() < end && start < fetch.end())
+                        .as("reads of the dictionary page [%d, %d), read %d", start, end, read)
+                        .hasSize(1);
+            }
         }
     }
 
@@ -235,6 +240,17 @@ class DictionaryPushDownIoTest {
                 }
             }
             return new Reads(file.readCount() - requestsBefore, file.bytesRead() - bytesBefore, rows);
+        }
+    }
+
+    /// The chunk of `column` in every row group of `file`.
+    private static List<ColumnMetaData> dictionaryChunks(Path file, String column) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            return reader.getFileMetaData().rowGroups().stream()
+                    .map(rowGroup -> rowGroup.columns().stream()
+                            .filter(chunk -> chunk.metaData().pathInSchema().toString().equals(column))
+                            .findFirst().orElseThrow().metaData())
+                    .toList();
         }
     }
 }
