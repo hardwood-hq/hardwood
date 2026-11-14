@@ -99,12 +99,6 @@ public final class DictionaryFilterSupport {
         return index.bitmask == null || absentHalfBits(dict, index.bitmask);
     }
 
-    /// The `float[]` form of [#absentAll(Dictionary, MembershipIndex.Float16s)], building the index
-    /// for this one call.
-    public static boolean absentAllFloat16(Dictionary dictionary, float[] values) {
-        return absentAll(dictionary, MembershipIndex.Float16s.of(values));
-    }
-
     public static boolean valueAbsent(Dictionary dictionary, byte[] value) {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
@@ -171,28 +165,6 @@ public final class DictionaryFilterSupport {
             return false;
         }
         return index.set == null || absentRawBits(entries, index.set);
-    }
-
-    // The array forms build the index for one call.
-
-    public static boolean absentAll(Dictionary dictionary, int[] values) {
-        return absentAll(dictionary, MembershipIndex.Ints.of(values));
-    }
-
-    public static boolean absentAll(Dictionary dictionary, long[] values) {
-        return absentAll(dictionary, MembershipIndex.Longs.of(values));
-    }
-
-    public static boolean absentAll(Dictionary dictionary, byte[][] values) {
-        return absentAll(dictionary, MembershipIndex.Binaries.of(values));
-    }
-
-    public static boolean absentAll(Dictionary dictionary, float[] values) {
-        return absentAll(dictionary, MembershipIndex.Floats.of(values));
-    }
-
-    public static boolean absentAll(Dictionary dictionary, double[] values) {
-        return absentAll(dictionary, MembershipIndex.Doubles.of(values));
     }
 
     /// The raw bits of the `FLOAT16` entry at `from`, stored little-endian.

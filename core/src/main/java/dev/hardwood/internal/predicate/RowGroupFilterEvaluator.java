@@ -270,33 +270,33 @@ public class RowGroupFilterEvaluator {
             // A membership test drops the row group only where every probe is absent.
             case ResolvedPredicate.IntInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership()));
             case ResolvedPredicate.UnsignedIntInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership()));
             case ResolvedPredicate.LongInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership()));
             case ResolvedPredicate.UnsignedLongInPredicate p ->
                     BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership()));
             case ResolvedPredicate.BinaryInPredicate p -> p.byteExact()
                     && (BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
-                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values())));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership())));
             // A NaN literal leaves the bloom check undecided for the whole list, so the filter is
             // not read for it.
             case ResolvedPredicate.FloatInPredicate p ->
                     (!NaNLiterals.containsNaN(p.values())
                             && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
-                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership()));
             case ResolvedPredicate.DoubleInPredicate p ->
                     (!NaNLiterals.containsNaN(p.values())
                             && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
-                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.values()));
+                            || dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership()));
             // As for Float16Predicate: the dictionary holds the chunk's exact halves and decides
             // membership.
             case ResolvedPredicate.Float16InPredicate p ->
-                    dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAllFloat16(d, p.values()));
+                    dictionaryAbsent(dictionaries, p.columnIndex(), d -> DictionaryFilterSupport.absentAll(d, p.membership()));
             // A BOOLEAN column holds two values, which its min/max already decide between.
             case ResolvedPredicate.BooleanPredicate ignored -> false;
             // These name no literal to look for: a null predicate asks about absence itself, and

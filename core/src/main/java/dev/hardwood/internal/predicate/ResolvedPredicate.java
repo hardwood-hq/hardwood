@@ -11,7 +11,9 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
+import dev.hardwood.internal.predicate.dictionary.MembershipIndex;
 import dev.hardwood.reader.FilterPredicate;
 
 /// Internal execution-facing predicate tree, produced by [FilterPredicateResolver] from
@@ -201,22 +203,80 @@ public sealed interface ResolvedPredicate {
         }
     }
 
-    record IntInPredicate(int columnIndex, int[] values) implements ResolvedPredicate {}
-    record LongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
+    /// Membership against an `INT32` column. `membership` is the [MembershipIndex] over `values`
+    /// that the dictionary check probes: the constructor taking only the values builds it, and
+    /// `remapColumns` reuses it. The index may hold `values` itself, which therefore must not be
+    /// mutated.
+    record IntInPredicate(int columnIndex, int[] values, MembershipIndex.Ints membership) implements ResolvedPredicate {
+
+        public IntInPredicate {
+            Objects.requireNonNull(membership, "membership");
+        }
+
+        public IntInPredicate(int columnIndex, int[] values) {
+            this(columnIndex, values, MembershipIndex.Ints.of(values));
+        }
+    }
+
+    /// Membership against an `INT64` column. See [IntInPredicate] for `membership`.
+    record LongInPredicate(int columnIndex, long[] values, MembershipIndex.Longs membership) implements ResolvedPredicate {
+
+        public LongInPredicate {
+            Objects.requireNonNull(membership, "membership");
+        }
+
+        public LongInPredicate(int columnIndex, long[] values) {
+            this(columnIndex, values, MembershipIndex.Longs.of(values));
+        }
+    }
 
     /// Membership against an unsigned `INT32` column. Membership itself is bit equality and so
     /// reads the same either way; the unsigned form exists because statistics pruning orders the
     /// probes against the column's bounds, which are recorded in unsigned order.
-    record UnsignedIntInPredicate(int columnIndex, int[] values) implements ResolvedPredicate {}
+    record UnsignedIntInPredicate(int columnIndex, int[] values, MembershipIndex.Ints membership)
+            implements ResolvedPredicate {
+
+        public UnsignedIntInPredicate {
+            Objects.requireNonNull(membership, "membership");
+        }
+
+        public UnsignedIntInPredicate(int columnIndex, int[] values) {
+            this(columnIndex, values, MembershipIndex.Ints.of(values));
+        }
+    }
 
     /// Membership against an unsigned `INT64` column; see [UnsignedIntInPredicate].
-    record UnsignedLongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
+    record UnsignedLongInPredicate(int columnIndex, long[] values, MembershipIndex.Longs membership)
+            implements ResolvedPredicate {
+
+        public UnsignedLongInPredicate {
+            Objects.requireNonNull(membership, "membership");
+        }
+
+        public UnsignedLongInPredicate(int columnIndex, long[] values) {
+            this(columnIndex, values, MembershipIndex.Longs.of(values));
+        }
+    }
+
     /// Membership against a binary column, comparing each probe in the column's own order —
     /// see [BinaryPredicate.Comparison]. A `DECIMAL` compares by the value its bytes stand for,
     /// so a padded encoding of a probe is still a member; only the Bloom filter and dictionary
     /// shortcuts, which test exact bytes, depend on [#byteExact()].
-    record BinaryInPredicate(int columnIndex, byte[][] values, BinaryPredicate.Comparison comparison)
-            implements ResolvedPredicate {
+    record BinaryInPredicate(int columnIndex, byte[][] values, BinaryPredicate.Comparison comparison,
+            MembershipIndex.Binaries membership) implements ResolvedPredicate {
+
+        /// `membership` is set exactly when the comparison is byte-exact, the only case in which the
+        /// dictionary check runs. See [IntInPredicate] for the rest of its contract.
+        public BinaryInPredicate {
+            if (comparison.byteExact() != (membership != null)) {
+                throw new IllegalArgumentException("A " + comparison + " membership "
+                        + (membership == null ? "needs" : "takes no") + " dictionary index");
+            }
+        }
+
+        public BinaryInPredicate(int columnIndex, byte[][] values, BinaryPredicate.Comparison comparison) {
+            this(columnIndex, values, comparison, comparison.byteExact() ? MembershipIndex.Binaries.of(values) : null);
+        }
 
         /// Whether the column encodes a value as exactly these bytes. See
         /// [BinaryPredicate.Comparison#byteExact()].
@@ -225,17 +285,44 @@ public sealed interface ResolvedPredicate {
         }
     }
     /// Membership against a `FLOAT` column, each probe compared by [Float#compare].
-    record FloatInPredicate(int columnIndex, float[] values)
-            implements ResolvedPredicate {}
+    record FloatInPredicate(int columnIndex, float[] values, MembershipIndex.Floats membership)
+            implements ResolvedPredicate {
+
+        public FloatInPredicate {
+            Objects.requireNonNull(membership, "membership");
+        }
+
+        public FloatInPredicate(int columnIndex, float[] values) {
+            this(columnIndex, values, MembershipIndex.Floats.of(values));
+        }
+    }
 
     /// Membership against a `DOUBLE` column, each probe compared by [Double#compare].
-    record DoubleInPredicate(int columnIndex, double[] values)
-            implements ResolvedPredicate {}
+    record DoubleInPredicate(int columnIndex, double[] values, MembershipIndex.Doubles membership)
+            implements ResolvedPredicate {
+
+        public DoubleInPredicate {
+            Objects.requireNonNull(membership, "membership");
+        }
+
+        public DoubleInPredicate(int columnIndex, double[] values) {
+            this(columnIndex, values, MembershipIndex.Doubles.of(values));
+        }
+    }
 
     /// Membership against a `FLOAT16` column, each probe a half compared with the decoded stored
     /// half by [Float#compare].
-    record Float16InPredicate(int columnIndex, float[] values)
-            implements ResolvedPredicate {}
+    record Float16InPredicate(int columnIndex, float[] values, MembershipIndex.Float16s membership)
+            implements ResolvedPredicate {
+
+        public Float16InPredicate {
+            Objects.requireNonNull(membership, "membership");
+        }
+
+        public Float16InPredicate(int columnIndex, float[] values) {
+            this(columnIndex, values, MembershipIndex.Float16s.of(values));
+        }
+    }
 
     /// Every non-null row of the leaf, and no null one: the answer to an ordered predicate whose
     /// literal lies past every value the column can hold, in the direction the predicate admits.
@@ -472,17 +559,23 @@ public sealed interface ResolvedPredicate {
             case BooleanPredicate p -> new BooleanPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
             case BinaryPredicate p -> new BinaryPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
                     p.comparison());
-            case IntInPredicate p -> new IntInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
-            case LongInPredicate p -> new LongInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
+            // Each membership leaf keeps its index, so every file of a read probes the same one.
+            case IntInPredicate p -> new IntInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.membership());
+            case LongInPredicate p -> new LongInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.membership());
             case UnsignedIntInPredicate p -> new UnsignedIntInPredicate(mapped(p.columnIndex(), columnMapping),
-                    p.values());
+                    p.values(), p.membership());
             case UnsignedLongInPredicate p -> new UnsignedLongInPredicate(mapped(p.columnIndex(), columnMapping),
-                    p.values());
+                    p.values(), p.membership());
             case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
-                    p.comparison());
-            case FloatInPredicate p -> new FloatInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
-            case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
-            case Float16InPredicate p -> new Float16InPredicate(mapped(p.columnIndex(), columnMapping), p.values());
+                    p.comparison(), p.membership());
+            case FloatInPredicate p -> new FloatInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.membership());
+            case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.membership());
+            case Float16InPredicate p -> new Float16InPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.membership());
             case IsNullPredicate p -> new IsNullPredicate(
                     mapped(p.columnIndex(), columnMapping), p.definitionLevel(), p.leafDefinitionLevel());
             case IsNotNullPredicate p -> new IsNotNullPredicate(
