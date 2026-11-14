@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -218,6 +219,34 @@ class WriterSchemaShapeTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThat(writer).isNotNull();
         }
+    }
+
+    @ParameterizedTest
+    @CsvSource({ "false, false", "false, true", "true, false", "true, true" })
+    void rejectsAMapWithAnOptionalKeyBeforeOpeningTheDestination(boolean nested, boolean keyOnly) {
+        List<SchemaElement> elements = new ArrayList<>();
+        elements.add(SchemaElement.root("schema", 1));
+        if (nested) {
+            elements.add(SchemaElement.group("outer", RepetitionType.OPTIONAL, 1));
+        }
+        elements.add(SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()));
+        elements.add(SchemaElement.group("entries", RepetitionType.REPEATED, keyOnly ? 1 : 2));
+        elements.add(SchemaElement.primitive("k", PhysicalType.INT32, RepetitionType.OPTIONAL));
+        if (!keyOnly) {
+            elements.add(SchemaElement.primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL));
+        }
+        FileSchema schema = FileSchema.fromSchemaElements(elements);
+        InMemoryOutputFile out = OutputFile.inMemory();
+        String path = nested ? "outer.props" : "props";
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("MAP key " + path + ".entries.k is OPTIONAL rather than REQUIRED;"
+                        + " a map key must always be present");
+
+        assertThatThrownBy(out::position)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Output for an in-memory file is not open; it has not been created");
     }
 
     /// The annotation accounts for the repetition of the group's entry, not for the group's
