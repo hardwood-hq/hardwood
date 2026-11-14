@@ -19,15 +19,15 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.PhysicalType;
 
-import static dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport.BINARY_PASS_LIMIT;
-import static dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport.PASS_LIMIT;
-import static dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport.SPARSE_PASS_LIMIT;
+import static dev.hardwood.internal.predicate.dictionary.MembershipIndex.BINARY_PASS_LIMIT;
+import static dev.hardwood.internal.predicate.dictionary.MembershipIndex.PASS_LIMIT;
+import static dev.hardwood.internal.predicate.dictionary.MembershipIndex.SPARSE_PASS_LIMIT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The membership check's three kernels on synthetic dictionaries: one pass per literal up to
-/// [DictionaryFilterSupport#PASS_LIMIT] literals, and above it a [RangeBitmask] for integer
+/// [MembershipIndex#PASS_LIMIT] literals, and above it a [RangeBitmask] for integer
 /// literals that lie close together or a [LongSet] / [BinarySet] otherwise; integer literals too
-/// spread out for a bitmask run passes up to [DictionaryFilterSupport#SPARSE_PASS_LIMIT] before
+/// spread out for a bitmask run passes up to [MembershipIndex#SPARSE_PASS_LIMIT] before
 /// they are hashed, as floating-point literals do; a `FLOAT16` list takes a bitmask over its raw
 /// half bits. Each kernel is driven to both decisions, with the present value at the
 /// dictionary's first and last entry.
