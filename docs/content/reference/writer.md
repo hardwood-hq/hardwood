@@ -475,6 +475,8 @@ Repetition is writable wherever a `LIST` or `MAP` annotation accounts for it. An
 
 Any other repetition is rejected with `UnsupportedOperationException` when the writer is created, as is a `FILE` group with no children.
 
+A `MAP` key must be `REQUIRED`, including in a key-only map. `ParquetFileWriter.create` rejects a schema with an `OPTIONAL` key with `UnsupportedOperationException` before opening the destination, even if all key values would be present. This also applies to schemas read from existing files.
+
 The row API reaches a list's values through an element node below the entry, which the legacy two-level lists do not have, so `rowWriter()` refuses those two shapes and `columnWriter()` writes them. `rowWriter()` also requires sibling field names to be unique, which the `ColumnBatch` indices and dotted paths do not.
 
 A column's maximum definition level and maximum repetition level must each be at most 255. A schema nested deeper is rejected with `UnsupportedOperationException` when the writer is created.
