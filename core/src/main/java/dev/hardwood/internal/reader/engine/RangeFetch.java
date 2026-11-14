@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.InputFile;
@@ -16,13 +17,20 @@ import dev.hardwood.internal.reader.fetch.FileRange;
 
 /// The fetch of one range of a file, for the planner before a unit is batched or for a batched
 /// unit's pages: the bytes once arrived, held until the last reader is done, their charge against
-/// R from the fetch's start; its bytes are its fetch's [Output], which pages, scans and the planner
-/// wait on. [RangeFetcher] fetches it and releases it. Used under the read's lock.
+/// R from the fetch's start, and the pages starting in it whose headers are parsed once it has
+/// arrived, before its bytes are handed on; its bytes
+/// are its fetch's [Output], which pages, scans and the planner wait on. [RangeFetcher] fetches it
+/// and releases it. Used under the read's lock.
 final class RangeFetch {
 
     private final FileRange range;
     private final Charge charge = new Charge();
     private final Output<ByteBuffer> bytes = new Output<>();
+    /// the pages whose headers are parsed once it has arrived, before its bytes are handed on
+    private final List<TrackedPage> headed = new ArrayList<>(0);
+    /// the bytes the file holds, which its pages' headers are parsed from in place of a fetch;
+    /// `null` for a range to fetch
+    private ByteBuffer held;
 
     RangeFetch(FileRange range) {
         this.range = range;
@@ -38,6 +46,20 @@ final class RangeFetch {
         return r;
     }
 
+    /// The fetch of `range` of `file` for a batched unit's planned pages: pending until the
+    /// headers of the pages starting in it are parsed, also where the file holds its bytes
+    /// ([#held]), which then need no fetch.
+    static RangeFetch ofPages(InputFile file, FileRange range) {
+        RangeFetch r = new RangeFetch(range);
+        r.held = HeldBytes.slice(file, range.start(), range.length());
+        return r;
+    }
+
+    /// The bytes of a range [#ofPages] made that the file holds, `null` for one to fetch.
+    ByteBuffer held() {
+        return held;
+    }
+
     FileRange range() {
         return range;
     }
@@ -46,6 +68,17 @@ final class RangeFetch {
     /// reader.
     Charge charge() {
         return charge;
+    }
+
+    /// The header of `page`, which starts in it and whose bytes past it the file holds, is parsed
+    /// once it has arrived; added before its fetch starts.
+    void parsesHeaderOf(TrackedPage page) {
+        headed.add(page);
+    }
+
+    /// The pages whose headers are parsed once it has arrived.
+    List<TrackedPage> headed() {
+        return headed;
     }
 
     /// One more reader, before the bytes can be let go.
@@ -76,6 +109,26 @@ final class RangeFetch {
             }
         }
         return null;
+    }
+
+    /// `[offset, offset + length)` from `bytes`, the arrived bytes of `range`, in which it starts,
+    /// and for a part past its end from what `file` holds: a slice where `range` holds it all, a
+    /// copy otherwise; `null` where the file does not hold that part. Read outside the read's lock.
+    static ByteBuffer read(InputFile file, FileRange range, ByteBuffer bytes, long offset, int length) {
+        int into = Math.toIntExact(offset - range.start());
+        long end = offset + length;
+        if (end <= range.end()) {
+            return bytes.slice(into, length);
+        }
+        int before = Math.toIntExact(range.end() - offset);
+        ByteBuffer rest = HeldBytes.slice(file, range.end(), length - before);
+        if (rest == null) {
+            return null;
+        }
+        ByteBuffer copy = ByteBuffer.allocate(length);
+        copy.put(0, bytes, into, before);
+        copy.put(before, rest, 0, length - before);
+        return copy;
     }
 
     /// `[offset, offset + length)` from those of `ranges` that hold part of it: a slice where one

@@ -156,7 +156,7 @@ class WorkingSetLimitTest {
             compat_maxrep_list.parquet         | [compat_maxrep_list.parquet: row group 0, column 'g.list.element', page 0] Data page needs 96 bytes to decode, which takes the read's working set to 96 bytes, %1$s
             misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 2128 bytes, %1$s
             dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1600 bytes, %1$s
-            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 9376 bytes, %1$s
+            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 8192 bytes, %1$s
             inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 800 bytes to decode, which takes the read's working set to 800 bytes, %1$s
             """)
     void everyPathChargesBeforeDecompressing(String file, String message) {

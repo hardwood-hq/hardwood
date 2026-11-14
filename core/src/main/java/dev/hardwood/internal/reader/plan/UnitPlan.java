@@ -29,7 +29,8 @@ import dev.hardwood.internal.reader.select.RowRanges;
 /// @param dictionaryEnd per decoded column, where such a dictionary's page ends, `0` for none
 /// @param ranges the unit's requests, coalesced across its columns
 public record UnitPlan(RowRanges matching, List<NeededPage>[] pages, long[] dictionaryStart,
-                long[] firstDataPage, Dictionary[] preloaded, long[] dictionaryEnd, List<FileRange> ranges) {
+                long[] firstDataPage, Dictionary[] preloaded, long[] dictionaryEnd,
+                List<FileRange> ranges) {
 
     /// The plan of a unit of `columns` decoded columns of which no row is read, its rows kept by
     /// `matching`.
