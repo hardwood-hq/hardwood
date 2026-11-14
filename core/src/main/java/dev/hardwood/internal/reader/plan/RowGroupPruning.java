@@ -13,30 +13,28 @@ import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.HardwoodContextImpl;
-import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.predicate.BloomFilterColumnRecorder;
+import dev.hardwood.internal.predicate.DictionaryColumnRecorder;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
-import dev.hardwood.internal.reader.decode.DictionaryParser;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.step.ByteSource;
-import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.jfr.RowGroupBloomFilterEvent;
 import dev.hardwood.jfr.RowGroupDictionaryFilterEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
-import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.schema.ColumnSchema;
 import jdk.jfr.Event;
 
 /// The pruning of a read's row groups by metadata: by statistics when a file is planned
 /// ([#filterRowGroups]), by Bloom filters and dictionaries once the read reaches a row group
-/// ([#probeOnArrival]), and whether the read narrows a row group's rows by the ColumnIndex
+/// ([#readOnArrival], [#evaluate]), and whether the read narrows a row group's rows by the ColumnIndex
 /// ([#pageFiltering]).
 public final class RowGroupPruning {
 
@@ -63,79 +61,99 @@ public final class RowGroupPruning {
         return unit.leafDecisions() != null && !unit.alwaysMatches();
     }
 
-    /// Sharpens the decisions planning recorded with the row group's bloom filters, then with its
-    /// dictionaries for every leaf they leave undecided, over the bytes the read holds: what
-    /// `bloomFilters` holds of the filters, and what `bytes` holds of dictionary pages. A filter or
-    /// dictionary not held counts as absent; the caller sees from `bytes` whether any was, and only
-    /// a drop then stands. `probe` keeps the dictionaries read and the leaves decided across evaluations.
-    public Arrival probeOnArrival(UnitListing unit, ByteSource bloomFilters, ByteSource bytes, Probe probe)
+    /// The first step of `unit`'s probe once the read reaches it, on a job: sharpens the decisions
+    /// planning recorded with the row group's bloom filters, held in `bloomFilters`, and where they
+    /// keep it, reads the dictionary pages a dictionary evaluation may consult ([#dictionaryColumns])
+    /// from `bytes`, their headers parsed, for [#evaluate] to be charged by and to decode. A page
+    /// `bytes` lacks is read again once the caller has fetched what `bytes` recorded missing; the
+    /// bloom filters are evaluated once.
+    public Arrival readOnArrival(UnitListing unit, ByteSource bloomFilters, ByteSource bytes, Probe probe)
             throws IOException {
-        RowGroupFilterEvaluator.LeafDecisions leafDecisions = unit.leafDecisions();
-        if (!unit.bloomFilterColumns().isEmpty()) {
-            RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
-            RowGroupBloomFilterSource filters = new RowGroupBloomFilterSource(unit.file(), bloomFilters,
-                    unit.metaData());
-            if (RowGroupFilterEvaluator.refineWithBloomFilters(unit.columnOrdinals().filter(),
-                    unit.metaData(), unit.leafDecisions(), filters, refined) == FilterDecision.CANNOT_MATCH) {
-                return new Arrival(true, bloomFilterDropEvent(unit));
+        if (probe.leafDecisions == null) {
+            RowGroupFilterEvaluator.LeafDecisions leafDecisions = unit.leafDecisions();
+            if (!unit.bloomFilterColumns().isEmpty()) {
+                RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
+                RowGroupBloomFilterSource filters = new RowGroupBloomFilterSource(unit.file(), bloomFilters,
+                        unit.metaData());
+                if (RowGroupFilterEvaluator.refineWithBloomFilters(unit.columnOrdinals().filter(),
+                        unit.metaData(), unit.leafDecisions(), filters, refined) == FilterDecision.CANNOT_MATCH) {
+                    return new Arrival(true, bloomFilterDropEvent(unit));
+                }
+                leafDecisions = refined;
             }
-            leafDecisions = refined;
+            probe.leafDecisions = leafDecisions;
+            probe.columns = dictionaryColumns(unit, leafDecisions);
+            probe.dictionaries = new RowGroupDictionaryFilterSource(unit.file(), bytes, unit.metaData(),
+                    unit.fileSchema(), context);
         }
-        if (probe.dictionaries == null) {
-            probe.dictionaries = new RowGroupDictionaryFilterSource(unit.file(), bytes,
-                    unit.metaData(), unit.fileSchema(), context);
+        for (int c = probe.columns.nextSetBit(0); c >= 0; c = probe.columns.nextSetBit(c + 1)) {
+            probe.dictionaries.page(c);
         }
+        return Arrival.KEPT;
+    }
+
+    /// The columns whose dictionary evaluating `unit` after its bloom filters, `leafDecisions`, may
+    /// consult: those a dry run of the evaluation asks for ([DictionaryColumnRecorder]).
+    private static BitSet dictionaryColumns(UnitListing unit, RowGroupFilterEvaluator.LeafDecisions leafDecisions)
+            throws IOException {
+        DictionaryColumnRecorder recorder = new DictionaryColumnRecorder();
+        RowGroupFilterEvaluator.refineWithDictionaries(unit.columnOrdinals().filter(), unit.metaData(), leafDecisions,
+                recorder);
+        return recorder.columns();
+    }
+
+    /// The buffers [#evaluate] holds while it runs, which R is charged: those of each dictionary
+    /// parse that exceeds `DecodeBuffers.RETAINED_BYTES`, from the headers [#readOnArrival] parsed;
+    /// under the read's lock.
+    public static long parseBytes(UnitListing unit, Probe probe) {
+        long bytes = 0;
+        for (int c = probe.columns.nextSetBit(0); c >= 0; c = probe.columns.nextSetBit(c + 1)) {
+            DataPage page = probe.dictionaries.readAhead(c);
+            long task = page == null ? 0 : DataPage.taskBytes(page.header(), unit.fileSchema().getColumn(c));
+            bytes += task > DecodeBuffers.RETAINED_BYTES ? task : 0;
+        }
+        return bytes;
+    }
+
+    /// The second and last step of `unit`'s probe, on a job charged [#parseBytes]: evaluates the
+    /// leaves its bloom filters left open with the dictionaries [#readOnArrival] read, decoding
+    /// each that a leaf consults.
+    public Arrival evaluate(UnitListing unit, Probe probe) throws IOException {
+        probe.dictionaries.readsEnded();
         if (RowGroupFilterEvaluator.refineWithDictionaries(unit.columnOrdinals().filter(), unit.metaData(),
-                leafDecisions, probe.dictionaries, probe.decided) == FilterDecision.CANNOT_MATCH) {
+                probe.leafDecisions, probe.dictionaries) == FilterDecision.CANNOT_MATCH) {
             return new Arrival(true, dictionaryDropEvent(unit));
         }
         return Arrival.KEPT;
     }
 
-    /// The dictionary pages the next pass of `unit`'s probe may parse: those of the filter's
-    /// columns whose header `held` holds and whose dictionary `probe` has not read. A header that
-    /// does not parse is left out: the pass fails on it.
-    public static List<HeldDictionary> dictionariesToParse(UnitListing unit, ByteSource held, Probe probe) {
-        BitSet columns = new BitSet();
-        ResolvedPredicate.collectColumnIndices(unit.columnOrdinals().filter(), columns);
-        List<HeldDictionary> dictionaries = new ArrayList<>();
-        for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
-            if (probe.dictionaries == null || !probe.dictionaries.decided(c)) {
-                PageHeader header = heldHeader(unit.metaData().columns().get(c), held);
-                if (header != null) {
-                    dictionaries.add(new HeldDictionary(unit.fileSchema().getColumn(c), header));
-                }
-            }
-        }
-        return dictionaries;
-    }
-
-    /// A dictionary page a probe holds: its column's schema and the page's header.
-    public record HeldDictionary(ColumnSchema schema, PageHeader header) {
-    }
-
-    /// The header of `chunk`'s dictionary page where `held` holds it, else `null`.
-    private static PageHeader heldHeader(ColumnChunk chunk, ByteSource held) {
-        try {
-            Parsed<PageHeader> header = DictionaryParser.readPageHeader(held, chunk, "");
-            return header.needsBytes() ? null : header.value();
-        }
-        catch (IOException | RuntimeException e) {
-            return null;
-        }
-    }
-
-    /// What the passes of one row group's probe on arrival keep between them: the dictionaries
-    /// read, and each leaf's decision once a dictionary has made it.
+    /// What one row group's probe keeps between its steps: the decisions its bloom filters left,
+    /// the columns whose dictionary its evaluation may consult, and those dictionaries, read and
+    /// then decoded.
     public static final class Probe {
 
+        private RowGroupFilterEvaluator.LeafDecisions leafDecisions;
+        private BitSet columns;
         private RowGroupDictionaryFilterSource dictionaries;
-        private final RowGroupFilterEvaluator.LeafDecisions decided = new RowGroupFilterEvaluator.LeafDecisions();
 
         /// The dictionaries the probe read, for the row group's plan to decode with; `null` when it
         /// read none.
         public RowGroupDictionaryFilterSource dictionaries() {
             return dictionaries;
+        }
+
+        /// Whether the probe's evaluation has a dictionary to consult: a column it may consult has
+        /// one, read once the bloom filters kept the row group; reads nothing.
+        public boolean hasDictionaries() {
+            if (columns == null) {
+                return false;
+            }
+            for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
+                if (dictionaries.readAhead(c) != null) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 

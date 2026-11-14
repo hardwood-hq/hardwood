@@ -80,11 +80,6 @@ sealed interface Unit {
             return listed.listing();
         }
 
-        /// The bytes its passes read, without recording what they lack.
-        ByteSource held() {
-            return Unit.held(listed.window().bloomFilters(), probed);
-        }
-
         /// A pass lacked bytes, `more`, which the next reads once fetched.
         void fetching(List<RangeFetch> more) {
             probed.addAll(more);
