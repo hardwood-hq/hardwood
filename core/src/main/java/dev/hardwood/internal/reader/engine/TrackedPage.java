@@ -10,15 +10,18 @@ package dev.hardwood.internal.reader.engine;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.PageDecoder;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
+import dev.hardwood.internal.reader.decode.ParsedHeader;
 import dev.hardwood.internal.reader.pipeline.PageTask;
 import dev.hardwood.internal.reader.plan.NeededPage;
 
 /// A page of a batched unit, from the start of its tracking until it is decoded: the page, the ranges its bytes
-/// lie in, its chunk's dictionary (`null` for a chunk without one), and, once [CellWriter] has
-/// given them, its decoder and task and whether it is ready
-/// to be placed. A dictionary page (`data` false) produces its chunk's dictionary's values. Used
-/// under the read's lock.
+/// lie in, its chunk's dictionary (`null` for a chunk without one), its header once parsed outside
+/// the read's lock, and, once [CellWriter] has given them, its decoder and task and whether it is
+/// ready to be placed. A dictionary page (`data` false) produces its chunk's dictionary's values.
+/// Used under the read's lock, except [#dataPage] on its decode's job.
 final class TrackedPage {
 
     private final Unit.Batched unit;
@@ -31,6 +34,8 @@ final class TrackedPage {
     /// the rows a page its inline statistics drop stands for, as nulls without bytes; `0` for a
     /// page read from its bytes
     private int placeholder;
+    /// its header or the failure its parse met, `null` until parsed
+    private ParsedHeader header;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -90,6 +95,18 @@ final class TrackedPage {
         placeholder = rows;
     }
 
+    /// Its header was parsed, outside the read's lock, into `header`, a header or the failure its
+    /// parse met.
+    void headerRead(ParsedHeader header) {
+        this.header = header;
+    }
+
+    /// Its header or the failure its parse met, `null` until parsed, which it is by the time all
+    /// its ranges have arrived.
+    ParsedHeader header() {
+        return header;
+    }
+
     /// Its chunk's decoder, once [CellWriter] has given it.
     PageDecoder decoder() {
         return decoder;
@@ -123,5 +140,13 @@ final class TrackedPage {
     /// The page's bytes, from its ranges: `null` where one has not arrived.
     ByteBuffer bytes() {
         return RangeFetch.read(ranges, page.location().offset(), page.location().compressedPageSize());
+    }
+
+    /// The page, with the header parsed before, on its decode's job.
+    ///
+    /// @throws RuntimeException the failure its header's parse met
+    DataPage dataPage() {
+        PageFormatProbe.HeaderAt parsed = header.orThrow();
+        return new DataPage(parsed.header(), parsed.length(), bytes());
     }
 }

@@ -7,12 +7,12 @@
  */
 package dev.hardwood.internal.reader.engine;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.function.Supplier;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -323,9 +323,9 @@ final class CellWriter {
         }
     }
 
-    /// Decodes a placed flat page whose bytes are `page` and fills its segments, on a job; returns
-    /// the cells whose last fill it was, completed.
-    List<Cell> decode(int column, PageTask task, ByteBuffer page, Dictionary dictionary, DecodeBuffers buffers)
+    /// Decodes a placed flat page, `page` where it is read from its bytes, and fills its segments, on
+    /// a job; returns the cells whose last fill it was, completed.
+    List<Cell> decode(int column, PageTask task, Supplier<DataPage> page, Dictionary dictionary, DecodeBuffers buffers)
             throws Exception {
         PageDecoder.LevelScratch levels = FlatFill.scratch(buffers);
         try {
@@ -334,7 +334,7 @@ final class CellWriter {
             // a page its inline statistics drop decodes as nulls, without bytes
             PageDecoder.InPlaceNestedPage nulls = info.isNullPlaceholder()
                     ? task.decoder().nullsInPlace(info.placeholderNumValues(), levels, false) : null;
-            DataPage dataPage = nulls == null ? DataPage.parse(page) : null;
+            DataPage dataPage = nulls == null ? page.get() : null;
             FlatPageValues fixed = binary ? null : nulls != null ? nulls.flat()
                     : task.decoder().decodeFlat(dataPage, dictionary, levels, buffers);
             BinaryPageValues bytes = !binary ? null : nulls != null ? nulls.binary()
