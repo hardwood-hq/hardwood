@@ -63,18 +63,24 @@ final class WriterTestSupport {
     /// Walks a column chunk's contiguous data pages from `startOffset`, returning how many pages
     /// cover `totalValues`.
     static int countDataPages(byte[] file, long startOffset, long totalValues) throws Exception {
+        return dataPageEntryCounts(file, startOffset, totalValues).size();
+    }
+
+    /// Walks a column chunk's contiguous data pages from `startOffset`, returning the entries each
+    /// page's header declares (nulls included), in page order, until they cover `totalValues`.
+    static List<Integer> dataPageEntryCounts(byte[] file, long startOffset, long totalValues) throws Exception {
         ByteBuffer buf = ByteBuffer.wrap(file);
         int offset = Math.toIntExact(startOffset);
         long seen = 0;
-        int pages = 0;
+        List<Integer> entries = new ArrayList<>();
         while (seen < totalValues) {
             ThriftCompactReader reader = new ThriftCompactReader(buf, offset);
             PageHeader header = PageHeaderReader.read(reader);
-            pages++;
+            entries.add(header.dataPageHeader().numValues());
             seen += header.dataPageHeader().numValues();
             offset += reader.getBytesRead() + header.compressedPageSize();
         }
-        return pages;
+        return entries;
     }
 
     static int[] readInts(ParquetFileReader reader, int columnIndex) throws IOException {

@@ -991,9 +991,11 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                          int[] offsets) {
         // Every entry costs the same wherever the column is unlevelled and its values are one
         // width — a dictionary chunk included, its indices being one width by construction — and
-        // every entry is a record. Then where the page ends is arithmetic, and the walk below is
-        // for the columns that need it.
-        if (offsets == null && maxDefLevel == 0 && maxRepLevel == 0) {
+        // every entry is a record. An `OPTIONAL` column whose remaining entries are all present, as
+        // many values left as entries, is such a column too, its definition levels charged alike.
+        // Then where the page ends is arithmetic, and the walk below is for the columns that need it.
+        if (offsets == null && maxRepLevel == 0
+                && (maxDefLevel == 0 || entryCount - entryFrom == presentCount - valueFrom)) {
             long entryBits = levelBitsPerEntry + uniformValueBits;
             long fit = Math.min(Math.min(pageTargetRows, maxPageEntries),
                     Math.max(1, (pageTargetBits - pageOverheadBits) / Math.max(1, entryBits)));

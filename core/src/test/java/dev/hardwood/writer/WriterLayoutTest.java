@@ -44,9 +44,11 @@ import dev.hardwood.schema.FileSchema;
 
 import static dev.hardwood.writer.WriterTestSupport.columnMeta;
 import static dev.hardwood.writer.WriterTestSupport.countDataPages;
+import static dev.hardwood.writer.WriterTestSupport.dataPageEntryCounts;
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
 import static dev.hardwood.writer.WriterTestSupport.readInts;
 import static dev.hardwood.writer.WriterTestSupport.readListOfInts;
+import static dev.hardwood.writer.WriterTestSupport.readNullable;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// How a file is banded into pages and row groups, and what each page carries.
@@ -247,6 +249,59 @@ class WriterLayoutTest {
             assertThat(largestDataPage(file, meta.dataPageOffset(), meta.numValues()))
                     .as("largest data page against a %d KiB target", pageTarget >> 10)
                     .isLessThanOrEqualTo(pageTarget);
+        }
+    }
+
+    /// An `OPTIONAL` column's pages hold records until the next would cross the byte target, wherever
+    /// its nulls fall. A present `INT32` entry is charged 33 bits (its value and a one-bit definition
+    /// level) and a null one bit, so an 8 KiB target holds 1,985 present entries. Nulls in the
+    /// first 100 rows let the first page take ten more; nulls in the last 100 sit in the last page,
+    /// which holds what is left. A page that took its entries as all present while nulls lay ahead
+    /// would declare the wrong value count, which reading the values back catches.
+    @ParameterizedTest(name = "nulls {0}")
+    @CsvSource(delimiter = '|', value = {
+            "none  | 1985,1985,1030",
+            "first | 1995,1985,1020",
+            "last  | 1985,1985,1030" })
+    void anOptionalColumnsPagesHoldThePageTargetWhereverItsNullsFall(String nullsAt, String expectedEntries)
+            throws Exception {
+        int rows = 5_000;
+        int[] values = new int[rows];
+        boolean[] nulls = new boolean[rows];
+        Integer[] expected = new Integer[rows];
+        for (int i = 0; i < rows; i++) {
+            values[i] = i * 7;
+            boolean inNullRange = switch (nullsAt) {
+                case "first" -> i < 100;
+                case "last" -> i >= rows - 100;
+                default -> false;
+            };
+            nulls[i] = inNullRange && i % 10 == 0;
+            expected[i] = nulls[i] ? null : values[i];
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .build();
+        WriterConfig config = WriterConfig.builder()
+                .encoding(ColumnEncoding.PLAIN)
+                .pageTargetBytes(8 << 10)
+                .pageTargetRows(100_000)       // so the byte target alone cuts
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .build();
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            writer.columnWriter().writeBatch(batch -> batch.ints("v", values, nulls));
+        }
+
+        byte[] file = InMemoryFiles.toByteArray(out);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            List<Integer> expectedCounts = Arrays.stream(expectedEntries.split(",")).map(Integer::valueOf).toList();
+            assertThat(dataPageEntryCounts(file, meta.dataPageOffset(), meta.numValues()))
+                    .isEqualTo(expectedCounts);
+            assertThat(readNullable(reader, 0)).isEqualTo(expected);
         }
     }
 
