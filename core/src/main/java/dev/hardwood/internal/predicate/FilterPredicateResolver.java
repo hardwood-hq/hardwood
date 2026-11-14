@@ -716,17 +716,21 @@ public class FilterPredicateResolver {
                 + "' orders as its stored bytes, which a byte literal compares directly");
     }
 
+    /// Membership by the stored bytes. Built per branch rather than up front, so a branch that does
+    /// not yield it builds no dictionary index.
+    private static ResolvedPredicate storedBytesIn(int columnIndex, byte[][] values) {
+        return new ResolvedPredicate.BinaryInPredicate(columnIndex, values, Comparison.STORED_BYTES);
+    }
+
     /// Whether a row stores exactly one of `values`, as [#storedBytesEqual] decides it for each.
     private static ResolvedPredicate storedBytesMember(String columnName, ColumnSchema columnSchema, byte[][] values) {
         int columnIndex = columnSchema.columnIndex();
-        ResolvedPredicate bytes = new ResolvedPredicate.BinaryInPredicate(columnIndex, values,
-                Comparison.STORED_BYTES);
         return switch (valueOrder(columnSchema)) {
             case INT96_INSTANT -> {
                 for (byte[] value : values) {
                     requireInt96Width(columnName, value);
                 }
-                yield bytes;
+                yield storedBytesIn(columnIndex, values);
             }
             case SIGNED_LITTLE_ENDIAN -> {
                 for (byte[] value : values) {
@@ -735,7 +739,7 @@ public class FilterPredicateResolver {
                 yield new ResolvedPredicate.BinaryInPredicate(columnIndex, values, Comparison.FIXED_TIMESTAMP);
             }
             case HALF_FLOAT -> new ResolvedPredicate.And(List.of(new ResolvedPredicate.Float16InPredicate(columnIndex,
-                    float16Probes(columnName, values)), bytes));
+                    float16Probes(columnName, values)), storedBytesIn(columnIndex, values)));
             case SIGNED_BIG_ENDIAN -> {
                 if (columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
                     for (byte[] value : values) {
@@ -744,7 +748,7 @@ public class FilterPredicateResolver {
                     yield new ResolvedPredicate.BinaryInPredicate(columnIndex, values, Comparison.FIXED_DECIMAL);
                 }
                 yield new ResolvedPredicate.And(List.of(new ResolvedPredicate.BinaryInPredicate(columnIndex, values,
-                        Comparison.VARIABLE_DECIMAL), bytes));
+                        Comparison.VARIABLE_DECIMAL), storedBytesIn(columnIndex, values)));
             }
             case BYTES, NONE -> throw ordersAsBytes(columnSchema);
         };

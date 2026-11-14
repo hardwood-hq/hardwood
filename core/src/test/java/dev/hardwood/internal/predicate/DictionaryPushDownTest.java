@@ -27,7 +27,9 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
+import dev.hardwood.internal.predicate.dictionary.DictionaryChecks;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
+import dev.hardwood.internal.predicate.dictionary.MembershipIndex;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.LogicalType;
@@ -37,6 +39,7 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 
+import static dev.hardwood.internal.predicate.dictionary.DictionaryChecks.absentAll;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -151,6 +154,25 @@ class DictionaryPushDownTest {
         @Test
         void presentValueIsKept() throws IOException {
             assertThat(dictionaryDrop(FilterPredicate.eq("category", "cat_5"))).isFalse();
+        }
+
+        @Test
+        void theEvaluatorProbesTheIndexTheLeafCarries() throws IOException {
+            // Three literals between the bounds "cat_0" and "cat_9", none in the dictionary: only
+            // the dictionary drops them. Carrying an index over literals the dictionary does hold,
+            // with the values left as they are, keeps the row group, which only happens when the
+            // evaluator probes the carried index rather than one built from the values.
+            ResolvedPredicate.BinaryInPredicate resolved = (ResolvedPredicate.BinaryInPredicate) FilterPredicateResolver
+                    .resolve(FilterPredicate.in("category", "cat_55", "cat_56", "cat_57"), schema);
+            assertThat(RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup(), null, dictionaries(), UNNAMED,
+                    BoundsReadability.ALL)).isEqualTo(FilterDecision.CANNOT_MATCH);
+
+            byte[][] present = { "cat_1".getBytes(StandardCharsets.UTF_8), "cat_2".getBytes(StandardCharsets.UTF_8),
+                    "cat_3".getBytes(StandardCharsets.UTF_8) };
+            ResolvedPredicate.BinaryInPredicate carrying = new ResolvedPredicate.BinaryInPredicate(resolved.columnIndex(),
+                    resolved.values(), resolved.comparison(), MembershipIndex.Binaries.of(present));
+            assertThat(RowGroupFilterEvaluator.decideRowGroup(carrying, rowGroup(), null, dictionaries(), UNNAMED,
+                    BoundsReadability.ALL)).isEqualTo(FilterDecision.MIGHT_MATCH);
         }
 
         @Test
@@ -311,14 +333,14 @@ class DictionaryPushDownTest {
             assertThat(DictionaryFilterSupport.valueAbsent(dict(999), cat5)).isFalse();
 
             // absentAll: a present probe anywhere in the list keeps the row group
-            assertThat(DictionaryFilterSupport.absentAll(dict(CATEGORY_COLUMN),
+            assertThat(absentAll(dict(CATEGORY_COLUMN),
                     new byte[][]{ nope, cat5 })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(CATEGORY_COLUMN),
+            assertThat(absentAll(dict(CATEGORY_COLUMN),
                     new byte[][]{ cat0, nope })).isFalse();
 
             // absentAll: null / wrong column
-            assertThat(DictionaryFilterSupport.absentAll(null, new byte[][]{ cat0 })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(999), new byte[][]{ cat0 })).isFalse();
+            assertThat(absentAll(null, new byte[][]{ cat0 })).isFalse();
+            assertThat(absentAll(dict(999), new byte[][]{ cat0 })).isFalse();
         }
     }
 
@@ -436,7 +458,7 @@ class DictionaryPushDownTest {
             assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0f, 3.5f))).isTrue();
             assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0f, 2.5f))).isFalse();
 
-            assertThat(DictionaryFilterSupport.absentAll(dict(F32_COLUMN), new float[]{ 3.5f, Float.NaN }))
+            assertThat(absentAll(dict(F32_COLUMN), new float[]{ 3.5f, Float.NaN }))
                     .isFalse();
         }
 
@@ -445,26 +467,26 @@ class DictionaryPushDownTest {
             assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 3.5))).isTrue();
             assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 2.5))).isFalse();
 
-            assertThat(DictionaryFilterSupport.absentAll(dict(F64_COLUMN), new double[]{ 3.5, Double.NaN }))
+            assertThat(absentAll(dict(F64_COLUMN), new double[]{ 3.5, Double.NaN }))
                     .isFalse();
         }
 
         @Test
         void int32PresentProbeAnywhereInTheListKeepsTheRowGroup() throws IOException {
-            assertThat(DictionaryFilterSupport.absentAll(dict(0), new int[]{ 9, 1, 5 })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(0), new int[]{ 0, 5, 7 })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(null, new int[]{ 0 })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(999), new int[]{ 0 })).isFalse();
+            assertThat(absentAll(dict(0), new int[]{ 9, 1, 5 })).isFalse();
+            assertThat(absentAll(dict(0), new int[]{ 0, 5, 7 })).isFalse();
+            assertThat(absentAll(null, new int[]{ 0 })).isFalse();
+            assertThat(absentAll(dict(999), new int[]{ 0 })).isFalse();
             assertThat(DictionaryFilterSupport.valueAbsent(null, 0)).isFalse();
             assertThat(DictionaryFilterSupport.valueAbsent(dict(999), 0)).isFalse();
         }
 
         @Test
         void int64PresentProbeAnywhereInTheListKeepsTheRowGroup() throws IOException {
-            assertThat(DictionaryFilterSupport.absentAll(dict(1), new long[]{ 3000L, 100L, 500L })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(1), new long[]{ 0L, 500L, 700L })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(null, new long[]{ 0L })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(999), new long[]{ 0L })).isFalse();
+            assertThat(absentAll(dict(1), new long[]{ 3000L, 100L, 500L })).isFalse();
+            assertThat(absentAll(dict(1), new long[]{ 0L, 500L, 700L })).isFalse();
+            assertThat(absentAll(null, new long[]{ 0L })).isFalse();
+            assertThat(absentAll(dict(999), new long[]{ 0L })).isFalse();
             assertThat(DictionaryFilterSupport.valueAbsent(null, 0L)).isFalse();
             assertThat(DictionaryFilterSupport.valueAbsent(dict(999), 0L)).isFalse();
         }
@@ -472,21 +494,21 @@ class DictionaryPushDownTest {
         @Test
         void floatingPointInListNeedsTheDictionaryArmOfItsOwnWidth() throws IOException {
             // A present probe at either end of the list, as the integer arms above.
-            assertThat(DictionaryFilterSupport.absentAll(dict(F64_COLUMN), new double[]{ 4.5, 1.5, 3.5 }))
+            assertThat(absentAll(dict(F64_COLUMN), new double[]{ 4.5, 1.5, 3.5 }))
                     .isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(F32_COLUMN), new float[]{ 4.5f, 1.5f, 3.5f }))
+            assertThat(absentAll(dict(F32_COLUMN), new float[]{ 4.5f, 1.5f, 3.5f }))
                     .isFalse();
 
             // No dictionary at all, and a column index past this row group: neither proves absence.
-            assertThat(DictionaryFilterSupport.absentAll(null, new double[]{ 3.5 })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(null, new float[]{ 3.5f })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(999), new double[]{ 3.5 })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(999), new float[]{ 3.5f })).isFalse();
+            assertThat(absentAll(null, new double[]{ 3.5 })).isFalse();
+            assertThat(absentAll(null, new float[]{ 3.5f })).isFalse();
+            assertThat(absentAll(dict(999), new double[]{ 3.5 })).isFalse();
+            assertThat(absentAll(dict(999), new float[]{ 3.5f })).isFalse();
 
             // A FLOAT list meeting DOUBLE entries, and the reverse: the arm that does not match the
             // stored width proves nothing, rather than reading the entries at the wrong one.
-            assertThat(DictionaryFilterSupport.absentAll(dict(F64_COLUMN), new float[]{ 3.5f })).isFalse();
-            assertThat(DictionaryFilterSupport.absentAll(dict(F32_COLUMN), new double[]{ 3.5 })).isFalse();
+            assertThat(absentAll(dict(F64_COLUMN), new float[]{ 3.5f })).isFalse();
+            assertThat(absentAll(dict(F32_COLUMN), new double[]{ 3.5 })).isFalse();
         }
     }
 
@@ -641,11 +663,11 @@ class DictionaryPushDownTest {
         }
 
         private boolean absentAll(int columnIndex, float... probes) throws IOException {
-            return DictionaryFilterSupport.absentAll(dict(columnIndex), probes);
+            return DictionaryChecks.absentAll(dict(columnIndex), probes);
         }
 
         private boolean absentAll(int columnIndex, double... probes) throws IOException {
-            return DictionaryFilterSupport.absentAll(dict(columnIndex), probes);
+            return DictionaryChecks.absentAll(dict(columnIndex), probes);
         }
     }
 }

@@ -31,6 +31,7 @@ import org.openjdk.jmh.annotations.Warmup;
 
 import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
+import dev.hardwood.internal.predicate.dictionary.MembershipIndex;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.PhysicalType;
 
@@ -39,8 +40,8 @@ import dev.hardwood.metadata.PhysicalType;
 ///
 /// The dictionary is unsorted and holds `entries` values; the predicate holds `literals` values,
 /// none of them in the dictionary, so every kernel scans the whole dictionary. The contenders
-/// are private prototypes in this class, except `PRODUCTION`, which is
-/// [DictionaryFilterSupport#absentAll(Dictionary, long[])] as it ships. `SORTED_SEARCH` is the
+/// are private prototypes in this class, except `PRODUCTION`, which builds a [MembershipIndex]
+/// and scans it with [DictionaryFilterSupport] as they ship. `SORTED_SEARCH` is the
 /// code that method ran before #1594, so its score is the baseline and the other kernels are
 /// checked against it in setup.
 ///
@@ -68,11 +69,10 @@ import dev.hardwood.metadata.PhysicalType;
 /// and the bitmask has to be probed. At 131072 entries the bitmask is 32 KiB and 128 KiB; the
 /// `DENSE_128X` span exceeds the limit, so `RANGE_BITMASK` falls back to `HASH_SET` there.
 ///
-/// `absentAll` measures a call as the evaluator makes it per row group today: build the
-/// structure over the literals, then scan. `scanOnly` measures the scan with the structure
-/// built in setup, which is what caching the structure in the resolved predicate would save.
-/// `SORTED_SEARCH` and `PRODUCTION` build inside the call, so both of their scores include it;
-/// `PASS_PER_LITERAL` builds nothing, so its two scores agree.
+/// `buildAndScan` measures a build of the structure over the literals followed by a scan.
+/// `scanOnly` measures the scan with the structure built in setup: for `PRODUCTION`, the
+/// evaluator's cost per row group, since the resolved predicate carries its index (#1751), while
+/// `buildAndScan` is what each row group paid before. `PASS_PER_LITERAL` builds nothing, so its two scores agree.
 ///
 /// Run:
 /// ```shell
@@ -161,7 +161,7 @@ public class DictionaryInListBenchmark {
     }
 
     @Benchmark
-    public boolean absentAll() {
+    public boolean buildAndScan() {
         probe.build();
         return probe.scan();
     }
@@ -447,13 +447,16 @@ public class DictionaryInListBenchmark {
                     }
                 };
                 case PRODUCTION -> new Probe() {
+                    private MembershipIndex.Longs index;
+
                     @Override
                     public void build() {
+                        index = MembershipIndex.Longs.of(literals);
                     }
 
                     @Override
                     public boolean scan() {
-                        return DictionaryFilterSupport.absentAll(dictionary, literals);
+                        return DictionaryFilterSupport.absentAll(dictionary, index);
                     }
                 };
                 case PASS_PER_LITERAL -> new Probe() {
@@ -554,13 +557,16 @@ public class DictionaryInListBenchmark {
                     }
                 };
                 case PRODUCTION -> new Probe() {
+                    private MembershipIndex.Ints index;
+
                     @Override
                     public void build() {
+                        index = MembershipIndex.Ints.of(literals);
                     }
 
                     @Override
                     public boolean scan() {
-                        return DictionaryFilterSupport.absentAll(dictionary, literals);
+                        return DictionaryFilterSupport.absentAll(dictionary, index);
                     }
                 };
                 case PASS_PER_LITERAL -> new Probe() {
@@ -656,13 +662,16 @@ public class DictionaryInListBenchmark {
                     }
                 };
                 case PRODUCTION -> new Probe() {
+                    private MembershipIndex.Doubles index;
+
                     @Override
                     public void build() {
+                        index = MembershipIndex.Doubles.of(literals);
                     }
 
                     @Override
                     public boolean scan() {
-                        return DictionaryFilterSupport.absentAll(dictionary, literals);
+                        return DictionaryFilterSupport.absentAll(dictionary, index);
                     }
                 };
                 case PASS_PER_LITERAL -> new Probe() {
@@ -806,13 +815,16 @@ public class DictionaryInListBenchmark {
                     }
                 };
                 case PRODUCTION -> new Probe() {
+                    private MembershipIndex.Binaries index;
+
                     @Override
                     public void build() {
+                        index = MembershipIndex.Binaries.of(literals);
                     }
 
                     @Override
                     public boolean scan() {
-                        return DictionaryFilterSupport.absentAll(dictionary, literals);
+                        return DictionaryFilterSupport.absentAll(dictionary, index);
                     }
                 };
                 case PASS_PER_LITERAL -> new Probe() {
