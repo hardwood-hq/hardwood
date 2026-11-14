@@ -93,7 +93,7 @@ final class RangeFetcher {
                             throw new IllegalStateException("The tail holding the end of the page at offset "
                                     + pages[i].offset() + " was dropped before its header was parsed");
                         }
-                        headers[i] = ParsedHeader.of(page);
+                        headers[i] = ParsedHeader.of(page, pages[i].offset());
                     }
                     return headers;
                 }, headers -> {

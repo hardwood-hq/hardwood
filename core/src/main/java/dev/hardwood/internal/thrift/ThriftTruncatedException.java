@@ -33,7 +33,22 @@ public class ThriftTruncatedException extends ParquetReadException {
 
     private static final long serialVersionUID = 1L;
 
+    /// the bytes from the buffer's start the read needs, `-1` where it does not know
+    private final long needed;
+
     public ThriftTruncatedException(String message) {
+        this(message, -1);
+    }
+
+    /// A truncation where the read knows it needs `needed` bytes from its buffer's start, as a
+    /// binary value's declared length tells it.
+    public ThriftTruncatedException(String message, long needed) {
         super(message);
+        this.needed = needed;
+    }
+
+    /// The bytes from the buffer's start the read needs, `-1` where it does not know.
+    public long needed() {
+        return needed;
     }
 }

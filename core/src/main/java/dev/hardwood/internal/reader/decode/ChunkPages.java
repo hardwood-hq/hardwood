@@ -17,8 +17,6 @@ import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.select.PageRowMask;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PageType;
@@ -42,9 +40,11 @@ public final class ChunkPages {
         Dictionary dictionary = null;
         int position = 0;
         while (position < length) {
-            ThriftCompactReader reader = new ThriftCompactReader(bytes.slice(position, length - position), 0);
-            PageHeader header = PageHeaderReader.read(reader);
-            int headerSize = reader.getBytesRead();
+            int at = position;
+            PageFormatProbe.HeaderAt parsed = PageFormatProbe.readHeader((offset, l) -> bytes.slice(Math.toIntExact(offset), l),
+                    at, length - at, PageFormatProbe.Extent.CHUNK, PageFormatProbe.INITIAL_PEEK_SIZE, "").get();
+            PageHeader header = parsed.header();
+            int headerSize = parsed.length();
             int pageSize = headerSize + header.compressedPageSize();
             ByteBuffer page = bytes.slice(position, pageSize);
             if (header.type() == PageType.DICTIONARY_PAGE) {

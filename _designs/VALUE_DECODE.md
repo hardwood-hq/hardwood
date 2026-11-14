@@ -1,6 +1,6 @@
 # Value decode
 
-Describes how the bytes of one data page become typed Java values: the page header and decompression hand-off in `PageDecoder`, the in-place value readers and the decoder each encoding drives, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernel with its scalar fallback.
+Describes how the bytes of one data page become typed Java values: how every reader parses page headers, the page header and decompression hand-off in `PageDecoder`, the in-place value readers and the decoder each encoding drives, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernel with its scalar fallback.
 
 Related documents:
 
@@ -12,6 +12,20 @@ Related documents:
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): dictionary-based row-group pruning and the location of the dictionary page
 - [THREADING.md](THREADING.md): which threads decode, and the context of zero threads whose reads decode on the threads driving them
 - [docs/content/concepts/parquet-layout.md](../docs/content/concepts/parquet-layout.md): the page hierarchy, described for users
+
+## Page headers
+
+A page header is read through one function, `PageFormatProbe.readHeader`, wherever the reader meets one: the read's planned and scanned pages, a chunk's dictionary page, and the CLI's walks. It reads the header at an offset from a byte source within an extent, so every reader judges a header by the same rule and reports a defect in the same words.
+
+**The extent.** A header and its page's body lie inside the page where the page's size is known, and inside the rest of its column chunk otherwise. An OffsetIndex gives each page's size, its header included, and a chunk read through it has its dictionary page end where the first listed page starts; a page a scan meets, and the dictionary page a probe or the CLI reads, have only the chunk. Parquet sets no other bound on a header's size, and the reader sets none either: a header is valid when it parses within its extent.
+
+**Reading.** The function parses from a window at the offset, starting small and widening while the header is truncated, up to the extent's end or the largest page there is (`PageLimit.MAX_PAGE_BYTES`), whichever is nearer. A truncated read that knows what it needs, the declared length of a binary value such as a long statistics bound, widens the window past it at once; any other truncation doubles it. A declared length past the ceiling fails at once, without being read. Where the source holds the extent's bytes already (a file in memory, an arrived request, a scan's arrived ranges), a window is a slice and widening costs a parse; where it reads them (the probe of a file read by request, the CLI), each window is a read, and a corrupt length within the extent costs about the bytes it declares. A source that lacks a window's bytes returns the range it needs, and its caller parses again once they are there, as a scan does when its next range arrives.
+
+**Failures.** A header that does not parse within its extent, or whose page ends past its chunk (`PageFormatProbe.pageEnd`), is malformed and fails with `ParquetReadException`. A header truncated at its extent's end names its offset, the bytes its extent leaves it and whether that is its page or its chunk; any other malformation carries the message of the field reader that refused it (an unknown page type, a size past the [page limit](#page-decode)). Each reader puts its own context (file, row group, column, page) in front.
+
+**Once per read.** Within a read, each page's header is parsed once, outside the read's lock, and handed with its page to what sizes and decodes it ([READ_PIPELINE.md](READ_PIPELINE.md#decoded-columns)). The one exception is a row group's probe, which prunes by dictionaries: it sizes its charge from the headers of the dictionary pages it may parse, read under the lock, and parses them again as it decodes them. A header whose parse failed fails its page when the page's decode runs, with the failure the parse met; no reader parses a header a second time to learn why it failed.
+
+Tests: `PageFormatProbeTest`, `PageHeaderParseTest`, `DictionaryParserTest`, `PageHeaderWalkTest` (cli).
 
 ## Page decode
 
