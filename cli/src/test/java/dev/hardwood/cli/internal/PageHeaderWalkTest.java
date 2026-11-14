@@ -22,6 +22,7 @@ import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.thrift.ThriftCompactConstants;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -77,21 +78,18 @@ class PageHeaderWalkTest {
         }
     }
 
-    /// A header too long for its peek widens the peek, but not without bound: one running
-    /// past [PageFormatProbe#MAX_PEEK_SIZE], as a corrupt length makes one, fails as a corrupt
-    /// file rather than being read to the end of a chunk that may span gigabytes.
+    /// A header too long for its peek widens the peek up to the end of the chunk: a header of a
+    /// few mebibytes inside it is walked.
     @Test
-    void aHeaderLongerThanTheMaximumPeekSizeFails() throws IOException {
-        int rangeSize = 3 * PageFormatProbe.MAX_PEEK_SIZE;
-        ByteBuffer bytes = ByteBuffer.allocate(rangeSize);
-        bytes.put(oversizedPageHeader(2 * PageFormatProbe.MAX_PEEK_SIZE)).rewind();
-        try (InputFile file = InputFile.of(bytes)) {
+    void aLongHeaderInsideTheRangeIsWalked() throws IOException {
+        byte[] header = oversizedPageHeader(2 * 1024 * 1024);
+        try (InputFile file = InputFile.of(ByteBuffer.wrap(header))) {
             file.open();
+            List<PageHeader> visited = new ArrayList<>();
 
-            assertThatThrownBy(() -> PageHeaderWalk.walk(file, 0, rangeSize, 16, header -> true))
-                    .isExactlyInstanceOf(ParquetReadException.class)
-                    .hasMessage("Page header at offset 0 exceeds maximum peek size ("
-                            + PageFormatProbe.MAX_PEEK_SIZE + " bytes)");
+            PageHeaderWalk.walk(file, 0, header.length, 16, visited::add);
+
+            assertThat(visited).extracting(PageHeader::type).containsExactly(PageType.DATA_PAGE);
         }
     }
 

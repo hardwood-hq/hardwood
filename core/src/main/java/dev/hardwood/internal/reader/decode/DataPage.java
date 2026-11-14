@@ -7,12 +7,12 @@
  */
 package dev.hardwood.internal.reader.decode;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.memory.WorkingSet;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -26,13 +26,21 @@ import dev.hardwood.schema.ColumnSchema;
 /// @param bytes the page, header first
 public record DataPage(PageHeader header, int headerSize, ByteBuffer bytes) {
 
-    /// The page whose bytes, header first, are `bytes`.
+    /// The page whose bytes, header first, are `bytes`, the page at `offset` of its file, which is
+    /// the header's extent ([PageFormatProbe#readHeader]).
     ///
-    /// @throws dev.hardwood.reader.ParquetReadException if the header does not parse
-    public static DataPage parse(ByteBuffer bytes) {
-        ThriftCompactReader reader = new ThriftCompactReader(bytes, 0);
-        PageHeader header = PageHeaderReader.read(reader);
-        return new DataPage(header, reader.getBytesRead(), bytes);
+    /// @throws dev.hardwood.reader.ParquetReadException if the header does not parse within the page
+    public static DataPage parse(ByteBuffer bytes, long offset) {
+        try {
+            PageFormatProbe.HeaderAt header = PageFormatProbe.readHeader(
+                    (o, length) -> bytes.slice(Math.toIntExact(o - offset), length), offset, bytes.remaining(),
+                    PageFormatProbe.Extent.PAGE, PageFormatProbe.INITIAL_PEEK_SIZE, "").get();
+            return new DataPage(header.header(), header.length(), bytes);
+        }
+        catch (IOException e) {
+            // slicing a buffer reads nothing
+            throw new UncheckedIOException(e);
+        }
     }
 
     /// The buffers the task decoding the page `header` heads holds while it runs, from the header

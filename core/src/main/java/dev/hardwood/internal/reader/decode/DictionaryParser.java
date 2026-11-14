@@ -79,12 +79,21 @@ public final class DictionaryParser {
         if (region == null) {
             return Parsed.need(extent.start(), openingRead);
         }
-        DataPage opening = DataPage.parse(region);
-        PageHeader header = opening.header();
+        // the header is read from the opening read, and past it from `bytes` where it is longer
+        long regionEnd = extent.start() + region.remaining();
+        Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
+                (offset, length) -> offset + length <= regionEnd
+                        ? region.slice(Math.toIntExact(offset - extent.start()), length) : bytes.read(offset, length),
+                extent.start(), extent.availableBytes(), PageFormatProbe.Extent.CHUNK, openingRead, messagePrefix);
+        if (read.needsBytes()) {
+            return read.asNeed();
+        }
+        PageHeader header = read.value().header();
         if (header.type() != PageType.DICTIONARY_PAGE) {
             return Parsed.of(null);
         }
-        int pageLength = opening.headerSize() + header.compressedPageSize();
+        int headerSize = read.value().length();
+        int pageLength = headerSize + header.compressedPageSize();
         if (pageLength > extent.availableBytes()) {
             throw new ParquetReadException(messagePrefix
                     + "Malformed Parquet metadata: the dictionary page header declares "
@@ -92,10 +101,10 @@ public final class DictionaryParser {
                     + " bytes remain in the chunk");
         }
         if (pageLength <= region.remaining()) {
-            return Parsed.of(new DataPage(header, opening.headerSize(), region.slice(0, pageLength)));
+            return Parsed.of(new DataPage(header, headerSize, region.slice(0, pageLength)));
         }
         ByteBuffer page = bytes.read(extent.start(), pageLength);
-        return page != null ? Parsed.of(new DataPage(header, opening.headerSize(), page))
+        return page != null ? Parsed.of(new DataPage(header, headerSize, page))
                 : Parsed.need(extent.start(), pageLength);
     }
 
@@ -103,17 +112,15 @@ public final class DictionaryParser {
     /// first page is not a dictionary page.
     ///
     /// The page is located as [#readPage] locates it, and only its header is read: a short probe,
-    /// widened while the header does not fit in it, up to the end of the chunk or
-    /// [PageFormatProbe#MAX_PEEK_SIZE], whichever comes first.
+    /// widened while the header does not fit in it, up to the end of the chunk.
     ///
     /// @param messagePrefix as [#readPage]
-    /// @throws ParquetReadException as [#readPage], or if the header does not fit in the chunk or
-    ///         exceeds [PageFormatProbe#MAX_PEEK_SIZE]
+    /// @throws ParquetReadException as [#readPage], or if the header does not fit in the chunk
     public static PageHeader readPageHeader(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
             throws IOException {
         Extent extent = extent(columnChunk, messagePrefix);
         PageHeader header = PageFormatProbe.readHeader(ByteSource.of(inputFile), extent.start(),
-                extent.availableBytes(), HEADER_PROBE_BYTES, messagePrefix).get().header();
+                extent.availableBytes(), PageFormatProbe.Extent.CHUNK, HEADER_PROBE_BYTES, messagePrefix).get().header();
         return header.type() == PageType.DICTIONARY_PAGE ? header : null;
     }
 
@@ -125,7 +132,7 @@ public final class DictionaryParser {
         Extent extent = extent(columnChunk, messagePrefix);
         int openingRead = Math.toIntExact(Math.min(extent.openingRead(), extent.availableBytes()));
         Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(bytes, extent.start(),
-                extent.availableBytes(), openingRead, messagePrefix);
+                extent.availableBytes(), PageFormatProbe.Extent.CHUNK, openingRead, messagePrefix);
         if (read.needsBytes()) {
             return read.asNeed();
         }

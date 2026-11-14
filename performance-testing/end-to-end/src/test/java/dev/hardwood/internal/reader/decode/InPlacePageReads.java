@@ -32,7 +32,7 @@ public final class InPlacePageReads {
     /// copies them.
     public Object read(PageDecoder decoder, ColumnSchema column, ByteBuffer page, Dictionary dictionary,
                        DecodeBuffers buffers) {
-        DataPage dataPage = DataPage.parse(page);
+        DataPage dataPage = DataPage.parse(page, 0);
         if (column.maxRepetitionLevel() > 0) {
             PageDecoder.InPlaceNestedPage nested = decoder.decodeNestedInPlace(dataPage, dictionary, scratch, buffers);
             return nested.flat() != null ? write(nested.flat(), column) : write(nested.binary());
