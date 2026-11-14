@@ -413,9 +413,6 @@ final class CellWriter {
         ColumnBatchMatcher filter = filters != null && column < filters.length ? filters[column] : null;
         if (batch.values instanceof BinaryBatchValues values) {
             BinaryFill.finish(cell, values, views[column]);
-            if (views[column].requested || filter != null && filter.readsEveryValueView()) {
-                values.ensureViews();
-            }
         }
         if (filter != null) {
             testFilter(filter, batch, records);

@@ -138,7 +138,7 @@ The mechanism has three parts:
 | Ids on the page | `BinaryPageValues.dictionary()` | A dictionary-encoded byte-array page's reader carries its `ByteArrayDictionary` and one id per non-null value, and these are its only representation of the values. A plain or delta page's reader has neither. |
 | Index on the batch | `BinaryBatchValues.dictionary` / `dictIndices` | For a string column the batch records, per value, the entry index or `-1`. `stringAt(i)` returns the cached `String` when the batch has a dictionary and the index is non-negative, and decodes from the value's bytes otherwise. A dictionary-aware binary matcher reads the same index to reuse its cached predicate outcome. |
 
-Every value has a byte view in the batch whatever its encoding (a dictionary value's view points into the batch's copy of the dictionary, see [COLUMN_READER.md](COLUMN_READER.md#variable-length)), so `getBinary` and raw-byte access are unaffected and the fallback in `stringAt` is always available.
+Every value's bytes are readable whatever its encoding, a dictionary value's through its entry and any other value's through its view ([COLUMN_READER.md](COLUMN_READER.md#variable-length)), so `getBinary` and raw-byte access are unaffected and the fallback in `stringAt` is always available.
 
 **Which columns.** Every `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` column records entry indices: they back `ColumnReader`'s dictionary ids ([COLUMN_READER.md](COLUMN_READER.md#dictionary-ids)) as well as string reuse. Only text columns reach `stringAt`: the consumer side asks `LeafKind.of(type, annotation) == STRING` (a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or carrying no annotation where the accessor allows it) before routing a value through it.
 

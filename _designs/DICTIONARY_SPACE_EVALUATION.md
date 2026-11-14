@@ -6,7 +6,7 @@ Related documents:
 
 - [RECORD_FILTERING.md](RECORD_FILTERING.md): the batch matchers this wraps, their eligibility and the merge of their masks
 - [VALUE_DECODE.md](VALUE_DECODE.md): the dictionary page and the per-value entry indices a batch records
-- [COLUMN_READER.md](COLUMN_READER.md): the batch layout, including the deferred byte views of dictionary values
+- [COLUMN_READER.md](COLUMN_READER.md): the batch layout, including how dictionary values are read and the window of every value's view
 - [READ_PIPELINE.md](READ_PIPELINE.md): why a batch of a binary column holds values of one column chunk
 
 ## Scope
@@ -42,6 +42,6 @@ The state belongs to one dictionary object, which is one column chunk's dictiona
 
 A batch records an entry id per value ([VALUE_DECODE.md](VALUE_DECODE.md)) and draws on at most one dictionary, since a read with a binary column ends its batches at row-group boundaries ([READ_PIPELINE.md](READ_PIPELINE.md)). An id of `-1` therefore marks a null or a value written `PLAIN` after the chunk's dictionary filled up. The wrapper decides such a non-null row through the delegate's `testValue` over the row's byte view.
 
-The wrapper reads no other view. `ColumnBatchMatcher.readsEveryValueView()` returns `false` for it, and for a same-column `AND` or `OR` whose sides both do, so the column leaves the batch's dictionary values with their views deferred ([COLUMN_READER.md](COLUMN_READER.md)). A filtered read that consumes the column through its dictionary ids or its strings then never builds the views. The first `-1` row of a batch with deferred views builds them, as any reader's first view access does.
+The wrapper reads no other bytes and builds no window, so a filtered read that consumes the column through its dictionary ids or its strings never has one built ([COLUMN_READER.md](COLUMN_READER.md#variable-length)). Every binary batch matcher is wrapped, so the delegate's whole-batch loop, which reads the batch's own view arrays, only sees a batch without a dictionary, whose views cover every value.
 
 Tests: `DictionaryBinaryBatchMatcherTest`, `DictionarySpaceEvaluationTest`, `ShortValueEqualityTest`, `FlatBinaryViewsTest`.

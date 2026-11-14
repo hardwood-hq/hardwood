@@ -451,10 +451,10 @@ class ColumnReaderDictionaryIdsTest {
         }
     }
 
-    /// A filtered read compacts the kept values of a batch whose views were not built yet: the
-    /// first batch is filtered, and its ids are read before its views.
+    /// A filtered read compacts the kept values of a batch that reads its dictionary values through
+    /// their entries: the first batch is filtered, and its ids are read before its bytes.
     @Test
-    void aFilteredReadKeepsTheBytesOfDeferredValues() throws Exception {
+    void aFilteredReadKeepsTheBytesOfResolvedValues() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(writeStations(2_000, 500))));
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("label"))
                      .filter(FilterPredicate.lt("id", 40L)).batchSize(64).build()) {
@@ -470,10 +470,11 @@ class ColumnReaderDictionaryIdsTest {
         }
     }
 
-    /// The row reader's string and byte accessors alternate over dictionary values, whose
-    /// views are deferred, and the plain values the writer fell back to.
+    /// The row reader's string and byte accessors alternate over dictionary values, read through
+    /// their entries until the first byte read and through views after, and the plain values the
+    /// writer fell back to.
     @Test
-    void aRowReaderReadsDeferredAndPlainValuesAsBytes() throws Exception {
+    void aRowReaderReadsResolvedAndPlainValuesAsBytes() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PLAIN_FALLBACK));
              RowReader rows = reader.rowReader()) {
             int row = 0;

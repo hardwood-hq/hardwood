@@ -86,6 +86,9 @@ public class DictionarySpacePredicateBenchmark {
     private int rows;
 
     private BatchExchange.Batch batch;
+    /// The same values as [#batch] without their dictionary, for the packed contender, which reads
+    /// every value's view.
+    private BatchExchange.Batch packedBatch;
     private BinaryBatchMatcher packedMatcher;
     private BinaryBatchMatcher coldDictionaryMatcher;
     private BinaryBatchMatcher hotDictionaryMatcher;
@@ -139,6 +142,10 @@ public class DictionarySpacePredicateBenchmark {
         batch = new BatchExchange.Batch();
         batch.values = values;
         batch.recordCount = rows;
+        packedBatch = new BatchExchange.Batch();
+        packedBatch.values = new BinaryBatchValues(bytes,
+                Arrays.copyOf(offsets, rows), Arrays.copyOfRange(offsets, 1, rows + 1));
+        packedBatch.recordCount = rows;
 
         int middle = referencedEntries / 2;
         byte[] literal = entries[middle];
@@ -177,7 +184,7 @@ public class DictionarySpacePredicateBenchmark {
 
     @Benchmark
     public long packedValues() {
-        packedMatcher.test(batch, outWords);
+        packedMatcher.test(packedBatch, outWords);
         return checksum();
     }
 
@@ -191,7 +198,7 @@ public class DictionarySpacePredicateBenchmark {
 
     private void verifyEquivalentResults() {
         long[] expected = new long[outWords.length];
-        packedMatcher.test(batch, expected);
+        packedMatcher.test(packedBatch, expected);
         verifyEquivalentResults(new DictionaryBinaryBatchMatcher(packedMatcher), expected);
     }
 
