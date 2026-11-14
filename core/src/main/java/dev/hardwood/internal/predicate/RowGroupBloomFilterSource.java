@@ -100,6 +100,14 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
         return filters[columnIndex];
     }
 
+    /// Whether `metaData`'s footer entry names a Bloom filter this source reads: one with a
+    /// `bloom_filter_offset` past the file's magic header. A filter whose header then names an
+    /// algorithm, hash or compression Hardwood does not implement is still left unread.
+    public static boolean declaresFilter(ColumnMetaData metaData) {
+        Long offset = metaData.bloomFilterOffset();
+        return offset != null && offset > 0;
+    }
+
     private Parsed<BloomFilter> readFilter(int columnIndex) throws IOException {
         ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
         ColumnMetaData metaData = columnChunk.metaData();

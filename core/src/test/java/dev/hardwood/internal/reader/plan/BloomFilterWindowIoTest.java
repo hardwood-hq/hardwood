@@ -97,9 +97,11 @@ class BloomFilterWindowIoTest {
 
     @ParameterizedTest
     @EnumSource(ReadKind.class)
-    void rowGroupsTheirBloomFiltersDropReadNoDictionaryAndNoPageIndex(ReadKind kind) throws Exception {
-        // The same rows, dictionary-encoded and with a page index: `code`'s dictionary could
-        // drop every row group too, and the read would need the page index of a kept one.
+    void aColumnsBloomFiltersAnswerForItsDictionariesWhichAreNotRead(ReadKind kind) throws Exception {
+        // The same rows, dictionary-encoded and with a page index: `code`'s dictionary could drop
+        // every row group too, but its Bloom filter answers the leaf first, and says "maybe" only
+        // where the dictionary holds the literal as well, so no dictionary is read, nor the page
+        // index of a row group the filters drop.
         CountingInputFile file = countingFile(DICT_INDEX_FIXTURE);
 
         long rows = count(kind, file, FilterPredicate.eq("code", 5));

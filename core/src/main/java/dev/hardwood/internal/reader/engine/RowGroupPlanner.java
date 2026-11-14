@@ -13,12 +13,12 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.io.HeldBytes;
-import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.reader.plan.BatchPlan;
@@ -220,7 +220,18 @@ final class RowGroupPlanner {
                 for (int i = first; i < first + count; i++) {
                     // a row group with a chunk in another file reads no index: it fails first
                     IndexWindow.Member m = members.get(i - from);
-                    units.add(new Unit.Listed(listings.get(i - from), m.offsetIndexColumns(), m.columnIndexColumns(), w));
+                    // a probe's dictionary pages are requested with the window's bloom filters,
+                    // whatever those decide, each on its own and held by its unit alone
+                    // (FETCH_PLANNING.md, Pruning reads)
+                    UnitListing listed = listings.get(i - from);
+                    List<RangeFetch> dictionaries = listed.storedInThisFile()
+                            ? ranges(file, RowGroupPruning.dictionaryRanges(listed), 1) : List.of();
+                    for (RangeFetch r : dictionaries) {
+                        if (!r.output().hasValue()) {
+                            fetcher.fetch(file, r, listed.base());
+                        }
+                    }
+                    units.add(new Unit.Listed(listed, m.offsetIndexColumns(), m.columnIndexColumns(), w, dictionaries));
                 }
                 first += count;
                 fetch(units.get(w.first()).listing(), w.bloomFilters(), () -> {
@@ -280,48 +291,54 @@ final class RowGroupPlanner {
     /// and waits for its page index otherwise.
     private void bloomFiltersArrived(Unit.Listed l) {
         if (RowGroupPruning.droppableOnArrival(l.listing())) {
-            probe(l.probing());
+            whenArrived(l.listing(), l.dictionaries(), () -> probe(l.probing()));
             return;
         }
         fetcher.readersDone(l.window().bloomFilters());
+        fetcher.readersDone(l.dictionaries());
         awaitIndex(l.nothingToProbe());
     }
 
-    /// Probes `p`'s Bloom filters and dictionaries on a job: the dictionary bytes a pass lacks are
-    /// fetched and it is probed again, until it is decided. A pass is charged the buffers of the
-    /// dictionary parses it may run ([#parseBytes]).
+    /// Reads `p`'s Bloom filters and the dictionary pages its evaluation may consult, on a job: what
+    /// the window did not bring, a filter or page read header first, is fetched and it reads again,
+    /// until it holds them all. Then evaluates them once: in the same job where no dictionary parse
+    /// needs a charge, which is every parse within [DecodeBuffers#RETAINED_BYTES], and otherwise on
+    /// a job charged for them ([#evaluate]).
     private void probe(Unit.Probing p) {
         set(p);
         UnitListing u = p.listing();
         p.missing().clear();
-        long cost = parseBytes(p);
-        scheduler.add(new JobScheduler.Job<>(u.base(), cost, planKind(u), cost > 0 ? new Charge() : null, buffers -> {
+        scheduler.add(new JobScheduler.Job<>(u.base(), 0, planKind(u), null, buffers -> {
             // its chunks lie in the file before a dictionary of them is read
             pages.extents(u);
-            return pruning.probeOnArrival(u, p.bytes(), p.bytes(), p.probe());
+            pruning.read(u, p.bytes(), p.probe());
+            boolean uncharged = p.missing().isEmpty() && RowGroupPruning.parseBytes(u, p.probe()) == 0;
+            return Optional.ofNullable(uncharged ? pruning.evaluate(u, p.probe()) : null);
         }, arrival -> {
-            if (arrival.dropped() || p.missing().isEmpty()) {
-                probed(p, arrival);
-                return;
+            if (arrival.isPresent()) {
+                probed(p, arrival.get());
             }
-            List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
-            p.fetching(more);
-            fetch(u, more, () -> probe(p));
+            else if (p.missing().isEmpty()) {
+                evaluate(p);
+            }
+            else {
+                List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
+                p.fetching(more);
+                fetch(u, more, () -> probe(p));
+            }
         }, t -> readFailure.failAt(u.base(), t)));
     }
 
-    /// The buffers of the dictionary parses `p`'s next pass may run, from the headers of the
-    /// dictionary pages it holds and has not parsed ([DataPage#taskBytes]), each where it exceeds
-    /// [DecodeBuffers#RETAINED_BYTES]: R holds them while the pass runs, unless need forces it, so
-    /// that the probes of several row groups parse such dictionaries at once only within R. A
-    /// smaller parse is not charged, as a context keeps that much per thread anyway.
-    private long parseBytes(Unit.Probing p) {
-        long bytes = 0;
-        for (RowGroupPruning.HeldDictionary d : RowGroupPruning.dictionariesToParse(p.listing(), p.held(), p.probe())) {
-            long task = DataPage.taskBytes(d.header(), d.schema());
-            bytes += task > DecodeBuffers.RETAINED_BYTES ? task : 0;
-        }
-        return bytes;
+    /// Evaluates `p`'s Bloom filters and dictionaries once, where a dictionary parse it may run
+    /// exceeds [DecodeBuffers#RETAINED_BYTES], on a job charged those parses, from the headers its
+    /// probe parsed: R holds them while it runs, unless need forces it, so that the probes of
+    /// several row groups parse such dictionaries at once only within R.
+    private void evaluate(Unit.Probing p) {
+        UnitListing u = p.listing();
+        long cost = RowGroupPruning.parseBytes(u, p.probe());
+        scheduler.add(new JobScheduler.Job<>(u.base(), cost, planKind(u), cost > 0 ? new Charge() : null,
+                buffers -> pruning.evaluate(u, p.probe()), arrival -> probed(p, arrival),
+                t -> readFailure.failAt(u.base(), t)));
     }
 
     /// `p`'s Bloom filters and dictionaries decided: a unit they dropped is planned with no row,

@@ -62,7 +62,7 @@ A read's work leaves its lock as jobs. A job's work runs outside the lock, and i
 |---|---|---|
 | Fetch | reads one range of a file: data, a dictionary, a page-index window, Bloom filters | F and R |
 | Footer | reads one file's footer as far as I/O goes | F and R |
-| Plan | parses a footer, probes a unit's Bloom filters and dictionaries, plans a unit's pages and ranges | CPU slots; a unit's probe and plan also the look-ahead where its file holds every byte; a probe's pass also R where a dictionary it may parse exceeds `DecodeBuffers.RETAINED_BYTES` |
+| Plan | parses a footer, probes a unit's Bloom filters and dictionaries, plans a unit's pages and ranges | CPU slots; a unit's probe and plan also the look-ahead where its file holds every byte; a probe's evaluation also R for the dictionary parses above `DecodeBuffers.RETAINED_BYTES` it may run |
 | Decode | decodes a page into its cells, measures a page decoded through levels, parses a dictionary | the look-ahead and CPU slots; R where its task's buffers exceed `DecodeBuffers.RETAINED_BYTES` |
 | CPU | scans a chunk's headers, fills a sealed nested cell, completes a sealed flat cell | CPU slots |
 
@@ -72,7 +72,7 @@ A read's work leaves its lock as jobs. A job's work runs outside the lock, and i
 
 | Bound | Governs | Reason |
 |---|---|---|
-| R, the context's read-ahead buffer | everything the read holds by its choice, across every read of the context: the bytes it fetches ahead, and the buffers of each decode whose task exceeds `DecodeBuffers.RETAINED_BYTES` beside the one need forces, sized from the page's header as the working set sizes a task ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)); a probe's pass is charged so for each dictionary it may parse, those of the filter's columns whose pages it holds and has not parsed, from their headers | no read on a context starves another, and a read's large decodes and probes do not run at once on every thread, since its working set counts one task's buffers; a charge that does not fit waits for R's next release, and a refused decode or probe also for the next job of the read to end; a refused probe holds back the plans after it |
+| R, the context's read-ahead buffer | everything the read holds by its choice, across every read of the context: the bytes it fetches ahead, and the buffers of each decode whose task exceeds `DecodeBuffers.RETAINED_BYTES` beside the one need forces, sized from the page's header as the working set sizes a task ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)); a probe's evaluation is charged so for each dictionary parse it may run, from the headers of the dictionary pages its probe read before it, outside the lock | no read on a context starves another, and a read's large decodes and probes do not run at once on every thread, since its working set counts one task's buffers; a charge that does not fit waits for R's next release, and a refused decode or probe also for the next job of the read to end; a refused probe holds back the plans after it |
 | F (`hardwood.internal.fetchAheadBytes`, twice S by default) | fetches ahead of the consumer's need: a fetch starts while less than F is fetched ahead, so a request larger than F still runs one at a time | the requests in flight decide a remote read's throughput |
 | The look-ahead (`ReadEngine.CAP_BUDGETS` batch byte budgets, in rows), counted from the first row a column has not published | decodes | a buffer that absorbs the consumer's pauses once the CPU is saturated; decoding further holds memory for nothing |
 | Files ahead (`hardwood.internal.maxFilesAhead`) | footers | F and R do not bound the footers of many small files ([multi-file reads](#multi-file-reads)) |
@@ -103,7 +103,7 @@ Fetch and decode are bounded apart because their delays differ. A request has a 
 |---|---|---|
 | A range's bytes | its unit's tracking until its scans hold it; the pages that lie in it; a scan until it has passed it; the batch of a flat page's last cell until every column has published it | once the last is done; a range whose last reader is done before its fetch starts is not fetched |
 | A footer read ahead | its file | once the consumer passes the file |
-| A decode's task buffers, or a probe pass's dictionary parses, above `DecodeBuffers.RETAINED_BYTES` | its job | as the job ends, with its value or its failure |
+| A decode's task buffers, or a probe evaluation's dictionary parses, above `DecodeBuffers.RETAINED_BYTES` | its job | as the job ends, with its value or its failure |
 
 A range a file holds already (a file in memory, the part of a file's tail the read holds) is sliced in place and charged to neither F nor R. Decoded values count against the read's working set ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), not R. The read's close returns every charge still held.
 
@@ -234,8 +234,8 @@ Units are planned in any order and batched in unit order: a unit is batched, its
 LISTED ──── nothing to probe ─────────┐
   │ something to probe                │
   ▼                                   │
-PROBING ⟲ lacks dictionary bytes:     │
-  │       fetches them, probes again  │
+PROBING ⟲ lacks bytes read header   │
+  │       first: fetches, reads again │
   ├──── kept ─────────────────────────┤
   │                                   ▼
   │                             AWAITING_INDEX
@@ -251,12 +251,12 @@ PROBING ⟲ lacks dictionary bytes:     │
 | State | Entered when | The unit gains |
 |---|---|---|
 | `LISTED` | its file's footer is parsed and its statistics keep it | its listing: file, row group, key, always-match flag, chunks, and the rows the row limit reaches in it |
-| `PROBING` | its Bloom filters have arrived and it has a leaf they or its dictionaries may decide | what its passes decided and decoded; a pass that lacks dictionary bytes fetches them and probes again |
+| `PROBING` | its Bloom filters and the dictionary pages requested with them have arrived, and it has a leaf they may decide | its Bloom filters and the dictionary pages it read, then the dictionaries it decoded; a read step that lacks bytes, a filter or page read header first, fetches them and reads again, and one evaluation then decides |
 | `AWAITING_INDEX` | its probe kept it, or it has nothing to probe | the dictionaries its probe decoded; its page index is read with its neighbours' ([FETCH_PLANNING.md](FETCH_PLANNING.md#per-row-group)), and its plan is made on a job once the index has arrived |
 | `PLANNED` | its plan is made, or its probe dropped it, which plans it with no row | its plan: the rows its filter keeps, each column's pages and dictionary page, and its ranges |
 | `BATCHED` | it and every unit before it are planned | its batches, from the batch plan; its ranges are fetched and its pages handed to its columns from here on |
 
-Each state is a record of `Unit` (`Unit.Listed`, `Unit.Probing`, `Unit.AwaitingIndex`, `Unit.Planned`, `Unit.Batched`) holding exactly what the unit has in it, and a state's transitions return the next one, so a transition the diagram lacks does not compile. `RowGroupPlanner` owns each unit until it is batched: it keeps the unit's current state and replaces it on each transition. The parts after the planner take the immutable `Unit.Batched`; a probe's state accumulates in place across its passes and is the planner's alone. A unit whose probe or plan fails takes no further transition: the read fails at its first row, and no unit from there on is batched.
+Each state is a record of `Unit` (`Unit.Listed`, `Unit.Probing`, `Unit.AwaitingIndex`, `Unit.Planned`, `Unit.Batched`) holding exactly what the unit has in it, and a state's transitions return the next one, so a transition the diagram lacks does not compile. `RowGroupPlanner` owns each unit until it is batched: it keeps the unit's current state and replaces it on each transition. The parts after the planner take the immutable `Unit.Batched`; a probe's state accumulates in place across its read steps and is the planner's alone. A unit whose probe or plan fails takes no further transition: the read fails at its first row, and no unit from there on is batched.
 
 **Invariant: reader structure is never derived from the contents of individual row groups in individual files.** A decision the reader takes once, at construction, from facts about row groups would force every file to be planned before the first row, returning time to first row to O(files). Facts about a row group reach the read on its unit:
 
