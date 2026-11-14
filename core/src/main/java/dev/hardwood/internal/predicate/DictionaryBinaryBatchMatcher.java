@@ -19,9 +19,8 @@ import dev.hardwood.internal.reader.batch.Dictionary;
 /// A batch without a dictionary goes directly to the delegate's optimized
 /// whole-batch loop. In a dictionary batch, a `-1` entry ID identifies a value
 /// written `PLAIN` after the chunk's dictionary filled up; such a row uses the
-/// delegate's per-value operation over its byte view. Rows with an entry ID never
-/// read their view, so a batch of dictionary values only is decided without its
-/// views being built.
+/// delegate's per-value operation over its bytes. Rows with an entry ID are decided
+/// by their entry's outcome alone.
 public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
 
     private static final byte UNKNOWN = 0;
@@ -34,11 +33,6 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
 
     public DictionaryBinaryBatchMatcher(BinaryBatchMatcher delegate) {
         this.delegate = delegate;
-    }
-
-    @Override
-    public boolean readsEveryValueView() {
-        return false;
     }
 
     @Override
@@ -111,9 +105,8 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
         }
     }
 
-    /// Tests row `row` through its byte view; the first such call on a batch whose
-    /// dictionary values were deferred builds their views.
+    /// Tests row `row`, which has no entry ID, through its bytes.
     private boolean testView(BinaryBatchValues values, int row) {
-        return delegate.testValue(values.buffer(row), values.starts()[row], values.ends()[row]);
+        return delegate.testValue(values.buffer(row), values.start(row), values.end(row));
     }
 }

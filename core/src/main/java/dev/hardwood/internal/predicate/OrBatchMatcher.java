@@ -36,11 +36,6 @@ public final class OrBatchMatcher implements ColumnBatchMatcher {
     }
 
     @Override
-    public boolean readsEveryValueView() {
-        return first.readsEveryValueView() || second.readsEveryValueView();
-    }
-
-    @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
         if (scratch == null || scratch.length < outWords.length) {
             scratch = new long[outWords.length];

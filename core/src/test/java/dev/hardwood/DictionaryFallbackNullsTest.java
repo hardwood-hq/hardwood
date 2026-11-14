@@ -381,9 +381,14 @@ class DictionaryFallbackNullsTest {
             ColumnReader ids = columns.getColumnReader("id");
             while (columns.nextBatch()) {
                 String[] strings = labels.getStrings();
+                // The window of the first batch is built when asked, of the later ones as their cells
+                // complete, and either way kept through the filter's compaction
+                BinaryValues values = labels.getBinaryValues();
                 for (int i = 0; i < ids.getRecordCount(); i++) {
                     long id = ids.getLongs()[i];
-                    assertThat(strings[i]).isEqualTo(label(Math.toIntExact(id)));
+                    String expectedLabel = label(Math.toIntExact(id));
+                    assertThat(strings[i]).isEqualTo(expectedLabel);
+                    assertThat(window(values, i)).isEqualTo(expectedLabel == null ? "" : expectedLabel);
                     viaColumns.add(id);
                 }
             }

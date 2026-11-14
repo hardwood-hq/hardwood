@@ -36,10 +36,9 @@ import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The views of a flat binary column's dictionary values are built when a reader first needs
-/// them: a reader of entry ids alone never gets them, nor their arrays; a filter that decides by
-/// entry ids leaves them deferred, and one that reads every value's view has them built as each
-/// cell completes. The first reader that builds deferred views raises the column's demand for them.
+/// A flat binary column's batches get a window of every value's view as their cells complete once
+/// a reader has taken a window: a reader of entry ids alone, or a filter that decides by entry ids,
+/// never gets one, nor view arrays for its dictionary values.
 ///
 /// The fixture has two row groups of 100 dictionary-encoded strings, read in batches of 10.
 class FlatBinaryViewsTest {
@@ -61,39 +60,38 @@ class FlatBinaryViewsTest {
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void aDictionaryAwareFilterLeavesViewsDeferred() throws Exception {
+    void aDictionaryAwareFilterWritesNoViews() throws Exception {
         byte[] literal = "x".getBytes(StandardCharsets.UTF_8);
 
-        List<BinaryBatchValues> dictionaryAware = read(false, new DictionaryBinaryBatchMatcher(
+        List<BinaryBatchValues> batches = read(false, new DictionaryBinaryBatchMatcher(
                 new BinaryEqBatchMatcher(literal, Comparison.BYTE_STRING)));
-        List<BinaryBatchValues> viewReading = read(false, new BinaryEqBatchMatcher(literal, Comparison.BYTE_STRING));
 
-        assertThat(dictionaryAware).hasSize(20);
-        assertThat(dictionaryAware).allSatisfy(values -> assertThat(values.viewArraysAllocated()).isFalse());
-        assertThat(viewReading).hasSize(20);
-        assertThat(viewReading).allSatisfy(values -> assertThat(values.hasPendingViews()).isFalse());
+        assertThat(batches).hasSize(20);
+        assertThat(batches).allSatisfy(values -> {
+            assertThat(values.viewArraysAllocated()).isFalse();
+            assertThat(values.hasWindow()).isFalse();
+        });
     }
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void aReaderOfViewsSwitchesTheColumnToBuildingThem() throws Exception {
+    void aReaderOfWindowsHasThemBuiltAsCellsComplete() throws Exception {
         List<BinaryBatchValues> batches = read(true, null);
-        BinaryBatchValues.ViewDemand demand = batches.getFirst().viewDemand();
 
         assertThat(batches).hasSize(20);
-        assertThat(demand.requested).as("the reader's views raised the column's demand").isTrue();
-        // Deferred, built and eager batches alike carry each value's bytes.
+        assertThat(batches.getFirst().hasWindow()).isFalse();
+        assertThat(batches.getLast().hasWindow()).as("a batch completed after the request").isTrue();
+        // Batches with and without a window alike carry each value's bytes
         for (BinaryBatchValues values : batches) {
-            int[] starts = values.starts();
-            int[] ends = values.ends();
             for (int i = 0; i < 10; i++) {
-                assertThat(new String(values.buffer(i), starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
+                int start = values.start(i);
+                assertThat(new String(values.buffer(i), start, values.end(i) - start, StandardCharsets.UTF_8))
                         .isEqualTo(values.stringAt(i));
             }
         }
     }
 
-    /// Reads the fixture's column in batches of 10, building the views of the first batch if
+    /// Reads the fixture's column in batches of 10, taking the first batch's window if
     /// `readViews`. On a context of zero threads, so that no job of the read runs before the
     /// consumer polls.
     private static List<BinaryBatchValues> read(boolean readViews, ColumnBatchMatcher filter) throws Exception {
@@ -121,7 +119,7 @@ class FlatBinaryViewsTest {
                 while ((batch = exchange.poll()) != null) {
                     BinaryBatchValues values = (BinaryBatchValues) batch.values;
                     if (readViews && batches.isEmpty()) {
-                        values.ensureViews();
+                        values.window(batch.recordCount);
                     }
                     batches.add(values);
                 }

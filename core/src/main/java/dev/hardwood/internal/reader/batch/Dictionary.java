@@ -136,9 +136,10 @@ public sealed interface Dictionary {
     /// `[chunkOffsets(c)[k], chunkOffsets(c)[k + 1])` of the chunk's bytes. A chunk's bytes and
     /// offsets each stay within [ArrayBound#MAX_BYTES], except the bytes of a chunk holding a
     /// single entry larger than that, so a dictionary held for its column chunk is never a
-    /// humongous object however large its page. A batch takes the chunks as buffers and points its
-    /// values at them (see [BinaryBatchValues#ensureViews()]); nothing holds the entries in any
-    /// other form.
+    /// humongous object however large its page. A batch reads a value through its entry
+    /// ([#entryBuffer(int)], [#entryStart(int)], [#entryEnd(int)]), and a batch's window takes the
+    /// chunks as buffers and points the value's view at its entry ([#writeViews]); nothing holds
+    /// the entries in any other form.
     ///
     /// A class (not a record) so it can hold the lazily-materialised interned `String` cache
     /// ([#internedString(int)]) alongside the entry bytes.
@@ -152,6 +153,10 @@ public sealed interface Dictionary {
         /// `firstEntries[c]` is the first entry of chunk `c`; the last element is the entry count.
         private final int[] firstEntries;
         private final long byteCount;
+        /// The bytes and offsets of the one chunk of a dictionary that has one, `null` for a
+        /// dictionary of several: resolving an entry of a single chunk needs no search.
+        private final byte[] onlyBytes;
+        private final int[] onlyOffsets;
 
         /// Interned `String` per entry and chunk, decoded once per column chunk and reused. Lazily
         /// allocated; populated only for columns read as text, via [#internedString(int)].
@@ -162,6 +167,8 @@ public sealed interface Dictionary {
             this.chunkOffsets = chunkOffsets;
             this.firstEntries = firstEntries;
             this.byteCount = byteCount;
+            this.onlyBytes = chunkBytes.length == 1 ? chunkBytes[0] : null;
+            this.onlyOffsets = chunkBytes.length == 1 ? chunkOffsets[0] : null;
         }
 
         /// Parses a PLAIN `BYTE_ARRAY` dictionary page, `[4-byte little-endian length][bytes]` per
@@ -324,10 +331,91 @@ public sealed interface Dictionary {
 
         /// Tests entry `entry` with `test`, handing it the bytes where they sit.
         public boolean testEntry(int entry, BinaryValueTest test) {
+            int[] only = onlyOffsets;
+            if (only != null) {
+                return test.testValue(onlyBytes, only[entry], only[entry + 1]);
+            }
             int chunk = chunkOf(entry);
             int[] offsets = chunkOffsets[chunk];
             int k = entry - firstEntries[chunk];
             return test.testValue(chunkBytes[chunk], offsets[k], offsets[k + 1]);
+        }
+
+        /// The array holding entry `entry`.
+        public byte[] entryBuffer(int entry) {
+            byte[] only = onlyBytes;
+            return only != null ? only : chunkBytes[chunkOf(entry)];
+        }
+
+        /// Where entry `entry` starts in [#entryBuffer(int)].
+        public int entryStart(int entry) {
+            int[] only = onlyOffsets;
+            if (only != null) {
+                return only[entry];
+            }
+            int chunk = chunkOf(entry);
+            return chunkOffsets[chunk][entry - firstEntries[chunk]];
+        }
+
+        /// Where entry `entry` ends in [#entryBuffer(int)].
+        public int entryEnd(int entry) {
+            int[] only = onlyOffsets;
+            if (only != null) {
+                return only[entry + 1];
+            }
+            int chunk = chunkOf(entry);
+            return chunkOffsets[chunk][entry - firstEntries[chunk] + 1];
+        }
+
+        /// Writes entry `entry`'s view as value `value`: the buffer id of its chunk, given the id
+        /// `firstBuffer` of the first chunk, and its range in that chunk.
+        public void writeView(int entry, int firstBuffer, int[] starts, int[] ends, int[] bufferIds, int value) {
+            int[] only = onlyOffsets;
+            if (only != null) {
+                bufferIds[value] = firstBuffer;
+                starts[value] = only[entry];
+                ends[value] = only[entry + 1];
+                return;
+            }
+            int chunk = chunkOf(entry);
+            int[] offsets = chunkOffsets[chunk];
+            int k = entry - firstEntries[chunk];
+            bufferIds[value] = firstBuffer + chunk;
+            starts[value] = offsets[k];
+            ends[value] = offsets[k + 1];
+        }
+
+        /// Writes the views of the entries `ids[from, to)` as values `[from, to)`, as [#writeView]
+        /// does for each, leaving the views of the values with no entry (`-1`) as they are.
+        public void writeViews(int[] ids, int from, int to, int firstBuffer, int[] starts, int[] ends,
+                               int[] bufferIds) {
+            int[] only = onlyOffsets;
+            for (int v = from; v < to; v++) {
+                int entry = ids[v];
+                if (entry < 0) {
+                    continue;
+                }
+                if (only != null) {
+                    bufferIds[v] = firstBuffer;
+                    starts[v] = only[entry];
+                    ends[v] = only[entry + 1];
+                }
+                else {
+                    writeView(entry, firstBuffer, starts, ends, bufferIds, v);
+                }
+            }
+        }
+
+        /// Whether entry `entry` holds exactly the bytes of `other`.
+        public boolean entryEquals(int entry, byte[] other) {
+            int[] only = onlyOffsets;
+            if (only != null) {
+                return Arrays.equals(onlyBytes, only[entry], only[entry + 1], other, 0, other.length);
+            }
+            int chunk = chunkOf(entry);
+            int[] offsets = chunkOffsets[chunk];
+            int k = entry - firstEntries[chunk];
+            return Arrays.equals(chunkBytes[chunk], offsets[k], offsets[k + 1], other, 0, other.length);
         }
 
         /// Whether any entry passes `test`.
@@ -347,6 +435,10 @@ public sealed interface Dictionary {
         /// A copy of entry `index`. Allocates; reads over many entries should use
         /// [#chunkBytes(int)] and [#chunkOffsets(int)].
         public byte[] entry(int index) {
+            int[] only = onlyOffsets;
+            if (only != null) {
+                return Arrays.copyOfRange(onlyBytes, only[index], only[index + 1]);
+            }
             int chunk = chunkOf(index);
             int[] offsets = chunkOffsets[chunk];
             int k = index - firstEntries[chunk];

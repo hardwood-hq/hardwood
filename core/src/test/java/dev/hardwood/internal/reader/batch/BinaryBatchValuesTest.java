@@ -18,29 +18,45 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A [BinaryBatchValues] filled positionally, as a cell's segments fill it
 /// ([dev.hardwood.internal.reader.pipeline.BinaryFill],
-/// [dev.hardwood.internal.reader.pipeline.NestedFill]): entry ids whose views into the dictionary's
-/// bytes are built when a reader first needs them, beside plain values whose bytes and views the
-/// segments write.
+/// [dev.hardwood.internal.reader.pipeline.NestedFill]): dictionary values held as their entry ids,
+/// beside plain values whose bytes and views the segments write, and the window of every value's
+/// view, built as the cell completes where the column's [BinaryBatchValues.ViewDemand] was raised
+/// and when asked otherwise.
 class BinaryBatchValuesTest {
 
     private static final Dictionary.ByteArrayDictionary STATIONS = dictionary("Hamburg", "Oslo", "Abha");
 
     @Test
-    void dictionaryValuesPointIntoTheDictionary() {
-        BinaryBatchValues values = filled(STATIONS, null, 1, 0, 1, 2, 1, 0);
+    void dictionaryValuesResolveThroughTheirEntries() {
+        BinaryBatchValues values = filled(STATIONS, notRequested(), 1, 0, 1, 2, 1, 0);
 
+        assertThat(values.hasWindow()).isFalse();
         assertThat(strings(values, 6)).containsExactly("Oslo", "Hamburg", "Oslo", "Abha", "Oslo", "Hamburg");
         for (int i = 0; i < 6; i++) {
             assertThat(values.buffer(i)).as("value %d", i).isSameAs(STATIONS.chunkBytes(0));
         }
-        assertThat(values.starts()[0]).isEqualTo(values.starts()[2]).isEqualTo(values.starts()[4]);
-        assertThat(values.bufferCount()).isEqualTo(2);
+        // No view is written: the batch neither allocates view arrays nor takes the dictionary's chunks
+        assertThat(values.viewArraysAllocated()).isFalse();
+        assertThat(values.bufferCount()).isEqualTo(1);
     }
 
-    /// A dictionary in several chunks becomes as many buffers of the batch, each value viewing its
-    /// entry in the chunk that holds it.
     @Test
-    void dictionaryValuesPointIntoTheChunkHoldingTheirEntry() {
+    void aRaisedDemandBuildsTheWindowAsTheCellCompletes() {
+        BinaryBatchValues values = filled(STATIONS, requested(), 1, 0, 1, 2);
+
+        assertThat(values.hasWindow()).isTrue();
+        BinaryBatchValues.Window window = values.window(4);
+        assertThat(windowStrings(window)).containsExactly("Oslo", "Hamburg", "Oslo", "Abha");
+        assertThat(window.buffers()[window.bufferIds()[3]]).isSameAs(STATIONS.chunkBytes(0));
+        assertThat(window.starts()[0]).isEqualTo(window.starts()[2]);
+        // The dictionary's chunks are the window's buffers, never the batch's
+        assertThat(values.bufferCount()).isEqualTo(1);
+    }
+
+    /// A value whose entry is in the second or a later chunk of a dictionary is read from that
+    /// chunk, through its entry or through the window.
+    @Test
+    void dictionaryValuesAreReadFromTheChunkHoldingTheirEntry() {
         String[] entries = new String[3000];
         for (int i = 0; i < entries.length; i++) {
             entries[i] = String.valueOf(i).repeat(1000).substring(0, 1000);
@@ -48,33 +64,108 @@ class BinaryBatchValuesTest {
         Dictionary.ByteArrayDictionary dictionary = dictionary(entries);
         assertThat(dictionary.chunkCount()).isGreaterThan(2);
 
-        BinaryBatchValues values = filled(dictionary, null, 2999, 0, -1, 1500, "Tunis", 600);
+        for (BinaryBatchValues.ViewDemand demand : new BinaryBatchValues.ViewDemand[]{ notRequested(), requested() }) {
+            BinaryBatchValues values = filled(dictionary, demand, 2999, 0, -1, 1500, "Tunis", 600);
 
-        assertThat(strings(values, 6)).containsExactly(entries[2999], entries[0], "", entries[1500], "Tunis",
-                entries[600]);
-        assertThat(values.buffer(0)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(2999)));
-        assertThat(values.buffer(3)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(1500)));
-        assertThat(values.buffer(5)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(600)));
-        assertThat(values.stringAt(0)).isEqualTo(entries[2999]);
+            assertThat(strings(values, 6)).containsExactly(entries[2999], entries[0], "", entries[1500], "Tunis",
+                    entries[600]);
+            assertThat(values.buffer(0)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(2999)));
+            assertThat(values.buffer(3)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(1500)));
+            assertThat(values.buffer(5)).isSameAs(dictionary.chunkBytes(dictionary.chunkOf(600)));
+            assertThat(values.stringAt(0)).isEqualTo(entries[2999]);
+            // The window carries each chunk under its buffer id, after the buffer of the plain value
+            BinaryBatchValues.Window window = values.window(6);
+            assertThat(windowStrings(window)).containsExactly(entries[2999], entries[0], "", entries[1500], "Tunis",
+                    entries[600]);
+            assertThat(window.buffers()[window.bufferIds()[3]]).isSameAs(values.buffer(3));
+        }
     }
 
     @Test
-    void aNullDictionaryValueGetsAnEmptyView() {
-        BinaryBatchValues values = filled(STATIONS, null, 0, -1, 2);
+    void aNullDictionaryValueIsEmpty() {
+        for (BinaryBatchValues.ViewDemand demand : new BinaryBatchValues.ViewDemand[]{ notRequested(), requested() }) {
+            BinaryBatchValues values = filled(STATIONS, demand, 0, -1, 2);
 
-        assertThat(values.ends()[1] - values.starts()[1]).isEqualTo(0);
-        assertThat(values.stringAt(0)).isEqualTo("Hamburg");
-        assertThat(values.stringAt(2)).isEqualTo("Abha");
+            assertThat(strings(values, 3)).containsExactly("Hamburg", "", "Abha");
+            assertThat(values.byteArrayAt(1)).isEmpty();
+        }
     }
 
     @Test
-    void aBatchViewsItsDictionaryAlongsidePlainValues() {
-        BinaryBatchValues values = filled(STATIONS, null, 0, 1, 0, "Tunis", 1, 2, 2, 2);
+    void aBatchReadsItsDictionaryValuesAlongsidePlainValues() {
+        for (BinaryBatchValues.ViewDemand demand : new BinaryBatchValues.ViewDemand[]{ notRequested(), requested() }) {
+            BinaryBatchValues values = filled(STATIONS, demand, 0, 1, 0, "Tunis", 1, 2, 2, 2);
 
-        assertThat(strings(values, 8)).containsExactly("Hamburg", "Oslo", "Hamburg", "Tunis", "Oslo", "Abha", "Abha", "Abha");
-        assertThat(values.dictIndices).containsExactly(0, 1, 0, -1, 1, 2, 2, 2);
-        assertThat(values.buffer(0)).isSameAs(STATIONS.chunkBytes(0));
-        assertThat(values.buffer(3)).isNotSameAs(STATIONS.chunkBytes(0));
+            assertThat(strings(values, 8)).containsExactly("Hamburg", "Oslo", "Hamburg", "Tunis", "Oslo", "Abha", "Abha",
+                    "Abha");
+            assertThat(values.dictIndices).containsExactly(0, 1, 0, -1, 1, 2, 2, 2);
+            assertThat(values.buffer(0)).isSameAs(STATIONS.chunkBytes(0));
+            assertThat(values.buffer(3)).isNotSameAs(STATIONS.chunkBytes(0));
+        }
+    }
+
+    /// Taking the window of a batch with dictionary values raises the column's demand, so that its
+    /// later batches have theirs built as they complete; reading values one at a time, as bytes or
+    /// strings, or the window of a batch without dictionary values, raises nothing.
+    @Test
+    void takingAWindowRaisesTheDemand() {
+        BinaryBatchValues.ViewDemand demand = notRequested();
+        BinaryBatchValues plain = filled(null, demand, "Tunis");
+        assertThat(windowStrings(plain.window(1))).containsExactly("Tunis");
+
+        BinaryBatchValues entries = filled(STATIONS, demand, 0, 1, "Tunis");
+        assertThat(entries.stringAt(0)).isEqualTo("Hamburg");
+        assertThat(entries.byteArrayAt(1)).isEqualTo(utf8("Oslo"));
+        assertThat(entries.stringAt(2)).isEqualTo("Tunis");
+
+        assertThat(demand.requested).isFalse();
+
+        assertThat(windowStrings(entries.window(3))).containsExactly("Hamburg", "Oslo", "Tunis");
+
+        assertThat(demand.requested).isTrue();
+        // The batch is not changed; the next one gets its window as it completes
+        assertThat(entries.hasWindow()).isFalse();
+        assertThat(filled(STATIONS, demand, 2).hasWindow()).isTrue();
+    }
+
+    /// A window built when asked has arrays of its own, the dictionary's chunks among its buffers,
+    /// and leaves the batch as it was.
+    @Test
+    void aWindowBuiltWhenAskedLeavesTheBatchAsItWas() {
+        BinaryBatchValues values = filled(STATIONS, notRequested(), 1, -1, "Tunis", 2, 0);
+
+        BinaryBatchValues.Window window = values.window(4);
+
+        assertThat(window.starts()).hasSize(4);
+        assertThat(windowStrings(window)).containsExactly("Oslo", "", "Tunis", "Abha");
+        assertThat(window.buffers()[window.bufferIds()[0]]).isSameAs(STATIONS.chunkBytes(0));
+        assertThat(values.hasWindow()).isFalse();
+        assertThat(values.bufferCount()).isEqualTo(2);
+    }
+
+    @Test
+    void aWindowHasExactlyTheValuesAskedFor() {
+        BinaryBatchValues built = filled(STATIONS, requested(), 1, 0, 2);
+        BinaryBatchValues plain = filled(null, notRequested(), "Lima", "Tunis");
+
+        assertThat(windowStrings(built.window(2))).containsExactly("Oslo", "Hamburg");
+        assertThat(windowStrings(plain.window(1))).containsExactly("Lima");
+        // A batch without dictionary values hands out its own views where they fit exactly
+        assertThat(plain.window(2).starts()).isSameAs(plain.starts());
+    }
+
+    @Test
+    void aBatchWithDictionaryValuesRefusesItsViewArrays() {
+        for (BinaryBatchValues.ViewDemand demand : new BinaryBatchValues.ViewDemand[]{ notRequested(), requested() }) {
+            BinaryBatchValues values = filled(STATIONS, demand, 0, 1);
+
+            assertThatThrownBy(values::buffers)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("A batch's dictionary values have no views of their own");
+            assertThatThrownBy(values::starts)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("A batch's dictionary values have no views of their own");
+        }
     }
 
     @Test
@@ -90,15 +181,26 @@ class BinaryBatchValuesTest {
 
     @Test
     void aRefilledSlotTakesTheNextRowGroupsDictionary() {
-        BinaryBatchValues values = filled(STATIONS, null, 0, 1, 2, 0);
-        values.ensureViews();
+        BinaryBatchValues values = filled(STATIONS, requested(), 0, 1, 2, 0);
 
         Dictionary.ByteArrayDictionary next = dictionary("Accra", "Lima");
-        fill(values, next, null, 1, 1, 0, 1);
+        fill(values, next, notRequested(), 1, 1, 0, 1);
 
+        assertThat(values.hasWindow()).isFalse();
         assertThat(strings(values, 4)).containsExactly("Lima", "Lima", "Accra", "Lima");
         assertThat(values.buffer(0)).isSameAs(next.chunkBytes(0));
-        assertThat(values.bufferCount()).isEqualTo(2);
+        assertThat(values.bufferCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aRefilledSlotStartsWithoutTheDictionaryOfTheLast() {
+        BinaryBatchValues values = filled(STATIONS, notRequested(), 0, 1);
+
+        fill(values, null, notRequested(), "Lima");
+
+        assertThat(values.dictionary).isNull();
+        assertThat(values.hasWindow()).isFalse();
+        assertThat(strings(values, 1)).containsExactly("Lima");
     }
 
     /// A dictionary chunk the size of a full plain chunk is still the dictionary's: a holder that
@@ -113,12 +215,12 @@ class BinaryBatchValuesTest {
         assertThat(dictionary.chunkBytes(0)).hasSize(BinaryBatchValues.CHUNK_BYTES);
         BinaryBatchValues values = new BinaryBatchValues(3);
         values.keepChunks();
-        fill(values, dictionary, null, 0, 1, "Tunis");
+        fill(values, dictionary, requested(), 0, 1, "Tunis");
         assertThat(strings(values, 3)).containsExactly(first, second, "Tunis");
 
         // Enough plain bytes that the fill takes a full chunk, a spare where the last fill kept one
         String plain = "c".repeat(BinaryBatchValues.CHUNK_BYTES / 2 + 1);
-        fill(values, null, null, plain, "Oslo", "Abha");
+        fill(values, null, requested(), plain, "Oslo", "Abha");
 
         assertThat(strings(values, 3)).containsExactly(plain, "Oslo", "Abha");
         assertThat(values.buffer(0)).isNotSameAs(dictionary.chunkBytes(0)).isNotSameAs(dictionary.chunkBytes(1));
@@ -127,92 +229,44 @@ class BinaryBatchValuesTest {
     }
 
     @Test
-    void aRefilledSlotStartsWithoutTheDeferredValuesOfTheLast() {
-        BinaryBatchValues values = filled(STATIONS, null, 0, 1);
-        values.ensureViews();
-
-        fill(values, null, null, "Lima");
-
-        assertThat(values.dictionary).isNull();
-        assertThat(strings(values, 1)).containsExactly("Lima");
-    }
-
-    @Test
-    void deferredValuesGetTheirViewsWhenFirstRead() {
-        BinaryBatchValues values = filled(STATIONS, null, 0, 1, 2, 0);
-
-        // A batch of dictionary values only has no view arrays until a reader needs them.
-        assertThat(values.viewArraysAllocated()).isFalse();
-
-        values.ensureViews();
-
-        assertThat(strings(values, 4)).containsExactly("Hamburg", "Oslo", "Abha", "Hamburg");
-        assertThat(values.buffer(3)).isSameAs(STATIONS.chunkBytes(0));
-    }
-
-    @Test
-    void aDeferredNullGetsItsEmptyViewAtOnce() {
-        BinaryBatchValues values = filled(STATIONS, null, 0, -1, 2);
-
-        assertThat(values.viewArraysAllocated()).isTrue();
-        assertThat(values.hasPendingViews()).isTrue();
-
-        values.ensureViews();
-
-        assertThat(strings(values, 3)).containsExactly("Hamburg", "", "Abha");
-    }
-
-    @Test
-    void buildingDeferredViewsRaisesTheDemand() {
-        BinaryBatchValues.ViewDemand demand = new BinaryBatchValues.ViewDemand();
-        BinaryBatchValues plain = filled(null, demand, "Tunis");
-        plain.ensureViews();
-
-        // Views that were never deferred raise nothing.
-        assertThat(demand.requested).isFalse();
-
-        BinaryBatchValues deferred = filled(STATIONS, demand, 0, 1, "Tunis");
-
-        // A string read resolves dictionary values through their ids and plain ones through the
-        // views their segment wrote, so it builds nothing and raises nothing.
-        assertThat(deferred.stringAt(0)).isEqualTo("Hamburg");
-        assertThat(deferred.stringAt(2)).isEqualTo("Tunis");
-        assertThat(demand.requested).isFalse();
-
-        deferred.ensureViews();
-
-        assertThat(demand.requested).isTrue();
-    }
-
-    @Test
-    void compactingKeepsTheKeptDictionaryValuesDeferred() {
-        BinaryBatchValues.ViewDemand demand = new BinaryBatchValues.ViewDemand();
+    void compactingKeepsTheEntriesAndTheColumnsDemand() {
+        BinaryBatchValues.ViewDemand demand = notRequested();
         BinaryBatchValues raw = filled(STATIONS, demand, 0, 1, 2, 1, "Tunis");
 
         BinaryBatchValues kept = raw.compact(new int[]{ 1, 2, 4 }, 3);
 
-        // A filtered read of the ids builds no views and leaves the column deferring.
         assertThat(kept.dictIndices).containsExactly(1, 2, -1);
-        assertThat(kept.hasPendingViews()).isTrue();
+        assertThat(kept.hasWindow()).isFalse();
+        assertThat(strings(kept, 3)).containsExactly("Oslo", "Abha", "Tunis");
         assertThat(demand.requested).isFalse();
 
-        assertThat(strings(kept, 3)).containsExactly("Oslo", "Abha", "Tunis");
+        // The kept batch raises the column's demand as the raw batch would
+        assertThat(windowStrings(kept.window(3))).containsExactly("Oslo", "Abha", "Tunis");
         assertThat(demand.requested).isTrue();
-        // Building the kept batch's views leaves the raw batch's bytes as they were.
-        assertThat(strings(raw, 5)).containsExactly("Hamburg", "Oslo", "Abha", "Oslo", "Tunis");
     }
 
     @Test
-    void compactingKeepsTheBuffersTheViewsPointInto() {
-        BinaryBatchValues raw = filled(STATIONS, null, "Tunis", 0, 1, 0, 1, 2, 0, 1);
-        raw.ensureViews();
+    void compactingKeepsTheWindowAndTheBuffersTheViewsPointInto() {
+        BinaryBatchValues raw = filled(STATIONS, requested(), "Tunis", 0, 1, 0, 1, 2, 0, 1);
 
         BinaryBatchValues kept = raw.compact(new int[]{ 0, 2, 5 }, 3);
 
+        assertThat(kept.hasWindow()).isTrue();
+        assertThat(windowStrings(kept.window(3))).containsExactly("Tunis", "Oslo", "Abha");
         assertThat(strings(kept, 3)).containsExactly("Tunis", "Oslo", "Abha");
         assertThat(kept.buffer(0)).isSameAs(raw.buffer(0));
         assertThat(kept.buffer(2)).isSameAs(STATIONS.chunkBytes(0));
         assertThat(kept.bufferCount()).isEqualTo(raw.bufferCount());
+    }
+
+    private static BinaryBatchValues.ViewDemand notRequested() {
+        return new BinaryBatchValues.ViewDemand();
+    }
+
+    private static BinaryBatchValues.ViewDemand requested() {
+        BinaryBatchValues.ViewDemand demand = new BinaryBatchValues.ViewDemand();
+        demand.requested = true;
+        return demand;
     }
 
     private static BinaryBatchValues filled(Dictionary.ByteArrayDictionary dictionary,
@@ -228,6 +282,7 @@ class BinaryBatchValuesTest {
     private static void fill(BinaryBatchValues values, Dictionary.ByteArrayDictionary dictionary,
                              BinaryBatchValues.ViewDemand demand, Object... entries) {
         values.prepareForFill();
+        int[] ids = dictionary != null ? values.installDictionary(dictionary) : null;
         int plainBytes = 0;
         boolean views = false;
         for (Object entry : entries) {
@@ -243,7 +298,6 @@ class BinaryBatchValuesTest {
         if (views) {
             values.installViews();
         }
-        int[] ids = dictionary != null ? values.installDictionary(dictionary) : null;
         for (int i = 0; i < entries.length; i++) {
             if (entries[i] instanceof String text) {
                 byte[] bytes = utf8(text);
@@ -267,7 +321,7 @@ class BinaryBatchValuesTest {
                 }
             }
         }
-        values.finishFill(entries.length, demand != null ? demand : new BinaryBatchValues.ViewDemand());
+        values.finishFill(entries.length, demand);
     }
 
     private static Dictionary.ByteArrayDictionary dictionary(String... entries) {
@@ -281,8 +335,17 @@ class BinaryBatchValuesTest {
     private static String[] strings(BinaryBatchValues values, int count) {
         String[] result = new String[count];
         for (int i = 0; i < count; i++) {
-            result[i] = new String(values.buffer(i), values.starts()[i], values.ends()[i] - values.starts()[i],
-                    StandardCharsets.UTF_8);
+            int start = values.start(i);
+            result[i] = new String(values.buffer(i), start, values.end(i) - start, StandardCharsets.UTF_8);
+        }
+        return result;
+    }
+
+    private static String[] windowStrings(BinaryBatchValues.Window window) {
+        String[] result = new String[window.starts().length];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = new String(window.buffers()[window.bufferIds()[i]], window.starts()[i],
+                    window.ends()[i] - window.starts()[i], StandardCharsets.UTF_8);
         }
         return result;
     }

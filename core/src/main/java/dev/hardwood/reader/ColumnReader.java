@@ -541,8 +541,8 @@ public class ColumnReader implements Closeable {
     /// Trims a primitive leaf array to exactly [#getValueCount()] entries so the
     /// capacity tail — stale or zero-filled values past the batch's real leaf
     /// count — is never exposed through the typed accessors. Already-exact arrays
-    /// and non-array payloads ([BinaryBatchValues], whose views are trimmed on
-    /// their own path) pass through untouched, so only the final short batch of a
+    /// and non-array payloads ([BinaryBatchValues], which [BinaryValues] bounds to
+    /// the leaf count) pass through untouched, so only the final short batch of a
     /// column ever pays a copy.
     private Object trimToValueCount(Object values) {
         int n = getValueCount();
@@ -560,10 +560,8 @@ public class ColumnReader implements Closeable {
         if (cachedBinaryValues != null) {
             return;
         }
-        BinaryBatchValues bbv = realLeafBinary();
-        int leafCount = nested ? getValueCount() : recordCount;
-        cachedBinaryValues = new BinaryValues(bbv.buffers(), trimToLeafCount(bbv.bufferIds(), leafCount),
-                trimToLeafCount(bbv.starts(), leafCount), trimToLeafCount(bbv.ends(), leafCount));
+        BinaryBatchValues.Window window = realLeafBinary().window(nested ? getValueCount() : recordCount);
+        cachedBinaryValues = new BinaryValues(window.buffers(), window.bufferIds(), window.starts(), window.ends());
     }
 
     /// Resolves the dictionary view of the current batch: ids only when every non-null
@@ -616,14 +614,13 @@ public class ColumnReader implements Closeable {
     }
 
     /// The per-batch [BinaryBatchValues] is sized to the read's batch
-    /// capacity; only the first `leafCount` views are meaningful at the
-    /// public-API surface. Trim if needed (the buffers the views point into
-    /// are not trimmed).
-    private static int[] trimToLeafCount(int[] views, int leafCount) {
-        if (views.length == leafCount) {
-            return views;
+    /// capacity; only the first `leafCount` dictionary ids are meaningful at the
+    /// public-API surface. Trim if needed.
+    private static int[] trimToLeafCount(int[] ids, int leafCount) {
+        if (ids.length == leafCount) {
+            return ids;
         }
-        return Arrays.copyOf(views, leafCount);
+        return Arrays.copyOf(ids, leafCount);
     }
 
     private void checkBatchAvailable() {

@@ -110,6 +110,39 @@ class ColumnReaderBinaryViewsTest {
         }
     }
 
+    /// A read that takes strings first and bytes later reads every value, whether a batch was filled
+    /// before the first read of bytes, and reads its dictionary values through their entries, or
+    /// after it, through views; either way the values of one entry cover the same bytes.
+    @Test
+    void bytesReadAfterStringsReadEveryValue() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReader col = reader.buildColumnReader("station").batchSize(100).build()) {
+
+            int row = 0;
+            int batches = 0;
+            while (col.nextBatch()) {
+                if (batches++ < 5) {
+                    for (String value : col.getStrings()) {
+                        assertThat(value).isEqualTo(station(row++));
+                    }
+                    continue;
+                }
+                BinaryValues values = col.getBinaryValues();
+                for (int i = 0; i < values.size(); i++, row++) {
+                    String expected = station(row);
+                    String actual = new String(values.buffer(i), values.start(i), values.end(i) - values.start(i),
+                            StandardCharsets.UTF_8);
+                    assertThat(actual).isEqualTo(expected == null ? "" : expected);
+                }
+                // Each batch starts at a row divisible by four: values 0 and 4 both hold "Hamburg"
+                assertThat(values.buffer(4)).isSameAs(values.buffer(0));
+                assertThat(values.start(4)).isEqualTo(values.start(0));
+            }
+            assertThat(batches).isEqualTo(ROWS / 100);
+            assertThat(row).isEqualTo(ROWS);
+        }
+    }
+
     /// A `FIXED_LEN_BYTE_ARRAY` null has an empty range like any other null, not a slot of the
     /// column's width.
     @Test

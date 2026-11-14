@@ -19,7 +19,8 @@ import dev.hardwood.internal.reader.decode.BinaryPageValues;
 ///
 /// The entry ids, the views and the validity are sized by the plan's records: whichever segment
 /// writes one first installs it, so a fill never waits for them. A segment of dictionary ids writes
-/// its ids, and the empty views of its nulls; its values' views are built when a reader needs them.
+/// its ids, and the empty views of its nulls; the window of every value's view is built as the cell
+/// completes, where the column's reader takes windows ([BinaryBatchValues#finishFill]).
 /// A segment of plain values writes its views and copies its bytes into chunks of its own
 /// ([PlainBytes]). Every value is written once.
 public final class BinaryFill implements FlatFill.Run {
@@ -53,7 +54,7 @@ public final class BinaryFill implements FlatFill.Run {
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         if (dictionary != null) {
             int[] ids = out.installDictionary(dictionary);
-            // Only a null writes a view: an all-present page leaves the views to be built
+            // Only a null writes a view: an all-present page leaves the views to the cell's completion
             boolean nulls = !values.allPresent();
             if (nulls) {
                 out.installViews();
@@ -87,7 +88,8 @@ public final class BinaryFill implements FlatFill.Run {
     }
 
     /// Finishes a completed cell's batch: in a batch with entry ids, the values of the segments
-    /// that wrote none have none, and the ids are complete when every segment wrote them.
+    /// that wrote none have none, the ids are complete when every segment wrote them, and `demand`
+    /// decides whether the batch gets its window now ([BinaryBatchValues#finishFill]).
     public static void finish(Cell cell, BinaryBatchValues out, BinaryBatchValues.ViewDemand demand) {
         if (out.dictionary != null) {
             boolean complete = true;

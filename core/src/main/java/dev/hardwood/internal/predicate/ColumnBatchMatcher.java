@@ -25,11 +25,4 @@ public sealed interface ColumnBatchMatcher
         BooleanBatchMatcher, BinaryBatchMatcher, NullBatchMatcher, AndBatchMatcher, OrBatchMatcher {
 
     void test(BatchExchange.Batch batch, long[] outWords);
-
-    /// Whether [#test] reads the byte view of every value of a binary batch. A matcher that
-    /// returns `false` lets the column leave dictionary values' views to be built when a
-    /// reader first needs them.
-    default boolean readsEveryValueView() {
-        return true;
-    }
 }

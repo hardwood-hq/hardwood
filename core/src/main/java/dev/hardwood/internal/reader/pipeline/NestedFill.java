@@ -170,8 +170,8 @@ final class NestedFill {
     }
 
     /// Writes every segment's binary values: the plain values' bytes, copied into the batch's
-    /// chunks in segment order, and their views; the dictionary values' entry ids, their views built
-    /// when a reader first needs them.
+    /// chunks in segment order, and their views; the dictionary values' entry ids; and the window of
+    /// every value's view where the column's reader takes windows ([BinaryBatchValues#finishFill]).
     private static void fillBinary(List<NestedSegment> segments, int valueCount, BinaryBatchValues out,
                                    BinaryBatchValues.ViewDemand viewDemand, int slotLevel) {
         long plainBytes = 0;
@@ -204,9 +204,6 @@ final class NestedFill {
             out.idsComplete = complete;
         }
         out.finishFill(valueCount, viewDemand);
-        if (viewDemand.requested) {
-            out.ensureViews();
-        }
     }
 
     /// Writes one segment's binary values from value `valueStart`: its plain values' bytes to

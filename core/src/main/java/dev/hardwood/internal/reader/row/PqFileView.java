@@ -99,7 +99,7 @@ final class PqFileView implements PqFile {
         }
         byte[] bytes = inlineValues.buffer(inlineIndex);
         int hash = 1;
-        for (int i = inlineValues.starts()[inlineIndex], end = inlineValues.ends()[inlineIndex]; i < end; i++) {
+        for (int i = inlineValues.start(inlineIndex), end = inlineValues.end(inlineIndex); i < end; i++) {
             hash = 31 * hash + bytes[i];
         }
         return hash;
@@ -108,7 +108,7 @@ final class PqFileView implements PqFile {
     @Override
     public String toString() {
         return PqFileImpl.render(this, inlineValues != null
-                ? inlineValues.ends()[inlineIndex] - inlineValues.starts()[inlineIndex]
+                ? inlineValues.end(inlineIndex) - inlineValues.start(inlineIndex)
                 : -1);
     }
 }

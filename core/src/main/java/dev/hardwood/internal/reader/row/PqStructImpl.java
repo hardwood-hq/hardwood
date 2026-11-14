@@ -68,17 +68,15 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         return valueIndex >= 0 ? valueIndex : batch.getValueIndex(projCol, rowIndex);
     }
 
-    /// The batch values of the binary field at `fieldIndex`, with their views built so that later
-    /// reads write nothing, or `null` for a null value. [#binaryIndexAt] gives the value's
-    /// position in them. For a reader that copies the value only when it is asked for.
+    /// The batch values of the binary field at `fieldIndex`, or `null` for a null value.
+    /// [#binaryIndexAt] gives the value's position in them. For a reader that copies the value only
+    /// when it is asked for, and reads its bytes in place until then.
     BinaryBatchValues binaryValuesAt(int fieldIndex) {
         int projCol = primitiveAt(fieldIndex).projectedCol();
         if (batch.isElementNull(projCol, resolveValueIndex(projCol))) {
             return null;
         }
-        BinaryBatchValues values = (BinaryBatchValues) batch.valueArrays[projCol];
-        values.ensureViews();
-        return values;
+        return (BinaryBatchValues) batch.valueArrays[projCol];
     }
 
     /// The position of the binary field at `fieldIndex` in [#binaryValuesAt].
