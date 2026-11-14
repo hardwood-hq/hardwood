@@ -419,11 +419,12 @@ class S3OutputFileTest {
             synchronized (parts) {
                 parts.put(partNumber, body);
             }
-            exchange.getResponseHeaders().add("ETag", "\"etag-" + partNumber + "\"");
-            respond(exchange, 200, "");
+            // before the response, after which the client may abort at once
             if (partNumber == 2) {
                 partTwoDone = true;
             }
+            exchange.getResponseHeaders().add("ETag", "\"etag-" + partNumber + "\"");
+            respond(exchange, 200, "");
         }
         else if (method.equals("PUT")) {
             published = body;

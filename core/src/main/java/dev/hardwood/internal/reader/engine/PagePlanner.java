@@ -21,6 +21,7 @@ import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.plan.NeededPage;
 import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
@@ -39,7 +40,8 @@ import jdk.jfr.Event;
 
 /// Plans a unit's pages and ranges on its plan job, once its page index has arrived: each decoded
 /// column's pages and dictionary page from its OffsetIndex, kept by the rows the ColumnIndex
-/// leaves its filter and by the row limit, and the ranges they are fetched in, coalesced. Also
+/// leaves its filter and by the row limit, the headers of those the file holds, and the ranges
+/// they are fetched in, coalesced. Also
 /// gives the planner a unit's checked chunk extents, on its probe job, and the columns a unit
 /// skips. Holds no state of the read.
 final class PagePlanner {
@@ -107,8 +109,11 @@ final class PagePlanner {
     }
 
     /// Plans each decoded column's pages and dictionary page from its OffsetIndex, kept by the
-    /// rows its filter matches, and the unit's ranges: its chunks' extents, or under page
-    /// filtering the pages kept, adding to `events` what page filtering reports; on a job.
+    /// rows its filter matches, and the unit's ranges, adding to `events` what page filtering
+    /// reports; on a job. A chunk with an OffsetIndex is read as its dictionary page and the pages
+    /// kept, so that no range cuts through a page but where the file's tail starts; a chunk a scan
+    /// reads as its extent, in pieces of at most S. Parses the header of each planned page whose
+    /// bytes the file holds, which no fetch reads.
     @SuppressWarnings("unchecked")
     UnitPlan plan(Unit.AwaitingIndex p, List<RangeFetch> index, List<Event> events)
             throws IOException {
@@ -127,8 +132,6 @@ final class PagePlanner {
         Dictionary[] preloaded = new Dictionary[n];
         long[] dictionaryEnd = new long[n];
         List<CoalescingPolicy.Need> needs = new ArrayList<>();
-        // pages are read alone where a filter or the row limit leaves some of them out
-        boolean pageRanges = !matching.isAll() || u.limit() < u.metaData().numRows();
         CoalescingPolicy.Extent[] extents = new CoalescingPolicy.Extent[n];
         String[] names = new String[n];
         for (int c = 0; c < n; c++) {
@@ -167,16 +170,13 @@ final class PagePlanner {
                     firstDataPage[c] = all.getFirst().offset();
                     dictionaryStart[c] = preloaded[c] != null ? 0
                             : DictionaryParser.dictionaryPageStart(chunk, firstDataPage[c]);
-                    if (pageRanges && dictionaryStart[c] > 0 && !pages[c].isEmpty()) {
+                    if (dictionaryStart[c] > 0 && !pages[c].isEmpty()) {
                         needs.add(new CoalescingPolicy.Need(c, dictionaryStart[c], firstDataPage[c]));
                     }
                 }
                 for (NeededPage page : pages[c]) {
                     long start = page.location().offset();
-                    long end = start + page.location().compressedPageSize();
-                    if (pageRanges) {
-                        needs.add(new CoalescingPolicy.Need(c, start, end));
-                    }
+                    needs.add(new CoalescingPolicy.Need(c, start, start + page.location().compressedPageSize()));
                 }
             }
             catch (ParquetReadException e) {
@@ -186,7 +186,7 @@ final class PagePlanner {
         }
         extents = extents(u, extents);
         for (CoalescingPolicy.Extent extent : extents) {
-            if (skips(u, extent.column()) || pageRanges && pages[extent.column()] != null) {
+            if (skips(u, extent.column()) || pages[extent.column()] != null) {
                 continue;
             }
             long end = extent.end();
@@ -200,8 +200,33 @@ final class PagePlanner {
                 needs.add(new CoalescingPolicy.Need(extent.column(), piece, Math.min(end, piece + maxSpan)));
             }
         }
-        return new UnitPlan(matching, pages, dictionaryStart, firstDataPage, preloaded, dictionaryEnd,
-                CoalescingPolicy.coalesce(needs, names, u.rowGroup(), maxSpan, HeldBytes.heldFrom(u.file())));
+        PageFormatProbe.HeaderAt[][] headers = new PageFormatProbe.HeaderAt[n][];
+        PageFormatProbe.HeaderAt[] dictionaryHeaders = new PageFormatProbe.HeaderAt[n];
+        for (int c = 0; c < n; c++) {
+            if (pages[c] == null || pages[c].isEmpty()) {
+                continue;
+            }
+            headers[c] = new PageFormatProbe.HeaderAt[pages[c].size()];
+            for (int i = 0; i < headers[c].length; i++) {
+                PageLocation location = pages[c].get(i).location();
+                headers[c][i] = heldHeader(u, location.offset(), location.compressedPageSize());
+            }
+            if (dictionaryStart[c] > 0) {
+                dictionaryHeaders[c] = heldHeader(u, dictionaryStart[c],
+                        Math.toIntExact(firstDataPage[c] - dictionaryStart[c]));
+            }
+        }
+        return new UnitPlan(matching, pages, dictionaryStart, firstDataPage, preloaded, dictionaryEnd, headers,
+                dictionaryHeaders, CoalescingPolicy.coalesce(needs, names, u.rowGroup(), maxSpan, HeldBytes.heldFrom(u.file())));
+    }
+
+    /// The header of the page of `length` bytes at `offset` of `u`'s file, where the file holds
+    /// the page; `null` where it does not, or the header does not parse.
+    private static PageFormatProbe.HeaderAt heldHeader(UnitListing u, long offset, int length) {
+        if (HeldBytes.slice(u.file(), offset, length) == null) {
+            return null;
+        }
+        return TrackedPage.readHeader((o, l) -> HeldBytes.slice(u.file(), o, l), offset, length);
     }
 
     private static PageFilterEvent pageFilterEvent(UnitListing u, String column, int totalPages, int pagesKept) {

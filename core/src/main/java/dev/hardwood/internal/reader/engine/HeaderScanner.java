@@ -205,11 +205,15 @@ final class HeaderScanner {
     }
 
     /// A page header found at `offset`, `length` bytes with its body.
-    private record Found(PageHeader header, long offset, int length) {
+    private record Found(PageFormatProbe.HeaderAt parsed, long offset, int length) {
+
+        PageHeader header() {
+            return parsed.header();
+        }
     }
 
-    /// How far a scan's job got.
-    private record Step(List<Found> found, long position) {
+    /// How far a scan's job got, and the failure it stopped at, `null` for none.
+    private record Step(List<Found> found, long position, Exception failure) {
     }
 
     private final JobScheduler scheduler;
@@ -316,35 +320,45 @@ final class HeaderScanner {
     }
 
     /// Walks the headers from `position` as far as `arrived` reaches, up to `end` or `values`
-    /// values, stopping before a page that ends past `held`, where the ranges held end; on a job.
-    private static Step walk(List<RangeFetch> arrived, long position, long end, long held, long values)
-            throws Exception {
+    /// values, stopping before a page that ends past `held`, where the ranges held end, or at a
+    /// header that does not parse, with the pages before it; on a job.
+    private static Step walk(List<RangeFetch> arrived, long position, long end, long held, long values) {
         List<Found> found = new ArrayList<>();
         while (position < end && values > 0) {
-            Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
-                    (offset, length) -> RangeFetch.read(arrived, offset, length), position, end - position,
-                    PageFormatProbe.INITIAL_PEEK_SIZE, "");
-            if (read.needsBytes()) {
-                return new Step(found, position);
+            PageFormatProbe.HeaderAt parsed;
+            int length;
+            try {
+                Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
+                        (offset, l) -> RangeFetch.read(arrived, offset, l), position, end - position,
+                        PageFormatProbe.INITIAL_PEEK_SIZE, "");
+                if (read.needsBytes()) {
+                    return new Step(found, position, null);
+                }
+                parsed = read.value();
+                long pageEnd = PageFormatProbe.pageEnd(parsed, position, end);
+                if (pageEnd > held) {
+                    return new Step(found, position, null);
+                }
+                // a page whose header and body together pass an int fails the read
+                length = Math.toIntExact(pageEnd - position);
             }
-            PageHeader header = read.value().header();
-            long pageEnd = PageFormatProbe.pageEnd(read.value(), position, end);
-            if (pageEnd > held) {
-                return new Step(found, position);
+            catch (Exception e) {
+                return new Step(found, position, e);
             }
-            // a page whose header and body together pass an int fails the read
-            found.add(new Found(header, position, Math.toIntExact(pageEnd - position)));
-            position = pageEnd;
+            PageHeader header = parsed.header();
+            found.add(new Found(parsed, position, length));
+            position += length;
             values -= switch (header.type()) {
                 case DATA_PAGE -> header.dataPageHeader().numValues();
                 case DATA_PAGE_V2 -> header.dataPageHeaderV2().numValues();
                 default -> 0;
             };
         }
-        return new Step(found, position);
+        return new Step(found, position, null);
     }
 
-    /// Hands the pages a step found to the chunk, lets go of the ranges it passed, and scans on.
+    /// Hands the pages a step found to the chunk, lets go of the ranges it passed, and scans on, or
+    /// fails at the page it stopped at.
     private void scanned(Scan s, Step step) {
         s.idle();
         for (Found f : step.found()) {
@@ -354,6 +368,7 @@ final class HeaderScanner {
                 s.found(dictionary);
                 TrackedPage dictionaryPage = new TrackedPage(s.unit(), s.column(), key(s),
                         NeededPage.dictionary(f.offset(), f.length()), within(s, f), dictionary, false);
+                dictionaryPage.headerRead(f.parsed());
                 fetcher.keyAt(dictionaryPage.ranges(), dictionaryPage.key());
                 tracker.addDictionaryPage(dictionaryPage);
             }
@@ -369,6 +384,10 @@ final class HeaderScanner {
             }
         }
         fetcher.readersDone(s.advanceTo(step.position()));
+        if (step.failure() != null) {
+            failed(s, step.failure());
+            return;
+        }
         next(s);
         tracker.place(s.column());
     }
@@ -397,6 +416,7 @@ final class HeaderScanner {
         if (nulls) {
             tracked.standsForNulls(mask.isAll() ? values : mask.totalRecords());
         }
+        tracked.headerRead(f.parsed());
         // the ranges were keyed by where they lie in the chunk; the page they hold serves its own
         // row, which may be lower
         fetcher.keyAt(tracked.ranges(), tracked.key());

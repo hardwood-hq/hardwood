@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.select.RowRanges;
 
@@ -27,9 +28,15 @@ import dev.hardwood.internal.reader.select.RowRanges;
 /// @param preloaded per decoded column, the dictionary the unit's pruning probe decoded, which its
 ///        pages decode with instead of reading it again, `null` for none
 /// @param dictionaryEnd per decoded column, where such a dictionary's page ends, `0` for none
+/// @param headers per decoded column with planned pages, their headers, in `pages`' order, parsed
+///        on the plan job where the file holds the page's bytes: `null` for a page it does not
+///        hold, which its fetch parses, and for one whose header does not parse
+/// @param dictionaryHeaders per decoded column, its dictionary page's header, parsed likewise
 /// @param ranges the unit's requests, coalesced across its columns
 public record UnitPlan(RowRanges matching, List<NeededPage>[] pages, long[] dictionaryStart,
-                long[] firstDataPage, Dictionary[] preloaded, long[] dictionaryEnd, List<FileRange> ranges) {
+                long[] firstDataPage, Dictionary[] preloaded, long[] dictionaryEnd,
+                PageFormatProbe.HeaderAt[][] headers, PageFormatProbe.HeaderAt[] dictionaryHeaders,
+                List<FileRange> ranges) {
 
     /// The plan of a unit of `columns` decoded columns of which no row is read, its rows kept by
     /// `matching`.
@@ -38,6 +45,7 @@ public record UnitPlan(RowRanges matching, List<NeededPage>[] pages, long[] dict
         List<NeededPage>[] pages = new List[columns];
         Arrays.fill(pages, List.of());
         return new UnitPlan(matching, pages, new long[columns], new long[columns], new Dictionary[columns],
-                new long[columns], List.of());
+                new long[columns], new PageFormatProbe.HeaderAt[columns][], new PageFormatProbe.HeaderAt[columns],
+                List.of());
     }
 }

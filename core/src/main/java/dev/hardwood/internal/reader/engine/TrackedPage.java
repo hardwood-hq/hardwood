@@ -7,18 +7,25 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.PageDecoder;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.pipeline.PageTask;
 import dev.hardwood.internal.reader.plan.NeededPage;
+import dev.hardwood.internal.reader.step.ByteSource;
+import dev.hardwood.internal.reader.step.Parsed;
+import dev.hardwood.reader.ParquetReadException;
 
 /// A page of a batched unit, from the start of its tracking until it is decoded: the page, the ranges its bytes
-/// lie in, its chunk's dictionary (`null` for a chunk without one), and, once [CellWriter] has
-/// given them, its decoder and task and whether it is ready
-/// to be placed. A dictionary page (`data` false) produces its chunk's dictionary's values. Used
-/// under the read's lock.
+/// lie in, its chunk's dictionary (`null` for a chunk without one), its header once parsed outside
+/// the read's lock, and, once [CellWriter] has given them, its decoder and task and whether it is
+/// ready to be placed. A dictionary page (`data` false) produces its chunk's dictionary's values.
+/// Used under the read's lock, except [#dataPage] on its decode's job.
 final class TrackedPage {
 
     private final Unit.Batched unit;
@@ -31,6 +38,8 @@ final class TrackedPage {
     /// the rows a page its inline statistics drop stands for, as nulls without bytes; `0` for a
     /// page read from its bytes
     private int placeholder;
+    private PageFormatProbe.HeaderAt header;
+    private boolean headerRead;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -90,6 +99,22 @@ final class TrackedPage {
         placeholder = rows;
     }
 
+    /// Its header was parsed, outside the read's lock, as `header`: `null` where it does not parse.
+    void headerRead(PageFormatProbe.HeaderAt header) {
+        this.header = header;
+        this.headerRead = true;
+    }
+
+    /// Whether its header was parsed, by the time all its ranges have arrived.
+    boolean headerRead() {
+        return headerRead;
+    }
+
+    /// Its header, `null` until parsed or where it does not parse.
+    PageFormatProbe.HeaderAt header() {
+        return header;
+    }
+
     /// Its chunk's decoder, once [CellWriter] has given it.
     PageDecoder decoder() {
         return decoder;
@@ -123,5 +148,42 @@ final class TrackedPage {
     /// The page's bytes, from its ranges: `null` where one has not arrived.
     ByteBuffer bytes() {
         return RangeFetch.read(ranges, page.location().offset(), page.location().compressedPageSize());
+    }
+
+    /// The page, with the header parsed before, on its decode's job. A header that did not parse is
+    /// parsed again from the whole page, failing as a malformed header does; one that parses so
+    /// exceeded the peek a header is read with, which fails the page as it fails a scan.
+    ///
+    /// @throws ParquetReadException if the header does not parse, or exceeds the peek
+    /// @throws IllegalStateException if a header that parses was not handed on
+    DataPage dataPage() {
+        if (header != null) {
+            return new DataPage(header.header(), header.length(), bytes());
+        }
+        DataPage page = DataPage.parse(bytes());
+        long offset = this.page.location().offset();
+        if (page.headerSize() > PageFormatProbe.MAX_PEEK_SIZE) {
+            throw new ParquetReadException("Page header at offset " + offset + " exceeds maximum peek size ("
+                    + PageFormatProbe.MAX_PEEK_SIZE + " bytes)");
+        }
+        throw new IllegalStateException("The header of the page at offset " + offset
+                + " parses, but was not handed on to its decode");
+    }
+
+    /// The header of the page of `length` bytes at `offset`, read from `bytes`, outside the read's
+    /// lock; `null` where it is malformed, which the page's decode fails on ([#dataPage]).
+    static PageFormatProbe.HeaderAt readHeader(ByteSource bytes, long offset, int length) {
+        try {
+            Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(bytes, offset, length,
+                    PageFormatProbe.INITIAL_PEEK_SIZE, "");
+            return read.needsBytes() ? null : read.value();
+        }
+        catch (ParquetReadException e) {
+            return null;
+        }
+        catch (IOException e) {
+            // the sources a read parses headers from slice bytes already there
+            throw new UncheckedIOException(e);
+        }
     }
 }

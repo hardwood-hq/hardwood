@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader.engine;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,10 +25,8 @@ import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.pipeline.Cell;
 import dev.hardwood.internal.reader.pipeline.NestedPageTask;
 import dev.hardwood.internal.reader.plan.NeededPage;
-import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.Encoding;
-import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
@@ -41,7 +38,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// [ChunkDictionary], which the chunk's data pages wait for as for their ranges, and a flat page
 /// waits for its placement too. A page waits for the first of these it lacks and, woken, looks
 /// again. A range or dictionary that fails fails the read at each page waiting for it, and the
-/// lowest row wins. Used under the read's lock, except the jobs' work.
+/// lowest row wins. A page's decode is charged from its header, which is parsed outside the read's
+/// lock before its ranges have all arrived ([#readsHeader]) and handed to the decode. Used under
+/// the read's lock, except the jobs' work.
 final class PageTracker {
 
     private final JobScheduler scheduler;
@@ -104,16 +103,22 @@ final class PageTracker {
             else if (u.plan().dictionaryStart()[c] > 0) {
                 dictionary = new ChunkDictionary();
                 int length = Math.toIntExact(u.plan().firstDataPage()[c] - u.plan().dictionaryStart()[c]);
-                addDictionaryPage(new TrackedPage(u, c, firstKey, NeededPage.dictionary(u.plan().dictionaryStart()[c], length),
-                        overlapping(ranges, keys, firstKey, u.plan().dictionaryStart()[c], length), dictionary, false));
+                TrackedPage dictionaryPage = new TrackedPage(u, c, firstKey,
+                        NeededPage.dictionary(u.plan().dictionaryStart()[c], length),
+                        overlapping(ranges, keys, firstKey, u.plan().dictionaryStart()[c], length), dictionary, false);
+                readsHeader(dictionaryPage, u.plan().dictionaryHeaders()[c]);
+                addDictionaryPage(dictionaryPage);
             }
             reportPagesLocated(u.listing().file().name(), u.listing().rowGroup(), columns.schema(c), needed.size(),
                     RowGroupScannedEvent.STRATEGY_OFFSET_INDEX);
-            for (NeededPage page : needed) {
+            for (int i = 0; i < needed.size(); i++) {
+                NeededPage page = needed.get(i);
                 int length = page.location().compressedPageSize();
                 long key = u.key(page.location().firstRowIndex());
-                add(placement, new TrackedPage(u, c, key, page,
-                        overlapping(ranges, keys, key, page.location().offset(), length), dictionary, true));
+                TrackedPage tracked = new TrackedPage(u, c, key, page,
+                        overlapping(ranges, keys, key, page.location().offset(), length), dictionary, true);
+                readsHeader(tracked, u.plan().headers()[c][i]);
+                add(placement, tracked);
             }
         }
         for (int i = 0; i < ranges.size(); i++) {
@@ -131,6 +136,28 @@ final class PageTracker {
     /// one that nothing reads is not fetched.
     void handedToScans(ScanInput input) {
         fetcher.readersDone(input.ranges());
+    }
+
+    /// Where `tracked`, a planned page, gets its header: `planned`, parsed on the plan job, for a
+    /// page whose bytes the file holds, its ranges having arrived as they were made; otherwise the
+    /// range it starts in, whose arrival parses it, reading any part of the header past that range
+    /// from the file's tail ([RangeFetcher]).
+    ///
+    /// @throws IllegalStateException if the page lies in more than one range to fetch, which
+    ///         coalescing never makes
+    private static void readsHeader(TrackedPage tracked, PageFormatProbe.HeaderAt planned) {
+        RangeFetch first = RangeFetch.firstMissing(tracked.ranges());
+        if (first == null) {
+            tracked.headerRead(planned);
+            return;
+        }
+        for (RangeFetch r : tracked.ranges()) {
+            if (r != first && !r.output().hasValue() || r == first && r != tracked.ranges().getFirst()) {
+                throw new IllegalStateException("The page at offset " + tracked.page().location().offset()
+                        + " lies in more than one range to fetch");
+            }
+        }
+        first.parsesHeaderOf(tracked);
     }
 
     /// The row `r` serves first: its first page's, `pageKey`, or for a chunk a scan reads, the row
@@ -248,8 +275,7 @@ final class PageTracker {
         // buffers beside the decode need forces
         scheduler.add(decodeJob(tracked, buffers -> {
             Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().output().value();
-            return cells.decode(tracked.column(), tracked.task(),
-                    tracked.placeholder() > 0 ? null : tracked.bytes(), dictionary, buffers);
+            return cells.decode(tracked.column(), tracked.task(), tracked::dataPage, dictionary, buffers);
         }, completed -> {
             // its ranges are held by the batch of its last row until every column has published it,
             // as R holds the bytes fetched ahead of the consumer
@@ -264,7 +290,7 @@ final class PageTracker {
     private void addMeasure(TrackedPage tracked) {
         scheduler.add(decodeJob(tracked, buffers -> {
             NestedPageTask task = cells.nestedTask(tracked,
-                    tracked.placeholder() > 0 ? null : DataPage.parse(tracked.bytes()),
+                    tracked.placeholder() > 0 ? null : tracked.dataPage(),
                     tracked.dictionary() == null ? null : tracked.dictionary().output().value());
             try {
                 task.decodeAndMeasure(buffers);
@@ -292,25 +318,21 @@ final class PageTracker {
                 work, onValue, onFailure);
     }
 
-    /// The buffers the task decoding `tracked` holds, from its header ([DataPage#taskBytes]), or a
-    /// null placeholder's levels. The header is read from a peek at the page's start, so that only
-    /// its bytes are parsed, and copied where the page straddles two ranges, under the read's lock.
-    /// `0` for a page whose header does not parse: its decode fails on it.
+    /// The buffers the task decoding `tracked` holds, from its header, parsed before
+    /// ([DataPage#taskBytes]), or a null placeholder's levels. `0` for a page whose header does not
+    /// parse: its decode fails on it.
+    ///
+    /// @throws IllegalStateException if the page's header was not parsed
     private long taskBytes(TrackedPage tracked) {
         ColumnSchema schema = columns.schema(tracked.column());
         if (tracked.placeholder() > 0) {
             return WorkingSet.Column.pageBuffers(schema, tracked.placeholder(), 0, Encoding.PLAIN);
         }
-        PageLocation location = tracked.page().location();
-        try {
-            Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
-                    (offset, length) -> RangeFetch.read(tracked.ranges(), offset, length), location.offset(),
-                    location.compressedPageSize(), PageFormatProbe.INITIAL_PEEK_SIZE, "");
-            return read.needsBytes() ? 0 : DataPage.taskBytes(read.value().header(), schema);
+        if (!tracked.headerRead()) {
+            throw new IllegalStateException("The header of the page at offset " + tracked.page().location().offset()
+                    + " was not parsed before its decode");
         }
-        catch (IOException | RuntimeException e) {
-            return 0;
-        }
+        return tracked.header() == null ? 0 : DataPage.taskBytes(tracked.header().header(), schema);
     }
 
     /// `tracked`'s decode failed with `t`: the read fails at the page, which is done.
@@ -341,8 +363,8 @@ final class PageTracker {
     }
 
     private Dictionary parseDictionary(TrackedPage tracked, DecodeBuffers buffers) {
-        ByteBuffer region = tracked.bytes();
-        DataPage page = DataPage.parse(region);
+        DataPage page = tracked.dataPage();
+        ByteBuffer region = page.bytes();
         int pageLength = page.headerSize() + page.header().compressedPageSize();
         if (page.header().type() != PageType.DICTIONARY_PAGE) {
             return null;
