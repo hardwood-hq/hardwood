@@ -25,6 +25,7 @@ import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
+import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
@@ -58,8 +59,10 @@ class PageHeaderParseTest {
     enum Source {
         /// a file in memory, whose planned pages' headers the plan job parses
         HELD,
-        /// a file read by request, whose planned pages' headers are parsed as each request arrives
-        FETCHED
+        /// a file read by request, whose planned pages' headers the fetch parses
+        FETCHED,
+        /// a file without an OffsetIndex, whose pages' headers its scan parses
+        SCANNED
     }
 
     /// the tail size the test JVM reads with, which the tests that set their own restore
@@ -90,6 +93,7 @@ class PageHeaderParseTest {
         InputFile file = switch (source) {
             case HELD -> InputFile.of(ByteBuffer.wrap(bytes));
             case FETCHED -> new CountingInputFile(ByteBuffer.wrap(bytes));
+            case SCANNED -> new CountingInputFile(ByteBuffer.wrap(FooterRewriter.withoutPageIndex(bytes)));
         };
         long[] read = new long[1];
 
