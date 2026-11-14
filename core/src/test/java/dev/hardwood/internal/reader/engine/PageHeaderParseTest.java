@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
@@ -26,14 +27,20 @@ import dev.hardwood.internal.reader.decode.ParsedHeader;
 import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
+import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
+import dev.hardwood.internal.thrift.ThriftCompactConstants;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
@@ -59,8 +66,10 @@ class PageHeaderParseTest {
     enum Source {
         /// a file in memory, whose planned pages' headers the plan job parses
         HELD,
-        /// a file read by request, whose planned pages' headers are parsed as each request arrives
-        FETCHED
+        /// a file read by request, whose planned pages' headers the fetch parses
+        FETCHED,
+        /// a file without an OffsetIndex, whose pages' headers its scan parses
+        SCANNED
     }
 
     /// the tail size the test JVM reads with, which the tests that set their own restore
@@ -91,6 +100,7 @@ class PageHeaderParseTest {
         InputFile file = switch (source) {
             case HELD -> InputFile.of(ByteBuffer.wrap(bytes));
             case FETCHED -> new CountingInputFile(ByteBuffer.wrap(bytes));
+            case SCANNED -> new CountingInputFile(ByteBuffer.wrap(FooterRewriter.withoutPageIndex(bytes)));
         };
         long[] read = new long[1];
 
@@ -106,6 +116,32 @@ class PageHeaderParseTest {
                         + "] PageHeader has unknown page type: -1408");
         assertThat(read[0]).as("no row of the page or after it is delivered")
                 .isLessThanOrEqualTo(corrupt.firstRowIndex());
+    }
+
+    /// A scanned chunk whose page header is padded past a mebibyte, as long inline statistics
+    /// make one, is read whole: the header is bounded by its chunk alone, from a file in memory and
+    /// by request alike.
+    @ParameterizedTest
+    @ValueSource(booleans = { true, false })
+    void aScannedHeaderOfAnySizeWithinItsChunkIsRead(boolean held) throws Exception {
+        byte[] bytes = withPaddedHeader(write(), CORRUPT_PAGE, 2 * 1024 * 1024);
+        InputFile file = held ? InputFile.of(ByteBuffer.wrap(bytes)) : new CountingInputFile(ByteBuffer.wrap(bytes));
+
+        long sum = 0;
+        long rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                ColumnReader column = reader.columnReader("a")) {
+            while (column.nextBatch()) {
+                long[] values = column.getLongs();
+                for (int i = 0; i < column.getRecordCount(); i++) {
+                    sum += values[i];
+                }
+                rows += column.getRecordCount();
+            }
+        }
+
+        assertThat(rows).isEqualTo(ROWS);
+        assertThat(sum).isEqualTo((long) ROWS * (ROWS - 1) / 2);
     }
 
     /// The tail starts two bytes into the last page's header: the page is fetched up to there and
@@ -152,10 +188,42 @@ class PageHeaderParseTest {
         ByteBuffer fetched = ByteBuffer.wrap(bytes, Math.toIntExact(last.offset()), 2).slice();
 
         PageFormatProbe.HeaderAt header = ParsedHeader.of(
-                RangeFetch.read(file, range, fetched, last.offset(), last.compressedPageSize())).orThrow();
+                RangeFetch.read(file, range, fetched, last.offset(), last.compressedPageSize()), last.offset()).orThrow();
 
         assertThat(header.header().type()).isEqualTo(PageType.DATA_PAGE);
         assertThat(header.length() + header.header().compressedPageSize()).isEqualTo(last.compressedPageSize());
+    }
+
+    /// `file` without its page index, the header of its page `page` carrying an unknown binary
+    /// field of `padding` bytes, which a reader skips, and its chunk grown by as much.
+    private static byte[] withPaddedHeader(byte[] file, int page, int padding) throws Exception {
+        PageLocation location = pages(file).get(page);
+        int offset = Math.toIntExact(location.offset());
+        int headerLength = ParsedHeader.of(ByteBuffer.wrap(file, offset, location.compressedPageSize()).slice(),
+                location.offset()).orThrow().length();
+        ThriftCompactWriter field = new ThriftCompactWriter();
+        field.writeFieldBegin(99, ThriftCompactConstants.FieldType.BINARY);
+        field.writeBinary(new byte[padding]);
+        byte[] added = field.toByteArray();
+        // the field goes in before the header's closing stop byte
+        int insertAt = offset + headerLength - 1;
+        byte[] spliced = new byte[file.length + added.length];
+        System.arraycopy(file, 0, spliced, 0, insertAt);
+        System.arraycopy(added, 0, spliced, insertAt, added.length);
+        System.arraycopy(file, insertAt, spliced, insertAt + added.length, file.length - insertAt);
+        return FooterRewriter.rewrite(FooterRewriter.withoutPageIndex(spliced), metaData -> new FileMetaData(
+                metaData.version(), metaData.schema(), metaData.numRows(), metaData.rowGroups().stream().map(rowGroup -> {
+                    ColumnChunk chunk = rowGroup.columns().getFirst();
+                    ColumnMetaData m = chunk.metaData();
+                    ColumnChunk grown = new ColumnChunk(new ColumnMetaData(m.type(), m.encodings(), m.pathInSchema(),
+                            m.codec(), m.numValues(), m.totalUncompressedSize() + added.length,
+                            m.totalCompressedSize() + added.length, m.keyValueMetadata(), m.dataPageOffset(),
+                            m.dictionaryPageOffset(), m.statistics(), m.geospatialStatistics(), m.bloomFilterOffset(),
+                            m.bloomFilterLength(), m.encodingStats(), m.sizeStatistics()),
+                            chunk.offsetIndexOffset(), chunk.offsetIndexLength(), chunk.columnIndexOffset(),
+                            chunk.columnIndexLength(), chunk.filePath());
+                    return new RowGroup(List.of(grown), rowGroup.totalByteSize(), rowGroup.numRows());
+                }).toList(), metaData.keyValueMetadata(), metaData.createdBy(), metaData.columnOrders()));
     }
 
     /// The pages of column `a`, from its OffsetIndex.

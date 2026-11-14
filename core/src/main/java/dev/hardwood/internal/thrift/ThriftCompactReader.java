@@ -716,7 +716,8 @@ public class ThriftCompactReader {
             // type is what lets the peek grow; a genuinely corrupt length is caught by the
             // ceiling the growing stops at rather than by this frame.
             throw new ThriftTruncatedException("Malformed Parquet metadata: binary value declares "
-                    + declaredLength + " bytes but only " + buffer.remaining() + " remain");
+                    + declaredLength + " bytes but only " + buffer.remaining() + " remain",
+                    (long) getBytesRead() + declaredLength);
         }
         return Math.toIntExact(declaredLength);
     }

@@ -7,7 +7,11 @@
  */
 package dev.hardwood.internal.reader.decode;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+
+import dev.hardwood.internal.reader.step.Parsed;
 
 /// A page's header parsed ahead of the page's decode, or the failure its parse met, which the
 /// decode then fails with: whoever parses a header hands on either, so that no reader parses it a
@@ -23,12 +27,18 @@ public record ParsedHeader(PageFormatProbe.HeaderAt header, RuntimeException fai
         }
     }
 
-    /// The header of `page`, the page's bytes as stored, header first; only the header's bytes are
-    /// read.
-    public static ParsedHeader of(ByteBuffer page) {
+    /// The header of `page`, the bytes of the page at `offset` as stored, header first, which is
+    /// its extent ([PageFormatProbe#readHeader]); only the header's bytes are read.
+    public static ParsedHeader of(ByteBuffer page, long offset) {
         try {
-            DataPage parsed = DataPage.parse(page);
-            return new ParsedHeader(new PageFormatProbe.HeaderAt(parsed.header(), parsed.headerSize()), null);
+            Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
+                    (o, length) -> page.slice(Math.toIntExact(o - offset), length), offset, page.remaining(),
+                    PageFormatProbe.Extent.PAGE, PageFormatProbe.INITIAL_PEEK_SIZE, "");
+            return new ParsedHeader(read.get(), null);
+        }
+        catch (IOException e) {
+            // slicing a buffer reads nothing
+            throw new UncheckedIOException(e);
         }
         catch (RuntimeException e) {
             return new ParsedHeader(null, e);

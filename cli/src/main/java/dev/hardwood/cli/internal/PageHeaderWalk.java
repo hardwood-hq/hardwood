@@ -39,8 +39,8 @@ public final class PageHeaderWalk {
     ///
     /// @param visitor receives each header; returns whether the walk goes on
     /// @throws IOException if a read fails
-    /// @throws ParquetReadException if a header exceeds [PageFormatProbe#MAX_PEEK_SIZE], is cut off
-    ///         by the range's end, or its page runs past it
+    /// @throws ParquetReadException if a header is cut off by the range's end, or its page runs past
+    ///         it
     public static void walk(InputFile inputFile, long start, long totalBytes, int windowBytes,
             Predicate<PageHeader> visitor) throws IOException {
         long end = start + totalBytes;

@@ -224,7 +224,7 @@ final class PagePlanner {
     /// parse met, where the file holds the page; `null` where it does not.
     private static ParsedHeader heldHeader(UnitListing u, long offset, int length) {
         ByteBuffer page = HeldBytes.slice(u.file(), offset, length);
-        return page == null ? null : ParsedHeader.of(page);
+        return page == null ? null : ParsedHeader.of(page, offset);
     }
 
     private static PageFilterEvent pageFilterEvent(UnitListing u, String column, int totalPages, int pagesKept) {
