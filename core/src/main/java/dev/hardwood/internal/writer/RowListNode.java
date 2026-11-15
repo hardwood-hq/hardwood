@@ -18,6 +18,7 @@ import java.util.function.Consumer;
 import dev.hardwood.Validity;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
+import dev.hardwood.row.PqList;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ListBuilder;
 import dev.hardwood.writer.MapBuilder;
@@ -199,6 +200,25 @@ final class RowListNode extends RowRepeatedNode implements ListBuilder {
         filler.accept(map);
         map.endScope();
         return counted();
+    }
+
+    /// A LIST group takes a [PqList], whose elements are copied in order, each written as the
+    /// element its form names.
+    @Override
+    void writeValue(Object value) {
+        if (value == null) {
+            appendNullInstance();
+            return;
+        }
+        if (!(value instanceof PqList source)) {
+            throw wrongValue(value, "a PqList");
+        }
+        beginScope();
+        for (int i = 0; i < source.size(); i++) {
+            element.writeValue(source.get(i));
+            countEntry();
+        }
+        endScope();
     }
 
     private ListBuilder counted() {

@@ -356,11 +356,19 @@ Producibility is settled by `ParquetFileWriter.create` before either view exists
 
 Two extensions are foreseen, and the surface is shaped so they can be added without a breaking change or a boxing penalty: bulk primitive entries (`setList("scores", int[])` and the other primitive arrays, distinct erasures that compose with the filler form) and string-keyed map sugar (`MapBuilder.putString(String, String)`, `putLong(String, long)`, …, linear rather than combinatorial).
 
-One rule keeps both open: **no unqualified `Object`-typed setter.** There is no `set(String, Object)`, no `ListBuilder.add(Object)`, and no `Collection<?>` overload. Any of them would make the boxing path the one that binds by default (`addInt(1)` and `add(1)` are not the same program) and would create overload ambiguity against primitive forms added later. The rule bites on the name, an unqualified `set` or `add` competing with typed siblings, not on the parameter type: a distinctly named `setValue(String | int, Object)` mirroring the reader's `getValue` is outside it, since no call to `setInt` can resolve to it by accident.
+One rule keeps both open: **no unqualified `Object`-typed setter.** There is no `set(String, Object)`, no `ListBuilder.add(Object)`, and no `Collection<?>` overload. Any of them would make the boxing path the one that binds by default (`addInt(1)` and `add(1)` are not the same program) and would create overload ambiguity against primitive forms added later. The rule bites on the name, an unqualified `set` or `add` competing with typed siblings, not on the parameter type: `StructBuilder.setValue(String | int, Object)`, mirroring the reader's `getValue`, is outside it, since no call to `setInt` can resolve to it by accident.
+
+### Runtime-typed values
+
+`setValue` serves code that learns the schema at runtime, such as a copier, a projection or a format bridge, which would otherwise switch on the physical type to pick a setter. It takes exactly the Java type `getValue` returns for the field and writes it through the typed setter for that type, so the two APIs cannot disagree on a value's form or its checks; any other type is rejected rather than converted. The form is decided per leaf once, when the plan is built (`RowLeafNode.ValueForm`), from the same physical and logical type the reader decodes by; `FLOAT16`, which no typed setter takes as a `Float`, is encoded to a half and rejected where the half does not hold the value exactly.
+
+Each `RowNode` writes one instance of itself from a value (`writeValue`), so groups recurse without a type switch in the caller: a struct copies a `PqStruct` field by field, a list a `PqList` element by element, and a map a `PqMap` entry by entry into its entry group's key and value. A struct is matched by name and driven by the target: each declared field takes the source's field of that name, a field the source lacks stays unset and is subject to the usual `REQUIRED` check, and a source field the target does not declare is not written, which is what a projection needs. A source name occurring twice is rejected for a field that would take it.
+
+Tests: `RowWriterSetValueTest`.
 
 ## Boundaries
 
 - **`INT96`** is not writable through either API.
 - **`VARIANT`** annotations are rejected on a declared leaf, and the builder cannot declare a Variant group; a Variant group read from a file is written field by field through the binary setters, since the writer has no Variant encoder.
 - **Typed binding** (writing a POJO or record directly) is the write side of the typed view epic (#940), not part of this layer.
-- **Open input-vocabulary gaps**, tracked in #1291: `StructBuilder.setValue` and `setVariant` (the two reader accessors with no setter), and group-oriented nesting for columnar copies, including a `REQUIRED` leaf under an `OPTIONAL` struct, whose reader-side leaf validity reports nulls the writer's leaf setter refuses on a `REQUIRED` column.
+- **Open input-vocabulary gaps**, tracked in #1291: `setVariant` (the reader accessor with no setter), and group-oriented nesting for columnar copies, including a `REQUIRED` leaf under an `OPTIONAL` struct, whose reader-side leaf validity reports nulls the writer's leaf setter refuses on a `REQUIRED` column.

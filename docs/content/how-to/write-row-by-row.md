@@ -194,6 +194,27 @@ Every rule of the by-name form applies unchanged, and an index outside `[0, getF
 !!! warning "The reader's index and the writer's index are not always the same position"
     On the reader, a field index is a position among an accessor's **projected** children. On the writer, it is a position in the struct as **declared** in the schema being written. The two agree when a whole file is read into its own schema — copying a record field by field then works — and diverge as soon as a projection drops or reorders fields. Resolve the name with `getFieldName(int)` on both sides when the two schemas are not identical.
 
+## Copying Rows Whose Schema Is Known at Runtime
+
+`setValue(String, Object)` and `setValue(int, Object)` take a value in the form the reader's `getValue` returns, and write it through the setter the field's declared type takes. A copier reads each field with `getValue` and writes it with `setValue`, without switching on the field's type:
+
+```java
+try (RowReader in = reader.rowReader();
+        ParquetFileWriter writer = ParquetFileWriter.create(out, reader.getFileSchema())) {
+    RowWriter rows = writer.rowWriter();
+    while (in.hasNext()) {
+        in.next();
+        rows.writeRow(row -> {
+            for (int field = 0; field < in.getFieldCount(); field++) {
+                row.setValue(in.getFieldName(field), in.getValue(field));
+            }
+        });
+    }
+}
+```
+
+A nested struct, list or map is copied with its contents. A struct's fields are matched by name, so the target struct can declare its fields in another order, or fewer of them; a field the source lacks is written as null. A value not in the field's form, such as a `String` for a `DOUBLE` field, fails with an error. See [Logical Types and Row Setters](../reference/writer.md#logical-types-and-row-setters) for the form each type takes.
+
 ## Configuring the Writer
 
 Pass a `WriterConfig` to `create`:

@@ -229,6 +229,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] `FileSchema.Builder` logical-type overload (and `FIXED_LEN_BYTE_ARRAY` type length, implied by `UUID`, `INTERVAL`, `FLOAT16` and `DECIMAL`)
 - [x] Logical-type value conversion in the writer API (`PhysicalValueConverter`, inverse of `LogicalTypeConverter`)
 - [x] Annotation range checks on both write APIs (`LogicalTypeValueRange`)
+- [x] `StructBuilder.setValue`, writing a value in the form `getValue` returns (#1530)
 
 ---
 
