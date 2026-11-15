@@ -40,7 +40,7 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// A probe's reads whose extent the footer does not give (FETCH_PLANNING.md, Pruning reads): a
+/// Pruning reads whose extent the footer does not give (FETCH_PLANNING.md, Pruning reads): a
 /// Bloom filter without `bloom_filter_length` and a dictionary page without
 /// `dictionary_page_offset`, both of which older writers omit, are read header first and still
 /// prune, so the read fetches no column data.
@@ -73,8 +73,8 @@ class PruningReadsTest {
     }
 
     /// A filter one leaf of which only a Bloom filter rules out and the other only a dictionary:
-    /// the row groups are dropped only where the probe evaluates both, from what it read in one
-    /// round.
+    /// the row groups are dropped only where Bloom-filter and dictionary pruning evaluate both,
+    /// from what they read in one round.
     @Test
     void aBloomFilterAndADictionaryDecideOneFilterTogether() throws Exception {
         byte[] bytes = bloomAndDictionary();

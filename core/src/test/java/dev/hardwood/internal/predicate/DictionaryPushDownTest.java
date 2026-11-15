@@ -195,12 +195,12 @@ class DictionaryPushDownTest {
                     FilterPredicate.gtEq("id", 0L),
                     FilterPredicate.or(FilterPredicate.eq("id", 20_000L), FilterPredicate.eq("category", "cat_5x"))),
                     schema);
-            BloomFilterColumnRecorder recorder = new BloomFilterColumnRecorder(rowGroup());
+            BloomFilterPruningPlan plan = new BloomFilterPruningPlan(rowGroup());
 
-            assertThat(RowGroupFilterEvaluator.planRowGroup(or, rowGroup(), recorder, UNNAMED,
+            assertThat(RowGroupFilterEvaluator.planRowGroup(or, rowGroup(), plan, UNNAMED,
                     BoundsReadability.ALL, new RowGroupFilterEvaluator.LeafDecisions()))
                     .isEqualTo(FilterDecision.MIGHT_MATCH);
-            assertThat(recorder.columns().stream().toArray()).containsExactly(CATEGORY_COLUMN);
+            assertThat(plan.columns().stream().toArray()).containsExactly(CATEGORY_COLUMN);
         }
 
         @Test
@@ -211,7 +211,7 @@ class DictionaryPushDownTest {
             ResolvedPredicate or = FilterPredicateResolver.resolve(FilterPredicate.or(
                     FilterPredicate.eq("id", 42L), FilterPredicate.eq("category", "cat_5x")), schema);
             RowGroupFilterEvaluator.LeafDecisions planned = new RowGroupFilterEvaluator.LeafDecisions();
-            assertThat(RowGroupFilterEvaluator.planRowGroup(or, rowGroup(), new BloomFilterColumnRecorder(rowGroup()),
+            assertThat(RowGroupFilterEvaluator.planRowGroup(or, rowGroup(), new BloomFilterPruningPlan(rowGroup()),
                     UNNAMED, BoundsReadability.ALL, planned)).isEqualTo(FilterDecision.MIGHT_MATCH);
             RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
 
@@ -230,7 +230,7 @@ class DictionaryPushDownTest {
             ResolvedPredicate and = FilterPredicateResolver.resolve(FilterPredicate.and(
                     FilterPredicate.eq("id", 42L), FilterPredicate.eq("category", "cat_5")), schema);
             RowGroupFilterEvaluator.LeafDecisions planned = new RowGroupFilterEvaluator.LeafDecisions();
-            RowGroupFilterEvaluator.planRowGroup(and, rowGroup(), new BloomFilterColumnRecorder(rowGroup()),
+            RowGroupFilterEvaluator.planRowGroup(and, rowGroup(), new BloomFilterPruningPlan(rowGroup()),
                     UNNAMED, BoundsReadability.ALL, planned);
             List<Integer> bloomReads = new ArrayList<>();
             BloomFilterSource bloomFilters = columnIndex -> {

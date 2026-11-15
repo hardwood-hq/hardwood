@@ -54,7 +54,7 @@ import dev.hardwood.reader.ParquetFileReader;
 /// chunk is ineligible for push-down. The files are otherwise byte-identical, so a pair differs in
 /// eligibility and nothing else.
 ///
-/// `absent` is a complete run in which nothing prunes before the dictionary probe, so its whole
+/// `absent` is a complete run in which nothing prunes before dictionary pruning, so its whole
 /// score bounds what push-down can cost when it prunes nothing. That cost is one request per
 /// filtered column per surviving row group; `DictionaryPushDownIoTest` in `hardwood-core` pins
 /// that request count deterministically.

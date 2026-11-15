@@ -42,8 +42,8 @@ final class JobScheduler {
         FETCH,
         /// a footer's read: a fetch whose key, the end of the rows listed, is no row the data reached
         FOOTER,
-        /// CPU work that leads to a fetch: a footer's parse, a row group's probe and plan; a probe
-        /// held back by R where it is charged the dictionary parses it runs
+        /// CPU work that leads to a fetch: a footer's parse, a row group's pruning and plan;
+        /// pruning held back by R where it is charged the dictionary parses it runs
         PLAN,
         /// CPU work that holds values for the consumer: held back by the look-ahead, and by R where it
         /// is charged the buffers it holds while it runs

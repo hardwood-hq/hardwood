@@ -98,7 +98,7 @@ final class PageTracker {
             long firstKey = u.key(needed.getFirst().location().firstRowIndex());
             ChunkDictionary dictionary = null;
             if (u.plan().preloaded()[c] != null) {
-                // decoded by the unit's probe
+                // decoded by the unit's dictionary pruning
                 dictionary = ChunkDictionary.preloaded(u.plan().preloaded()[c]);
             }
             else if (u.plan().dictionaryStart()[c] > 0) {

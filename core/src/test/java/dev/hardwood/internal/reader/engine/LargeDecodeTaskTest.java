@@ -24,7 +24,7 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// A read's decodes, and the dictionary parses its probes run to prune row groups, whose buffers
+/// A read's decodes, and the dictionary parses its dictionary pruning runs, whose buffers
 /// exceed the retention size run beside the one its consumer's next batch needs only within the
 /// read-ahead buffer.
 class LargeDecodeTaskTest {
@@ -67,11 +67,12 @@ class LargeDecodeTaskTest {
 
     /// Sixteen row groups whose one column's dictionary decompresses to 128 MiB of zeros, a few
     /// KiB on disk, read under a filter for a value none holds, with no read-ahead buffer on a
-    /// pool of eight threads and on none: each row group's probe parses its dictionary and drops
-    /// it, and the read returns no row in a heap that cannot hold eight parses at once.
+    /// pool of eight threads and on none: each row group's dictionary pruning parses its
+    /// dictionary and drops it, and the read returns no row in a heap that cannot hold eight
+    /// parses at once.
     @ParameterizedTest
     @ValueSource(ints = { 8, 0 })
-    void largeDictionariesOfEveryRowGroupProbeInAHeapSmallerThanTheirSum(int threads) throws IOException {
+    void largeDictionariesPruneEveryRowGroupInAHeapSmallerThanTheirSum(int threads) throws IOException {
         assertThat(Runtime.getRuntime().maxMemory()).isLessThan(8L * 2 * DICTIONARY_BYTES);
         System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
         byte[] file = RleExpansionFile.buildWide(1, ROW_GROUPS, DICTIONARY_BYTES, PAGE_VALUES);

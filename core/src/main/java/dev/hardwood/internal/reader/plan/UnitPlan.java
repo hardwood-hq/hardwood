@@ -24,8 +24,8 @@ import dev.hardwood.internal.reader.select.RowRanges;
 ///        which a scan finds
 /// @param dictionaryStart per decoded column, where its dictionary page starts, `0` for none to read
 /// @param firstDataPage per decoded column, where its first data page lies
-/// @param preloaded per decoded column, the dictionary the unit's pruning probe decoded, which its
-///        pages decode with instead of reading it again, `null` for none
+/// @param preloaded per decoded column, the dictionary the unit's dictionary pruning decoded, which
+///        its pages decode with instead of reading it again, `null` for none
 /// @param dictionaryEnd per decoded column, where such a dictionary's page ends, `0` for none
 /// @param ranges the unit's requests, coalesced across its columns
 public record UnitPlan(RowRanges matching, List<NeededPage>[] pages, long[] dictionaryStart,

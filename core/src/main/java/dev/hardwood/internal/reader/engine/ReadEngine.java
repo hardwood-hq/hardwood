@@ -34,9 +34,9 @@ import dev.hardwood.schema.FileSchema;
 /// The parts each own their state:
 ///
 /// - [FooterReader] reads the footers of the files after the first and lists them in order.
-/// - [RowGroupPlanner] moves each row group's [Unit] through its states: lists it, probes it,
-///   plans its pages and ranges once its page index has arrived, batches the units in order,
-///   and commits what pruning reports once the consumer reaches it.
+/// - [RowGroupPlanner] moves each row group's [Unit] through its states: lists it, prunes it by its
+///   Bloom filters and dictionaries, plans its pages and ranges once its page index has arrived,
+///   batches the units in order, and commits what pruning reports once the consumer reaches it.
 /// - [RangeFetcher] fetches each range the read requests ([RangeFetch]) and releases it once its
 ///   last reader is done.
 /// - [HeaderScanner] scans each column chunk without an OffsetIndex header by header.
@@ -164,7 +164,7 @@ public final class ReadEngine implements Closeable {
         JobScheduler.Position at = publisher.position(batchedTo);
         if (cells.allPlacementEnded()) {
             // no column takes a further page: nothing of a unit not batched starts, neither its
-            // probe, plan and index fetches nor a footer past it
+            // pruning, plan and index fetches nor a footer past it
             at = new JobScheduler.Position(at.need(), at.reach(), Math.min(at.end(), batchedTo - 1));
         }
         // footers start ahead of the file the read's data has reached, which F bounds, or of the

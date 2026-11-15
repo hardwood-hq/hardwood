@@ -26,10 +26,10 @@ import dev.hardwood.reader.FilterPredicate;
 /// determine whether a row group can be skipped — or read without per-row filtering.
 ///
 /// A leaf is decided in two steps. Its column chunk's statistics answer first, through
-/// [UnitStats#decide], which is the same decision [PageFilterEvaluator] asks of a page. The
-/// absence probes follow: a bloom filter or the chunk's dictionary can prove the leaf's literal
-/// absent from every row, which drops a row group whose bounds could not. Neither proves the
-/// dual, so neither ever raises a decision to [FilterDecision#ALWAYS_MATCHES].
+/// [UnitStats#decide], which is the same decision [PageFilterEvaluator] asks of a page.
+/// Bloom-filter and dictionary pruning follow: a bloom filter or the chunk's dictionary can prove
+/// the leaf's literal absent from every row, which drops a row group whose bounds could not.
+/// Neither proves the dual, so neither ever raises a decision to [FilterDecision#ALWAYS_MATCHES].
 ///
 /// The approach is conservative throughout: a column whose statistics are absent, partial or
 /// unusable is never dropped and never promised to match in full.
@@ -66,7 +66,7 @@ public class RowGroupFilterEvaluator {
     }
 
     /// The decision a row group's statistics and bloom filters reach. The read plans with a
-    /// [BloomFilterColumnRecorder], so on statistics alone, and sharpens the decision once it
+    /// [BloomFilterPruningPlan], so on statistics alone, and sharpens the decision once it
     /// reaches a row group it kept, through [#refineWithBloomFilters] and
     /// [#refineWithDictionaries].
     ///
@@ -79,9 +79,9 @@ public class RowGroupFilterEvaluator {
             FilterDecision decision = UnitStats.ChunkStats
                     .of(rowGroup, ResolvedPredicate.leafColumnIndex(leaf), readability)
                     .decide(leaf, logContext);
-            // Only a leaf the statistics left open reaches a probe: one they drop keeps a bloom
-            // filter from being read for a row group that is going anyway, and one they prove to
-            // match in full holds its literal in every row, so no filter can prove it absent.
+            // Only a leaf the statistics left open reaches a Bloom filter: one they drop keeps a
+            // bloom filter from being read for a row group that is going anyway, and one they prove
+            // to match in full holds its literal in every row, so no filter can prove it absent.
             if (decision == FilterDecision.MIGHT_MATCH && absent(leaf, bloomFilters, null)) {
                 decision = FilterDecision.CANNOT_MATCH;
             }
@@ -127,19 +127,20 @@ public class RowGroupFilterEvaluator {
         });
     }
 
-    /// Records in `recorder` the columns whose dictionary [#refineWithDictionaries] may consult for
-    /// a row group, after [#refineWithBloomFilters], as a dry run that reads nothing. A leaf
-    /// `leafDecisions` leaves open asks its column's Bloom filter first, as the evaluation does, and
-    /// a leaf whose column carries one does not record that column's dictionary: the filter says
-    /// "maybe" only where the literal is present, when the dictionary holds it too, or for a false
-    /// positive. A leaf no Bloom filter answers, as a NaN or `FLOAT16` literal, records it.
-    public static void recordDictionaryCandidates(ResolvedPredicate predicate, RowGroup rowGroup,
-            LeafDecisions leafDecisions, DictionaryColumnRecorder recorder) throws IOException {
+    /// Records in `plan` the columns whose dictionary [#refineWithDictionaries] may consult for a
+    /// row group, after [#refineWithBloomFilters], reading nothing: the plan of its dictionary
+    /// pruning. A leaf `leafDecisions` leaves open asks its column's Bloom filter first, as the
+    /// evaluation does, and a leaf whose column carries one does not record that column's
+    /// dictionary: the filter says "maybe" only where the literal is present, when the dictionary
+    /// holds it too, or for a false positive. A leaf no Bloom filter answers, as a NaN or `FLOAT16`
+    /// literal, records it.
+    public static void planDictionaryPruning(ResolvedPredicate predicate, RowGroup rowGroup,
+            LeafDecisions leafDecisions, DictionaryPruningPlan plan) throws IOException {
         fold(predicate, rowGroup, leaf -> {
             FilterDecision planned = leafDecisions.get(leaf);
             if (planned == FilterDecision.MIGHT_MATCH) {
-                recorder.nextLeaf();
-                absent(leaf, recorder, recorder);
+                plan.nextLeaf();
+                absent(leaf, plan, plan);
             }
             return planned;
         });
@@ -303,7 +304,7 @@ public class RowGroupFilterEvaluator {
             case ResolvedPredicate.IsNotNullPredicate ignored -> false;
             case ResolvedPredicate.EveryNonNullRowPredicate ignored -> false;
             case ResolvedPredicate.NoRowPredicate ignored -> false;
-            // Geospatial statistics are read before a leaf reaches a probe.
+            // Geospatial statistics are read before a leaf reaches a Bloom filter or dictionary.
             case ResolvedPredicate.GeospatialPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> throw notALeaf(leaf);
             case ResolvedPredicate.Or ignored -> throw notALeaf(leaf);
@@ -331,19 +332,19 @@ public class RowGroupFilterEvaluator {
                         : FilterDecision.MIGHT_MATCH;
     }
 
-    /// Reports a compound predicate reaching the per-leaf probes. [#decide] folds `AND` and `OR`
-    /// before either is asked about a literal, so this is a wiring mistake rather than anything a
-    /// file can cause.
+    /// Reports a compound predicate reaching the per-leaf Bloom-filter and dictionary tests.
+    /// [#decide] folds `AND` and `OR` before either is asked about a literal, so this is a wiring
+    /// mistake rather than anything a file can cause.
     private static IllegalArgumentException notALeaf(ResolvedPredicate predicate) {
-        return new IllegalArgumentException(
-                "Absence probes decide a leaf predicate, not " + predicate.getClass().getSimpleName());
+        return new IllegalArgumentException("Bloom filters and dictionaries decide a leaf predicate, not "
+                + predicate.getClass().getSimpleName());
     }
 
     /// Resolves the column's bloom filter, or `null` when no source is supplied or the column
     /// carries none. The read lives here rather than in [BloomFilterSupport] because the guards
     /// that decide whether it is worth doing — statistics did not already drop the row group, the
     /// operator is one a filter can answer — are here, and the `||` above keeps it from running
-    /// when an earlier probe has already proved the value absent.
+    /// when an earlier test has already proved the value absent.
     private static BloomFilter bloom(BloomFilterSource bloomFilters, int columnIndex) throws IOException {
         return bloomFilters == null ? null : bloomFilters.forColumn(columnIndex);
     }
