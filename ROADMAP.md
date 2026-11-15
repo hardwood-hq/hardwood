@@ -189,7 +189,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Implement `RowWriter` — the row-oriented layer over the columnar core, obtained from
   `ParquetFileWriter.rowWriter()` (see `_designs/WRITER_INPUT.md#rowwriter`)
 - [x] Implement `WriterConfig` (row-group row and buffer targets, page byte and row targets, per-column encoding policy,
-  codec, statistics truncation, precision-loss policy)
+  compression codec and level, statistics truncation, precision-loss policy)
 - [x] Implement `ColumnWriter` — the columnar entry point, obtained from
   `ParquetFileWriter.columnWriter()`, taking one aligned batch of typed arrays through
   `ColumnBatch`
@@ -207,7 +207,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Data page encoding and writing (`AUTO` dictionary-or-`PLAIN` per chunk, or a named
   per-column policy: `PLAIN`, the three delta encodings, `BYTE_STREAM_SPLIT`, `ALP`)
 - [x] Page compression (UNCOMPRESSED, GZIP, SNAPPY, ZSTD, LZ4_RAW, BROTLI; `LZ4`'s deprecated
-  Hadoop framing and `LZO` are refused at writer creation)
+  Hadoop framing and `LZO` are refused by `Compression.of`)
+- [x] Compression levels for ZSTD, GZIP, BROTLI and LZ4_RAW, set through `Compression` (#1530)
 - [x] Footer writing
 - [x] Footer key-value metadata, and `created_by` alongside it, set on `ParquetFileWriter`
   rather than `WriterConfig` (#1029)

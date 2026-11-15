@@ -26,7 +26,6 @@ import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PhysicalType;
@@ -41,6 +40,7 @@ import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -373,7 +373,7 @@ class ReadFailurePositionTest {
     private static byte[] write(FileSchema schema, ColumnEncoding encoding, Consumer<ColumnBatch> batch)
             throws Exception {
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .encoding(encoding)
                 .pageTargetRows(20)
                 .build();

@@ -44,6 +44,7 @@ import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnWriter;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -189,7 +190,7 @@ public class FlatWriteBenchmark {
                 .pageTargetBytes(PAGE_TARGET_BYTES)
                 .pageTargetRows(PAGE_TARGET_ROWS)
                 .rowGroupBufferTargetBytes(ROW_GROUP_TARGET_BYTES)
-                .codec(CompressionCodec.valueOf(codec))
+                .compression(Compression.of(CompressionCodec.valueOf(codec)))
                 .build();
         parquetJavaSchema = MessageTypeParser.parseMessageType(PARQUET_JAVA_SCHEMA);
         parquetJavaCodec = CompressionCodecName.valueOf(codec);

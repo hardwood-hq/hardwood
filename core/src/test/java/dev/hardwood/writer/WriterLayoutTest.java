@@ -30,7 +30,6 @@ import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageEncodingStats;
 import dev.hardwood.metadata.PageType;
@@ -168,7 +167,7 @@ class WriterLayoutTest {
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .pageTargetBytes(pageTarget)
-                .codec(CompressionCodec.UNCOMPRESSED)   // so a page's bytes are its values
+                .compression(Compression.uncompressed())   // so a page's bytes are its values
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -218,7 +217,7 @@ class WriterLayoutTest {
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.ALP)
                 .pageTargetBytes(pageTarget)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -287,7 +286,7 @@ class WriterLayoutTest {
                 .encoding(ColumnEncoding.PLAIN)
                 .pageTargetBytes(8 << 10)
                 .pageTargetRows(100_000)       // so the byte target alone cuts
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -395,7 +394,7 @@ class WriterLayoutTest {
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .rowGroupBufferTargetBytes(target)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -659,7 +658,7 @@ class WriterLayoutTest {
         int pageTarget = 1 << 20;
         WriterConfig config = WriterConfig.builder()
                 .pageTargetBytes(pageTarget)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .encoding(encoding)
                 .pageTargetRows(Integer.MAX_VALUE)
                 // The chunk has to outlast several pages for the cut to be observable at all.

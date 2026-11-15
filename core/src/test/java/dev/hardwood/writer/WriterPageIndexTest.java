@@ -33,7 +33,6 @@ import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
@@ -54,7 +53,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class WriterPageIndexTest {
 
     private static final WriterConfig UNCOMPRESSED = WriterConfig.builder()
-            .codec(CompressionCodec.UNCOMPRESSED)
+            .compression(Compression.uncompressed())
             .pageTargetRows(10_000)
             .build();
 
@@ -133,7 +132,7 @@ class WriterPageIndexTest {
             elements[e] = e;
         }
         // A byte target that every page outgrows part-way through a record.
-        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).pageTargetBytes(100).build();
+        WriterConfig config = WriterConfig.builder().compression(Compression.uncompressed()).pageTargetBytes(100).build();
         byte[] file = write(schema, config, batch -> batch.list("v", offsets).ints("v.list.element", elements));
 
         Index index = index(file, 0, 0);
@@ -159,7 +158,7 @@ class WriterPageIndexTest {
             offsets[r + 1] = offsets[r] + (r % 5 == 0 ? 1_000 : 3);
         }
         int[] elements = new int[offsets[records]];
-        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).pageTargetBytes(100).build();
+        WriterConfig config = WriterConfig.builder().compression(Compression.uncompressed()).pageTargetBytes(100).build();
         byte[] file = write(schema, config, batch -> batch.list("v", offsets).ints("v.list.element", elements));
 
         Index index = index(file, 0, 0);
@@ -179,7 +178,7 @@ class WriterPageIndexTest {
             offsets[r + 1] = offsets[r] + 3;
         }
         int[] elements = new int[offsets[records]];
-        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).pageTargetRows(250).build();
+        WriterConfig config = WriterConfig.builder().compression(Compression.uncompressed()).pageTargetRows(250).build();
         byte[] file = write(schema, config, batch -> batch.list("v", offsets).ints("v.list.element", elements));
 
         assertThat(index(file, 0, 0).offsets().pageLocations()).extracting(PageLocation::firstRowIndex)
@@ -386,7 +385,7 @@ class WriterPageIndexTest {
     @Test
     void placesThePageIndexBetweenTheLastRowGroupAndTheFooter() throws Exception {
         int[] values = new int[30_000];
-        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED)
+        WriterConfig config = WriterConfig.builder().compression(Compression.uncompressed())
                 .rowGroupTargetRows(10_000).build();
         byte[] file = write(ints(RepetitionType.REQUIRED), config, batch -> batch.ints(0, values));
 

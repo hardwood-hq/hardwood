@@ -19,7 +19,6 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.BinaryValues;
@@ -30,6 +29,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -117,7 +117,7 @@ class ConcurrentPlainBinaryFillTest {
         }
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.PLAIN)
-                .codec(CompressionCodec.GZIP)
+                .compression(Compression.gzip())
                 .pageTargetRows(pageRows)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

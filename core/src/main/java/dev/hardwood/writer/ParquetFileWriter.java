@@ -166,14 +166,14 @@ public final class ParquetFileWriter implements Closeable {
         this.shredder = new RecordShredder(schema);
         boolean multiprocessor = Runtime.getRuntime().availableProcessors() > 1;
         this.appendsInParallel = schema.getColumnCount() > 1 && multiprocessor;
-        this.handsOffPages = config.codec() != CompressionCodec.UNCOMPRESSED && multiprocessor;
+        this.handsOffPages = config.compression().codec() != CompressionCodec.UNCOMPRESSED && multiprocessor;
         this.compressor = compressor;
         this.ranges = LogicalTypeValueRange.forSchema(schema);
         // One buffer serves every row group: flushing it resets it in place, so the writer's
         // largest allocation is made once per file rather than once per row group.
         this.current = new RowGroupBuffer(schema, config.pageTargetBytes(), config.pageTargetRows(),
                 config.rowGroupBufferTargetBytes(), config.rowGroupTargetRows(), encodings,
-                config.statisticsTruncationLength(), compressor, config.codec(), bloomFilterFpps);
+                config.statisticsTruncationLength(), compressor, config.compression().codec(), bloomFilterFpps);
     }
 
     /// The bytes the open row group retains. Exposed to the tests that hold this number against a
@@ -215,8 +215,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
     /// @throws UnsupportedOperationException if the schema has a column of an unsupported
-    ///         physical type, a shape the writer cannot produce, or the configured codec cannot
-    ///         be written
+    ///         physical type, a shape the writer cannot produce, or the configured codec's library
+    ///         is missing
     /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
     ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
     ///         its physical type cannot carry or no value can be written for; or an encoding
@@ -224,7 +224,7 @@ public final class ParquetFileWriter implements Closeable {
     ///         or a Bloom filter names a column the schema does not have, or a `BOOLEAN` column
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
-        return create(out, schema, config, null, () -> new CompressorFactory().getCompressor(config.codec()));
+        return create(out, schema, config, null, () -> new CompressorFactory().getCompressor(config.compression().codec(), config.compression().level()));
     }
 
     /// Opens a writer that appends and encodes column chunks on the thread pool of `context`,
@@ -240,8 +240,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
     /// @throws UnsupportedOperationException if the schema has a column of an unsupported
-    ///         physical type, a shape the writer cannot produce, or the configured codec cannot
-    ///         be written
+    ///         physical type, a shape the writer cannot produce, or the configured codec's library
+    ///         is missing
     /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
     ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
     ///         its physical type cannot carry or no value can be written for; or an encoding
@@ -251,7 +251,7 @@ public final class ParquetFileWriter implements Closeable {
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config,
             HardwoodContext context) throws IOException {
         HardwoodContextImpl impl = (HardwoodContextImpl) Objects.requireNonNull(context, "context");
-        return create(out, schema, config, impl, () -> new CompressorFactory().getCompressor(config.codec()));
+        return create(out, schema, config, impl, () -> new CompressorFactory().getCompressor(config.compression().codec(), config.compression().level()));
     }
 
     /// Opens a writer over a caller-supplied compressor.

@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import dev.hardwood.internal.compression.CodecLibraries;
-import dev.hardwood.metadata.CompressionCodec;
 
 /// Tuning knobs for [ParquetFileWriter].
 ///
@@ -41,7 +40,7 @@ import dev.hardwood.metadata.CompressionCodec;
 /// the row target. See [ParquetFileWriter] for what bounds memory.
 ///
 /// How a column's values are stored is a [ColumnEncoding], set file-wide or per leaf column;
-/// how the resulting page bodies are compressed is the [CompressionCodec]. Both are configured
+/// how the resulting page bodies are compressed is a [Compression]. Both are configured
 /// here rather than on the schema.
 ///
 /// A column can carry a Bloom filter in every row group, which lets a reader skip a row group
@@ -75,11 +74,12 @@ public final class WriterConfig {
     /// 64 bytes are truncated and flagged inexact.
     public static final int DEFAULT_STATISTICS_TRUNCATION_LENGTH = 64;
 
-    /// Default page compression codec: `ZSTD` when the zstd-jni library is on the classpath,
-    /// otherwise `UNCOMPRESSED`. Choosing a codec explicitly through [Builder#codec] still
-    /// requires that codec's library and fails at writer creation when it is missing; this
-    /// default only avoids imposing the ZSTD dependency on callers who did not ask to compress.
-    public static final CompressionCodec DEFAULT_CODEC = defaultCodec();
+    /// Default page compression: `ZSTD` at its default level when the zstd-jni library is on the
+    /// classpath, otherwise `UNCOMPRESSED`. Choosing a codec explicitly through
+    /// [Builder#compression] still requires that codec's library and fails at writer creation
+    /// when it is missing; this default only avoids imposing the ZSTD dependency on callers who
+    /// did not ask to compress.
+    public static final Compression DEFAULT_COMPRESSION = defaultCompression();
 
     /// Default precision-loss policy: reject a value the column cannot hold exactly, rather
     /// than silently dropping the digits that do not fit.
@@ -100,7 +100,7 @@ public final class WriterConfig {
     private final Map<String, ColumnEncoding> columnEncodings;
     private final Map<String, Double> bloomFilters;
     private final int statisticsTruncationLength;
-    private final CompressionCodec codec;
+    private final Compression compression;
     private final PrecisionLossPolicy precisionLossPolicy;
 
     private WriterConfig(Builder builder) {
@@ -112,7 +112,7 @@ public final class WriterConfig {
         this.columnEncodings = Map.copyOf(builder.columnEncodings);
         this.bloomFilters = Map.copyOf(builder.bloomFilters);
         this.statisticsTruncationLength = builder.statisticsTruncationLength;
-        this.codec = builder.codec;
+        this.compression = builder.compression;
         this.precisionLossPolicy = builder.precisionLossPolicy;
     }
 
@@ -179,9 +179,9 @@ public final class WriterConfig {
         return statisticsTruncationLength;
     }
 
-    /// The codec each page body is compressed with.
-    public CompressionCodec codec() {
-        return codec;
+    /// How each page body is compressed.
+    public Compression compression() {
+        return compression;
     }
 
     /// What [RowWriter] does with a value carrying more precision than its column can hold.
@@ -191,10 +191,10 @@ public final class WriterConfig {
 
     /// `ZSTD` when its library is loadable, otherwise `UNCOMPRESSED`. The class is only probed
     /// for presence, not initialized, so picking the default never triggers the native load.
-    private static CompressionCodec defaultCodec() {
+    private static Compression defaultCompression() {
         return CodecLibraries.Library.ZSTD.isPresent()
-                ? CompressionCodec.ZSTD
-                : CompressionCodec.UNCOMPRESSED;
+                ? Compression.zstd()
+                : Compression.uncompressed();
     }
 
     /// Builder for [WriterConfig].
@@ -208,7 +208,7 @@ public final class WriterConfig {
         private final Map<String, ColumnEncoding> columnEncodings = new LinkedHashMap<>();
         private final Map<String, Double> bloomFilters = new LinkedHashMap<>();
         private int statisticsTruncationLength = DEFAULT_STATISTICS_TRUNCATION_LENGTH;
-        private CompressionCodec codec = DEFAULT_CODEC;
+        private Compression compression = DEFAULT_COMPRESSION;
         private PrecisionLossPolicy precisionLossPolicy = DEFAULT_PRECISION_LOSS_POLICY;
 
         private Builder() {
@@ -356,22 +356,15 @@ public final class WriterConfig {
             return this;
         }
 
-        /// Sets the codec each page body is compressed with; must be non-null.
+        /// Sets how each page body is compressed; must be non-null. See [Compression] for the
+        /// codecs and their levels.
         ///
-        /// `UNCOMPRESSED`, `GZIP`, `SNAPPY`, `ZSTD`, `LZ4_RAW` and `BROTLI` are written.
-        /// Everything but the first two needs its library on the classpath, which is checked
-        /// when the writer is created rather than here.
-        ///
-        /// The other two members of [CompressionCodec] are not produced, and neither is
-        /// waiting on a later release. `LZ4` names the Hadoop framing the format deprecated in
-        /// favour of `LZ4_RAW`; files already written with it are still read, so the refusal is
-        /// on this side only. `LZO` has no maintained JVM implementation and is refused in both
-        /// directions. Asking for either fails when the writer is created.
-        public Builder codec(CompressionCodec codec) {
-            if (codec == null) {
-                throw new IllegalArgumentException("codec must not be null");
+        /// A codec's library is required when the writer is created rather than here.
+        public Builder compression(Compression compression) {
+            if (compression == null) {
+                throw new IllegalArgumentException("compression must not be null");
             }
-            this.codec = codec;
+            this.compression = compression;
             return this;
         }
 

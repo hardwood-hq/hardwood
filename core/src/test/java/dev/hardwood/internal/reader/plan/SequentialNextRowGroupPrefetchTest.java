@@ -17,12 +17,12 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.thrift.FooterRewriter;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -79,7 +79,7 @@ class SequentialNextRowGroupPrefetchTest {
             schemaBuilder.addColumn(column, PhysicalType.INT64, RepetitionType.REQUIRED);
         }
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .rowGroupTargetRows(ROWS_PER_ROW_GROUP)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

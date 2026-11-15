@@ -19,6 +19,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - The native CLI is no longer published for macOS on Intel; on those machines the CLI runs from the Docker image ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
 - `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()`; `buffer().remaining()` gives the file's length ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
+- `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, the getter `codec()` by `compression()`, and `WriterConfig.DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 
 **Deprecations:**
 
@@ -38,6 +39,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - `AbstractOutputFile` is a base for implementing `OutputFile` that enforces its lifecycle; the bundled outputs extend it ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 - A row reader projecting structs that hold no list, map or variant reads them without decoding nested records, as it reads top-level columns ([#475](https://github.com/hardwood-hq/hardwood/issues/475))
 - Row readers resolve most field names passed as string literals, or taken from the file's schema, by comparing references rather than characters ([#681](https://github.com/hardwood-hq/hardwood/issues/681))
+- `Compression` sets the writer's compression level for `ZSTD`, `GZIP`, `BROTLI` and `LZ4_RAW`, as in `Compression.zstd().level(9)` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 
 **Bug fixes:**
 

@@ -25,7 +25,6 @@ import org.junit.jupiter.api.io.TempDir;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -559,7 +558,7 @@ class RowWriterTryWriteRowTest {
 
     private static WriterConfig flushPerRecord() {
         return WriterConfig.builder()
-                .codec(CompressionCodec.GZIP)
+                .compression(Compression.gzip())
                 .rowGroupTargetRows(1)
                 .build();
     }

@@ -9,8 +9,6 @@ package dev.hardwood.writer;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.metadata.CompressionCodec;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -27,22 +25,24 @@ class WriterConfigTest {
         assertThat(config.pageTargetBytes()).isEqualTo(WriterConfig.DEFAULT_PAGE_TARGET_BYTES);
         assertThat(config.rowGroupBufferTargetBytes()).isEqualTo(WriterConfig.DEFAULT_ROW_GROUP_BUFFER_TARGET_BYTES);
         assertThat(config.rowGroupTargetRows()).isEqualTo(WriterConfig.DEFAULT_ROW_GROUP_TARGET_ROWS);
-        assertThat(config.codec()).isEqualTo(WriterConfig.DEFAULT_CODEC);
+        assertThat(config.compression()).isEqualTo(WriterConfig.DEFAULT_COMPRESSION);
         // zstd-jni is on the build classpath, so the classpath-conditional default resolves to
-        // ZSTD here; it degrades to UNCOMPRESSED only when the library is absent.
-        assertThat(WriterConfig.DEFAULT_CODEC).isEqualTo(CompressionCodec.ZSTD);
+        // ZSTD at its default level here; it degrades to UNCOMPRESSED only when the library is
+        // absent.
+        assertThat(WriterConfig.DEFAULT_COMPRESSION).isEqualTo(Compression.zstd());
     }
 
     @Test
-    void codecOverrideIsRetained() {
-        assertThat(WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).build().codec())
-                .isEqualTo(CompressionCodec.UNCOMPRESSED);
+    void compressionOverrideIsRetained() {
+        assertThat(WriterConfig.builder().compression(Compression.gzip().level(9)).build().compression())
+                .isEqualTo(Compression.gzip().level(9));
     }
 
     @Test
-    void rejectsNullCodec() {
-        assertThatThrownBy(() -> WriterConfig.builder().codec(null))
-                .isInstanceOf(IllegalArgumentException.class);
+    void rejectsNullCompression() {
+        assertThatThrownBy(() -> WriterConfig.builder().compression(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("compression must not be null");
     }
 
     @Test

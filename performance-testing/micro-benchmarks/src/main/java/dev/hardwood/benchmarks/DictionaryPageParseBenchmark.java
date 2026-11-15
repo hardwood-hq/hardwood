@@ -38,12 +38,12 @@ import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -172,7 +172,7 @@ public class DictionaryPageParseBenchmark {
         // codec squeezed it down to.
         WriterConfig config = WriterConfig.builder()
                 .rowGroupTargetRows(ROWS)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
 
         byte[][] values = new byte[ROWS][];

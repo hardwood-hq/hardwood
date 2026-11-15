@@ -27,6 +27,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.OutputFile;
@@ -677,8 +678,27 @@ class WriterDifferentialTest {
     void duckDbReadsEveryWritableCodec(CompressionCodec codec, @TempDir Path dir) throws Exception {
         // DuckDB shares no code with hardwood's compressors, so its agreement proves the
         // compressed bytes are the codec's own form rather than merely one hardwood's reader
-        // accepts — the framing question every one of these codecs poses. Dictionary encoding is
-        // disabled to force compressible PLAIN page bodies.
+        // accepts — the framing question every one of these codecs poses.
+        assertDuckDbReadsCompressed(WriterConfig.builder().encoding(ColumnEncoding.PLAIN).compression(Compression.of(codec)).build(),
+                codec.toString(), dir);
+    }
+
+    @ParameterizedTest(name = "{0} {1}")
+    @CsvSource({ "ZSTD, -5", "ZSTD, 22", "GZIP, 0", "GZIP, 9", "BROTLI, 0", "BROTLI, 5", "LZ4_RAW, 17" })
+    void duckDbReadsNonDefaultCompressionLevels(CompressionCodec codec, int level, @TempDir Path dir)
+            throws Exception {
+        // The one independent reader of BROTLI here, parquet-java lacking the codec; a level
+        // changes which of a codec's block forms the body is made of.
+        assertDuckDbReadsCompressed(
+                WriterConfig.builder().encoding(ColumnEncoding.PLAIN)
+                        .compression(((Compression.Leveled) Compression.of(codec)).level(level)).build(),
+                codec + " level " + level, dir);
+    }
+
+    /// Writes two compressible `INT32` columns under `config` and checks DuckDB's count, sum and
+    /// max of one of them. Dictionary encoding is disabled by the callers to force compressible
+    /// PLAIN page bodies.
+    private static void assertDuckDbReadsCompressed(WriterConfig config, String label, Path dir) throws Exception {
         int n = 20_000;
         int[] v = new int[n];
         int[] r = new int[n];
@@ -691,7 +711,6 @@ class WriterDifferentialTest {
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
-        WriterConfig config = WriterConfig.builder().encoding(ColumnEncoding.PLAIN).codec(codec).build();
         Path file = dir.resolve("compressed.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, r).ints(1, v));
@@ -709,9 +728,9 @@ class WriterDifferentialTest {
                 sum += value;
                 max = Math.max(max, value);
             }
-            assertThat(rs.getLong("n")).as("%s row count", codec).isEqualTo(n);
-            assertThat(rs.getLong("s")).as("%s value sum", codec).isEqualTo(sum);
-            assertThat(rs.getLong("mx")).as("%s value max", codec).isEqualTo(max);
+            assertThat(rs.getLong("n")).as("%s row count", label).isEqualTo(n);
+            assertThat(rs.getLong("s")).as("%s value sum", label).isEqualTo(sum);
+            assertThat(rs.getLong("mx")).as("%s value max", label).isEqualTo(max);
         }
     }
 

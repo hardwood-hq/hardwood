@@ -26,7 +26,6 @@ import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PhysicalType;
@@ -46,7 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WriterSizeStatisticsTest {
 
     private static final WriterConfig TWO_ROW_PAGES = WriterConfig.builder()
-            .codec(CompressionCodec.UNCOMPRESSED)
+            .compression(Compression.uncompressed())
             .pageTargetRows(2)
             .build();
 
@@ -140,7 +139,7 @@ class WriterSizeStatisticsTest {
             fixed[r] = new byte[3];
             pageBytes[r / 100] += nulls[r] ? 0 : strings[r].length;
         }
-        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED)
+        WriterConfig config = WriterConfig.builder().compression(Compression.uncompressed())
                 .pageTargetRows(100).encoding("s", encoding).build();
         byte[] file = write(schema, config, batch -> batch.bytes(0, strings, nulls).fixed(1, fixed));
 
