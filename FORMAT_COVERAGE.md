@@ -61,13 +61,13 @@ writer to keep every value's nanoseconds within one day; #1417.
 | 1 | columns | ✅ | |
 | 2 | total_byte_size | ✅ | |
 | 3 | num_rows | ✅ | |
-| 4 | sorting_columns | ❌ | declared sort order not exploited |
+| 4 | sorting_columns | ❌ | not read (#483); written from `WriterConfig.sortingColumns`, the order checked as rows arrive (#1530) |
 | 5 | file_offset | ❌ | |
 | 6 | total_compressed_size | ❌ | |
 | 7 | ordinal | ❌ | |
 
 ### SortingColumn
-All fields (column_idx, descending, nulls_first) ❌ — struct not read.
+All fields (column_idx, descending, nulls_first) ❌ — struct not read; the writer writes all three (#1530).
 
 ### ColumnChunk
 | id | field | status | notes |

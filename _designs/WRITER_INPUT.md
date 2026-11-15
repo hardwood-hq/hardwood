@@ -1,6 +1,6 @@
 # Writer input
 
-Describes how values enter the writer: the schema builder and which schema shapes the writer can produce, the `ColumnBatch` contract (column-by-column input, nulls, nested layers and the rules a batch must satisfy), the shredding of that input into repetition and definition levels, which logical-type annotations are legal on which physical types and the value ranges they impose, and the row-oriented `RowWriter` layered over the columnar path.
+Describes how values enter the writer: the schema builder and which schema shapes the writer can produce, the `ColumnBatch` contract (column-by-column input, nulls, nested layers and the rules a batch must satisfy), the shredding of that input into repetition and definition levels, which logical-type annotations are legal on which physical types and the value ranges they impose, the declared sort order rows are held to, and the row-oriented `RowWriter` layered over the columnar path.
 
 Related documents:
 
@@ -248,6 +248,20 @@ A slot an absent ancestor makes unreachable is not a value either API checks. Th
 An unannotated or unbounded column pays one `isBounded()` test per setter call and nothing per value. A bounded integral column pays two compares per value. A binary `DECIMAL` constructs a `BigInteger` only for a value long enough to possibly exceed the precision: a value of `L` bytes cannot exceed `10^p - 1` when `2^(8L-1) <= 10^p - 1`, so the longest always-safe length is derived once per column from the bound's bit length.
 
 Tests: `WriterAnnotationRangeTest`, `WriterReaderSymmetryTest`.
+
+## Declared sort order
+
+`WriterConfig.sortingColumns` declares the order every row group's rows are in, and each row group's footer entry carries it as `sorting_columns`, a leaf column index per entry with its direction and null placement. A reader can then skip a sort or narrow a range lookup on the file's word, so the writer does not take the declaration on the caller's word: it checks every row against the row before it, and fails the write at the first row out of order. A declaration the data does not keep would reach a reader as a wrong answer rather than an error.
+
+**What may be declared.** A sorting column is a leaf that repeats nowhere on its path, so it holds one value per row, and whose annotation names an order (`AnnotationKind.namesAnOrder`), the same rule that decides whether its statistics carry bounds. A column inside a `STRUCT` qualifies; a null struct makes the leaf null for that row. Both are checked when the writer is created, with the other path-keyed options.
+
+**The order.** Rows compare lexicographically over the declared columns. Each column compares in its column order, the one its statistics use (signed or unsigned integers by annotation, `DECIMAL` by its number, `FLOAT16` as a float, other binary types byte by byte), so the declaration and the bounds a reader prunes with cannot disagree. parquet-format leaves `NaN` and signed zero unspecified for sorting; the check orders `NaN` after every number and treats `-0.0` as equal to `0.0`, as SQL engines sort. Null placement is part of the declaration, with no default, since engines disagree on one.
+
+**Where the check lives.** `SortOrderCheck` runs in `RowGroupBuffer.append`, on the calling thread, once per slice and before the slice reaches any column, so a slice out of order is appended to none. It walks one sorting column at a time across the slice: the first column compares every row with its predecessor, and each later column only the rows the columns before it left tied, so the cost follows the number of ties rather than the number of declared columns. A sorting column's value for a row sits at the row's own position in its source, and its nulls are the shredder's `presence`, which already folds in struct nulls. The previous row is carried across slices and batches, detached from the caller's arrays at the end of each slice, and dropped when a row group is cut, the order being declared per row group.
+
+A violation is an `IllegalArgumentException` naming the row and row group, the column the rows first differ on in the wrong direction, and the declaration. It fails the writer like any rejected batch. Under `RowWriter` it surfaces when the staged batch holding the row is written, which may be a later `writeRow`, `endRowGroup` or `close`, so it is not a per-record `RowWriteResult.Rejected`.
+
+Tests: `WriterSortingColumnsTest`.
 
 ## RowWriter
 

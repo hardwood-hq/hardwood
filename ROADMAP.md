@@ -154,7 +154,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Implement `RowGroup` class
 - [x] Row group metadata serialization
 - [x] Row group metadata deserialization
-- [ ] Sorting column tracking (optional; non-goal for write support)
+- [x] Sorting columns written, the declared order checked as rows arrive (#1530); read side is #483
 
 ---
 
@@ -189,7 +189,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Implement `RowWriter` — the row-oriented layer over the columnar core, obtained from
   `ParquetFileWriter.rowWriter()` (see `_designs/WRITER_INPUT.md#rowwriter`)
 - [x] Implement `WriterConfig` (row-group row and buffer targets, page byte and row targets, per-column encoding policy,
-  compression codec and level, statistics truncation, precision-loss policy)
+  compression codec and level, statistics truncation, precision-loss policy, sorting columns)
 - [x] Implement `ColumnWriter` — the columnar entry point, obtained from
   `ParquetFileWriter.columnWriter()`, taking one aligned batch of typed arrays through
   `ColumnBatch`

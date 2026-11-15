@@ -44,6 +44,8 @@ public final class RowGroupBuffer {
     /// than two: a caller's row target above the structural ceiling is the ceiling.
     private final int targetRows;
     private int rowCount;
+    /// Holds each row group to its declared sort order; `null` where none is declared.
+    private final SortOrderCheck sortOrder;
     private long peakRetainedBytes;
 
     /// Writes out and resets the buffered row group, which [RowGroupBuffer#append] calls to cut
@@ -66,12 +68,14 @@ public final class RowGroupBuffer {
     /// @param codec the codec `compressor` applies, recorded in each chunk's metadata
     /// @param bloomFilterFpps each leaf column's Bloom filter false-positive probability, in schema
     ///        order, `0` for a column without one
+    /// @param sortOrder holds each row group to its declared sort order, or `null` where none is
+    ///        declared
     public RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                           long rowGroupTargetRows, ColumnEncoding[] encodings,
                           int statisticsTruncationLength, Compressor compressor, CompressionCodec codec,
-                          double[] bloomFilterFpps) {
+                          double[] bloomFilterFpps, SortOrderCheck sortOrder) {
         this(schema, pageTargetBytes, pageTargetRows, rowGroupBufferTargetBytes, rowGroupTargetRows, encodings,
-                statisticsTruncationLength, compressor, codec, bloomFilterFpps, MAX_STORE_CAPACITY);
+                statisticsTruncationLength, compressor, codec, bloomFilterFpps, sortOrder, MAX_STORE_CAPACITY);
     }
 
     /// A buffer whose column chunks are capped at `storeCapacity` rather than at
@@ -80,8 +84,10 @@ public final class RowGroupBuffer {
     /// out of a test's reach, so the tests of the cut it forces lower it instead.
     RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                    long rowGroupTargetRows, ColumnEncoding[] encodings, int statisticsTruncationLength,
-                   Compressor compressor, CompressionCodec codec, double[] bloomFilterFpps, int storeCapacity) {
+                   Compressor compressor, CompressionCodec codec, double[] bloomFilterFpps, SortOrderCheck sortOrder,
+                   int storeCapacity) {
         this.schema = schema;
+        this.sortOrder = sortOrder;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
         this.targetBytes = rowGroupBufferTargetBytes;
         this.targetRows = (int) Math.min(rowGroupTargetRows, maxRows(storeCapacity));
@@ -169,9 +175,14 @@ public final class RowGroupBuffer {
         return retainedBytes();
     }
 
-    /// Shreds the same record range into every column and advances the row count.
+    /// Checks a record range against the declared sort order, then shreds it into every column
+    /// and advances the row count. The check runs first, so a range out of order is appended to
+    /// no column.
     private void appendRecords(RecordShredder shredder, ColumnSource[] sources, ParallelAppend parallel, int from,
                                int count) {
+        if (sortOrder != null) {
+            sortOrder.check(shredder, sources, from, count, rowCount);
+        }
         if (parallel == null) {
             for (int c = 0; c < columns.length; c++) {
                 columns[c].append(shredder, sources[c], c, from, count);
@@ -309,6 +320,9 @@ public final class RowGroupBuffer {
             column.reset();
         }
         rowCount = 0;
+        if (sortOrder != null) {
+            sortOrder.startRowGroup();
+        }
     }
 
     /// Encodes the buffered column chunks, on up to `workers` tasks of `executor` besides the

@@ -147,10 +147,52 @@ WriterConfig config = WriterConfig.builder()
 | `bloomFilter(String, double)` | — | Writes a Bloom filter for one leaf column at the given false-positive probability. Must be strictly between 0 and 1. |
 | `statisticsTruncationLength(int)` | `64` | Longest `BYTE_ARRAY` `min` / `max` statistics bound. A longer bound is truncated and flagged inexact. Must be positive. |
 | `precisionLossPolicy(PrecisionLossPolicy)` | `REJECT` | What the row-oriented layer does with a value carrying more precision than its column can hold. |
+| `sortingColumns(SortingColumn...)`, `sortingColumns(List<SortingColumn>)` | none | The order every row group's rows are sorted in, recorded in each row group's metadata and checked as rows are written. See [Sorted Rows](#sorted-rows). |
 
 A page is cut at whichever of the two page targets is reached first, and in any case at 2,147,483,638 values and nulls, the most a reader takes in one page; a single record holding more is a page of its own. A row group is cut at whichever of the two row-group targets is reached first.
 
-Each option has a getter that reads the configured value back: `pageTargetBytes()`, `pageTargetRows()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `compression()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`, and for the Bloom filter setters, `bloomFilters()`, a map from column path to probability. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
+Each option has a getter that reads the configured value back: `pageTargetBytes()`, `pageTargetRows()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `compression()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, `sortingColumns()`, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`, and for the Bloom filter setters, `bloomFilters()`, a map from column path to probability. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
+
+## Sorted Rows
+
+`sortingColumns` declares the order the rows of every row group are in: by the first column, rows equal there by the second, and so on. Each row group's metadata records the declaration as `sorting_columns`. A second call replaces the first.
+
+```java
+import static dev.hardwood.metadata.SortingColumn.NullOrder.NULLS_LAST;
+
+WriterConfig config = WriterConfig.builder()
+        .sortingColumns(
+                SortingColumn.ascending("vendor", NULLS_LAST),
+                SortingColumn.descending("pickup_ts", NULLS_LAST))
+        .build();
+```
+
+| Factory | Order |
+|---------|-------|
+| `SortingColumn.ascending(String columnPath, NullOrder nullOrder)` | Least to greatest |
+| `SortingColumn.descending(String columnPath, NullOrder nullOrder)` | Greatest to least |
+
+`NullOrder` is `NULLS_FIRST` or `NULLS_LAST`. A column is named by its dotted leaf path, as for `encoding(String, ColumnEncoding)`.
+
+Values compare in their column's order, the order its statistics use:
+
+| Column | Order |
+|--------|-------|
+| `INT32`, `INT64` | Signed; unsigned under an unsigned `INT` annotation |
+| `FLOAT`, `DOUBLE`, `FLOAT16` | Numeric; `NaN` after every number, `-0.0` equal to `0.0` |
+| `BOOLEAN` | `false` before `true` |
+| `DECIMAL` on `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` | By the number it holds |
+| Other `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | Unsigned, byte by byte; a prefix before the values it starts |
+
+The writer checks the order within each row group as rows are written. The first row that sorts before the row ahead of it fails the write with an `IllegalArgumentException` naming the row, its row group and the column, and the writer accepts no more rows. Under `RowWriter`, rows are checked when their staged batch is written, which can be a later `writeRow`, `endRowGroup()` or `close()`. A new row group starts the order again.
+
+When the writer is created, it rejects a sorting column that:
+
+- names no leaf column of the schema;
+- is repeated, or sits inside a list or map;
+- has a type with no defined order: `INTERVAL`, `UNKNOWN`, `GEOMETRY` or `GEOGRAPHY`.
+
+The builder rejects a `null` entry and a column declared twice.
 
 ## Encodings
 
@@ -403,7 +445,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 | Exception | When |
 |---|---|
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); `Compression.of` given a refused codec (`LZ4`, `LZO`); a codec whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
-| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `FILE` value that is not valid, or that sets a field its group has no child for; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1); a compression level outside the codec's range |
+| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `FILE` value that is not valid, or that sets a field its group has no child for; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1); a compression level outside the codec's range; a row out of the declared sort order; a sorting column naming no leaf column, a repeated one or one whose type has no defined order, or declared twice |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; creating a writer on an `OutputFile` another writer has already used; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded; flushing a row group after the `HardwoodContext` passed to `create` has been closed |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |

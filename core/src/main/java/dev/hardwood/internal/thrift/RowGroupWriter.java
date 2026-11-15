@@ -7,6 +7,9 @@
  */
 package dev.hardwood.internal.thrift;
 
+import java.util.List;
+
+import dev.hardwood.internal.metadata.SortingColumnIndex;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
@@ -15,6 +18,11 @@ import dev.hardwood.metadata.RowGroup;
 public class RowGroupWriter {
 
     public static void write(ThriftCompactWriter writer, RowGroup rowGroup) {
+        write(writer, rowGroup, List.of());
+    }
+
+    /// Writes `rowGroup` with the order its rows are sorted in, which is omitted where empty.
+    public static void write(ThriftCompactWriter writer, RowGroup rowGroup, List<SortingColumnIndex> sortingColumns) {
         short saved = writer.pushFieldIdContext();
         try {
             // 1: columns (list<ColumnChunk>)
@@ -31,6 +39,12 @@ public class RowGroupWriter {
             // 3: num_rows
             writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I64);
             writer.writeI64(rowGroup.numRows());
+
+            // 4: sorting_columns (optional list<SortingColumn>)
+            if (!sortingColumns.isEmpty()) {
+                writer.writeFieldBegin(4, ThriftCompactConstants.FieldType.LIST);
+                SortingColumnWriter.writeList(writer, sortingColumns);
+            }
 
             writer.writeFieldStop();
         }
