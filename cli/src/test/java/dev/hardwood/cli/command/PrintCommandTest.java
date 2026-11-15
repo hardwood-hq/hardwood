@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.cli.dive.internal.Plurals;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -208,5 +209,22 @@ class PrintCommandTest implements PrintCommandContract {
                             new byte[19] }));
         }
         return file;
+    }
+
+    /// Rows printed before a read failure stay on standard output, and the error names
+    /// how many there are.
+    @Test
+    void readFailureCountsPrintedRows(@TempDir Path tempDir) throws Exception {
+        Path file = CorruptFiles.withBadLastRowGroup(tempDir);
+
+        Cli.Result result = Cli.launch("print", "-f", file.toString());
+
+        // Every table line but the header's is a row; the separators start with `+`.
+        long rows = Math.max(0, result.output().lines().filter(line -> line.startsWith("|")).count() - 1);
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo(rows == 0
+                ? CorruptFiles.CRC_FAILURE
+                : CorruptFiles.CRC_FAILURE + "\nPrinted " + Plurals.format(rows, "row", "rows")
+                        + " before the failure; the output is incomplete.");
     }
 }

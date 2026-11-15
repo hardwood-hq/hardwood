@@ -10,6 +10,7 @@ package dev.hardwood.cli.command;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -22,6 +23,7 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.dive.internal.Plurals;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.cli.internal.ValueFormatter;
@@ -74,6 +76,14 @@ public class ConvertCommand implements Command<CommandInvocation> {
     @Option(name = "null-string", description = "CSV field to write for a null value (default: an empty field). CSV output only.")
     String nullString;
 
+    private static final long NOT_STARTED = -1;
+
+    /// Rows written to the output so far, or [#NOT_STARTED] before the output is opened.
+    private long rowsWritten = NOT_STARTED;
+
+    /// The writer the conversion goes to, once opened.
+    private PrintWriter output;
+
     @Override
     public CommandResult execute(CommandInvocation ci) {
         return logFileMixin.run(this::run);
@@ -97,31 +107,72 @@ public class ConvertCommand implements Command<CommandInvocation> {
             List<SchemaNode> fields = RowTable.projectedFields(fileSchema, projection);
             Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf = projectedChildren(fileSchema, projection);
 
-            PrintWriter out = openOutput();
+            output = openOutput();
+            if (output == null) {
+                return CommandResult.FAILURE;
+            }
             String effectiveNullString = nullString == null ? "" : nullString;
+            rowsWritten = 0;
             try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, window)) {
                 switch (format) {
-                    case CSV -> writeCsv(out, fields, rowReader, childrenOf, effectiveNullString);
-                    case JSON -> writeJson(out, fields, rowReader);
+                    case CSV -> writeCsv(output, fields, rowReader, childrenOf, effectiveNullString);
+                    case JSON -> writeJson(output, fields, rowReader);
                 }
             }
-            if (outputFile != null) {
-                out.close();
+            finally {
+                // Closed on failure too, so the rows converted so far reach the file
+                // rather than staying in the writer's buffer.
+                if (outputFile != null) {
+                    output.close();
+                }
+                else {
+                    output.flush();
+                }
             }
-            else {
-                out.flush();
+            // PrintWriter never throws; a failed write (a full disk, say) only sets its
+            // error flag. Standard output is left alone, so that piping into a
+            // consumer that stops early, like `head`, is not reported as a failure.
+            if (outputFile != null && output.checkError()) {
+                System.err.println("Error writing " + outputFile + "; the file is incomplete.");
+                return CommandResult.FAILURE;
             }
         }
         catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
+            reportPartialOutput();
             return CommandResult.FAILURE;
         }
-        catch (IOException | ParquetReadException e) {
+        catch (IOException | ParquetReadException | UnsupportedOperationException e) {
             System.err.println("Error reading file: " + e.getMessage());
+            reportPartialOutput();
+            return CommandResult.FAILURE;
+        }
+        catch (UncheckedIOException e) {
+            // An InputFile may report a failed transport unchecked; the reader passes it on as is.
+            System.err.println("Error reading file: " + e.getCause().getMessage());
+            reportPartialOutput();
             return CommandResult.FAILURE;
         }
 
         return CommandResult.SUCCESS;
+    }
+
+    /// Names how far a conversion got before it failed. Rows already written stay
+    /// where they were written, so a failure past the first row leaves a prefix of the
+    /// conversion in the output; the exit code alone does not say so.
+    private void reportPartialOutput() {
+        if (rowsWritten == NOT_STARTED) {
+            return;
+        }
+        // A file write that failed too dropped rows the count includes.
+        if (outputFile != null && output.checkError()) {
+            System.err.println("Error writing " + outputFile + "; the file is incomplete.");
+            return;
+        }
+        String target = outputFile != null ? " to " + outputFile : "";
+        String incomplete = outputFile != null ? "the file is incomplete" : "the output is incomplete";
+        System.err.println("Wrote " + Plurals.format(rowsWritten, "row", "rows") + target
+                + " before the failure; " + incomplete + ".");
     }
 
     private ColumnProjection parseColumnProjection() {
@@ -144,16 +195,24 @@ public class ConvertCommand implements Command<CommandInvocation> {
         return ProjectedSchema.create(schema, projection, true)::projectedChildren;
     }
 
-    private PrintWriter openOutput() throws IOException {
-        if (outputFile != null) {
+    /// The writer the conversion goes to, or `null` after reporting why the output
+    /// file cannot be opened.
+    private PrintWriter openOutput() {
+        if (outputFile == null) {
+            return new PrintWriter(System.out, true);
+        }
+        try {
             return new PrintWriter(new FileWriter(outputFile));
         }
-        return new PrintWriter(System.out, true);
+        catch (IOException e) {
+            System.err.println("Error writing " + outputFile + ": " + e.getMessage());
+            return null;
+        }
     }
 
     // ==================== CSV ====================
 
-    private static void writeCsv(PrintWriter out, List<SchemaNode> fields, RowReader rowReader,
+    private void writeCsv(PrintWriter out, List<SchemaNode> fields, RowReader rowReader,
                                  Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf,
                                  String nullString) throws IOException {
         List<String> flatHeaders = new ArrayList<>();
@@ -170,6 +229,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
                 flattenValues(rowReader, i, field, field.name(), childrenOf, flatValues, nullString);
             }
             out.println(csvRow(flatValues.toArray(new String[0])));
+            rowsWritten++;
         }
     }
 
@@ -243,7 +303,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
 
     // ==================== JSON ====================
 
-    private static void writeJson(PrintWriter out, List<SchemaNode> fields, RowReader rowReader) throws IOException {
+    private void writeJson(PrintWriter out, List<SchemaNode> fields, RowReader rowReader) throws IOException {
         String[] headers = fields.stream().map(SchemaNode::name).toArray(String[]::new);
         out.print("[");
         boolean first = true;
@@ -269,6 +329,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
                 }
             }
             out.print("}");
+            rowsWritten++;
         }
         out.println("\n]");
     }
