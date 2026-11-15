@@ -70,12 +70,14 @@ public final class ReferencePageDecoder {
             int offset = 0;
             int[] repetitionLevels = null;
             if (column.maxRepetitionLevel() > 0) {
+                requireRle(v1.repetitionLevelEncoding());
                 int length = intAt(data, offset);
                 repetitionLevels = levels(data, offset + 4, length, numValues, column.maxRepetitionLevel());
                 offset += 4 + length;
             }
             int[] definitionLevels = null;
             if (column.maxDefinitionLevel() > 0) {
+                requireRle(v1.definitionLevelEncoding());
                 int length = intAt(data, offset);
                 definitionLevels = levels(data, offset + 4, length, numValues, column.maxDefinitionLevel());
                 offset += 4 + length;
@@ -135,6 +137,14 @@ public final class ReferencePageDecoder {
         byte[] decompressed = TestDecodeBuffers.decode(buffers -> decompressorFactory.getDecompressor(codec)
                 .decompress(compressed, uncompressedSize, new byte[uncompressedSize], buffers));
         return Arrays.copyOf(decompressed, uncompressedSize);
+    }
+
+    /// The reference reads a `V1` level section as the length-prefixed RLE hybrid only; a page
+    /// declaring another level encoding is refused rather than misread.
+    private static void requireRle(Encoding levelEncoding) {
+        if (levelEncoding != Encoding.RLE) {
+            throw new IllegalArgumentException("No reference decode of " + levelEncoding + " levels");
+        }
     }
 
     private static int[] levels(byte[] data, int offset, int length, int numValues, int maxLevel) {

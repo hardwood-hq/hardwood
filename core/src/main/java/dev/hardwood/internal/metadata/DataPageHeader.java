@@ -20,12 +20,15 @@ import dev.hardwood.metadata.Statistics;
 /// [#encodingValue] is the raw Thrift value [#encoding] was mapped from. Every
 /// value this release does not recognize maps to the single
 /// [Encoding#UNKNOWN] constant, so the raw value is the only thing left that
-/// identifies which encoding the page actually uses.
+/// identifies which encoding the page actually uses. [#definitionLevelEncodingValue] and
+/// [#repetitionLevelEncodingValue] are the same for the level encodings.
 public record DataPageHeader(
         int numValues,
         Encoding encoding,
         int encodingValue,
         Encoding definitionLevelEncoding,
+        int definitionLevelEncodingValue,
         Encoding repetitionLevelEncoding,
+        int repetitionLevelEncodingValue,
         Statistics statistics) {
 }
