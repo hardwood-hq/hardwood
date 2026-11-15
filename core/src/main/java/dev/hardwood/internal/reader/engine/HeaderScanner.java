@@ -205,7 +205,11 @@ final class HeaderScanner {
     }
 
     /// A page header found at `offset`, `length` bytes with its body.
-    private record Found(PageHeader header, long offset, int length) {
+    private record Found(PageFormatProbe.HeaderAt parsed, long offset, int length) {
+
+        PageHeader header() {
+            return parsed.header();
+        }
     }
 
     /// How far a scan's job got, and the failure it stopped at, `null` for none.
@@ -342,7 +346,7 @@ final class HeaderScanner {
                 return new Step(found, position, e);
             }
             PageHeader header = parsed.header();
-            found.add(new Found(header, position, length));
+            found.add(new Found(parsed, position, length));
             position += length;
             values -= switch (header.type()) {
                 case DATA_PAGE -> header.dataPageHeader().numValues();
@@ -364,6 +368,7 @@ final class HeaderScanner {
                 s.found(dictionary);
                 TrackedPage dictionaryPage = new TrackedPage(s.unit(), s.column(), key(s),
                         NeededPage.dictionary(f.offset(), f.length()), within(s, f), dictionary, false);
+                dictionaryPage.headerRead(f.parsed());
                 fetcher.keyAt(dictionaryPage.ranges(), dictionaryPage.key());
                 tracker.addDictionaryPage(dictionaryPage);
             }
@@ -410,6 +415,9 @@ final class HeaderScanner {
                 : new TrackedPage(s.unit(), s.column(), key(s), page, within(s, f), s.dictionary(), true);
         if (nulls) {
             tracked.standsForNulls(mask.isAll() ? values : mask.totalRecords());
+        }
+        else {
+            tracked.headerRead(f.parsed());
         }
         // the ranges were keyed by where they lie in the chunk; the page they hold serves its own
         // row, which may be lower

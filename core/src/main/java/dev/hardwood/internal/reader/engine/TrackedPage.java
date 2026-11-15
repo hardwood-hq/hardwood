@@ -10,7 +10,9 @@ package dev.hardwood.internal.reader.engine;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.PageDecoder;
+import dev.hardwood.internal.reader.decode.PageFormatProbe;
 import dev.hardwood.internal.reader.pipeline.PageTask;
 import dev.hardwood.internal.reader.plan.NeededPage;
 
@@ -31,6 +33,9 @@ final class TrackedPage {
     /// the rows a page its inline statistics drop stands for, as nulls without bytes; `0` for a
     /// page read from its bytes
     private int placeholder;
+    /// its header, parsed by the scan that found it or for its charge; `null` until then, and for
+    /// a header that did not parse
+    private PageFormatProbe.HeaderAt header;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -123,5 +128,26 @@ final class TrackedPage {
     /// The page's bytes, from its ranges: `null` where one has not arrived.
     ByteBuffer bytes() {
         return RangeFetch.read(ranges, page.location().offset(), page.location().compressedPageSize());
+    }
+
+    /// Its header was parsed into `header`, under the read's lock.
+    void headerRead(PageFormatProbe.HeaderAt header) {
+        this.header = header;
+    }
+
+    /// Its header, `null` until parsed and where it did not parse.
+    PageFormatProbe.HeaderAt header() {
+        return header;
+    }
+
+    /// The page, on its decode's job: from its header as parsed before, or parsed here where it
+    /// did not parse before, which fails with what the header's defect is, in the words every
+    /// reader of a header uses ([PageFormatProbe#readHeader]).
+    ///
+    /// @throws dev.hardwood.reader.ParquetReadException if its header does not parse
+    DataPage dataPage() {
+        ByteBuffer bytes = bytes();
+        return header == null ? DataPage.parse(bytes, page.location().offset())
+                : new DataPage(header.header(), header.length(), bytes);
     }
 }

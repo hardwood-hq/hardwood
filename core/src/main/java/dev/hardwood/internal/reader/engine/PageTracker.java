@@ -249,8 +249,7 @@ final class PageTracker {
         scheduler.add(decodeJob(tracked, buffers -> {
             Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().output().value();
             return cells.decode(tracked.column(), tracked.task(),
-                    tracked.placeholder() > 0 ? null : tracked.bytes(), tracked.page().location().offset(), dictionary,
-                    buffers);
+                    tracked::dataPage, dictionary, buffers);
         }, completed -> {
             // its ranges are held by the batch of its last row until every column has published it,
             // as R holds the bytes fetched ahead of the consumer
@@ -265,7 +264,7 @@ final class PageTracker {
     private void addMeasure(TrackedPage tracked) {
         scheduler.add(decodeJob(tracked, buffers -> {
             NestedPageTask task = cells.nestedTask(tracked,
-                    tracked.placeholder() > 0 ? null : DataPage.parse(tracked.bytes(), tracked.page().location().offset()),
+                    tracked.placeholder() > 0 ? null : tracked.dataPage(),
                     tracked.dictionary() == null ? null : tracked.dictionary().output().value());
             try {
                 task.decodeAndMeasure(buffers);
@@ -294,20 +293,28 @@ final class PageTracker {
     }
 
     /// The buffers the task decoding `tracked` holds, from its header ([DataPage#taskBytes]), or a
-    /// null placeholder's levels. The header is read from a peek at the page's start, so that only
-    /// its bytes are parsed, and copied where the page straddles two ranges, under the read's lock.
+    /// null placeholder's levels. A header its scan did not hand on is read here from a peek at the
+    /// page's start, so that only its bytes are parsed, and copied where the page straddles two
+    /// ranges, under the read's lock; the page keeps it for its decode ([TrackedPage#dataPage]).
     /// `0` for a page whose header does not parse: its decode fails on it.
     private long taskBytes(TrackedPage tracked) {
         ColumnSchema schema = columns.schema(tracked.column());
         if (tracked.placeholder() > 0) {
             return WorkingSet.Column.pageBuffers(schema, tracked.placeholder(), 0, Encoding.PLAIN);
         }
+        if (tracked.header() != null) {
+            return DataPage.taskBytes(tracked.header().header(), schema);
+        }
         PageLocation location = tracked.page().location();
         try {
             Parsed<PageFormatProbe.HeaderAt> read = PageFormatProbe.readHeader(
                     (offset, length) -> RangeFetch.read(tracked.ranges(), offset, length), location.offset(),
                     location.compressedPageSize(), PageFormatProbe.Extent.PAGE, PageFormatProbe.INITIAL_PEEK_SIZE, "");
-            return read.needsBytes() ? 0 : DataPage.taskBytes(read.value().header(), schema);
+            if (read.needsBytes()) {
+                return 0;
+            }
+            tracked.headerRead(read.value());
+            return DataPage.taskBytes(read.value().header(), schema);
         }
         catch (IOException | RuntimeException e) {
             return 0;
@@ -342,8 +349,8 @@ final class PageTracker {
     }
 
     private Dictionary parseDictionary(TrackedPage tracked, DecodeBuffers buffers) {
-        ByteBuffer region = tracked.bytes();
-        DataPage page = DataPage.parse(region, tracked.page().location().offset());
+        DataPage page = tracked.dataPage();
+        ByteBuffer region = page.bytes();
         int pageLength = page.headerSize() + page.header().compressedPageSize();
         if (page.header().type() != PageType.DICTIONARY_PAGE) {
             return null;
