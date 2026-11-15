@@ -44,21 +44,18 @@ import dev.hardwood.schema.SchemaNode;
 ///
 /// The entry points differ in where the value comes from:
 ///
-/// - [#formatReader(RowReader, int, SchemaNode, boolean, Style, int)] — a field
-///   of a [RowReader]'s current row: dive preview cells, the dive record modal
-///   and `convert --format json` leaves.
-/// - [#formatValue(Object, SchemaNode, Style, int)] — a materialised value:
-///   `print` cells and `convert` CSV cells.
+/// - [#formatField(StructAccessor, int, SchemaNode, boolean, Style, int)] — a
+///   field of a row or struct: `print` cells, `convert` cells, dive preview
+///   cells and the dive record modal.
 /// - [#formatDictionary(Object, ColumnSchema, boolean, int)] — a raw primitive
 ///   out of a parsed `Dictionary`.
 /// - `formatBytes` — raw statistics bytes.
 ///
-/// Core decodes every value: the reader and materialised sources hand over what
-/// the reader's `getValue` returns, and the dictionary and statistics sources
-/// decode their stored value through [LogicalTypeConverter#convert]. One leaf
-/// renderer spells the decoded Java value, so the annotation decides text or
-/// bytes in core alone. `formatReader` and `formatValue` render nested values
-/// through one walker; [Style] picks the layout, whether control characters are
+/// Core decodes every value: a field is read through `getValue`, and the
+/// dictionary and statistics sources decode their stored value through
+/// [LogicalTypeConverter#convert]. One leaf renderer spells the decoded Java
+/// value, so the annotation decides text or bytes in core alone. Nested values
+/// render through one walker; [Style] picks the layout, whether control characters are
 /// sanitised, and whether nested values are written as JSON. Statistics and
 /// dictionary entries come from the file unchecked: a value its annotation
 /// cannot decode renders there in its stored form.
@@ -103,32 +100,25 @@ public final class ValueFormatter {
         EXPORT
     }
 
-    // ==================== reader and materialised sources ====================
+    // ==================== fields ====================
 
-    /// Renders the field at `fieldIndex` of a reader's current row.
+    /// Renders the field at `fieldIndex` of a row or struct — a [RowReader] on its
+    /// current row, or a [PqStruct]. `field` is the field's schema node; it
+    /// decides how nested values walk and whether integers render unsigned. A
+    /// group schema paired with a scalar value throws.
+    ///
     /// `useLogicalType=true` renders timestamps, decimals, UUIDs, etc. in their
     /// canonical logical form; `useLogicalType=false` renders the stored physical
     /// value (e.g. `1735689600000000` instead of `2025-01-01T00:00:00Z`). Groups
     /// and repeated fields render structurally in both modes; the toggle decides
     /// how their leaves are read.
-    public static String formatReader(RowReader reader, int fieldIndex, SchemaNode field,
-                                      boolean useLogicalType, Style style, int budget) {
-        Objects.requireNonNull(reader, "reader");
+    public static String formatField(StructAccessor accessor, int fieldIndex, SchemaNode field,
+                                     boolean useLogicalType, Style style, int budget) {
+        Objects.requireNonNull(accessor, "accessor");
         Objects.requireNonNull(field, "field");
         Objects.requireNonNull(style, "style");
         requireBudget(budget);
-        return render(read(reader, fieldIndex, field, useLogicalType), field, useLogicalType, style, 0, budget);
-    }
-
-    /// Renders a materialised value — whatever the reader's `getValue` hands back
-    /// for one field. `field` is the value's own schema node; it decides whether
-    /// integers render unsigned. A `null` or non-group schema walks a nested
-    /// value schema-less, the way legacy list and map layouts without resolvable
-    /// child schemas render. A group schema paired with a scalar value throws.
-    public static String formatValue(Object value, SchemaNode field, Style style, int budget) {
-        Objects.requireNonNull(style, "style");
-        requireBudget(budget);
-        return render(value, field, true, style, 0, budget);
+        return render(read(accessor, fieldIndex, field, useLogicalType), field, useLogicalType, style, 0, budget);
     }
 
     /// The value of the field at `fieldIndex` as the formatter renders it: decoded, apart from a

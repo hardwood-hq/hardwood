@@ -8,6 +8,7 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +25,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.row.PqFile;
+import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -297,7 +299,16 @@ class ConvertCommandTest implements ConvertCommandContract {
                 List.of(child), 1, 0);
         List<String> values = new ArrayList<>();
 
-        assertThatThrownBy(() -> ConvertCommand.flattenValues("not a struct", account, "account",
+        StructAccessor row = (StructAccessor) Proxy.newProxyInstance(
+                StructAccessor.class.getClassLoader(),
+                new Class<?>[] { StructAccessor.class },
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "isNull" -> false;
+                    case "getValue" -> "not a struct";
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+
+        assertThatThrownBy(() -> ConvertCommand.flattenValues(row, 0, account, "account",
                 SchemaNode.GroupNode::children, values, ""))
                         .isInstanceOf(IllegalStateException.class)
                         .hasMessage("Field 'account' is a struct in the schema, but the reader returned a "

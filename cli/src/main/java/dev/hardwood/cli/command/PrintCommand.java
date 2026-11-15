@@ -106,11 +106,11 @@ public class PrintCommand implements Command<CommandInvocation> {
                         ? Math.max(0, reader.getFileMetaData().numRows() + window.limit())
                         : window.skip();
                 AtomicLong rowIndex = addRowIndex ? new AtomicLong(rowIndexStart) : null;
-                Stream<Object[]> stream = stream(rowReader).map(r -> toData(r, fields));
+                Stream<String[]> stream = stream(rowReader).map(r -> cells(r, fields));
                 if (transpose) {
-                    printTransposed(stream, headers, fields, rowIndex);
+                    printTransposed(stream, headers, rowIndex);
                 } else {
-                    printTable(stream, headers, fields, rowIndex);
+                    printTable(stream, headers, rowIndex);
                 }
             }
         }
@@ -143,10 +143,10 @@ public class PrintCommand implements Command<CommandInvocation> {
         }
     }
 
-    private void printTransposed(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
+    private void printTransposed(Stream<String[]> stream, String[] headers, AtomicLong rowIndex) {
         stream.forEach(r -> {
             Stream<String[]> data = IntStream.range(0, headers.length)
-                    .mapToObj(i -> new String[]{headers[i], cell(r[i], fields.get(i), cellBudget())});
+                    .mapToObj(i -> new String[]{headers[i], r[i]});
             List<String[]> tableRows = (rowIndex != null ?
                     Stream.concat(
                             Stream.<String[]>of(new String[]{"rowIndex", Long.toString(rowIndex.getAndIncrement())}), data) : data)
@@ -162,19 +162,14 @@ public class PrintCommand implements Command<CommandInvocation> {
         return truncate ? maxWidth : BinaryValues.NO_LIMIT;
     }
 
-    private static String cell(Object value, SchemaNode field, int budget) {
-        return ValueFormatter.formatValue(value, field, ValueFormatter.Style.COMPACT, budget);
-    }
-
-    private void printTable(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
-        int budget = cellBudget();
+    private void printTable(Stream<String[]> stream, String[] headers, AtomicLong rowIndex) {
         new StreamedTable().print(
                 new PrintWriter(System.out, true),
                 addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
                 stream
                         .map(r -> rowIndex == null ?
-                                (IntFunction<String>) i -> cell(r[i], fields.get(i), budget) :
-                                ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : cell(r[i - 1], fields.get(i - 1), budget)))
+                                (IntFunction<String>) i -> r[i] :
+                                ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : r[i - 1]))
                         .iterator(),
                 sampleSize,
                 maxWidth,
@@ -193,10 +188,13 @@ public class PrintCommand implements Command<CommandInvocation> {
         return ColumnProjection.columns(names);
     }
 
-    private Object[] toData(RowReader rowReader, List<SchemaNode> fields) {
+    /// The row's cells, rendered while the reader is on the row.
+    private String[] cells(RowReader rowReader, List<SchemaNode> fields) {
+        int budget = cellBudget();
         return IntStream.range(0, fields.size())
-                .mapToObj(i -> ValueFormatter.valueOf(rowReader, i, fields.get(i)))
-                .toArray(Object[]::new);
+                .mapToObj(i -> ValueFormatter.formatField(rowReader, i, fields.get(i), true,
+                        ValueFormatter.Style.COMPACT, budget))
+                .toArray(String[]::new);
     }
 
     private Stream<RowReader> stream(RowReader rowReader) {

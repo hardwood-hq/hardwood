@@ -34,6 +34,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -166,8 +167,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
             List<String> flatValues = new ArrayList<>();
             for (int i = 0; i < fields.size(); i++) {
                 SchemaNode field = fields.get(i);
-                flattenValues(ValueFormatter.valueOf(rowReader, i, field), field, field.name(), childrenOf,
-                        flatValues, nullString);
+                flattenValues(rowReader, i, field, field.name(), childrenOf, flatValues, nullString);
             }
             out.println(csvRow(flatValues.toArray(new String[0])));
         }
@@ -187,33 +187,35 @@ public class ConvertCommand implements Command<CommandInvocation> {
     }
 
     // package visibility for tests
-    static void flattenValues(Object value, SchemaNode schema, String path,
+    static void flattenValues(StructAccessor accessor, int fieldIndex, SchemaNode schema, String path,
                               Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf,
                               List<String> values, String nullString) {
-        if (schema instanceof SchemaNode.GroupNode group && isStruct(group)) {
-            if (value == null) {
-                flattenNulls(group, path, childrenOf, values, nullString);
-            }
-            else if (value instanceof PqStruct struct) {
-                // The struct's fields sit in the projection's order, as the children do; read by
-                // position, since two sibling fields may share a name
-                List<SchemaNode> children = childrenOf.apply(group);
-                for (int i = 0; i < children.size(); i++) {
-                    SchemaNode child = children.get(i);
-                    flattenValues(ValueFormatter.valueOf(struct, i, child), child,
-                            path + "." + child.name(), childrenOf, values, nullString);
-                }
+        SchemaNode.GroupNode struct = schema instanceof SchemaNode.GroupNode group && isStruct(group) ? group : null;
+        if (accessor.isNull(fieldIndex)) {
+            if (struct != null) {
+                flattenNulls(struct, path, childrenOf, values, nullString);
             }
             else {
-                throw new IllegalStateException("Field '" + group.name() + "' is a struct in the schema, but the"
-                        + " reader returned a " + value.getClass().getName());
+                values.add(nullString);
             }
         }
-        else if (value == null) {
-            values.add(nullString);
+        else if (struct == null) {
+            values.add(ValueFormatter.formatField(accessor, fieldIndex, schema, true, ValueFormatter.Style.EXPORT,
+                    BinaryValues.NO_LIMIT));
         }
         else {
-            values.add(ValueFormatter.formatValue(value, schema, ValueFormatter.Style.EXPORT, BinaryValues.NO_LIMIT));
+            Object read = ValueFormatter.valueOf(accessor, fieldIndex, schema);
+            if (!(read instanceof PqStruct value)) {
+                throw new IllegalStateException("Field '" + struct.name() + "' is a struct in the schema, but the"
+                        + " reader returned a " + read.getClass().getName());
+            }
+            // The struct's fields sit in the projection's order, as the children do; read by
+            // position, since two sibling fields may share a name
+            List<SchemaNode> children = childrenOf.apply(struct);
+            for (int i = 0; i < children.size(); i++) {
+                SchemaNode child = children.get(i);
+                flattenValues(value, i, child, path + "." + child.name(), childrenOf, values, nullString);
+            }
         }
     }
 
@@ -261,7 +263,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
                     out.print("null");
                 } else if (!writeIfJsonScalar(out, rowReader, i, fieldSchema)) {
                     // A nested field renders as JSON; a primitive one as text to quote.
-                    String val = ValueFormatter.formatReader(rowReader, i, fieldSchema, true,
+                    String val = ValueFormatter.formatField(rowReader, i, fieldSchema, true,
                             ValueFormatter.Style.EXPORT, BinaryValues.NO_LIMIT);
                     out.print(ValueFormatter.isNested(fieldSchema) ? val : "\"" + JsonStrings.escape(val) + "\"");
                 }

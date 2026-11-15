@@ -43,6 +43,7 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantObject;
+import dev.hardwood.row.StructAccessor;
 import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
@@ -53,11 +54,11 @@ import dev.hardwood.writer.ParquetFileWriter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Rendering contracts for [ValueFormatter] across its sources: reader-backed
-/// rows, materialised values, and raw dictionary primitives. The reader leg
-/// runs against `interval_logical_type_test.parquet` (row 0: 1 month, 15 days,
-/// 1 hour; row 1: 30 days; row 2: null); the dictionary and materialised legs
-/// build their columns in-test.
+/// Rendering contracts for [ValueFormatter] across its sources: fields of a row
+/// or struct, dictionary entries and statistics bytes. The reader leg runs
+/// against `interval_logical_type_test.parquet` (row 0: 1 month, 15 days,
+/// 1 hour; row 1: 30 days; row 2: null); the other legs build their values or
+/// columns in-test.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ValueFormatterTest {
 
@@ -78,7 +79,6 @@ class ValueFormatterTest {
     private String addressesCapped;
     private String addressesWhole;
     private String addressesExpanded;
-    private String bboxMaterialised;
 
     @BeforeAll
     void readIntervalFixture() throws IOException {
@@ -90,15 +90,15 @@ class ValueFormatterTest {
             durationIdx = schema.getColumn("duration").columnIndex();
 
             rowReader.next();
-            row0Compact = ValueFormatter.formatReader(rowReader, durationIdx, durationField, true,
+            row0Compact = ValueFormatter.formatField(rowReader, durationIdx, durationField, true,
                     ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET);
-            row0Expanded = ValueFormatter.formatReader(rowReader, durationIdx, durationField, true,
+            row0Expanded = ValueFormatter.formatField(rowReader, durationIdx, durationField, true,
                     ValueFormatter.Style.EXPANDED, NO_LIMIT);
             rowReader.next();
-            row1Compact = ValueFormatter.formatReader(rowReader, durationIdx, durationField, true,
+            row1Compact = ValueFormatter.formatField(rowReader, durationIdx, durationField, true,
                     ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET);
             rowReader.next();
-            row2Compact = ValueFormatter.formatReader(rowReader, durationIdx, durationField, true,
+            row2Compact = ValueFormatter.formatField(rowReader, durationIdx, durationField, true,
                     ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET);
         }
     }
@@ -111,17 +111,16 @@ class ValueFormatterTest {
             SchemaNode bboxField = schema.getField("bbox");
             SchemaNode addressesField = schema.getField("addresses");
             rowReader.next();
-            bboxCapped = ValueFormatter.formatReader(rowReader, bbox, bboxField, true,
+            bboxCapped = ValueFormatter.formatField(rowReader, bbox, bboxField, true,
                     ValueFormatter.Style.PREVIEW, 100);
-            bboxWhole = ValueFormatter.formatReader(rowReader, bbox, bboxField, true,
+            bboxWhole = ValueFormatter.formatField(rowReader, bbox, bboxField, true,
                     ValueFormatter.Style.COMPACT, NO_LIMIT);
-            addressesCapped = ValueFormatter.formatReader(rowReader, addresses, addressesField, true,
+            addressesCapped = ValueFormatter.formatField(rowReader, addresses, addressesField, true,
                     ValueFormatter.Style.PREVIEW, 100);
-            addressesWhole = ValueFormatter.formatReader(rowReader, addresses, addressesField, true,
+            addressesWhole = ValueFormatter.formatField(rowReader, addresses, addressesField, true,
                     ValueFormatter.Style.COMPACT, NO_LIMIT);
-            addressesExpanded = ValueFormatter.formatReader(rowReader, addresses, addressesField, true,
+            addressesExpanded = ValueFormatter.formatField(rowReader, addresses, addressesField, true,
                     ValueFormatter.Style.EXPANDED, NO_LIMIT);
-            bboxMaterialised = display(rowReader.getValue(bbox), bboxField);
         });
     }
 
@@ -315,28 +314,28 @@ class ValueFormatterTest {
     }
 
     @Test
-    void materialisedStringWithControlRendersMiddleDot() {
+    void fieldStringWithControlRendersMiddleDot() {
         assertThat(display("A\u0001B", primitive(PhysicalType.BYTE_ARRAY,
                 LogicalType.string()))).isEqualTo("A·B");
     }
 
-    // ==================== materialised source ====================
+    // ==================== values of a field ====================
 
     @Test
-    void materialisedNullRendersAsNull() {
+    void fieldNullRendersAsNull() {
         assertThat(display(null, primitive(PhysicalType.BYTE_ARRAY, null)))
                 .isEqualTo("null");
     }
 
     @Test
-    void materialisedBareByteArrayAsStringWhenValidUtf8() {
+    void fieldBareByteArrayAsStringWhenValidUtf8() {
         byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
         assertThat(display(bytes, primitive(PhysicalType.BYTE_ARRAY, null)))
                 .isEqualTo("hello");
     }
 
     @Test
-    void materialisedBareByteArrayAsHexWhenInvalidUtf8() {
+    void fieldBareByteArrayAsHexWhenInvalidUtf8() {
         // Lone continuation byte — not a valid UTF-8 sequence.
         byte[] bytes = { (byte) 0xC3, (byte) 0x28, (byte) 0xA0, (byte) 0xA1 };
         assertThat(display(bytes, primitive(PhysicalType.BYTE_ARRAY, null)))
@@ -344,13 +343,13 @@ class ValueFormatterTest {
     }
 
     @Test
-    void materialisedUnsignedInt32() {
+    void fieldUnsignedInt32() {
         SchemaNode node = primitive(PhysicalType.INT32, LogicalType.intType(32, false));
         assertThat(display(-1, node)).isEqualTo("4294967295");
     }
 
     @Test
-    void materialisedDecimalRendersPlainString() {
+    void fieldDecimalRendersPlainString() {
         SchemaNode node = primitive(PhysicalType.INT32, LogicalType.decimal(9, 7));
         // BigDecimal.toString would give "1E-7"; the canonical form is plain.
         assertThat(display(new BigDecimal("0.0000001"), node))
@@ -358,7 +357,7 @@ class ValueFormatterTest {
     }
 
     @Test
-    void decimalRendersIdenticallyAcrossDictionaryAndMaterialisedSources() {
+    void decimalRendersIdenticallyAcrossDictionaryAndFieldSources() {
         ColumnSchema col = column(PhysicalType.BYTE_ARRAY, LogicalType.decimal(9, 7));
         SchemaNode node = primitive(PhysicalType.BYTE_ARRAY, LogicalType.decimal(9, 7));
         // BigInteger.ONE.toByteArray() — the unscaled encoding of 0.0000001 at
@@ -371,7 +370,7 @@ class ValueFormatterTest {
     }
 
     @Test
-    void emptyMaterialisedMapUsesCanonicalEmptyGrammar() {
+    void emptyMapFieldUsesCanonicalEmptyGrammar() {
         PqMap emptyMap = (PqMap) Proxy.newProxyInstance(
                 PqMap.class.getClassLoader(),
                 new Class<?>[] { PqMap.class },
@@ -400,11 +399,11 @@ class ValueFormatterTest {
 
         assertThat(display(value, null))
                 .isEqualTo("{ bad·name·key : x, tab·name : x, nul·name : x, plain : x }");
-        assertThat(ValueFormatter.formatValue(value, null, ValueFormatter.Style.PREVIEW, 100))
+        assertThat(format(value, null, ValueFormatter.Style.PREVIEW, 100))
                 .isEqualTo("{ bad·name·key : x, tab·name : x, nul·name : x, …+1 }");
-        assertThat(ValueFormatter.formatValue(value, null, ValueFormatter.Style.EXPORT, NO_LIMIT))
+        assertThat(format(value, null, ValueFormatter.Style.EXPORT, NO_LIMIT))
                 .isEqualTo("{\"bad\\nname\\u001bkey\": \"x\", \"tab\\tname\": \"x\", \"nul\\u0000name\": \"x\", \"plain\": \"x\"}");
-        assertThat(ValueFormatter.formatValue(value, null, ValueFormatter.Style.EXPANDED, NO_LIMIT))
+        assertThat(format(value, null, ValueFormatter.Style.EXPANDED, NO_LIMIT))
                 .isEqualTo("""
                         {
                           bad·name·key: x,
@@ -518,13 +517,6 @@ class ValueFormatterTest {
                 ]""");
     }
 
-    /// The reader and materialised sources render nested values through one
-    /// walker, so a `print` cell spells a struct as the reader path does.
-    @Test
-    void materialisedWalkerRendersNestedValuesWhole() {
-        assertThat(bboxMaterialised).isEqualTo(bboxWhole);
-    }
-
     // ==================== budget contract ====================
 
     @Test
@@ -551,7 +543,7 @@ class ValueFormatterTest {
     void readerAcceptsBudgetOfOne() throws IOException {
         withIntervalReader(rowReader -> {
             rowReader.next();
-            assertThat(ValueFormatter.formatReader(rowReader, durationIdx, durationField, true,
+            assertThat(ValueFormatter.formatField(rowReader, durationIdx, durationField, true,
                     ValueFormatter.Style.COMPACT, 1)).isEqualTo("1mo 15d 3600000ms");
         });
     }
@@ -569,11 +561,11 @@ class ValueFormatterTest {
     private void assertBudgetRejectedOnEveryEntryPoint(int budget) throws IOException {
         String message = "budget must be BinaryValues.NO_LIMIT (-1, unlimited) or a positive number of terminal"
                 + " cells, got " + budget;
-        withIntervalReader(rowReader -> assertThatThrownBy(() -> ValueFormatter.formatReader(rowReader, durationIdx,
+        withIntervalReader(rowReader -> assertThatThrownBy(() -> ValueFormatter.formatField(rowReader, durationIdx,
                 durationField, true, ValueFormatter.Style.COMPACT, budget))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message));
-        assertThatThrownBy(() -> ValueFormatter.formatValue("x", primitive(PhysicalType.BYTE_ARRAY, null),
+        assertThatThrownBy(() -> format("x", primitive(PhysicalType.BYTE_ARRAY, null),
                 ValueFormatter.Style.COMPACT, budget))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
@@ -588,16 +580,16 @@ class ValueFormatterTest {
     // ==================== null dependencies ====================
 
     @Test
-    void nullReaderRejected() {
-        assertThatThrownBy(() -> ValueFormatter.formatReader(null, 0, durationField, true,
+    void nullAccessorRejected() {
+        assertThatThrownBy(() -> ValueFormatter.formatField(null, 0, durationField, true,
                 ValueFormatter.Style.COMPACT, NO_LIMIT))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessage("reader");
+                .hasMessage("accessor");
     }
 
     @Test
     void nullFieldRejected() throws IOException {
-        withIntervalReader(rowReader -> assertThatThrownBy(() -> ValueFormatter.formatReader(rowReader, 0, null, true,
+        withIntervalReader(rowReader -> assertThatThrownBy(() -> ValueFormatter.formatField(rowReader, 0, null, true,
                 ValueFormatter.Style.COMPACT, NO_LIMIT))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("field"));
@@ -731,7 +723,7 @@ class ValueFormatterTest {
     }
 
     @Test
-    void int96RendersIdenticallyAcrossMaterialisedAndStatisticsSources() {
+    void int96RendersIdenticallyAcrossFieldAndStatisticsSources() {
         byte[] epochBytes = int96EpochBytes();
         assertThat(ValueFormatter.formatBytes(epochBytes, int96Column(), true))
                 .isEqualTo(display(Instant.EPOCH, primitive(PhysicalType.INT96, null)))
@@ -750,10 +742,9 @@ class ValueFormatterTest {
             byte[] raw = (byte[]) rowReader.getRawValue(index);
             String expected = "2026-03-05T09:30:00.123456Z";
 
-            assertThat(ValueFormatter.formatReader(rowReader, index, field, true,
+            assertThat(ValueFormatter.formatField(rowReader, index, field, true,
                     ValueFormatter.Style.COMPACT, 1)).isEqualTo(expected);
             assertThat(ValueFormatter.formatDictionary(raw, int96Column(), true, 1)).isEqualTo(expected);
-            assertThat(display(rowReader.getValue(index), field)).isEqualTo(expected);
             assertThat(ValueFormatter.formatBytes(raw, int96Column(), true, 1)).isEqualTo(expected);
         }
     }
@@ -770,7 +761,7 @@ class ValueFormatterTest {
             byte[] raw = (byte[]) rowReader.getRawValue(index);
             String expected = "0x" + HexFormat.of().formatHex(raw);
 
-            assertThat(ValueFormatter.formatReader(rowReader, index, field, false,
+            assertThat(ValueFormatter.formatField(rowReader, index, field, false,
                     ValueFormatter.Style.COMPACT, NO_LIMIT)).isEqualTo(expected);
             assertThat(ValueFormatter.formatDictionary(raw, int96Column(), false, NO_LIMIT)).isEqualTo(expected);
             assertThat(ValueFormatter.formatBytes(raw, int96Column(), false, NO_LIMIT)).isEqualTo(expected);
@@ -778,7 +769,7 @@ class ValueFormatterTest {
     }
 
     /// A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` renders as its instant or wall clock wherever
-    /// the value comes from: a row, a dictionary entry, a materialised value and a statistics bound.
+    /// the value comes from: a row, a dictionary entry and a statistics bound.
     @Test
     void flba12TimestampRendersTheSameAcrossEverySource() throws IOException {
         Path file = TestResources.path("/flba12_timestamp_test.parquet");
@@ -793,10 +784,9 @@ class ValueFormatterTest {
                 byte[] raw = (byte[]) rowReader.getRawValue(column.columnIndex());
                 String expected = name.equals("utc_ns") ? "1969-12-31T23:59:59.999999999Z" : "1969-12-31T23:59:59.999999";
 
-                assertThat(ValueFormatter.formatReader(rowReader, column.columnIndex(), field, true,
+                assertThat(ValueFormatter.formatField(rowReader, column.columnIndex(), field, true,
                         ValueFormatter.Style.COMPACT, NO_LIMIT)).isEqualTo(expected);
                 assertThat(ValueFormatter.formatDictionary(raw, column, true, NO_LIMIT)).isEqualTo(expected);
-                assertThat(display(rowReader.getValue(column.columnIndex()), field)).isEqualTo(expected);
                 assertThat(ValueFormatter.formatBytes(raw, column, true)).isEqualTo(expected);
                 assertThat(ValueFormatter.formatBytes(raw, column, false)).isEqualTo("0x" + "ff".repeat(12));
             }
@@ -1038,12 +1028,12 @@ class ValueFormatterTest {
     /// layouts without resolvable child schemas always have — the walkers pass
     /// `null` child schemas when the group or element node does not resolve.
     @Test
-    void materialisedNestedValueWalksSchemaLessWithoutAResolvableSchema() throws Exception {
+    void nestedValueWalksSchemaLessWithoutAResolvableSchema() throws Exception {
         withDiveFixtureReader((rowReader, schema) -> {
             int bbox = rootFieldIndex(schema, "bbox");
             rowReader.next();
             assertThat(display(rowReader.getValue(bbox), null))
-                    .isEqualTo(bboxMaterialised);
+                    .isEqualTo(bboxWhole);
         });
     }
 
@@ -1096,10 +1086,8 @@ class ValueFormatterTest {
 
             String bytes = "0x" + hex;
             for (ValueFormatter.Style style : ValueFormatter.Style.values()) {
-                assertThat(ValueFormatter.formatReader(rowReader, index, field, true, style, NO_LIMIT))
-                        .as("reader, %s", style).isEqualTo(bytes);
-                assertThat(ValueFormatter.formatValue(rowReader.getValue(index), field, style, NO_LIMIT))
-                        .as("value, %s", style).isEqualTo(bytes);
+                assertThat(ValueFormatter.formatField(rowReader, index, field, true, style, NO_LIMIT))
+                        .as(style.name()).isEqualTo(bytes);
             }
             assertThat(ValueFormatter.formatDictionary(payload, column, true, NO_LIMIT)).isEqualTo(bytes);
             assertThat(ValueFormatter.formatBytes(payload, column, true, NO_LIMIT)).isEqualTo(bytes);
@@ -1139,26 +1127,22 @@ class ValueFormatterTest {
             SchemaNode listField = fileSchema.getField("l");
             rowReader.next();
             for (ValueFormatter.Style style : List.of(ValueFormatter.Style.COMPACT, ValueFormatter.Style.PREVIEW)) {
-                assertThat(ValueFormatter.formatReader(rowReader, structIndex, structField, true, style, NO_LIMIT))
+                assertThat(ValueFormatter.formatField(rowReader, structIndex, structField, true, style, NO_LIMIT))
                         .isEqualTo(struct);
-                assertThat(ValueFormatter.formatReader(rowReader, listIndex, listField, true, style, NO_LIMIT))
+                assertThat(ValueFormatter.formatField(rowReader, listIndex, listField, true, style, NO_LIMIT))
                         .isEqualTo(list);
             }
-            assertThat(ValueFormatter.formatReader(rowReader, structIndex, structField, true,
+            assertThat(ValueFormatter.formatField(rowReader, structIndex, structField, true,
                     ValueFormatter.Style.EXPANDED, NO_LIMIT)).isEqualTo("""
                             {
                               u32: 4294967295,
                               u64: 18446744073709551615
                             }""");
-            assertThat(display(rowReader.getValue(structIndex), structField)).isEqualTo(struct);
-            assertThat(display(rowReader.getValue(listIndex), listField)).isEqualTo(list);
 
             String structJson = "{\"u32\": 4294967295, \"u64\": 18446744073709551615}";
-            assertThat(ValueFormatter.formatReader(rowReader, structIndex, structField, true,
+            assertThat(ValueFormatter.formatField(rowReader, structIndex, structField, true,
                     ValueFormatter.Style.EXPORT, NO_LIMIT)).isEqualTo(structJson);
-            assertThat(ValueFormatter.formatValue(rowReader.getValue(structIndex), structField,
-                    ValueFormatter.Style.EXPORT, NO_LIMIT)).isEqualTo(structJson);
-            assertThat(ValueFormatter.formatReader(rowReader, listIndex, listField, true,
+            assertThat(ValueFormatter.formatField(rowReader, listIndex, listField, true,
                     ValueFormatter.Style.EXPORT, NO_LIMIT)).isEqualTo(list);
         }
     }
@@ -1166,7 +1150,7 @@ class ValueFormatterTest {
     @Test
     void exportStyleWritesControlCharactersVerbatim() {
         SchemaNode string = primitive(PhysicalType.BYTE_ARRAY, LogicalType.string());
-        assertThat(ValueFormatter.formatValue("A\u0001B", string, ValueFormatter.Style.EXPORT, NO_LIMIT))
+        assertThat(format("A\u0001B", string, ValueFormatter.Style.EXPORT, NO_LIMIT))
                 .isEqualTo("A\u0001B");
     }
 
@@ -1216,14 +1200,12 @@ class ValueFormatterTest {
             SchemaNode addressesField = schema.getField("addresses");
             rowReader.next();
 
-            String bboxJson = ValueFormatter.formatReader(rowReader, bbox, bboxField, true,
+            String bboxJson = ValueFormatter.formatField(rowReader, bbox, bboxField, true,
                     ValueFormatter.Style.EXPORT, NO_LIMIT);
-            String addressesJson = ValueFormatter.formatReader(rowReader, addresses, addressesField, true,
+            String addressesJson = ValueFormatter.formatField(rowReader, addresses, addressesField, true,
                     ValueFormatter.Style.EXPORT, NO_LIMIT);
 
             assertThat(bboxJson).isEqualTo("{\"xmin\": -123.0, \"xmax\": -122.5, \"ymin\": 37.0, \"ymax\": 37.4}");
-            assertThat(ValueFormatter.formatValue(rowReader.getValue(bbox), bboxField, ValueFormatter.Style.EXPORT,
-                    NO_LIMIT)).isEqualTo(bboxJson);
             assertThat(addressesJson).isEqualTo("[{\"freeform\": \"100 Main St\", \"locality\": \"New York\","
                     + " \"region\": \"NA\", \"country\": \"United States\"}]");
             JSONAssert.assertEquals("""
@@ -1344,9 +1326,9 @@ class ValueFormatterTest {
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
 
-        assertThat(ValueFormatter.formatReader(reader, 0, dates, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
+        assertThat(ValueFormatter.formatField(reader, 0, dates, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
                 .isEqualTo("[2025-04-24]");
-        assertThat(ValueFormatter.formatReader(reader, 0, dates, false, ValueFormatter.Style.COMPACT, NO_LIMIT))
+        assertThat(ValueFormatter.formatField(reader, 0, dates, false, ValueFormatter.Style.COMPACT, NO_LIMIT))
                 .isEqualTo("[20202]");
     }
 
@@ -1378,14 +1360,14 @@ class ValueFormatterTest {
     void siblingFieldsOfOneNameRenderTheirOwnValuesAndTypes() throws IOException {
         withDuplicateFieldNamesReader(ColumnProjection.all(), (rowReader, field) -> {
             rowReader.next();
-            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
+            assertThat(ValueFormatter.formatField(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
                     .isEqualTo("{ v : 3, v : a, w : 2024-01-02 }");
-            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
+            assertThat(ValueFormatter.formatField(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
                     .isEqualTo("{\"v\": 3, \"v\": \"a\", \"w\": \"2024-01-02\"}");
             rowReader.next();
-            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
+            assertThat(ValueFormatter.formatField(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
                     .isEqualTo("{ v : 4, v : null, w : 2024-03-04 }");
-            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
+            assertThat(ValueFormatter.formatField(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
                     .isEqualTo("{\"v\": 4, \"v\": null, \"w\": \"2024-03-04\"}");
         });
     }
@@ -1396,9 +1378,9 @@ class ValueFormatterTest {
     void projectedStructFieldRendersWithItsOwnType() throws IOException {
         withDuplicateFieldNamesReader(ColumnProjection.columns("s.w"), (rowReader, field) -> {
             rowReader.next();
-            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
+            assertThat(ValueFormatter.formatField(rowReader, 0, field, true, ValueFormatter.Style.COMPACT, NO_LIMIT))
                     .isEqualTo("{ w : 2024-01-02 }");
-            assertThat(ValueFormatter.formatReader(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
+            assertThat(ValueFormatter.formatField(rowReader, 0, field, true, ValueFormatter.Style.EXPORT, NO_LIMIT))
                     .isEqualTo("{\"w\": \"2024-01-02\"}");
         });
     }
@@ -1416,14 +1398,33 @@ class ValueFormatterTest {
         }
     }
 
-    /// A `convert` rendering of a materialised value.
+    /// A `convert` rendering of a value.
     private static String export(Object value) {
-        return ValueFormatter.formatValue(value, null, ValueFormatter.Style.EXPORT, NO_LIMIT);
+        return format(value, null, ValueFormatter.Style.EXPORT, NO_LIMIT);
     }
 
-    /// A `print` cell's rendering of a materialised value.
+    /// A `print` cell's rendering of a value.
     private static String display(Object value, SchemaNode field) {
-        return ValueFormatter.formatValue(value, field, ValueFormatter.Style.COMPACT, NO_LIMIT);
+        return format(value, field, ValueFormatter.Style.COMPACT, NO_LIMIT);
+    }
+
+    /// Renders `value` as the one field of a row whose accessors return it. A `null`
+    /// `field` stands for an unannotated primitive, under which a nested value walks
+    /// schema-less.
+    private static String format(Object value, SchemaNode field, ValueFormatter.Style style, int budget) {
+        SchemaNode schema = field != null ? field : primitive(PhysicalType.BYTE_ARRAY, null);
+        return ValueFormatter.formatField(rowOf(value), 0, schema, true, style, budget);
+    }
+
+    private static StructAccessor rowOf(Object value) {
+        return (StructAccessor) Proxy.newProxyInstance(
+                StructAccessor.class.getClassLoader(),
+                new Class<?>[] { StructAccessor.class },
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "isNull" -> value == null;
+                    case "getValue", "getRawValue" -> value;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
     }
 
     private static String zeroHex(int length) {

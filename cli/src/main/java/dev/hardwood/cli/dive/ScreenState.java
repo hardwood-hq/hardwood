@@ -284,7 +284,7 @@ public sealed interface ScreenState {
     /// whose pretty-printed value is rendered inline (multi-line, no
     /// element caps). `expandedRows` is parallel to `rows` and holds the
     /// multi-line pretty-printed form of each cell, populated by
-    /// `ValueFormatter.formatReader` with `Style.EXPANDED`.
+    /// `ValueFormatter.formatField` with `Style.EXPANDED`.
     record DataPreview(
             long firstRow,
             int pageSize,

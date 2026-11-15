@@ -149,13 +149,13 @@ final class PreviewWindow {
                 List<String> expPhysical = new ArrayList<>(fieldCount);
                 for (int c = 0; c < fieldCount; c++) {
                     SchemaNode field = topLevelFields.get(c);
-                    rowLogical.add(ValueFormatter.formatReader(reader, c, field, true,
+                    rowLogical.add(ValueFormatter.formatField(reader, c, field, true,
                             ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET));
-                    rowPhysical.add(ValueFormatter.formatReader(reader, c, field, false,
+                    rowPhysical.add(ValueFormatter.formatField(reader, c, field, false,
                             ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET));
-                    expLogical.add(ValueFormatter.formatReader(reader, c, field, true,
+                    expLogical.add(ValueFormatter.formatField(reader, c, field, true,
                             ValueFormatter.Style.EXPANDED, BinaryValues.NO_LIMIT));
-                    expPhysical.add(ValueFormatter.formatReader(reader, c, field, false,
+                    expPhysical.add(ValueFormatter.formatField(reader, c, field, false,
                             ValueFormatter.Style.EXPANDED, BinaryValues.NO_LIMIT));
                 }
                 rowsLogical.add(rowLogical);
