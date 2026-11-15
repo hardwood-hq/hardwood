@@ -141,6 +141,22 @@ inside a rendered list, map, or struct cell is the text `null` in that cell. A
 Variant holding the Variant null is the text `null` too: that is a value the
 column carries, not an absent one.
 
+## Failures part-way through a read
+
+`print` and `convert` write rows as they read them. When the read fails part-way,
+for example on a corrupt page, the command exits with a non-zero status and the rows
+written before the failure stay in place: on standard output, or in the file named by
+`convert -o`. After the error, standard error names how many rows were written,
+unless `print` printed none:
+
+```
+Error reading file: [data.parquet: row group 2, column 'id', page 9] CRC mismatch: expected 478e649 but computed 9ea5c6df
+Wrote 524,264 rows to out.csv before the failure; the file is incomplete.
+```
+
+`convert -o` also exits with a non-zero status when writing the output file fails, for
+example on a full disk.
+
 ## Value rendering
 
 Every command spells a value of a given logical type the same way:

@@ -16,11 +16,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 import org.skyscreamer.jsonassert.JSONAssert;
 import org.skyscreamer.jsonassert.JSONCompareMode;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.cli.dive.internal.Plurals;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -506,5 +509,75 @@ class ConvertCommandTest implements ConvertCommandContract {
                 "1,A\u0001B",
                 "2,\"line\nbreak\"",
                 "3,\"carriage\rreturn\""));
+    }
+
+    /// A read failure leaves the rows converted so far in the output file, and the error
+    /// names how many there are.
+    @Test
+    void readFailureKeepsWrittenRowsAndCountsThem(@TempDir Path tempDir) throws Exception {
+        Path file = CorruptFiles.withBadLastRowGroup(tempDir);
+        Path csv = tempDir.resolve("out.csv");
+
+        Cli.Result result = Cli.launch("convert", "-f", file.toString(), "--format", "csv", "-o", csv.toString());
+
+        List<String> lines = Files.readAllLines(csv);
+        long rows = lines.size() - 1;
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo(CorruptFiles.CRC_FAILURE + "\nWrote "
+                + Plurals.format(rows, "row", "rows") + " to " + csv + " before the failure; the file is incomplete.");
+        assertThat(lines).first().isEqualTo("id");
+        for (int i = 1; i < lines.size(); i++) {
+            assertThat(lines.get(i)).isEqualTo(Integer.toString(i - 1));
+        }
+    }
+
+    /// On standard output, the error names how many rows were written before the failure.
+    @Test
+    void readFailureOnStandardOutputCountsWrittenRows(@TempDir Path tempDir) throws Exception {
+        Path file = CorruptFiles.withBadLastRowGroup(tempDir);
+
+        Cli.Result result = Cli.launch("convert", "-f", file.toString(), "--format", "csv");
+
+        long rows = result.output().lines().count() - 1;
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo(CorruptFiles.CRC_FAILURE + "\nWrote "
+                + Plurals.format(rows, "row", "rows") + " before the failure; the output is incomplete.");
+    }
+
+    /// A write to the output file that fails fails the command, rather than reporting success
+    /// over an incomplete file.
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void writeFailureFailsTheCommand() {
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-o", "/dev/full");
+
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo("Error writing /dev/full; the file is incomplete.");
+    }
+
+    /// When writing failed too, the rows counted are not all in the file, so the error
+    /// names the write failure instead of a count.
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void readFailureAfterAWriteFailureReportsBoth(@TempDir Path tempDir) throws Exception {
+        Path file = CorruptFiles.withBadLastRowGroup(tempDir);
+
+        Cli.Result result = Cli.launch("convert", "-f", file.toString(), "--format", "csv", "-o", "/dev/full");
+
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo(CorruptFiles.CRC_FAILURE
+                + "\nError writing /dev/full; the file is incomplete.");
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void outputFileThatCannotBeOpenedFailsTheCommand(@TempDir Path tempDir) {
+        Path csv = tempDir.resolve("missing").resolve("out.csv");
+
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-o", csv.toString());
+
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo(
+                "Error writing %s: %s (No such file or directory)".formatted(csv, csv));
     }
 }

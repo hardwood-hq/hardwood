@@ -307,7 +307,9 @@ class StreamedTableTest {
                 sampleSize,
                 maxWidth,
                 truncate,
-                false);
+                false,
+                () -> {
+                });
         return output.toString().replace("\r\n", "\n").stripTrailing();
     }
 

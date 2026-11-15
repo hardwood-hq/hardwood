@@ -17,9 +17,11 @@ import java.util.stream.IntStream;
 // note: align text left since it is how people do read in english
 public class StreamedTable {
 
+    /// Prints the table, running `onRowPrinted` after each data row it prints.
     public void print(PrintWriter out, String[] headers,
                Iterator<IntFunction<String>> iterator,
-               int sampleSize, int maxWidth, boolean truncate, boolean rowDelimiter) {
+               int sampleSize, int maxWidth, boolean truncate, boolean rowDelimiter,
+               Runnable onRowPrinted) {
         int n = headers.length;
 
         // sample a bit the rows so we can better adjust the widths
@@ -66,6 +68,7 @@ public class StreamedTable {
         for (String[] rowFunc : sampleRows) {
             printRow(out, i -> rowFunc[i], widths, truncate);
             emittedDataRow = true;
+            onRowPrinted.run();
             if (rowDelimiter) {
                 out.println(sep);
             }
@@ -76,6 +79,7 @@ public class StreamedTable {
             IntFunction<String> rowFunc = iterator.next();
             printRow(out, rowFunc, widths, truncate);
             emittedDataRow = true;
+            onRowPrinted.run();
             if (rowDelimiter) {
                 out.println(sep);
             }

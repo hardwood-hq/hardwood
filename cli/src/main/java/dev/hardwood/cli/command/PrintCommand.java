@@ -28,6 +28,7 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.dive.internal.Plurals;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.table.RowTable;
@@ -78,6 +79,9 @@ public class PrintCommand implements Command<CommandInvocation> {
     @Option(name = "row-group", description = "Print the rows of a single row group, counted from 0. Cannot be combined with --skip.")
     Integer rowGroup;
 
+    /// Data rows printed so far.
+    private long rowsPrinted;
+
     @Override
     public CommandResult execute(CommandInvocation ci) {
         return logFileMixin.run(this::run);
@@ -116,10 +120,12 @@ public class PrintCommand implements Command<CommandInvocation> {
         }
         catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
+            reportPartialOutput();
             return CommandResult.FAILURE;
         }
-        catch (IOException | ParquetReadException e) {
+        catch (IOException | ParquetReadException | UnsupportedOperationException e) {
             System.err.println("Error reading file: " + e.getMessage());
+            reportPartialOutput();
             return CommandResult.FAILURE;
         }
         catch (UncheckedIOException e) {
@@ -127,10 +133,21 @@ public class PrintCommand implements Command<CommandInvocation> {
             // checked exception, so a read failure arrives wrapped. This is where the stream
             // is consumed, so it is unwrapped here and reported like any other read failure.
             System.err.println("Error reading file: " + e.getCause().getMessage());
+            reportPartialOutput();
             return CommandResult.FAILURE;
         }
 
         return CommandResult.SUCCESS;
+    }
+
+    /// Names how far the output got before a failure. Rows already printed cannot be
+    /// taken back, so a failure past the first row leaves a prefix of the table on
+    /// standard output; the exit code alone does not say so.
+    private void reportPartialOutput() {
+        if (rowsPrinted > 0) {
+            System.err.println("Printed " + Plurals.format(rowsPrinted, "row", "rows")
+                    + " before the failure; the output is incomplete.");
+        }
     }
 
     /// Rejects widths below one cell. A column has to be at least one cell wide to
@@ -153,6 +170,7 @@ public class PrintCommand implements Command<CommandInvocation> {
                     .toList();
             System.out.println(RowTable.renderTransposedTable(
                     tableRows.get(0), tableRows.subList(1, tableRows.size())));
+            rowsPrinted++;
         });
     }
 
@@ -174,7 +192,8 @@ public class PrintCommand implements Command<CommandInvocation> {
                 sampleSize,
                 maxWidth,
                 truncate,
-                rowDelimiter);
+                rowDelimiter,
+                () -> rowsPrinted++);
     }
 
     private ColumnProjection parseColumnProjection() {
