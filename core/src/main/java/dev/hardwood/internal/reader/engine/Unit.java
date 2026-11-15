@@ -34,17 +34,17 @@ sealed interface Unit {
     /// Listed: its file's footer is parsed and its statistics keep it. `offsetIndexes` and
     /// `columnIndexes` are the file ordinals of the columns whose OffsetIndex and ColumnIndex its
     /// plan reads, from `window`, which also holds its Bloom filters; `dictionaries` are the
-    /// dictionary pages its probe reads whose extent the footer gives, fetched with the window's
-    /// Bloom filters and held by it alone.
+    /// dictionary pages its dictionary pruning reads whose extent the footer gives, fetched with
+    /// the window's Bloom filters and held by it alone.
     record Listed(UnitListing listing, BitSet offsetIndexes, BitSet columnIndexes,
                   RowGroupPlanner.WindowFetch window, List<RangeFetch> dictionaries) implements Unit {
 
         /// Its Bloom filters and dictionary pages have arrived and it has a leaf they may decide.
-        Probing probing() {
-            List<RangeFetch> probed = new ArrayList<>(dictionaries);
+        Pruning pruning() {
+            List<RangeFetch> fetched = new ArrayList<>(dictionaries);
             List<FileRange> missing = new ArrayList<>();
             String reason = "rg=" + listing.rowGroup() + " pruning";
-            ByteSource held = held(window.bloomFilters(), probed);
+            ByteSource held = held(window.bloomFilters(), fetched);
             ByteSource bytes = (offset, length) -> {
                 ByteBuffer found = held.read(offset, length);
                 if (found == null) {
@@ -52,28 +52,30 @@ sealed interface Unit {
                 }
                 return found;
             };
-            return new Probing(this, new RowGroupPruning.Probe(), probed, missing, bytes);
+            return new Pruning(this, new RowGroupPruning.Inputs(), fetched, missing, bytes);
         }
 
-        /// It has nothing to probe: its page index is waited for.
-        AwaitingIndex nothingToProbe() {
+        /// Neither its Bloom filters nor its dictionaries can drop it: it waits for its page index.
+        AwaitingIndex nothingToPrune() {
             return new AwaitingIndex(this, null, List.of());
         }
     }
 
-    /// What a probe reads from: its window's Bloom filters, then the dictionary bytes it fetched.
-    private static ByteSource held(List<RangeFetch> bloomFilters, List<RangeFetch> probed) {
+    /// What Bloom-filter and dictionary pruning read from: the window's Bloom filters, then the
+    /// dictionary bytes fetched for them.
+    private static ByteSource held(List<RangeFetch> bloomFilters, List<RangeFetch> fetched) {
         return (offset, length) -> {
             ByteBuffer found = RangeFetch.read(bloomFilters, offset, length);
-            return found != null ? found : RangeFetch.read(probed, offset, length);
+            return found != null ? found : RangeFetch.read(fetched, offset, length);
         };
     }
 
-    /// Probing: its Bloom filters and dictionary pages are read from `bytes`, a read step at a time
-    /// until none lacks anything, then evaluated once. `probe` holds what the steps read, `probed`
-    /// the dictionary bytes fetched for it, in file order, and `missing` what the last step lacked.
+    /// Pruning by its Bloom filters and dictionaries: they are read from `bytes`, a read step at a
+    /// time until none lacks anything, then evaluated once. `inputs` holds what the steps read,
+    /// `fetched` the dictionary bytes fetched for it, in file order, and `missing` what the last
+    /// step lacked.
     /// Only the planner sees it.
-    record Probing(Listed listed, RowGroupPruning.Probe probe, List<RangeFetch> probed, List<FileRange> missing,
+    record Pruning(Listed listed, RowGroupPruning.Inputs inputs, List<RangeFetch> fetched, List<FileRange> missing,
                    ByteSource bytes) implements Unit {
 
         @Override
@@ -83,25 +85,27 @@ sealed interface Unit {
 
         /// A pass lacked bytes, `more`, which the next reads once fetched.
         void fetching(List<RangeFetch> more) {
-            probed.addAll(more);
-            probed.sort(Comparator.comparingLong(r -> r.range().start()));
+            fetched.addAll(more);
+            fetched.sort(Comparator.comparingLong(r -> r.range().start()));
         }
 
-        /// The probe kept it, reporting `event` unless it is `null`: its page index is waited for.
+        /// Its Bloom filters and dictionaries kept it, reporting `event` unless it is `null`: its
+        /// page index is waited for.
         AwaitingIndex kept(Event event) {
-            return new AwaitingIndex(listed, probe.decoded(), event == null ? List.of() : List.of(event));
+            return new AwaitingIndex(listed, inputs.decoded(), event == null ? List.of() : List.of(event));
         }
 
-        /// The probe dropped it, reporting `event` unless it is `null`: it is planned with no row
-        /// of its `columns`.
+        /// Its Bloom filters or dictionaries dropped it, reporting `event` unless it is `null`: it
+        /// is planned with no row of its `columns`.
         Planned dropped(Event event, int columns) {
             return new Planned(listing(), UnitPlan.empty(columns, RowRanges.NONE),
                     event == null ? List.of() : List.of(event));
         }
     }
 
-    /// Awaiting its page index: kept by its probe, whose decoded `dictionaries` its pages decode
-    /// with (`null` for none), with the `events` its pruning reports so far.
+    /// Awaiting its page index: kept by its Bloom filters and dictionaries, whose decoded
+    /// `dictionaries` its pages decode with (`null` for none), with the `events` its pruning
+    /// reports so far.
     record AwaitingIndex(Listed listed, RowGroupDictionaryFilterSource.DecodedDictionaries dictionaries, List<Event> events)
             implements Unit {
 

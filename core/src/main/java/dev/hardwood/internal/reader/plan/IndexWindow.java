@@ -39,7 +39,7 @@ public final class IndexWindow {
     /// @param rowGroupIndex the row group's index in the file, for the fetch reason
     /// @param offsetIndexColumns the columns whose OffsetIndex it needs
     /// @param columnIndexColumns the columns whose ColumnIndex it needs
-    /// @param bloomFilterColumns the columns whose bloom filter it may probe
+    /// @param bloomFilterColumns the columns whose bloom filter it may consult
     public record Member(RowGroup rowGroup, int rowGroupIndex, BitSet offsetIndexColumns, BitSet columnIndexColumns,
                   BitSet bloomFilterColumns) {
     }
@@ -163,7 +163,7 @@ public final class IndexWindow {
     }
 
     /// Adds the bloom-filter slices of `columns` whose extent the footer gives. A filter without
-    /// one is read by [RowGroupBloomFilterSource] if a probe reaches it.
+    /// one is read by [RowGroupBloomFilterSource] if Bloom-filter pruning reaches it.
     private static void addBloomFilterRanges(RowGroup rowGroup, BitSet columns,
             CoalescedRequests.Builder bloomFilters) {
         List<ColumnChunk> chunks = rowGroup.columns();

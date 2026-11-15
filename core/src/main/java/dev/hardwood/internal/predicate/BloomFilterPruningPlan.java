@@ -12,19 +12,20 @@ import java.util.BitSet;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.metadata.RowGroup;
 
-/// A [BloomFilterSource] that reads nothing: it answers "no filter" for every column and records
+/// The plan of a row group's Bloom-filter pruning: the columns whose Bloom filter it reads. A
+/// [BloomFilterSource] that reads nothing: it answers "no filter" for every column and records
 /// which columns the evaluator asked for.
 ///
 /// Planning a row group with it through [RowGroupFilterEvaluator#planRowGroup] yields the
 /// decision of its statistics alone and the columns whose bloom filter a leaf would consult. A
 /// leaf its statistics drop asks for no filter, so the recorded columns are those the read
 /// may have to fetch a filter for once it reaches the row group.
-public final class BloomFilterColumnRecorder implements BloomFilterSource {
+public final class BloomFilterPruningPlan implements BloomFilterSource {
 
     private final int columnCount;
     private final BitSet columns = new BitSet();
 
-    public BloomFilterColumnRecorder(RowGroup rowGroup) {
+    public BloomFilterPruningPlan(RowGroup rowGroup) {
         this.columnCount = rowGroup.columns().size();
     }
 

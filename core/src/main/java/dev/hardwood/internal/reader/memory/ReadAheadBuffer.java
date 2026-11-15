@@ -16,8 +16,8 @@ import java.util.concurrent.atomic.AtomicLong;
 /// requests a read ([dev.hardwood.internal.reader.engine.ReadEngine]) starts ahead of its
 /// consumer, the footers a multi-file read reads ahead, each charged the tail it reads until
 /// the read is done with the file, and the buffers of a decode above
-/// [dev.hardwood.internal.DecodeBuffers#RETAINED_BYTES] it runs beside its own task, a probe's
-/// dictionary parses included, charged while the decode or probe runs.
+/// [dev.hardwood.internal.DecodeBuffers#RETAINED_BYTES] it runs beside its own task, dictionary
+/// pruning's dictionary parses included, charged while the decode or the pruning runs.
 ///
 /// Such a request, footer read or decode starts only while it fits; one that does not fit is
 /// not started and is considered again on a later release, whose waiters run in registration order.

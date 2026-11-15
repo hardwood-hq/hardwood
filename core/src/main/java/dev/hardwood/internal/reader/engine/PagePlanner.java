@@ -40,7 +40,7 @@ import jdk.jfr.Event;
 /// Plans a unit's pages and ranges on its plan job, once its page index has arrived: each decoded
 /// column's pages and dictionary page from its OffsetIndex, kept by the rows the ColumnIndex
 /// leaves its filter and by the row limit, and the ranges they are fetched in, coalesced. Also
-/// gives the planner a unit's checked chunk extents, on its probe job, and the columns a unit
+/// gives the planner a unit's checked chunk extents, on its pruning job, and the columns a unit
 /// skips. Holds no state of the read.
 final class PagePlanner {
 

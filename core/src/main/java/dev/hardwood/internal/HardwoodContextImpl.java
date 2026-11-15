@@ -160,8 +160,9 @@ public class HardwoodContextImpl implements HardwoodContext {
         };
         ThreadPoolExecutor executor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
                 DecodeExecutor.newWorkQueue(), threadFactory);
-        // A read's first decode, often its dictionary probe on the calling thread, would otherwise
-        // wait for the pool's first thread to start; it starts here, while the footer is read
+        // A read's first decode, often its dictionary pruning on the calling thread, would
+        // otherwise wait for the pool's first thread to start; it starts here, while the footer
+        // is read
         executor.prestartCoreThread();
         return new HardwoodContextImpl(executor, threads, poolThreads, ioExecutor, libdeflatePool, metadataSource);
     }

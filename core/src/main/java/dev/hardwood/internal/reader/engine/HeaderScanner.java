@@ -123,7 +123,8 @@ final class HeaderScanner {
             return pages;
         }
 
-        /// The chunk's dictionary, `null` until the scan finds it where the probe did not decode it.
+        /// The chunk's dictionary, `null` until the scan finds it where dictionary pruning did not
+        /// decode it.
         ChunkDictionary dictionary() {
             return dictionary;
         }
@@ -246,7 +247,7 @@ final class HeaderScanner {
         long end = start + CoalescingPolicy.chunkLength(meta, u.listing().rowGroup(), u.listing().file().name(), columns.schema(column));
         ChunkDictionary dictionary = null;
         if (u.plan().preloaded()[column] != null) {
-            // decoded by the unit's probe: the scan starts at the first data page
+            // decoded by the unit's dictionary pruning: the scan starts at the first data page
             dictionary = ChunkDictionary.preloaded(u.plan().preloaded()[column]);
             start = u.plan().dictionaryEnd()[column];
         }

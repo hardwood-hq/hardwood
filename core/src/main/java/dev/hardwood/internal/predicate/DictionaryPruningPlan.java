@@ -14,17 +14,18 @@ import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.RowGroup;
 
-/// A [DictionarySource] and [BloomFilterSource] that read nothing: it proves no literal absent and
+/// The plan of a row group's dictionary pruning: the columns whose dictionary it reads. A
+/// [DictionarySource] and [BloomFilterSource] that read nothing: it proves no literal absent and
 /// records which columns' dictionaries the evaluator asked for, leaving out a column whose Bloom
 /// filter the same leaf asked for first.
 ///
-/// Evaluating a row group with it through [RowGroupFilterEvaluator#recordDictionaryCandidates]
+/// Evaluating a row group with it through [RowGroupFilterEvaluator#planDictionaryPruning]
 /// yields the columns whose dictionary a leaf may consult: since no dictionary decides a leaf
 /// here, no `AND` or `OR` stops short of one a real evaluation could reach. A leaf asks its
 /// column's Bloom filter before its dictionary, so a dictionary asked for right after the same
 /// column's Bloom filter, in a chunk that carries one, is the one that filter answers first, and is
 /// left out.
-public final class DictionaryColumnRecorder implements DictionarySource, BloomFilterSource {
+public final class DictionaryPruningPlan implements DictionarySource, BloomFilterSource {
 
     private final RowGroup rowGroup;
     private final BitSet columns = new BitSet();
@@ -32,8 +33,8 @@ public final class DictionaryColumnRecorder implements DictionarySource, BloomFi
     /// for none
     private int bloomed = -1;
 
-    /// A recorder for the columns of `rowGroup`.
-    public DictionaryColumnRecorder(RowGroup rowGroup) {
+    /// A plan for the columns of `rowGroup`.
+    public DictionaryPruningPlan(RowGroup rowGroup) {
         this.rowGroup = rowGroup;
     }
 

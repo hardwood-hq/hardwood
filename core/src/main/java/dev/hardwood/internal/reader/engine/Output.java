@@ -15,8 +15,8 @@ import java.util.List;
 /// dictionary's values ([ChunkDictionary]), which its data pages read, ended by the dictionary
 /// page's decode; or a flat page's placement ([TrackedPage#placement]), ended by its column's
 /// placement. It exists from when a service decides it needs it, so anything can wait for it from
-/// then on ([#whenEnded]). A range a file holds in memory, or a dictionary the probe decoded, has
-/// one ended from the start ([#of]). Used under the read's lock.
+/// then on ([#whenEnded]). A range a file holds in memory, or a dictionary that dictionary
+/// pruning decoded, has one ended from the start ([#of]). Used under the read's lock.
 final class Output<T> {
 
     /// `null` until something waits

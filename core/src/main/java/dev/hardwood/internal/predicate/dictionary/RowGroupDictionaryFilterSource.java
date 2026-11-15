@@ -153,7 +153,8 @@ public final class RowGroupDictionaryFilterSource implements DictionarySource {
         return new DecodedDictionaries(dictionaries.clone(), pageEnds.clone());
     }
 
-    /// A row group's dictionaries a probe decoded, for its plan to decode its pages with.
+    /// A row group's dictionaries that dictionary pruning decoded, for its plan to decode its pages
+    /// with.
     ///
     /// @param dictionaries per column, its decoded dictionary, `null` for none
     /// @param pageEnds per column, where its decoded dictionary's page ends, `0` for none

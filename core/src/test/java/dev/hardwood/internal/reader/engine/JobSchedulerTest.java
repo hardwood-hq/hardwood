@@ -184,10 +184,11 @@ class JobSchedulerTest {
         assertThat(applied).containsExactly("d2", "d3 failed: broken");
     }
 
-    /// A probe charged its dictionary parses that R refuses waits, holding back the plans after it
-    /// but not the other CPU work, and starts once the probe before it has returned its charge.
+    /// A pruning job charged its dictionary parses that R refuses waits, holding back the plans
+    /// after it but not the other CPU work, and starts once the pruning job before it has returned
+    /// its charge.
     @Test
-    void probeRefusedByTheBufferWaitsForItsRelease() {
+    void pruningRefusedByTheBufferWaitsForItsRelease() {
         ReadAheadBuffer r = new ReadAheadBuffer(100);
         JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 0);
         JobScheduler.Job<?> first = job("p1", 50, 80, JobScheduler.Kind.PLAN, new Charge());
@@ -206,11 +207,11 @@ class JobSchedulerTest {
         assertThat(r.held()).isEqualTo(80);
     }
 
-    /// A probe R refuses holds back only the plans after it: planning starts first whatever its
-    /// key, so a refused probe ahead of need must not keep the fetch the consumer's next batch
-    /// waits on from starting, even one that never fits R.
+    /// A pruning job R refuses holds back only the plans after it: planning starts first whatever
+    /// its key, so a refused pruning job ahead of need must not keep the fetch the consumer's next
+    /// batch waits on from starting, even one that never fits R.
     @Test
-    void probeRefusedByTheBufferHoldsBackNoNeededFetch() {
+    void pruningRefusedByTheBufferHoldsBackNoNeededFetch() {
         ReadAheadBuffer r = new ReadAheadBuffer(100);
         JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 1000);
         s.add(job("p", 50, 200, JobScheduler.Kind.PLAN, new Charge()));

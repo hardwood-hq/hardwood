@@ -33,11 +33,12 @@ import dev.hardwood.schema.FileSchema;
 import jdk.jfr.Event;
 
 /// Plans a read's row groups, moving each through its states ([Unit.State]). Lists each file's row
-/// groups that statistics and the read's skip and limit keep, as [Unit]s; probes each unit's Bloom
-/// filters and dictionaries; reads its window's page index (sliced from the file's tail where it
-/// holds it), from which [PagePlanner] plans its pages and ranges into a [UnitPlan]; and batches the units in unit
-/// order, so batches stay in row order whichever plan finishes first. A unit whose planning fails fails the read at its first row, between two units. Used
-/// under the read's lock, except the jobs' work.
+/// groups that statistics and the read's skip and limit keep, as [Unit]s; prunes each unit by its
+/// Bloom filters and dictionaries; reads its window's page index (sliced from the file's tail where
+/// it holds it), from which [PagePlanner] plans its pages and ranges into a [UnitPlan]; and batches
+/// the units in unit order, so batches stay in row order whichever plan finishes first. A unit
+/// whose planning fails fails the read at its first row, between two units. Used under the read's
+/// lock, except the jobs' work.
 final class RowGroupPlanner {
 
     /// The fetch of an [IndexWindow] in the read: its units, the `count` from the one at `first`,
@@ -220,7 +221,7 @@ final class RowGroupPlanner {
                 for (int i = first; i < first + count; i++) {
                     // a row group with a chunk in another file reads no index: it fails first
                     IndexWindow.Member m = members.get(i - from);
-                    // a probe's dictionary pages are requested with the window's bloom filters,
+                    // dictionary pruning's pages are requested with the window's bloom filters,
                     // whatever those decide, each on its own and held by its unit alone
                     // (FETCH_PLANNING.md, Pruning reads)
                     UnitListing listed = listings.get(i - from);
@@ -287,16 +288,16 @@ final class RowGroupPlanner {
         }
     }
 
-    /// `l`'s Bloom filters have arrived: it is probed where they or its dictionaries may drop it,
-    /// and waits for its page index otherwise.
+    /// `l`'s Bloom filters have arrived: it is pruned by them and its dictionaries where they may
+    /// drop it, and waits for its page index otherwise.
     private void bloomFiltersArrived(Unit.Listed l) {
         if (RowGroupPruning.droppableOnArrival(l.listing())) {
-            whenArrived(l.listing(), l.dictionaries(), () -> probe(l.probing()));
+            whenArrived(l.listing(), l.dictionaries(), () -> prune(l.pruning()));
             return;
         }
         fetcher.readersDone(l.window().bloomFilters());
         fetcher.readersDone(l.dictionaries());
-        awaitIndex(l.nothingToProbe());
+        awaitIndex(l.nothingToPrune());
     }
 
     /// Reads `p`'s Bloom filters and the dictionary pages its evaluation may consult, on a job: what
@@ -304,19 +305,19 @@ final class RowGroupPlanner {
     /// until it holds them all. Then evaluates them once: in the same job where no dictionary parse
     /// needs a charge, which is every parse within [DecodeBuffers#RETAINED_BYTES], and otherwise on
     /// a job charged for them ([#evaluate]).
-    private void probe(Unit.Probing p) {
+    private void prune(Unit.Pruning p) {
         set(p);
         UnitListing u = p.listing();
         p.missing().clear();
         scheduler.add(new JobScheduler.Job<>(u.base(), 0, planKind(u), null, buffers -> {
             // its chunks lie in the file before a dictionary of them is read
             pages.extents(u);
-            pruning.read(u, p.bytes(), p.probe());
-            boolean uncharged = p.missing().isEmpty() && RowGroupPruning.parseBytes(u, p.probe()) == 0;
-            return Optional.ofNullable(uncharged ? pruning.evaluate(u, p.probe()) : null);
+            pruning.read(u, p.bytes(), p.inputs());
+            boolean uncharged = p.missing().isEmpty() && RowGroupPruning.parseBytes(u, p.inputs()) == 0;
+            return Optional.ofNullable(uncharged ? pruning.evaluate(u, p.inputs()) : null);
         }, arrival -> {
             if (arrival.isPresent()) {
-                probed(p, arrival.get());
+                pruned(p, arrival.get());
             }
             else if (p.missing().isEmpty()) {
                 evaluate(p);
@@ -324,29 +325,29 @@ final class RowGroupPlanner {
             else {
                 List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
                 p.fetching(more);
-                fetch(u, more, () -> probe(p));
+                fetch(u, more, () -> prune(p));
             }
         }, t -> readFailure.failAt(u.base(), t)));
     }
 
     /// Evaluates `p`'s Bloom filters and dictionaries once, where a dictionary parse it may run
-    /// exceeds [DecodeBuffers#RETAINED_BYTES], on a job charged those parses, from the headers its
-    /// probe parsed: R holds them while it runs, unless need forces it, so that the probes of
-    /// several row groups parse such dictionaries at once only within R.
-    private void evaluate(Unit.Probing p) {
+    /// exceeds [DecodeBuffers#RETAINED_BYTES], on a job charged those parses, from the headers
+    /// [#prune] parsed: R holds them while it runs, unless need forces it, so that the dictionary
+    /// pruning of several row groups parses such dictionaries at once only within R.
+    private void evaluate(Unit.Pruning p) {
         UnitListing u = p.listing();
-        long cost = RowGroupPruning.parseBytes(u, p.probe());
+        long cost = RowGroupPruning.parseBytes(u, p.inputs());
         scheduler.add(new JobScheduler.Job<>(u.base(), cost, planKind(u), cost > 0 ? new Charge() : null,
-                buffers -> pruning.evaluate(u, p.probe()), arrival -> probed(p, arrival),
+                buffers -> pruning.evaluate(u, p.inputs()), arrival -> pruned(p, arrival),
                 t -> readFailure.failAt(u.base(), t)));
     }
 
     /// `p`'s Bloom filters and dictionaries decided: a unit they dropped is planned with no row,
     /// one they kept waits for its page index.
-    private void probed(Unit.Probing p, RowGroupPruning.Arrival arrival) {
+    private void pruned(Unit.Pruning p, RowGroupPruning.Arrival arrival) {
         WindowFetch w = p.listed().window();
         fetcher.readersDone(w.bloomFilters());
-        fetcher.readersDone(p.probed());
+        fetcher.readersDone(p.fetched());
         if (arrival.dropped()) {
             set(p.dropped(arrival.dropEvent(), schemas.length));
             batchPlanned(w.index());
@@ -436,9 +437,10 @@ final class RowGroupPlanner {
         }));
     }
 
-    /// The kind of `u`'s probe and plan: planning ahead leads to fetches, whose latency it hides;
-    /// the plan of a unit whose file holds every byte leads to none, and is held to the look-ahead
-    /// like the decodes it leads to, so that the read does not hold every unit's pages at once.
+    /// The kind of `u`'s pruning and plan jobs: planning ahead leads to fetches, whose latency it
+    /// hides; the plan of a unit whose file holds every byte leads to none, and is held to the
+    /// look-ahead like the decodes it leads to, so that the read does not hold every unit's pages
+    /// at once.
     private static JobScheduler.Kind planKind(UnitListing u) {
         return HeldBytes.inMemory(u.file()) ? JobScheduler.Kind.DECODE : JobScheduler.Kind.PLAN;
     }
@@ -468,8 +470,8 @@ final class RowGroupPlanner {
     private record FileReport(Event event, long base) {
     }
 
-    /// Charges the dictionary `u`'s probe decoded for `column` as the column takes it, against the
-    /// batches `u` places; a charge over the read's limit fails the read at the unit.
+    /// Charges the dictionary `u`'s dictionary pruning decoded for `column` as the column takes it,
+    /// against the batches `u` places; a charge over the read's limit fails the read at the unit.
     private void chargePreloaded(Unit.Batched u, int column) {
         try {
             columns.chargeDictionary(column, u, () -> {

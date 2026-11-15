@@ -88,8 +88,8 @@ class OutsideFileTest {
                         + (offset + bloomFilterLength(moved)) + ") lies outside the file of " + moved.length + " bytes");
     }
 
-    /// A filter whose length the footer omits is not fetched with the window but read where a probe
-    /// reaches it, so the probe rejects it.
+    /// A filter whose length the footer omits is not fetched with the window but read where
+    /// Bloom-filter pruning reaches it, which rejects it.
     @Test
     void aBloomFilterOfUnknownLengthPastTheFileIsRejectedBeforeItIsRead() throws Exception {
         byte[] bytes = dictionaryEncodedFile(WriterConfig.builder().bloomFilter("s").build());

@@ -28,7 +28,8 @@ import dev.hardwood.schema.FileSchema;
 /// @param alwaysMatches whether statistics proved every row of it matches the filter
 /// @param leafDecisions what statistics decided for each leaf of the filter, for its Bloom filters
 ///        and dictionaries to sharpen once the read reaches it; `null` without metadata filtering
-/// @param bloomFilterColumns the file ordinals of the columns whose Bloom filter a leaf would probe
+/// @param bloomFilterColumns the file ordinals of the columns whose Bloom filter a leaf would
+///        consult
 /// @param chunks per decoded column, its chunk in the file; not written once listed
 /// @param limit the rows of the row group the read's row limit reaches, its leading skipped rows
 ///        included; all of them without a limit
