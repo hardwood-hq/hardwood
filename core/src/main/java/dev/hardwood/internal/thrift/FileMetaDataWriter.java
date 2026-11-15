@@ -7,6 +7,9 @@
  */
 package dev.hardwood.internal.thrift;
 
+import java.util.List;
+
+import dev.hardwood.internal.metadata.SortingColumnIndex;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -17,6 +20,13 @@ import dev.hardwood.metadata.SchemaElement;
 public class FileMetaDataWriter {
 
     public static void write(ThriftCompactWriter writer, FileMetaData metaData) {
+        write(writer, metaData, List.of());
+    }
+
+    /// Writes `metaData` with the order every row group's rows are sorted in, which is omitted
+    /// where empty.
+    public static void write(ThriftCompactWriter writer, FileMetaData metaData,
+                             List<SortingColumnIndex> sortingColumns) {
         writer.pushFieldIdContext();
 
         // 1: version
@@ -38,7 +48,7 @@ public class FileMetaDataWriter {
         writer.writeFieldBegin(4, ThriftCompactConstants.FieldType.LIST);
         writer.writeListBegin(metaData.rowGroups().size(), ThriftCompactConstants.ElementType.STRUCT);
         for (RowGroup rowGroup : metaData.rowGroups()) {
-            RowGroupWriter.write(writer, rowGroup);
+            RowGroupWriter.write(writer, rowGroup, sortingColumns);
         }
 
         // 5: key_value_metadata (optional list<KeyValue>), the application metadata the

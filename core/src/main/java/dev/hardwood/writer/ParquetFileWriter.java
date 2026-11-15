@@ -30,6 +30,8 @@ import dev.hardwood.internal.BuildInfo;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.compression.CompressorFactory;
+import dev.hardwood.internal.metadata.SortingColumnIndex;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.internal.thrift.BloomFilterHeaderWriter;
 import dev.hardwood.internal.thrift.ColumnIndexWriter;
@@ -41,6 +43,7 @@ import dev.hardwood.internal.writer.LogicalTypeValueRange;
 import dev.hardwood.internal.writer.ParallelAppend;
 import dev.hardwood.internal.writer.RecordShredder;
 import dev.hardwood.internal.writer.RowGroupBuffer;
+import dev.hardwood.internal.writer.SortOrderCheck;
 import dev.hardwood.internal.writer.WriterSchemaShape;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
@@ -50,6 +53,7 @@ import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.SortingColumn;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -120,6 +124,8 @@ public final class ParquetFileWriter implements Closeable {
     private String createdBy = DEFAULT_CREATED_BY;
 
     private final RowGroupBuffer current;
+    /// The order every row group's rows are declared sorted in, as the footer records it.
+    private final List<SortingColumnIndex> sortingColumns;
     private long numRows;
 
     /// The pool that appends and encodes column chunks beside the caller. Created on first use
@@ -157,7 +163,8 @@ public final class ParquetFileWriter implements Closeable {
     private RowWriter rowWriter;
 
     private ParquetFileWriter(OutputFile out, FileSchema schema, WriterConfig config, HardwoodContextImpl context,
-            Compressor compressor, ColumnEncoding[] encodings, double[] bloomFilterFpps) {
+            Compressor compressor, ColumnEncoding[] encodings, double[] bloomFilterFpps,
+            List<SortingColumnIndex> sortingColumns) {
         this.out = out;
         this.context = context;
         this.ownsContext = context == null;
@@ -173,7 +180,9 @@ public final class ParquetFileWriter implements Closeable {
         // largest allocation is made once per file rather than once per row group.
         this.current = new RowGroupBuffer(schema, config.pageTargetBytes(), config.pageTargetRows(),
                 config.rowGroupBufferTargetBytes(), config.rowGroupTargetRows(), encodings,
-                config.statisticsTruncationLength(), compressor, config.compression().codec(), bloomFilterFpps);
+                config.statisticsTruncationLength(), compressor, config.compression().codec(), bloomFilterFpps,
+                sortingColumns.isEmpty() ? null : new SortOrderCheck(schema, config.sortingColumns(), sortingColumns));
+        this.sortingColumns = sortingColumns;
     }
 
     /// The bytes the open row group retains. Exposed to the tests that hold this number against a
@@ -283,8 +292,8 @@ public final class ParquetFileWriter implements Closeable {
             HardwoodContextImpl context, Supplier<Compressor> compressors) throws IOException {
         // Everything this schema and configuration decide is settled before the output is
         // touched, so a file the writer cannot honour is never begun: the columns' physical
-        // types, the schema's shape, the encoding policies and Bloom filters against the schema's
-        // columns, then the codec and its library.
+        // types, the schema's shape, the encoding policies, Bloom filters and sorting columns
+        // against the schema's columns, then the codec and its library.
         for (int c = 0; c < schema.getColumnCount(); c++) {
             ColumnSchema column = schema.getColumn(c);
             if (!isSupportedType(column.type())) {
@@ -302,11 +311,13 @@ public final class ParquetFileWriter implements Closeable {
         WriterSchemaShape.validate(schema);
         ColumnEncoding[] encodings = resolveEncodings(schema, config);
         double[] bloomFilterFpps = resolveBloomFilters(schema, config);
+        List<SortingColumnIndex> sortingColumns = resolveSortingColumns(schema, config);
         Compressor compressor = compressors.get();
         out.create();
         try {
             out.write(ByteBuffer.wrap(MAGIC));
-            return new ParquetFileWriter(out, schema, config, context, compressor, encodings, bloomFilterFpps);
+            return new ParquetFileWriter(out, schema, config, context, compressor, encodings, bloomFilterFpps,
+                    sortingColumns);
         }
         catch (Throwable t) {
             // The destination is open and holds no valid file. Discard it rather than leaving
@@ -373,6 +384,33 @@ public final class ParquetFileWriter implements Closeable {
             fpps[c] = fpp;
         }
         return fpps;
+    }
+
+    /// Resolves the declared sorting columns to the leaf columns they name, rejecting a column
+    /// that cannot carry a sort order: one naming no leaf column, one that repeats, having no
+    /// single value per row to sort by, and one whose type defines no order of its values.
+    private static List<SortingColumnIndex> resolveSortingColumns(FileSchema schema, WriterConfig config) {
+        List<SortingColumn> declared = config.sortingColumns();
+        Set<String> paths = new LinkedHashSet<>();
+        for (SortingColumn column : declared) {
+            paths.add(column.columnPath());
+        }
+        requireLeafColumns(schema, "Sorting column", paths);
+        List<SortingColumnIndex> resolved = new ArrayList<>(declared.size());
+        for (SortingColumn sortingColumn : declared) {
+            ColumnSchema column = schema.getColumn(sortingColumn.columnPath());
+            if (column.maxRepetitionLevel() > 0) {
+                throw new IllegalArgumentException("Sorting column '" + sortingColumn.columnPath()
+                        + "' is repeated or inside a list or map; a sorting column holds one value per row.");
+            }
+            if (!AnnotationKind.namesAnOrder(column.logicalType())) {
+                throw new IllegalArgumentException("Sorting column '" + sortingColumn.columnPath() + "' is "
+                        + column.logicalType() + ", whose values have no defined order.");
+            }
+            resolved.add(new SortingColumnIndex(column.columnIndex(), sortingColumn.descending(),
+                    sortingColumn.nullsFirst()));
+        }
+        return List.copyOf(resolved);
     }
 
     /// Rejects a configured path that names no leaf column of `schema`: a typo whose only other
@@ -880,7 +918,7 @@ public final class ParquetFileWriter implements Closeable {
                 columnOrders());
 
         ThriftCompactWriter footer = new ThriftCompactWriter();
-        FileMetaDataWriter.write(footer, metaData);
+        FileMetaDataWriter.write(footer, metaData, sortingColumns);
         byte[] footerBytes = footer.toByteArray();
 
         out.write(ByteBuffer.wrap(footerBytes));

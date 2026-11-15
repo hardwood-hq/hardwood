@@ -7,10 +7,15 @@
  */
 package dev.hardwood.writer;
 
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import dev.hardwood.internal.compression.CodecLibraries;
+import dev.hardwood.metadata.SortingColumn;
 
 /// Tuning knobs for [ParquetFileWriter].
 ///
@@ -46,6 +51,10 @@ import dev.hardwood.internal.compression.CodecLibraries;
 /// A column can carry a Bloom filter in every row group, which lets a reader skip a row group
 /// that does not hold a value an equality or `IN` predicate asks for, where the row group's
 /// `min` / `max` span it. No column has one unless named through [Builder#bloomFilter(String)].
+///
+/// Rows written already sorted can be declared so through [Builder#sortingColumns(SortingColumn...)]:
+/// every row group records the order in its metadata, where a reader can find it, and the
+/// writer fails the write at the first row out of that order.
 ///
 /// A file's `created_by` identifier and its key-value metadata are set on [ParquetFileWriter].
 ///
@@ -102,6 +111,7 @@ public final class WriterConfig {
     private final int statisticsTruncationLength;
     private final Compression compression;
     private final PrecisionLossPolicy precisionLossPolicy;
+    private final List<SortingColumn> sortingColumns;
 
     private WriterConfig(Builder builder) {
         this.pageTargetBytes = builder.pageTargetBytes;
@@ -114,6 +124,7 @@ public final class WriterConfig {
         this.statisticsTruncationLength = builder.statisticsTruncationLength;
         this.compression = builder.compression;
         this.precisionLossPolicy = builder.precisionLossPolicy;
+        this.sortingColumns = builder.sortingColumns;
     }
 
     /// The default configuration.
@@ -189,6 +200,12 @@ public final class WriterConfig {
         return precisionLossPolicy;
     }
 
+    /// The columns every row group is declared sorted by, in order; empty when no order is
+    /// declared.
+    public List<SortingColumn> sortingColumns() {
+        return sortingColumns;
+    }
+
     /// `ZSTD` when its library is loadable, otherwise `UNCOMPRESSED`. The class is only probed
     /// for presence, not initialized, so picking the default never triggers the native load.
     private static Compression defaultCompression() {
@@ -210,6 +227,7 @@ public final class WriterConfig {
         private int statisticsTruncationLength = DEFAULT_STATISTICS_TRUNCATION_LENGTH;
         private Compression compression = DEFAULT_COMPRESSION;
         private PrecisionLossPolicy precisionLossPolicy = DEFAULT_PRECISION_LOSS_POLICY;
+        private List<SortingColumn> sortingColumns = List.of();
 
         private Builder() {
         }
@@ -377,6 +395,49 @@ public final class WriterConfig {
                 throw new IllegalArgumentException("precisionLossPolicy must not be null");
             }
             this.precisionLossPolicy = precisionLossPolicy;
+            return this;
+        }
+
+        /// Declares the order every row group's rows are sorted in; a second call replaces the
+        /// first, and no columns declares none. See
+        /// [#sortingColumns(List)].
+        public Builder sortingColumns(SortingColumn... sortingColumns) {
+            if (sortingColumns == null) {
+                throw new IllegalArgumentException("sortingColumns must not be null");
+            }
+            return sortingColumns(Arrays.asList(sortingColumns));
+        }
+
+        /// Declares the order every row group's rows are sorted in: by the first column, rows
+        /// equal there by the second, and so on. A second call replaces the first, and an empty
+        /// list declares none. The list must be non-null, hold no `null` and name each column
+        /// once.
+        ///
+        /// Each row group's metadata records the order. The writer checks it as rows arrive,
+        /// within each row group: the first row that sorts before the row ahead of it fails
+        /// the write with an `IllegalArgumentException`. [SortingColumn] defines how each
+        /// column's values compare.
+        ///
+        /// A column is named by its dotted leaf path, as for
+        /// [#encoding(String, ColumnEncoding)]. A path matching no leaf column, a column that is
+        /// repeated or sits inside a list or map, and a column whose type has no defined order
+        /// (`INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `UNKNOWN`) are rejected when the
+        /// writer is created.
+        public Builder sortingColumns(List<SortingColumn> sortingColumns) {
+            if (sortingColumns == null) {
+                throw new IllegalArgumentException("sortingColumns must not be null");
+            }
+            Set<String> seen = new HashSet<>();
+            for (SortingColumn column : sortingColumns) {
+                if (column == null) {
+                    throw new IllegalArgumentException("sortingColumns must not contain null: " + sortingColumns);
+                }
+                if (!seen.add(column.columnPath())) {
+                    throw new IllegalArgumentException("Column '" + column.columnPath()
+                            + "' is declared more than once among the sorting columns " + sortingColumns);
+                }
+            }
+            this.sortingColumns = List.copyOf(sortingColumns);
             return this;
         }
 
