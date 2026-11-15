@@ -15,6 +15,7 @@ import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.CodecExpansion;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.encoding.BitPackedLevelDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
@@ -500,19 +501,25 @@ public class PageDecoder {
             body = ByteBuffer.wrap(data, 0, limit).order(ByteOrder.LITTLE_ENDIAN);
         }
         int numValues = header.numValues();
+        // A level whose maximum is 0 has no section, whatever encoding the header names for it
+        // (parquet-java names BIT_PACKED)
+        Encoding repEncoding = header.repetitionLevelEncoding();
+        Encoding defEncoding = header.definitionLevelEncoding();
         int offset = 0;
         int repOffset = 0;
         int repLength = 0;
         if (column.maxRepetitionLevel() > 0) {
-            repLength = readSectionLength(body, offset, limit, "repetition level");
-            repOffset = offset + 4;
+            repLength = levelSectionLength(repEncoding, header.repetitionLevelEncodingValue(), body, offset, limit,
+                    numValues, column.maxRepetitionLevel(), "repetition level");
+            repOffset = levelSectionStart(repEncoding, offset);
             offset = repOffset + repLength;
         }
         int defOffset = 0;
         int defLength = 0;
         if (column.maxDefinitionLevel() > 0) {
-            defLength = readSectionLength(body, offset, limit, "definition level");
-            defOffset = offset + 4;
+            defLength = levelSectionLength(defEncoding, header.definitionLevelEncodingValue(), body, offset, limit,
+                    numValues, column.maxDefinitionLevel(), "definition level");
+            defOffset = levelSectionStart(defEncoding, offset);
             offset = defOffset + defLength;
         }
         ByteBuffer storedValues = null;
@@ -523,13 +530,16 @@ public class PageDecoder {
             body.get(0, data, 0, offset);
             storedValues = body.slice(offset, limit - offset);
         }
+        boolean repBitPacked = repEncoding == Encoding.BIT_PACKED;
+        boolean defBitPacked = defEncoding == Encoding.BIT_PACKED;
         // The detector reads the RLE hybrid only; legacy BIT_PACKED levels keep their levels
-        int k = header.repetitionLevelEncoding() == Encoding.RLE && header.definitionLevelEncoding() == Encoding.RLE
+        int k = !repBitPacked && !defBitPacked
                 ? fixedListK(data, repOffset, repLength, data, defOffset, defLength, numValues,
                         FixedSizeListDetector.ROWS_UNKNOWN)
                 : 0;
         return levels(header.encoding(), data, limit, offset, storedValues, numValues, data, repOffset, repLength,
-                data, defOffset, defLength, k, compressedSize, limit, stored ? offset : limit, event, scratch);
+                repBitPacked, data, defOffset, defLength, defBitPacked, k, compressedSize, limit,
+                stored ? offset : limit, event, scratch);
     }
 
     private InPlacePage readV2InPlace(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
@@ -602,7 +612,7 @@ public class PageDecoder {
             limit = storedValuesLength;
         }
         return levels(header.encoding(), data, limit, offset, storedValues, numValues, levelData, 0, repLength,
-                levelData, repLength, defLength, k, compressedSize, uncompressedPageSize, decodedBytes, event, scratch);
+                false, levelData, repLength, defLength, false, k, compressedSize, uncompressedPageSize, decodedBytes, event, scratch);
     }
 
     /// Whether a page in `encoding` whose value section is stored uncompressed in `pageData` is
@@ -691,18 +701,20 @@ public class PageDecoder {
     /// Decodes a page's levels into `scratch`, none for a fixed-size-list page.
     private InPlacePage levels(Encoding encoding, byte[] data, int limit, int valuesOffset, ByteBuffer storedValues,
                                int numValues,
-                               byte[] repData, int repOffset, int repLength, byte[] defData, int defOffset,
-                               int defLength, int k, int compressedSize, int uncompressedSize, long decodedBytes,
+                               byte[] repData, int repOffset, int repLength, boolean repBitPacked, byte[] defData,
+                               int defOffset, int defLength, boolean defBitPacked, int k, int compressedSize,
+                               int uncompressedSize, long decodedBytes,
                                PageDecodedEvent event, LevelScratch scratch) {
         int[] repetitionLevels = null;
         int[] definitionLevels = null;
         if (k == 0) {
             if (column.maxRepetitionLevel() > 0) {
-                repetitionLevels = decodeRepetitionLevels(repData, repOffset, repLength, numValues,
+                repetitionLevels = decodeRepetitionLevels(repData, repOffset, repLength, repBitPacked, numValues,
                         column.maxRepetitionLevel(), scratch);
             }
             if (column.maxDefinitionLevel() > 0) {
-                definitionLevels = decodeDefinitionLevels(defData, defOffset, defLength, numValues, scratch);
+                definitionLevels = decodeDefinitionLevels(defData, defOffset, defLength, defBitPacked, numValues,
+                        scratch);
             }
         }
         return new InPlacePage(encoding, data, limit, valuesOffset, storedValues, numValues, definitionLevels,
@@ -730,10 +742,15 @@ public class PageDecoder {
         return ids;
     }
 
-    /// Decode levels using RLE/Bit-Packing Hybrid encoding.
-    private int[] decodeRepetitionLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel,
-            LevelScratch scratch) {
+    /// Decodes repetition levels in the RLE/bit-packing hybrid, or in the deprecated `BIT_PACKED`
+    /// encoding where `bitPacked`.
+    private int[] decodeRepetitionLevels(byte[] levelData, int offset, int length, boolean bitPacked, int numValues,
+            int maxLevel, LevelScratch scratch) {
         int[] levels = scratch.repetitionLevels(numValues);
+        if (bitPacked) {
+            BitPackedLevelDecoder.decode(levelData, offset, getBitWidth(maxLevel), levels, numValues);
+            return levels;
+        }
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, getBitWidth(maxLevel));
         decoder.readInts(levels, 0, numValues);
         return levels;
@@ -749,10 +766,17 @@ public class PageDecoder {
     /// definition-level array as all-present (every leaf at `maxDef`) and takes a
     /// whole-page bulk-copy path; the repetition levels are still materialised, so
     /// record boundaries are preserved.
-    private int[] decodeDefinitionLevels(byte[] levelData, int offset, int length, int numValues,
+    ///
+    /// Levels in the deprecated `BIT_PACKED` encoding, where `bitPacked`, are always materialized.
+    private int[] decodeDefinitionLevels(byte[] levelData, int offset, int length, boolean bitPacked, int numValues,
             LevelScratch scratch) {
         int maxDef = column.maxDefinitionLevel();
         int bitWidth = getBitWidth(maxDef);
+        if (bitPacked) {
+            int[] levels = scratch.definitionLevels(numValues);
+            BitPackedLevelDecoder.decode(levelData, offset, bitWidth, levels, numValues);
+            return levels;
+        }
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, bitWidth);
         // The probe loads the first run; if it is not the all-present fast path,
         // readInts below resumes from that same loaded run on the same instance.
@@ -800,6 +824,43 @@ public class PageDecoder {
             case 1 -> column.repetitionType() != RepetitionType.REPEATED;
             default -> false;
         };
+    }
+
+    /// The length of a `DATA_PAGE`'s level section at `offset` of `body`, in the encoding its
+    /// header declares for it: the 4-byte length prefix of an `RLE` section, or the bytes
+    /// `numValues` levels at the bit width of `maxLevel` occupy in an unprefixed `BIT_PACKED` one.
+    /// Checks that the section ends within the page.
+    ///
+    /// @param encodingValue the raw Thrift value `encoding` was mapped from
+    /// @param section `"repetition level"` or `"definition level"`
+    private int levelSectionLength(Encoding encoding, int encodingValue, ByteBuffer body, int offset, int limit,
+            int numValues, int maxLevel, String section) {
+        return switch (encoding) {
+            case RLE -> readSectionLength(body, offset, limit, section);
+            case BIT_PACKED -> {
+                int bitWidth = getBitWidth(maxLevel);
+                long length = ((long) numValues * bitWidth + 7) / 8;
+                int remaining = limit - offset;
+                if (length > remaining) {
+                    throw new ParquetReadException("BIT_PACKED " + section + "s of " + numValues + " values at "
+                            + bitWidth + (bitWidth == 1 ? " bit" : " bits") + " take " + length + " bytes: "
+                            + remaining + " bytes remain in the page");
+                }
+                yield Math.toIntExact(length);
+            }
+            // As for values, an encoding this release cannot name is a gap in this release rather
+            // than a malformed file
+            case UNKNOWN -> throw new UnsupportedOperationException("Encoding not yet supported for a DATA_PAGE's "
+                    + section + "s: UNKNOWN (Thrift encoding value " + encodingValue + ")");
+            default -> throw new ParquetReadException("A DATA_PAGE's " + section + "s cannot be " + encoding
+                    + "; the format encodes them as RLE or BIT_PACKED");
+        };
+    }
+
+    /// Where the levels of a section at `offset` begin: behind the length prefix of an `RLE`
+    /// section, at `offset` itself for a `BIT_PACKED` one.
+    private static int levelSectionStart(Encoding encoding, int offset) {
+        return encoding == Encoding.BIT_PACKED ? offset : offset + Integer.BYTES;
     }
 
     /// Reads the 4-byte little-endian length prefix of a section of `data` at `offset`, and checks

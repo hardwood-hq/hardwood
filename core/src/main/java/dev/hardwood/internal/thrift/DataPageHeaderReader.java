@@ -32,8 +32,8 @@ public class DataPageHeaderReader {
         int numValues = 0;
         Encoding encoding = null;
         int encodingValue = -1;
-        Encoding definitionLevelEncoding = null;
-        Encoding repetitionLevelEncoding = null;
+        int definitionLevelEncodingValue = -1;
+        int repetitionLevelEncodingValue = -1;
         Statistics statistics = null;
         long seen = 0;
 
@@ -60,12 +60,12 @@ public class DataPageHeaderReader {
                     break;
                 case 3: // definition_level_encoding
                     reader.requireField(header, Codes.I32);
-                    definitionLevelEncoding = ThriftEnumLookup.encoding(reader.readI32());
+                    definitionLevelEncodingValue = reader.readI32();
                     seen |= 1L << fieldId;
                     break;
                 case 4: // repetition_level_encoding
                     reader.requireField(header, Codes.I32);
-                    repetitionLevelEncoding = ThriftEnumLookup.encoding(reader.readI32());
+                    repetitionLevelEncodingValue = reader.readI32();
                     seen |= 1L << fieldId;
                     break;
                 case 5: // statistics
@@ -82,6 +82,7 @@ public class DataPageHeaderReader {
         ThriftCompactReader.requireFields(ThriftStruct.DATA_PAGE_HEADER, seen, REQUIRED_FIELDS);
 
         return new DataPageHeader(numValues, encoding, encodingValue,
-                definitionLevelEncoding, repetitionLevelEncoding, statistics);
+                ThriftEnumLookup.encoding(definitionLevelEncodingValue), definitionLevelEncodingValue,
+                ThriftEnumLookup.encoding(repetitionLevelEncodingValue), repetitionLevelEncodingValue, statistics);
     }
 }

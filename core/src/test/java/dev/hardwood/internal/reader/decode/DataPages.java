@@ -77,6 +77,24 @@ public final class DataPages {
         return concat(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(encoded.length).array(), encoded);
     }
 
+    /// The deprecated `BIT_PACKED` encoding of `levels` at the bit width of `maxLevel`: each value's
+    /// bits from its most significant one down, filled into each byte from its most significant
+    /// bit, the last byte padded with zeros. A `V1` page stores it without a length prefix.
+    static byte[] bitPackedLevels(int maxLevel, int... levels) {
+        int bitWidth = 32 - Integer.numberOfLeadingZeros(maxLevel);
+        byte[] packed = new byte[(levels.length * bitWidth + 7) / 8];
+        int bit = 0;
+        for (int level : levels) {
+            for (int b = bitWidth - 1; b >= 0; b--) {
+                if ((level >>> b & 1) != 0) {
+                    packed[bit / 8] |= (byte) (0x80 >>> (bit % 8));
+                }
+                bit++;
+            }
+        }
+        return packed;
+    }
+
     static byte[] concat(byte[]... parts) {
         int length = 0;
         for (byte[] part : parts) {
@@ -110,6 +128,46 @@ public final class DataPages {
     /// `body`.
     public static ByteBuffer page(Encoding encoding, int numValues, byte[] body) {
         return withBody(dataPageHeader(numValues, body, encoding), body);
+    }
+
+    /// An uncompressed `DATA_PAGE` as [#page] builds it, whose header declares
+    /// `repetitionLevelEncoding` and `definitionLevelEncoding` for its level sections.
+    static ByteBuffer page(Encoding encoding, Encoding repetitionLevelEncoding, Encoding definitionLevelEncoding,
+                           int numValues, byte[] body) {
+        return page(encoding, thriftValue(repetitionLevelEncoding), thriftValue(definitionLevelEncoding), numValues,
+                body);
+    }
+
+    /// A page as [#page(Encoding, Encoding, Encoding, int, byte\[\])] builds it, its level
+    /// encodings given as raw Thrift values, which [Encoding] need not name.
+    static ByteBuffer page(Encoding encoding, int repetitionLevelEncoding, int definitionLevelEncoding,
+                           int numValues, byte[] body) {
+        CRC32 crc = new CRC32();
+        crc.update(body);
+        ThriftCompactWriter header = new ThriftCompactWriter();
+        header.pushFieldIdContext();
+        header.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
+        header.writeI32(0); // PageType.DATA_PAGE
+        header.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
+        header.writeI32(body.length);
+        header.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
+        header.writeI32(body.length);
+        header.writeFieldBegin(4, ThriftCompactConstants.FieldType.I32);
+        header.writeI32((int) crc.getValue());
+        header.writeFieldBegin(5, ThriftCompactConstants.FieldType.STRUCT);
+        short saved = header.pushFieldIdContext();
+        header.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
+        header.writeI32(numValues);
+        header.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
+        header.writeI32(thriftValue(encoding));
+        header.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
+        header.writeI32(definitionLevelEncoding);
+        header.writeFieldBegin(4, ThriftCompactConstants.FieldType.I32);
+        header.writeI32(repetitionLevelEncoding);
+        header.writeFieldStop();
+        header.popFieldIdContext(saved);
+        header.writeFieldStop();
+        return withBody(header.toByteArray(), body);
     }
 
     /// A page as [#page] builds it, its header declaring the raw Thrift encoding value

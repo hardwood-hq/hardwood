@@ -222,7 +222,7 @@ class PageDropPredicatesTest {
 
     private static PageHeader v1(Statistics stats) {
         return new PageHeader(PageType.DATA_PAGE, 0, 0,
-                new DataPageHeader(ROWS, Encoding.PLAIN, 0, Encoding.RLE, Encoding.RLE, stats), null, null, null);
+                new DataPageHeader(ROWS, Encoding.PLAIN, 0, Encoding.RLE, 3, Encoding.RLE, 3, stats), null, null, null);
     }
 
     private static PageHeader v2(Statistics stats) {

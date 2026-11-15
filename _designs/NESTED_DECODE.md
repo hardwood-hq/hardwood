@@ -62,10 +62,10 @@ Tests: `ColumnReaderLayerModelTest`, `UnannotatedRepeatedListTest`, `LegacyTwoLe
 
 ## Level decode and scratch
 
-`PageDecoder` decodes a page's level streams (RLE / bit-packing hybrid) before its values.
+`PageDecoder` decodes a page's level streams before its values: the RLE / bit-packing hybrid, or the deprecated `BIT_PACKED` encoding a `DATA_PAGE` may declare ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)).
 
 - **Repetition levels** are always materialised for a column with `maxRepetitionLevel > 0`, except on a page the [fixed-size-list fast path](#fixed-size-list-fast-path) takes.
-- **Definition levels** go through the all-present gate: `RleBitPackingHybridDecoder.isSingleRleRunOf(maxDef, numValues)` inspects one run header and value. When the stream is a single RLE run of `maxDef` covering every value, no array is produced and the page's definition levels are `null`. A `null` array is the reader-wide all-present convention, shared with required columns; value readers read densely from it.
+- **Definition levels** in the hybrid go through the all-present gate: `RleBitPackingHybridDecoder.isSingleRleRunOf(maxDef, numValues)` inspects one run header and value. When the stream is a single RLE run of `maxDef` covering every value, no array is produced and the page's definition levels are `null`. A `null` array is the reader-wide all-present convention, shared with required columns; value readers read densely from it. `BIT_PACKED` definition levels are always materialised.
 
 **Page-owned scratch.** A nested page is read in two passes (`PageDecoder.decodeNestedInPlace`): its task decompresses the page into a `PageDecoder.LevelScratch` the page owns (`NestedPageTask.scratch`) and decodes its levels and dictionary ids there, leaving the values in the decompressed bytes (or, for [stored values](VALUE_DECODE.md#page-decode), in the fetched page, which takes no value buffer from the scratch, only a copy of its level sections); the scratch also holds the page's record starts, the byte prefix of its plain binary values and, for a masked page, its kept levels. The page borrows the scratch from its column's pool and keeps it past its task, until every cell it is placed into is filled ([Cells](#cells)), so it cannot be the task's scratch. A scratch array can be longer than its page: no consumer reads `array.length`; every consumer scans the page's size or an explicit count, and `SimdOperations.countNonNulls` takes explicit bounds.
 
@@ -155,7 +155,7 @@ A `LIST` column in which every row is a present list of exactly `k` present elem
 | Enabled | The reader option `hardwood.fixed-list-fast-path` is `"true"` (case-insensitive). The option is off by default; see [docs/content/reference/reader.md](../docs/content/reference/reader.md). `ParquetFileReader` resolves it and threads it to every nested column and its `PageDecoder`s. |
 | Element type | Physical type `BOOLEAN`, `INT32`, `INT64`, `FLOAT` or `DOUBLE`. |
 | Level geometry | `maxRepetitionLevel == 1`, and `maxDefinitionLevel == 2`, or `maxDefinitionLevel == 1` with a leaf whose own repetition is not `REPEATED`. |
-| Page format | `DataPageV2`: both level regions non-empty. `DataPageV1`: both level encodings `RLE` and both level regions non-empty. Legacy `BIT_PACKED` levels do not qualify; the regular path misreads them (#569). |
+| Page format | `DataPageV2`: both level regions non-empty. `DataPageV1`: both level encodings `RLE` and both level regions non-empty. Legacy `BIT_PACKED` levels do not qualify. |
 | Definition levels | One RLE run of `maxDefinitionLevel` covering all values (`isSingleRleRunOf`). |
 | Repetition levels | `k` is the first gap between `0`s, and every later gap, including the final row closed against the end of the stream, equals it. `DataPageV2` also requires `numRows × k == numValues`; `DataPageV1`, which has no row count, requires `numValues % k == 0`. |
 
@@ -179,6 +179,5 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 - **Fixed-size list, 2-level required lists and bare repeated primitives** (`maxDefinitionLevel == 1` with a `REPEATED` leaf) take the regular path; #808.
 - **Fixed-size list with null rows** takes the regular path: the definition gate accepts a single max-value run only; #809.
 - **Fixed-size list element types** are limited to fixed-width primitives; byte-array-backed leaves (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) and nullable elements take the regular path.
-- **Legacy `BIT_PACKED` levels (#569).** `DataPageV1` level streams are decoded as the RLE / bit-packing hybrid whatever the header's level encoding says, so a page with `BIT_PACKED` levels is misread.
 - **Bare repeated Variant groups** (#1378). A repeated `VARIANT` group outside a `LIST` or `MAP` group keeps its annotation and is refused when a read projects it, rather than read as a list of variants.
 - **Real view per leaf (#1023).** Each leaf column computes its real-items view from its own levels, so sibling leaves of one repetition domain derive the same ancestor structure once each.

@@ -46,6 +46,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - An S3 range read whose connection fails midway re-requests only the bytes not yet received, within the retry budget ([#1666](https://github.com/hardwood-hq/hardwood/issues/1666))
 - Creating a writer on an `OutputFile` another writer has used fails, instead of a local `OutputFile` publishing over the first writer's file ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 - On heaps below 4 GB, a read allocates no humongous G1 object for a batch of an `INT64`, `DOUBLE` or list column, for the dictionary of a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column, or for a page decompressed with Brotli or with LZ4 in the Hadoop format ([#1497](https://github.com/hardwood-hq/hardwood/issues/1497))
+- A `DATA_PAGE` whose repetition or definition levels are in the deprecated `BIT_PACKED` encoding is read correctly, instead of failing or returning wrong nulls and nesting ([#569](https://github.com/hardwood-hq/hardwood/issues/569))
 
 ## 1.1.0.Beta3 (2026-10-21)
 
