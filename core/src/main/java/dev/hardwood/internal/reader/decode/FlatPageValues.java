@@ -59,6 +59,8 @@ public final class FlatPageValues {
     /// Dictionary ids of the non-null values, and the dictionary's values; `null` for `PLAIN`.
     private final int[] ids;
     private final Object dictionaryValues;
+    /// The dictionary [#ids] refer to, `null` for any page but a dictionary-encoded one.
+    private final Dictionary dictionary;
     /// `BYTE_STREAM_SPLIT` values: the non-null values, which is the distance between two of a
     /// value's bytes; `0` for any other encoding.
     private final int stride;
@@ -85,7 +87,8 @@ public final class FlatPageValues {
 
     private FlatPageValues(PhysicalType type, int numValues, int[] definitionLevels, int maxDefinitionLevel,
                            byte[] plain, int plainOffset, ByteBuffer plainValues, int[] ids,
-                           Object dictionaryValues, int stride, int alpLimit, int alpValues, int deltaLimit) {
+                           Object dictionaryValues, Dictionary dictionary, int stride, int alpLimit, int alpValues,
+                           int deltaLimit) {
         this.type = type;
         this.numValues = numValues;
         this.definitionLevels = definitionLevels;
@@ -95,6 +98,7 @@ public final class FlatPageValues {
         this.plainValues = plainValues;
         this.ids = ids;
         this.dictionaryValues = dictionaryValues;
+        this.dictionary = dictionary;
         this.stride = stride;
         this.alpLimit = alpLimit;
         this.alpValues = alpValues;
@@ -108,7 +112,7 @@ public final class FlatPageValues {
                                 byte[] data, int offset, int limit) {
         checkPlainSize(type, definitionLevels, maxDefinitionLevel, numValues, limit - offset);
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
-                null, 0, 0, 0, 0);
+                null, null, 0, 0, 0, 0);
     }
 
     /// `PLAIN` values of `type` in `values` from its position to its limit, which must hold every
@@ -130,7 +134,7 @@ public final class FlatPageValues {
         }
         checkPlainSize(type, definitionLevels, maxDefinitionLevel, numValues, values.remaining());
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0,
-                values.slice().order(ByteOrder.LITTLE_ENDIAN), null, null, 0, 0, 0, 0);
+                values.slice().order(ByteOrder.LITTLE_ENDIAN), null, null, null, 0, 0, 0, 0);
     }
 
     /// Checks that a `PLAIN` value section of `length` bytes holds exactly the page's values.
@@ -155,7 +159,7 @@ public final class FlatPageValues {
         // The stream header is read and checked here, so a malformed one fails with the page
         new DeltaBinaryPackedDecoder(data, offset, limit);
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
-                null, 0, 0, 0, limit);
+                null, null, 0, 0, 0, limit);
     }
 
     /// `ALP` values of `type` (`FLOAT` or `DOUBLE`) from `offset` in `data`, ending at `limit`. Every
@@ -167,7 +171,7 @@ public final class FlatPageValues {
         int nonNull = countNonNull(definitionLevels, maxDefinitionLevel, numValues);
         new AlpDecoder(data, offset, limit, nonNull, type).validate();
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
-                null, 0, limit, nonNull, 0);
+                null, null, 0, limit, nonNull, 0);
     }
 
     /// `BYTE_STREAM_SPLIT` values of `type` from `offset` in `data`: byte `b` of the `i`th non-null
@@ -183,7 +187,7 @@ public final class FlatPageValues {
                     + " bytes, not the " + bytes + " of its " + nonNull + " " + type + " values");
         }
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
-                null, Math.max(1, nonNull), 0, 0, 0);
+                null, null, Math.max(1, nonNull), 0, 0, 0);
     }
 
     /// Dictionary ids already decoded into `ids`, one per non-null value, and the values of the
@@ -207,8 +211,8 @@ public final class FlatPageValues {
                         + " out of bounds for a dictionary of " + size + " entries");
             }
         }
-        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0, null, ids, values, 0,
-                0, 0, 0);
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0, null, ids, values,
+                dictionary, 0, 0, 0, 0);
     }
 
     private static final boolean[] BOOLEAN_IDS = { false, true };
@@ -222,7 +226,7 @@ public final class FlatPageValues {
             }
         }
         return new FlatPageValues(PhysicalType.BOOLEAN, numValues, definitionLevels, maxDefinitionLevel, null, 0, null,
-                ids, BOOLEAN_IDS, 0, 0, 0, 0);
+                ids, BOOLEAN_IDS, null, 0, 0, 0, 0);
     }
 
     /// The non-null values among a page's first `numValues`.
@@ -247,7 +251,13 @@ public final class FlatPageValues {
     /// fills can read one page at once.
     public FlatPageValues view() {
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, plain, plainOffset,
-                plainValues, ids, dictionaryValues, stride, alpLimit, alpValues, deltaLimit);
+                plainValues, ids, dictionaryValues, dictionary, stride, alpLimit, alpValues, deltaLimit);
+    }
+
+    /// The dictionary the page's values are entries of, `null` for a page that is not
+    /// dictionary-encoded.
+    public Dictionary dictionary() {
+        return dictionary;
     }
 
     /// The page's values, nulls included.
@@ -263,6 +273,45 @@ public final class FlatPageValues {
     /// element as it is. Rows must be asked for in increasing order.
     public void copy(int pageRow, Object out, int destPos, int length) {
         copy(pageRow, out, destPos, length, 0);
+    }
+
+    /// Writes page rows `[pageRow, pageRow + length)` from `destPos`: their values to `out` unless
+    /// it is `null`, and their entry ids in [#dictionary()] to `idsOut` unless it is `null`, `-1`
+    /// at a null. A null leaves its element of `out` as it is. Rows must be asked for in increasing
+    /// order.
+    ///
+    /// @throws IllegalStateException if `idsOut` is given for a page that is not
+    ///         dictionary-encoded
+    public void copy(int pageRow, Object out, int[] idsOut, int destPos, int length) {
+        if (idsOut == null) {
+            copy(pageRow, out, destPos, length, 0);
+            return;
+        }
+        if (dictionary == null) {
+            throw new IllegalStateException("A " + type + " page that is not dictionary-encoded has no entry ids");
+        }
+        skipTo(pageRow);
+        if (definitionLevels == null) {
+            if (out != null) {
+                copyDense(out, destPos, length);
+            }
+            System.arraycopy(ids, nonNull, idsOut, destPos, length);
+            nonNull += length;
+        }
+        else {
+            for (int i = 0; i < length; i++) {
+                if (definitionLevels[pageRow + i] == maxDefinitionLevel) {
+                    if (out != null) {
+                        copyOne(out, destPos + i, nonNull);
+                    }
+                    idsOut[destPos + i] = ids[nonNull++];
+                }
+                else {
+                    idsOut[destPos + i] = -1;
+                }
+            }
+        }
+        row = pageRow + length;
     }
 
     /// Writes page rows `[pageRow, pageRow + length)` to `out` from `destPos`, each row whose

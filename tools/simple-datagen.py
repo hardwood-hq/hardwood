@@ -7716,3 +7716,31 @@ pq.write_table(
 print("\nGenerated duplicate_top_level_structs.parquet:")
 print("  - INT64 'id' (1, 2, 3), struct 't' {a} ({1}, {2}, null) and struct 't' {g {b}}")
 print("    ({g: {b: 5}}, {g: null}, null)")
+
+# Numeric dictionary ids: one row group of DOUBLE columns read by a column reader through
+# dictionary ids. 'fallback' starts with three repeated values (dictionary-encoded pages) and
+# turns to distinct ones, so its dictionary outgrows its page size limit and the remaining data
+# pages go out PLAIN, and a batch can mix pages of both encodings. 'temperature' is optional,
+# with nulls inside pages and on page edges, from a pool of five values. 'plain' is the same
+# pool without a dictionary.
+NUMERIC_DICT_ROWS = 4000
+numeric_dict_pool = [-12.5, 0.0, 3.25, 17.75, 41.0]
+pq.write_table(
+    pa.table({
+        'fallback': pa.array([[1.5, 2.5, 3.5][i % 3] if i < 2000 else 10_000.0 + i
+                              for i in range(NUMERIC_DICT_ROWS)], pa.float64()),
+        'temperature': pa.array([None if i % 7 == 3 or i % 500 in (0, 499) else numeric_dict_pool[i % 5]
+                                 for i in range(NUMERIC_DICT_ROWS)], pa.float64()),
+        'plain': pa.array([numeric_dict_pool[i % 5] for i in range(NUMERIC_DICT_ROWS)], pa.float64()),
+    }),
+    'core/src/test/resources/dict_numeric_ids.parquet',
+    use_dictionary=['fallback', 'temperature'],
+    compression='none',
+    data_page_version='1.0',
+    dictionary_pagesize_limit=1024,
+    write_batch_size=500,
+    data_page_size=1,
+)
+print("\nGenerated dict_numeric_ids.parquet:")
+print(f"  - {NUMERIC_DICT_ROWS} rows of DOUBLE: 'fallback' dictionary pages, then PLAIN once the dictionary")
+print("    outgrows 1 KiB; optional 'temperature' from a pool of five with nulls; 'plain' without a dictionary")

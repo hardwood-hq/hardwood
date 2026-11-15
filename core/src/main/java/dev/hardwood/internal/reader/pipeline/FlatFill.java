@@ -12,10 +12,14 @@ import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BitmapWords;
+import dev.hardwood.internal.reader.batch.DeferredValues;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.FlatPageValues;
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.select.PageRowMask;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Fills a [Segment] of a flat fixed-width column's cell from its page's values in place
 /// ([FlatPageValues]).
@@ -63,6 +67,44 @@ public final class FlatFill {
             values.copy(pageRow, out, destPos, length);
             validity.mark(values.definitionLevels(), pageRow, destPos, length);
         });
+    }
+
+    /// Fills `segment` of a numeric column that may keep its entry ids ([DeferredValues]) into the
+    /// cell's `batch`: the segment writes ids where the batch keeps ids of its page's dictionary,
+    /// and values where the batch has a value array, which a segment without ids adds.
+    ///
+    /// @param maxDefinitionLevel the column's, below which a value is null
+    public static void fillNumeric(Segment segment, FlatPageValues values, BatchExchange.Batch batch,
+                                   ColumnSchema column, int maxDefinitionLevel) {
+        Dictionary dictionary = values.dictionary();
+        int[] ids = batch.dictionaryIds != null && dictionary != null && batch.dictionary == dictionary
+                ? batch.dictionaryIds : null;
+        Object out = ids == null ? segment.cell.ensureValues(column) : batch.values;
+        ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel);
+        forEachRun(segment, (pageRow, destPos, length) -> {
+            values.copy(pageRow, out, ids, destPos, length);
+            validity.mark(values.definitionLevels(), pageRow, destPos, length);
+        });
+        segment.wroteIds = ids != null;
+        segment.wroteValues = out != null;
+    }
+
+    /// Finishes a completed cell's batch that keeps entry ids: the values of the segments that
+    /// wrote ids alone are written where the batch has a value array, and the batch keeps its ids
+    /// only when every segment wrote them.
+    public static void finishNumeric(Cell cell, BatchExchange.Batch batch) {
+        boolean complete = true;
+        for (Segment segment : cell.segments()) {
+            if (segment.wroteIds && !segment.wroteValues && batch.values != null) {
+                DeferredValues.write(batch.dictionary, batch.dictionaryIds, segment.cellOffset,
+                        segment.cellOffset + segment.records(), batch.values);
+            }
+            complete &= segment.wroteIds;
+        }
+        if (!complete) {
+            batch.dictionaryIds = null;
+            batch.dictionary = null;
+        }
     }
 
     /// Copies `segment`'s definition levels from its page's `levels` into the cell's `out`, run by

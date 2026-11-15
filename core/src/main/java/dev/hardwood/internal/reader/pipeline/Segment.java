@@ -27,10 +27,13 @@ public final class Segment {
     /// holding a null; the cell's completion sets the bits of every other segment.
     boolean wroteValidity;
 
-    // === Binary columns ([BinaryFill]) ===
+    // === Binary columns ([BinaryFill]), and numeric ones that keep entry ids ([FlatFill]) ===
     /// Whether the fill wrote the segment's entry ids; the cell's completion marks every other
     /// segment's values as having none.
     boolean wroteIds;
+    /// A numeric column's: whether the fill wrote the segment's values, which a segment of entry
+    /// ids in a batch without a value array does not.
+    boolean wroteValues;
 
     Segment(Cell cell, PageTask page, int recordStart, int recordEnd, int cellOffset) {
         this.cell = cell;

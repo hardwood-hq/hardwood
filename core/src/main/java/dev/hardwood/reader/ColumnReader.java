@@ -16,6 +16,8 @@ import dev.hardwood.Validity;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.DeferredValues;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.batch.LeafCompaction;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
@@ -55,9 +57,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// [#getLeafValidity()], and the rest) belongs to the current batch and is
 /// freshly allocated by the call that produced it — [#nextBatch()], or
 /// [ColumnReaders#nextBatch()] for a reader of a group — except
-/// [Validity#NO_NULLS], a shared immutable singleton. [#getBinaryDictionary()]
-/// returns an object whose entries never change, the same for every batch drawn
-/// from one dictionary. A later advance never reuses or overwrites an array
+/// [Validity#NO_NULLS], a shared immutable singleton. [#getBinaryDictionary()] and the
+/// typed dictionary accessors such as [#getDoubleDictionary()] return an object whose
+/// entries never change, the same for every batch drawn from one dictionary. A later advance never reuses or overwrites an array
 /// returned for an earlier batch — so a
 /// returned array may be kept and read after the reader has advanced,
 /// including handed off to another thread for processing. The reader itself
@@ -105,6 +107,10 @@ public class ColumnReader implements Closeable {
     /// The last dictionary handed out, kept across batches so every batch drawn from the same
     /// chunk dictionary returns the same instance.
     private BinaryDictionary lastBinaryDictionary;
+    /// The last numeric dictionary handed out and the chunk dictionary it reads, kept across
+    /// batches for the same reason.
+    private ColumnDictionary lastNumericDictionary;
+    private Dictionary lastNumericSource;
     private byte[][] cachedBinaries;
     private String[] cachedStrings;
 
@@ -337,23 +343,77 @@ public class ColumnReader implements Closeable {
     // ==================== Dictionary ====================
 
     /// Each value's entry in the batch's dictionary: value `i` is entry
-    /// `getDictionaryIds()[i]` of [#getBinaryDictionary()], and `-1` at a null value.
-    /// Length == `getValueCount()`.
+    /// `getDictionaryIds()[i]` of the column's dictionary accessor ([#getBinaryDictionary()],
+    /// [#getIntDictionary()], [#getLongDictionary()], [#getFloatDictionary()] or
+    /// [#getDoubleDictionary()]), and `-1` at a null value. Length == `getValueCount()`.
     ///
     /// Returns `null` unless every non-null value of the batch was decoded from the
     /// column chunk's dictionary: for every batch of a column without a dictionary, and,
     /// where a writer switched to plain encoding after its dictionary filled up, for the
     /// batch holding the switch and the rest of that row group. Read such a batch through
-    /// the value accessors. A batch never draws on two dictionaries: a read that includes
-    /// a binary column ends its batches at row-group boundaries. Dictionary ids are exposed for `BYTE_ARRAY`,
-    /// `FIXED_LEN_BYTE_ARRAY` and `INT96` columns; for any other column this returns `null`.
+    /// the value accessors. A batch never draws on two dictionaries.
+    ///
+    /// Dictionary ids are exposed for `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96`
+    /// columns, and for flat `INT32`, `INT64`, `FLOAT` and `DOUBLE` columns read without a
+    /// filter; for any other column this returns `null`. For a numeric column, a batch whose
+    /// values this reader reads before it first asks for ids may also return `null`: the
+    /// reader decodes the batches it reads ahead with the values alone, and keeps the ids
+    /// again once it has been asked for them. A reader that reads only ids leaves the
+    /// values unwritten until it reads them.
     public int[] getDictionaryIds() {
         checkBatchAvailable();
-        if (!hasBinaryLeaf()) {
+        if (hasBinaryLeaf()) {
+            ensureDictionary();
+            return cachedDictionaryIds;
+        }
+        if (nested || currentFlatBatch.demand == null) {
             return null;
         }
-        ensureDictionary();
+        if (!currentFlatBatch.demand.ids) {
+            currentFlatBatch.demand.ids = true;
+        }
+        int[] ids = currentFlatBatch.dictionaryIds;
+        if (ids == null) {
+            return null;
+        }
+        if (cachedDictionaryIds == null) {
+            cachedDictionaryIds = trimToLeafCount(ids, recordCount);
+        }
         return cachedDictionaryIds;
+    }
+
+    /// The dictionary [#getDictionaryIds()] refers to for an `INT32` column, or `null` when
+    /// the ids are `null`. Every batch drawn from the same dictionary returns the same
+    /// instance, so comparing it with the previous batch's (`!=`) tells when the dictionary
+    /// changed.
+    ///
+    /// @throws IllegalStateException for a column that is not `INT32`
+    public IntDictionary getIntDictionary() {
+        return (IntDictionary) numericDictionary(PhysicalType.INT32, "int");
+    }
+
+    /// The dictionary [#getDictionaryIds()] refers to for an `INT64` column, or `null` when
+    /// the ids are `null`; see [#getIntDictionary()].
+    ///
+    /// @throws IllegalStateException for a column that is not `INT64`
+    public LongDictionary getLongDictionary() {
+        return (LongDictionary) numericDictionary(PhysicalType.INT64, "long");
+    }
+
+    /// The dictionary [#getDictionaryIds()] refers to for a `FLOAT` column, or `null` when
+    /// the ids are `null`; see [#getIntDictionary()].
+    ///
+    /// @throws IllegalStateException for a column that is not `FLOAT`
+    public FloatDictionary getFloatDictionary() {
+        return (FloatDictionary) numericDictionary(PhysicalType.FLOAT, "float");
+    }
+
+    /// The dictionary [#getDictionaryIds()] refers to for a `DOUBLE` column, or `null` when
+    /// the ids are `null`; see [#getIntDictionary()].
+    ///
+    /// @throws IllegalStateException for a column that is not `DOUBLE`
+    public DoubleDictionary getDoubleDictionary() {
+        return (DoubleDictionary) numericDictionary(PhysicalType.DOUBLE, "double");
     }
 
     /// The dictionary [#getDictionaryIds()] refers to, or `null` when the ids are
@@ -526,7 +586,7 @@ public class ColumnReader implements Closeable {
     /// compacted typed array (batches derived by record selection).
     private Object rawLeafValues() {
         if (!nested) {
-            return currentFlatBatch.values;
+            return flatValues();
         }
         NestedBatch batch = currentNestedBatch;
         if (batch.realValues != null) {
@@ -536,6 +596,44 @@ public class ColumnReader implements Closeable {
         return map == null
                 ? batch.values                     // pass-through, no compaction
                 : LeafCompaction.compact(batch.values, map);
+    }
+
+    /// The flat batch's values, written from its entry ids where it holds the ids alone, which
+    /// tells the column's later batches to write their values as they are filled.
+    private Object flatValues() {
+        BatchExchange.Batch batch = currentFlatBatch;
+        if (batch.values == null && batch.dictionaryIds != null) {
+            batch.values = DeferredValues.materialize(batch, recordCount);
+            if (!batch.demand.values) {
+                batch.demand.values = true;
+            }
+        }
+        return batch.values;
+    }
+
+    /// The current batch's dictionary as a [ColumnDictionary] of a column of `type`, `null` where
+    /// the batch has no entry ids.
+    private ColumnDictionary numericDictionary(PhysicalType type, String expected) {
+        checkBatchAvailable();
+        if (column.type() != type) {
+            throw typeMismatch(expected);
+        }
+        if (getDictionaryIds() == null) {
+            return null;
+        }
+        Dictionary source = currentFlatBatch.dictionary;
+        if (lastNumericSource != source) {
+            lastNumericDictionary = switch (source) {
+                case Dictionary.IntDictionary d -> new IntDictionary(d.values());
+                case Dictionary.LongDictionary d -> new LongDictionary(d.values());
+                case Dictionary.FloatDictionary d -> new FloatDictionary(d.values());
+                case Dictionary.DoubleDictionary d -> new DoubleDictionary(d.values());
+                default -> throw new IllegalStateException(prefix() + "Column '" + column.name()
+                        + "' has a dictionary of another type");
+            };
+            lastNumericSource = source;
+        }
+        return lastNumericDictionary;
     }
 
     /// Trims a primitive leaf array to exactly [#getValueCount()] entries so the

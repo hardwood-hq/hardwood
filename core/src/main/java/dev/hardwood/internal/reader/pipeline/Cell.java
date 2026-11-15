@@ -16,6 +16,8 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.DeferredValues;
+import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.schema.ColumnSchema;
 
 /// The work of one column for one planned batch: the batch it fills and the [Segment]s placed
@@ -123,15 +125,32 @@ public final class Cell implements BatchCell<BatchExchange.Batch> {
     /// meanwhile parks on the cell's lock until the array exists, rather than spinning while it is
     /// zeroed, and the lock orders the array's creation before its writes into it.
     public BatchExchange.Batch allocate(BatchExchange<BatchExchange.Batch> exchange, ColumnSchema column) {
+        return allocate(exchange, column, true, null);
+    }
+
+    /// As [#allocate(BatchExchange, ColumnSchema)], for a flat numeric column that may keep its
+    /// entry ids ([DeferredValues]): the batch gets a value array only `withValues`, and an array
+    /// of entry ids in `ids` unless it is `null`. The first task that reaches the cell decides;
+    /// a later segment that needs what the batch was not given adds a value array
+    /// ([#ensureValues]), or writes no ids.
+    public BatchExchange.Batch allocate(BatchExchange<BatchExchange.Batch> exchange, ColumnSchema column,
+                                        boolean withValues, Dictionary ids) {
         if (!allocated) {
             allocation.lock();
             try {
                 if (!allocated) {
                     BatchExchange.Batch taken = exchange.newBatch();
-                    if (taken.values == null || taken.capacity < capacity) {
+                    if (!withValues) {
+                        taken.values = null;
+                        taken.capacity = capacity;
+                    }
+                    else if (taken.values == null || taken.capacity < capacity) {
                         taken.values = BatchExchange.allocateArray(column, capacity);
                         taken.capacity = capacity;
                     }
+                    taken.dictionaryIds = ids != null ? new int[capacity] : null;
+                    taken.dictionary = ids;
+                    taken.demand = null;
                     if (taken.definitionLevels != null && taken.definitionLevels.length < capacity) {
                         taken.definitionLevels = new int[capacity];
                     }
@@ -147,6 +166,24 @@ public final class Cell implements BatchCell<BatchExchange.Batch> {
             }
         }
         return batch;
+    }
+
+    /// The allocated batch's value array, created at [#capacity] if the batch was given none.
+    Object ensureValues(ColumnSchema column) {
+        Object values = batch.values;
+        if (values != null) {
+            return values;
+        }
+        allocation.lock();
+        try {
+            if (batch.values == null) {
+                batch.values = BatchExchange.allocateArray(column, capacity);
+            }
+            return batch.values;
+        }
+        finally {
+            allocation.unlock();
+        }
     }
 
     @Override

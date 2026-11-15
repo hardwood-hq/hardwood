@@ -16,7 +16,8 @@ import dev.hardwood.Experimental;
 /// **This API is [Experimental]:** it may change in future releases without prior
 /// deprecation.
 @Experimental
-public sealed interface ColumnDictionary permits BinaryDictionary {
+public sealed interface ColumnDictionary
+        permits BinaryDictionary, IntDictionary, LongDictionary, FloatDictionary, DoubleDictionary {
 
     /// The number of entries; entry ids run from `0` to `size() - 1`.
     int size();

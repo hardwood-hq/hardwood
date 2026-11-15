@@ -38,6 +38,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - `AbstractOutputFile` is a base for implementing `OutputFile` that enforces its lifecycle; the bundled outputs extend it ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 - A row reader projecting structs that hold no list, map or variant reads them without decoding nested records, as it reads top-level columns ([#475](https://github.com/hardwood-hq/hardwood/issues/475))
 - Row readers resolve most field names passed as string literals, or taken from the file's schema, by comparing references rather than characters ([#681](https://github.com/hardwood-hq/hardwood/issues/681))
+- `ColumnReader.getDictionaryIds()` returns ids for flat `INT32`, `INT64`, `FLOAT` and `DOUBLE` columns, with `getIntDictionary()`, `getLongDictionary()`, `getFloatDictionary()` and `getDoubleDictionary()` for their dictionaries ([#1811](https://github.com/hardwood-hq/hardwood/issues/1811))
 
 **Bug fixes:**
 

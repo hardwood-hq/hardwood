@@ -20,6 +20,7 @@ import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BitmapWords;
+import dev.hardwood.internal.reader.batch.DeferredValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
@@ -136,6 +137,9 @@ final class CellWriter {
     private final List<ArrayDeque<ChunkPlacement>> placements = new ArrayList<>();
     private final List<ArrayBlockingQueue<PageDecoder.LevelScratch>> scratch = new ArrayList<>();
     private final BinaryBatchValues.ViewDemand[] views;
+    /// per column, the [DeferredValues.Demand] of a flat numeric column whose reader may ask for
+    /// its entry ids (a column reader's unfiltered read); `null` for any other column
+    private final DeferredValues.Demand[] numericDemands;
     /// per flat column, its filter fragment, which writes each batch's matches as it completes;
     /// `null` for none
     private final ColumnBatchMatcher[] filters;
@@ -156,6 +160,7 @@ final class CellWriter {
         this.decompressors = decompressors;
         int n = columns.count();
         this.views = new BinaryBatchValues.ViewDemand[n];
+        this.numericDemands = new DeferredValues.Demand[n];
         this.last = new PageTask[n];
         for (int c = 0; c < n; c++) {
             placers.add(columns.nested(c) ? new ColumnPlacer<>(new NestedSink(c), batchCapacity)
@@ -163,6 +168,10 @@ final class CellWriter {
             placements.add(new ArrayDeque<>());
             scratch.add(new ArrayBlockingQueue<>(SCRATCH_POOL));
             views[c] = new BinaryBatchValues.ViewDemand();
+            if (indexMode == NestedIndexMode.REAL_VIEW && !columns.nested(c)
+                    && DeferredValues.holds(columns.schema(c).type())) {
+                numericDemands[c] = new DeferredValues.Demand();
+            }
         }
     }
 
@@ -342,14 +351,22 @@ final class CellWriter {
             checkRows(task.info(), binary ? bytes.size() : fixed.size());
             int maxDefinitionLevel = columns.schema(column).maxDefinitionLevel();
             List<Cell> completed = new ArrayList<>(1);
+            DeferredValues.Demand demand = numericDemands[column];
             for (Segment segment : task.segments()) {
                 Cell cell = segment.cell();
-                BatchExchange.Batch batch = cell.allocate(exchange(column), columns.schema(column));
-                if (binary) {
-                    BinaryFill.fill(segment, bytes, (BinaryBatchValues) batch.values, maxDefinitionLevel);
+                BatchExchange.Batch batch;
+                if (demand != null) {
+                    batch = allocateNumeric(column, cell, fixed.dictionary(), demand);
+                    FlatFill.fillNumeric(segment, fixed, batch, columns.schema(column), maxDefinitionLevel);
                 }
                 else {
-                    FlatFill.fill(segment, fixed, batch.values, maxDefinitionLevel);
+                    batch = cell.allocate(exchange(column), columns.schema(column));
+                    if (binary) {
+                        BinaryFill.fill(segment, bytes, (BinaryBatchValues) batch.values, maxDefinitionLevel);
+                    }
+                    else {
+                        FlatFill.fill(segment, fixed, batch.values, maxDefinitionLevel);
+                    }
                 }
                 FlatFill.copyDefinitionLevels(segment, binary ? bytes.definitionLevels() : fixed.definitionLevels(),
                         batch.definitionLevels, maxDefinitionLevel);
@@ -366,6 +383,18 @@ final class CellWriter {
         finally {
             levels.trim();
         }
+    }
+
+    /// Allocates the batch of a numeric column's `cell` that may keep its entry ids, for a first
+    /// segment of entries of `dictionary`, `null` for a page that is not dictionary-encoded: the
+    /// batch keeps ids while the reader has read no values or has asked for ids, and has a value
+    /// array once the reader has read values or where the page has no ids.
+    private BatchExchange.Batch allocateNumeric(int column, Cell cell, Dictionary dictionary,
+                                                DeferredValues.Demand demand) {
+        boolean values = demand.values;
+        boolean ids = dictionary != null && (!values || demand.ids);
+        return cell.allocate(exchange(column), columns.schema(column), values || dictionary == null,
+                ids ? dictionary : null);
     }
 
     /// Checks that a decoded page holds the rows its placement took from its metadata: every row
@@ -413,6 +442,12 @@ final class CellWriter {
         ColumnBatchMatcher filter = filters != null && column < filters.length ? filters[column] : null;
         if (batch.values instanceof BinaryBatchValues values) {
             BinaryFill.finish(cell, values, views[column]);
+        }
+        else if (numericDemands[column] != null) {
+            batch.demand = numericDemands[column];
+            if (batch.dictionaryIds != null) {
+                FlatFill.finishNumeric(cell, batch);
+            }
         }
         if (filter != null) {
             testFilter(filter, batch, records);

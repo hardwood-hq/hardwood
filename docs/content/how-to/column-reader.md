@@ -133,7 +133,7 @@ The reader stays a single-threaded cursor: only the loop thread calls `nextBatch
 Three returned objects are shared across batches instead of allocated per batch:
 
 - `Validity.NO_NULLS` is one immutable instance.
-- The `BinaryDictionary` from `getBinaryDictionary()` is the column chunk's dictionary, whose entries never change (see [Dictionary-Encoded Columns](#dictionary-encoded-columns)).
+- The `BinaryDictionary` from `getBinaryDictionary()`, and the `IntDictionary`, `LongDictionary`, `FloatDictionary` or `DoubleDictionary` from the numeric dictionary accessors, is the column chunk's dictionary, whose entries never change (see [Dictionary-Encoded Columns](#dictionary-encoded-columns)).
 - For a dictionary-encoded value, `getBinaryValues().buffer(i)` returns one of the arrays holding the dictionary's entries, the one holding the value's entry, which every batch using that dictionary shares. Do not write to it.
 
 ### Dictionary-Encoded Columns
@@ -203,8 +203,64 @@ static void addTallies(BinaryDictionary dictionary, long[] rowsPerEntry, Map<Str
 - Every batch drawn from the same dictionary returns the same `BinaryDictionary`, which is how the example detects the next row group's dictionary (`!=`).
 - The id at a null value is `-1`.
 - `getString(e)` reads a column that holds text, as `getStrings()` does, and caches each entry's `String`; `getBinary(e)` returns a copy of the entry's bytes.
-- On an `INT32`, `INT64`, `FLOAT`, `DOUBLE` or `BOOLEAN` column, `getDictionaryIds()` returns `null` and `getBinaryDictionary()` throws `IllegalStateException`.
+- On a numeric or `BOOLEAN` column, `getBinaryDictionary()` throws `IllegalStateException`; `getDictionaryIds()` returns `null` on a `BOOLEAN` column and works on a numeric one as described in [Numeric Columns](#numeric-columns).
 - Treat the returned ids as read-only: they also back `getStrings()` for the same batch.
+
+#### Numeric Columns
+
+For an `INT32`, `INT64`, `FLOAT` or `DOUBLE` column, `getDictionaryIds()` returns each value's entry in the column chunk's dictionary, and the accessor for the column's type returns that dictionary: `getIntDictionary()`, `getLongDictionary()`, `getFloatDictionary()` or `getDoubleDictionary()`, each with `size()` and a typed getter (`getInt(e)`, `getLong(e)`, `getFloat(e)`, `getDouble(e)`). This example sums a temperature column in tenths of a degree, converting each dictionary entry once:
+
+```java
+import dev.hardwood.InputFile;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.DoubleDictionary;
+import dev.hardwood.reader.ParquetFileReader;
+
+long sumOfTenths = 0;
+try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path));
+     ColumnReader temperature = reader.columnReader("temperature")) {
+
+    DoubleDictionary dictionary = null;
+    long[] tenthsOfEntry = null;
+
+    while (temperature.nextBatch()) {
+        int count = temperature.getValueCount();
+        int[] ids = temperature.getDictionaryIds();
+
+        if (ids == null) {
+            // A batch without ids: read its values.
+            double[] values = temperature.getDoubles();
+            for (int i = 0; i < count; i++) {
+                if (temperature.getLeafValidity().isNotNull(i)) {
+                    sumOfTenths += Math.round(values[i] * 10);
+                }
+            }
+            continue;
+        }
+
+        if (temperature.getDoubleDictionary() != dictionary) {
+            dictionary = temperature.getDoubleDictionary();
+            tenthsOfEntry = new long[dictionary.size()];
+            for (int e = 0; e < dictionary.size(); e++) {
+                tenthsOfEntry[e] = Math.round(dictionary.getDouble(e) * 10);
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            if (ids[i] >= 0) { // -1 marks a null
+                sumOfTenths += tenthsOfEntry[ids[i]];
+            }
+        }
+    }
+}
+```
+
+The ids follow the rules above, with these differences:
+
+- A reader that reads only a batch's ids leaves its values unwritten until `getDoubles()` (or the accessor for the column's type) is called on the batch.
+- Once the reader has read values, the batches it has already read ahead may hold values alone, and return `null` ids even when the reader then asks for them; later batches have ids again.
+- A read of numeric columns alone can run a batch across a row-group boundary. Such a batch draws on two dictionaries and returns `null` ids.
+- A numeric column inside a list, a map or an optional struct, and a read with a filter, return `null` ids.
+- Each typed dictionary accessor throws `IllegalStateException` on a column of another physical type.
 
 ### Nested and Repeated Columns
 

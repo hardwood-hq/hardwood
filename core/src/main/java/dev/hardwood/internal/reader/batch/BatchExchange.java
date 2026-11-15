@@ -90,6 +90,17 @@ public class BatchExchange<B> {
         /// predicate, making [#matches] all-ones without per-record evaluation.
         /// Only set on the batch-matcher filter path; `false` is always safe.
         public boolean filterAlwaysMatches;
+
+        /// A flat numeric batch's entry ids in [#dictionary], one per record and `-1` at a null,
+        /// when every value of the batch was decoded from that dictionary and the read keeps
+        /// them ([DeferredValues]); `null` otherwise. [#values] is `null` while the batch's values
+        /// are deferred: they exist only as these ids until a reader writes them.
+        public int[] dictionaryIds;
+        /// The dictionary [#dictionaryIds] refer to, `null` where they are.
+        public Dictionary dictionary;
+        /// The column's [DeferredValues.Demand], on every batch of a column whose reader may ask
+        /// for its entry ids; `null` otherwise.
+        public DeferredValues.Demand demand;
     }
 
     /// Handed to the consumer by [#finish()] so that a poll already waiting on the queue learns
