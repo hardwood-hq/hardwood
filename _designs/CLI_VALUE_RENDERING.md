@@ -47,14 +47,13 @@ Two questions decide how a value renders: who reads the output, and whether its 
 
 | Entry point | Source | Callers |
 |---|---|---|
-| `formatReader` | a field of a `RowReader`'s current row | dive preview cells and record modal; `convert --format json` fields that are not JSON scalars |
-| `formatValue` | a materialised value | `print` cells, `convert` CSV cells |
+| `formatField` | a field of a row or struct (`StructAccessor`) | `print` cells, `convert` CSV cells and JSON fields that are not JSON scalars, dive preview cells and record modal |
 | `formatDictionary` | a raw primitive from a parsed `Dictionary` | dive dictionary screen, `inspect dictionary` numeric entries |
 | `formatBytes` | raw min/max statistics bytes | `inspect pages`, `inspect dictionary` byte-array entries, the dive pages, column index, column chunk detail and column-across-row-groups screens |
 
 Two predicates are shared with `convert`. `isJsonScalar(PrimitiveNode)` holds for a `BOOLEAN`, `INT32`, `INT64`, `FLOAT` or `DOUBLE` with no annotation or an `INT` one, for top-level fields and nested leaves alike. `isNested(SchemaNode)` holds for groups and repeated primitives.
 
-No entry point decodes an annotation itself. `formatReader` and `formatValue` render what the reader's `getValue` returns (`getRawValue` with the physical toggle off); `formatDictionary` and `formatBytes` decode their stored value through `LogicalTypeConverter.convert`, the switch the reader decodes with, which is exhaustive over the sealed hierarchy. One leaf renderer spells the decoded Java value, a `String` as text and a `byte[]` through `BinaryValues`, so whether an annotation is text or bytes is decided in core alone.
+No entry point decodes an annotation itself. `formatField` renders what the field's `getValue` returns (`getRawValue` with the physical toggle off); `formatDictionary` and `formatBytes` decode their stored value through `LogicalTypeConverter.convert`, the switch the reader decodes with, which is exhaustive over the sealed hierarchy. One leaf renderer spells the decoded Java value, a `String` as text and a `byte[]` through `BinaryValues`, so whether an annotation is text or bytes is decided in core alone.
 
 ### Styles
 
@@ -69,7 +68,7 @@ No entry point decodes an annotation itself. `formatReader` and `formatValue` re
 
 ### Nested values
 
-`formatReader` and `formatValue` hand `PqStruct`, `PqList`, `PqMap` and `PqVariant` values to one walker, so a nested value reads the same from both. A `FILE` group is read through the raw route at every level (`ValueFormatter.valueOf`), so it renders as the struct of its stored children and a file holding an invalid reference still renders. The walker resolves each child's schema node from its parent (a struct field from the struct itself, the list element, a repeated primitive as its own element, the map's key and value) and renders leaves against that node: a leaf arrives decoded, or stored with the physical toggle off, and the node decides whether an `INT` renders unsigned. A struct's fields are read and resolved by position: two sibling fields may share a name, and a projected struct's positions follow the projection, which can differ from the file's group, so the struct (`FieldSchemaAccessor`) supplies the node at each position. A value whose schema node does not resolve walks schema-less. A group schema paired with a scalar value throws.
+`formatField` hands `PqStruct`, `PqList`, `PqMap` and `PqVariant` values to one walker, so a nested value reads the same on every surface. A `FILE` group is read through the raw route at every level (`ValueFormatter.valueOf`), so it renders as the struct of its stored children and a file holding an invalid reference still renders. The walker resolves each child's schema node from its parent (a struct field from the struct itself, the list element, a repeated primitive as its own element, the map's key and value) and renders leaves against that node: a leaf arrives decoded, or stored with the physical toggle off, and the node decides whether an `INT` renders unsigned. A struct's fields are read and resolved by position: two sibling fields may share a name, and a projected struct's positions follow the projection, which can differ from the file's group, so the struct (`FieldSchemaAccessor`) supplies the node at each position. A value whose schema node does not resolve walks schema-less. A group schema paired with a scalar value throws.
 
 The display styles use the display grammar: `{ a : 1 }` for structs, maps and Variant objects, `[1, 2]` for lists and Variant arrays, unquoted Variant keys and strings, `{}` and `[]` when empty. `EXPANDED` writes `name: value` entries one per line.
 
@@ -100,7 +99,7 @@ A UUID that is not 16 bytes, an INTERVAL or INT96 that is not 12, a FLOAT16 that
 
 | Path | Behaviour |
 |---|---|
-| `formatReader`, `formatValue` | render the value core's decoder returns for it |
+| `formatField` | renders the value core's decoder returns for it |
 | `formatDictionary`, `formatBytes` | renders the stored form (bytes as `0x` hex, a TIME as its integer), so a damaged bound or entry shows in its cell and the rest of the screen stays readable |
 
 ### Budgets and truncation
