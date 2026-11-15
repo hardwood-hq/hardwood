@@ -255,7 +255,7 @@ public class FlatWriteBenchmark {
         if (dir == null) {
             InMemoryOutputFile out = OutputFile.inMemory();
             write.writeTo(out);
-            return out.position();
+            return out.buffer().remaining();
         }
         Path path = dir.resolve(fileName);
         write.writeTo(OutputFile.of(path));
