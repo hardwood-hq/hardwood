@@ -207,25 +207,25 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
             case Dictionary.IntDictionary d -> {
                 int[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i], columnSchema), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDictionary(vs[i], columnSchema, true, budget), budget));
                 }
             }
             case Dictionary.LongDictionary d -> {
                 long[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i], columnSchema), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDictionary(vs[i], columnSchema, true, budget), budget));
                 }
             }
             case Dictionary.FloatDictionary d -> {
                 float[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i]), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDictionary(vs[i], columnSchema, true, budget), budget));
                 }
             }
             case Dictionary.DoubleDictionary d -> {
                 double[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i]), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDictionary(vs[i], columnSchema, true, budget), budget));
                 }
             }
             case Dictionary.ByteArrayDictionary d -> addByteArrayRows(

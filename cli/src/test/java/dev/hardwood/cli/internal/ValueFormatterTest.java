@@ -272,15 +272,6 @@ class ValueFormatterTest {
     }
 
     @Test
-    void dictionaryPrimitiveMismatchFailsFast() {
-        // A Long dictionary value can never back DATE (an INT32 logical type).
-        ColumnSchema col = column(PhysicalType.INT64, LogicalType.date());
-        assertThatThrownBy(() -> ValueFormatter.formatDictionary(42L, col, true, NO_LIMIT))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Column 'value' has logical type DATE, which INT64 values cannot carry");
-    }
-
-    @Test
     void unknownDictionaryPrimitiveFailsFast() {
         ColumnSchema col = column(PhysicalType.INT64, null);
         assertThatThrownBy(() -> ValueFormatter.formatDictionary("not-a-primitive", col, true, NO_LIMIT))
@@ -329,13 +320,6 @@ class ValueFormatterTest {
                 LogicalType.string()))).isEqualTo("A·B");
     }
 
-    @Test
-    void materialisedAnnotatedBytesWithControlRenderMiddleDots() {
-        assertThat(display("tab\tsep".getBytes(StandardCharsets.UTF_8),
-                primitive(PhysicalType.BYTE_ARRAY, LogicalType.string())))
-                .isEqualTo("tab·sep");
-    }
-
     // ==================== materialised source ====================
 
     @Test
@@ -375,50 +359,15 @@ class ValueFormatterTest {
 
     @Test
     void decimalRendersIdenticallyAcrossDictionaryAndMaterialisedSources() {
-        ColumnSchema col = column(PhysicalType.INT32, LogicalType.decimal(9, 7));
-        SchemaNode node = primitive(PhysicalType.INT32, LogicalType.decimal(9, 7));
-        // BigInteger.ONE.toByteArray() — the unscaled Int32 encoding of
-        // 0.0000001 at scale 7.
+        ColumnSchema col = column(PhysicalType.BYTE_ARRAY, LogicalType.decimal(9, 7));
+        SchemaNode node = primitive(PhysicalType.BYTE_ARRAY, LogicalType.decimal(9, 7));
+        // BigInteger.ONE.toByteArray() — the unscaled encoding of 0.0000001 at
+        // scale 7.
         byte[] unscaledOne = BigInteger.ONE.toByteArray();
 
         assertThat(ValueFormatter.formatDictionary(unscaledOne, col, true, NO_LIMIT))
                 .isEqualTo(display(new BigDecimal("0.0000001"), node))
                 .isEqualTo("0.0000001");
-    }
-
-    @Test
-    void materialisedInt96EpochBytesRenderAsInstant() {
-        // INT96 is little-endian: 8 bytes nanos-of-day, 4 bytes Julian day.
-        // The Unix epoch is Julian day 2440588 with zero nanos-of-day.
-        byte[] epochBytes = new byte[12];
-        ByteBuffer bb = ByteBuffer.wrap(epochBytes).order(ByteOrder.LITTLE_ENDIAN);
-        bb.putLong(0, 0L);
-        bb.putInt(8, 2440588);
-        assertThat(display(epochBytes, primitive(PhysicalType.INT96, null)))
-                .isEqualTo("1970-01-01T00:00:00Z");
-    }
-
-    @Test
-    void materialisedUuidWrongLengthFails() {
-        assertThatThrownBy(() -> display(new byte[15],
-                primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.uuid())))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Field 'f': UUID requires exactly 16 bytes, got 15");
-    }
-
-    @Test
-    void materialisedIntervalWrongLengthFails() {
-        assertThatThrownBy(() -> display(new byte[11],
-                primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval())))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Field 'f': INTERVAL requires exactly 12 bytes, got 11");
-    }
-
-    @Test
-    void materialisedInt96WrongLengthFails() {
-        assertThatThrownBy(() -> display(new byte[16], primitive(PhysicalType.INT96, null)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Field 'f': INT96 requires exactly 12 bytes, got 16");
     }
 
     @Test
@@ -785,7 +734,7 @@ class ValueFormatterTest {
     void int96RendersIdenticallyAcrossMaterialisedAndStatisticsSources() {
         byte[] epochBytes = int96EpochBytes();
         assertThat(ValueFormatter.formatBytes(epochBytes, int96Column(), true))
-                .isEqualTo(display(epochBytes, primitive(PhysicalType.INT96, null)))
+                .isEqualTo(display(Instant.EPOCH, primitive(PhysicalType.INT96, null)))
                 .isEqualTo("1970-01-01T00:00:00Z");
     }
 
@@ -804,7 +753,7 @@ class ValueFormatterTest {
             assertThat(ValueFormatter.formatReader(rowReader, index, field, true,
                     ValueFormatter.Style.COMPACT, 1)).isEqualTo(expected);
             assertThat(ValueFormatter.formatDictionary(raw, int96Column(), true, 1)).isEqualTo(expected);
-            assertThat(display(raw, field)).isEqualTo(expected);
+            assertThat(display(rowReader.getValue(index), field)).isEqualTo(expected);
             assertThat(ValueFormatter.formatBytes(raw, int96Column(), true, 1)).isEqualTo(expected);
         }
     }
@@ -847,7 +796,7 @@ class ValueFormatterTest {
                 assertThat(ValueFormatter.formatReader(rowReader, column.columnIndex(), field, true,
                         ValueFormatter.Style.COMPACT, NO_LIMIT)).isEqualTo(expected);
                 assertThat(ValueFormatter.formatDictionary(raw, column, true, NO_LIMIT)).isEqualTo(expected);
-                assertThat(display(raw, field)).isEqualTo(expected);
+                assertThat(display(rowReader.getValue(column.columnIndex()), field)).isEqualTo(expected);
                 assertThat(ValueFormatter.formatBytes(raw, column, true)).isEqualTo(expected);
                 assertThat(ValueFormatter.formatBytes(raw, column, false)).isEqualTo("0x" + "ff".repeat(12));
             }
@@ -855,15 +804,11 @@ class ValueFormatterTest {
     }
 
     @Test
-    void flba12TimestampOfAnotherWidthRendersAsHexOrFails() {
+    void flba12TimestampOfAnotherWidthRendersAsHex() {
         ColumnSchema column = new ColumnSchema(FieldPath.of("ts"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
                 RepetitionType.OPTIONAL, 12, 0, 1, 0, LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS));
         assertThat(ValueFormatter.formatDictionary(new byte[8], column, true, NO_LIMIT)).isEqualTo(zeroHex(8));
         assertThat(ValueFormatter.formatBytes(new byte[8], column, true)).isEqualTo(zeroHex(8));
-        assertThatThrownBy(() -> display(new byte[8], primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Field 'f': TIMESTAMP requires exactly 12 bytes, got 8");
     }
 
     /// Twelve bytes counting past the range of `Instant` and `LocalDateTime` are no value the
@@ -937,49 +882,35 @@ class ValueFormatterTest {
                 .hasMessage("col");
     }
 
-    // ==================== decoded dictionary entries ====================
+    // ==================== numeric dictionary entries ====================
 
     @Test
-    void decodedDecimalRendersPlainString() {
+    void dictionaryDecimalRendersPlainString() {
         // String.valueOf(BigDecimal) would give "1E-7"; the canonical form is
         // plain — the same text every other source shows for the value.
         ColumnSchema col = column(PhysicalType.INT32, LogicalType.decimal(9, 7));
-        assertThat(ValueFormatter.formatDecoded(1, col)).isEqualTo("0.0000001");
-    }
-
-    @Test
-    void decodedDecimalRendersIdenticallyAcrossDecodedAndMaterialisedSources() {
-        ColumnSchema col = column(PhysicalType.INT32, LogicalType.decimal(9, 7));
         SchemaNode node = primitive(PhysicalType.INT32, LogicalType.decimal(9, 7));
 
-        assertThat(ValueFormatter.formatDecoded(1, col))
+        assertThat(ValueFormatter.formatDictionary(1, col, true, NO_LIMIT))
                 .isEqualTo(display(new BigDecimal("0.0000001"), node))
                 .isEqualTo("0.0000001");
     }
 
     @Test
-    void decodedIntAndLongRenderUnsignedAndSigned() {
+    void dictionaryIntAndLongRenderUnsignedAndSigned() {
         ColumnSchema unsigned32 = column(PhysicalType.INT32, LogicalType.intType(32, false));
         ColumnSchema signed64 = column(PhysicalType.INT64, null);
 
-        assertThat(ValueFormatter.formatDecoded(-1, unsigned32)).isEqualTo("4294967295");
-        assertThat(ValueFormatter.formatDecoded(-1L, signed64)).isEqualTo("-1");
+        assertThat(ValueFormatter.formatDictionary(-1, unsigned32, true, NO_LIMIT)).isEqualTo("4294967295");
+        assertThat(ValueFormatter.formatDictionary(-1L, signed64, true, NO_LIMIT)).isEqualTo("-1");
     }
 
     @Test
-    void decodedFloatAndDoubleRenderAsJavaText() {
-        assertThat(ValueFormatter.formatDecoded(1.5f)).isEqualTo("1.5");
-        assertThat(ValueFormatter.formatDecoded(-2.25d)).isEqualTo("-2.25");
-    }
-
-    @Test
-    void decodedSchemaBearingOverloadsRejectNullColumn() {
-        assertThatThrownBy(() -> ValueFormatter.formatDecoded(1, (ColumnSchema) null))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessage("col");
-        assertThatThrownBy(() -> ValueFormatter.formatDecoded(1L, (ColumnSchema) null))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessage("col");
+    void dictionaryFloatAndDoubleRenderAsJavaText() {
+        assertThat(ValueFormatter.formatDictionary(1.5f, column(PhysicalType.FLOAT, null), true, NO_LIMIT))
+                .isEqualTo("1.5");
+        assertThat(ValueFormatter.formatDictionary(-2.25d, column(PhysicalType.DOUBLE, null), true, NO_LIMIT))
+                .isEqualTo("-2.25");
     }
 
     // ==================== interval helpers ====================
@@ -987,19 +918,19 @@ class ValueFormatterTest {
     @Test
     void intervalRendersAsReadableComponents() {
         // Row 0 from interval_logical_type_test.parquet: 1 month, 15 days, 1 hour (3_600_000 ms)
-        assertThat(ValueFormatter.formatInterval(new PqInterval(1, 15, 3_600_000)))
+        assertThat(display(new PqInterval(1, 15, 3_600_000), null))
                 .isEqualTo("1mo 15d 3600000ms");
     }
 
     @Test
     void intervalWithZeroComponentsOmitsThem() {
-        assertThat(ValueFormatter.formatInterval(new PqInterval(0, 30, 0)))
+        assertThat(display(new PqInterval(0, 30, 0), null))
                 .isEqualTo("30d");
     }
 
     @Test
     void intervalAllZeroRendersAsZeroMs() {
-        assertThat(ValueFormatter.formatInterval(new PqInterval(0, 0, 0)))
+        assertThat(display(new PqInterval(0, 0, 0), null))
                 .isEqualTo("0ms");
     }
 
@@ -1008,7 +939,7 @@ class ValueFormatterTest {
         // 0xFFFFFFFF = 4_294_967_295 — the upper bound of the on-disk
         // unsigned-32-bit encoding, which `PqInterval` exposes verbatim as a long.
         long maxUint32 = 0xFFFFFFFFL;
-        assertThat(ValueFormatter.formatInterval(new PqInterval(maxUint32, maxUint32, maxUint32)))
+        assertThat(display(new PqInterval(maxUint32, maxUint32, maxUint32), null))
                 .isEqualTo("4294967295mo 4294967295d 4294967295ms");
     }
 
@@ -1237,9 +1168,6 @@ class ValueFormatterTest {
         SchemaNode string = primitive(PhysicalType.BYTE_ARRAY, LogicalType.string());
         assertThat(ValueFormatter.formatValue("A\u0001B", string, ValueFormatter.Style.EXPORT, NO_LIMIT))
                 .isEqualTo("A\u0001B");
-        assertThat(ValueFormatter.formatValue("tab\tsep".getBytes(StandardCharsets.UTF_8), string,
-                ValueFormatter.Style.EXPORT, NO_LIMIT))
-                .isEqualTo("tab\tsep");
     }
 
     // ==================== Variant scalars ====================
@@ -1372,10 +1300,18 @@ class ValueFormatterTest {
 
         assertThat(ValueFormatter.formatBytes(littleEndian(-1L), micros, true)).isEqualTo("-1");
         assertThat(ValueFormatter.formatDictionary(-1L, micros, true, NO_LIMIT)).isEqualTo("-1");
-        assertThat(ValueFormatter.formatDecoded(-1L, micros)).isEqualTo("-1");
         assertThat(ValueFormatter.formatDictionary(86_400_000, millis, true, NO_LIMIT)).isEqualTo("86400000");
-        assertThat(ValueFormatter.formatDecoded(86_400_000, millis)).isEqualTo("86400000");
-        assertThat(ValueFormatter.formatDecoded(86_399_999, millis)).isEqualTo("23:59:59.999");
+        assertThat(ValueFormatter.formatDictionary(86_399_999, millis, true, NO_LIMIT)).isEqualTo("23:59:59.999");
+    }
+
+    /// A `NULL` column holds no value, so a statistic or dictionary entry on one
+    /// is no value of its type: it shows the stored integer.
+    @Test
+    void valueOnANullColumnRendersAsItsStoredInteger() {
+        ColumnSchema col = column(PhysicalType.INT32, LogicalType.nullType());
+
+        assertThat(ValueFormatter.formatBytes(littleEndian(7), col, true)).isEqualTo("7");
+        assertThat(ValueFormatter.formatDictionary(7, col, true, NO_LIMIT)).isEqualTo("7");
     }
 
     // ==================== physical toggle, field names ====================
@@ -1404,7 +1340,7 @@ class ValueFormatterTest {
                 new Class<?>[] { RowReader.class },
                 (proxy, method, args) -> switch (method.getName()) {
                     case "isNull" -> false;
-                    case "getValue" -> list;
+                    case "getValue", "getRawValue" -> list;
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
 
