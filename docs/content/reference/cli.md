@@ -297,8 +297,9 @@ Protobuf message or a hash. Every command decides from the bytes themselves:
 well-formed UTF-8 with no control characters prints as text unless it starts
 with `0x`; anything else prints as `0x`-prefixed lowercase hex, so a `0x…`
 value always means bytes. The same rule applies to values,
-dictionary entries and min/max statistics alike, and to a byte-backed logical
-type whose payload length rules out its own decoder.
+dictionary entries and min/max statistics alike, to `BSON`, `GEOMETRY` and
+`GEOGRAPHY` columns, and to a byte-backed logical type whose payload length
+rules out its own decoder.
 
 Each table column holds 50 cells, and a value wider than that is cut with a
 trailing `…`. `print`, `inspect dictionary` and `inspect pages` take `-w N` for

@@ -88,8 +88,8 @@ The display styles use the display grammar: `{ a : 1 }` for structs, maps and Va
 | `INTERVAL` | non-zero parts as `3mo 2d 500ms`; all zero as `0ms` |
 | `FLOAT16` | the widened `Float.toString` |
 | unsigned `INT` | the unsigned decimal |
-| `STRING`, `ENUM`, `JSON`, `BSON` | UTF-8 text |
-| unannotated byte array, `GEOMETRY`, `GEOGRAPHY` | `BinaryValues`: text when the bytes are displayable text, else `0x` hex |
+| `STRING`, `ENUM`, `JSON` | UTF-8 text |
+| unannotated byte array, `BSON`, `GEOMETRY`, `GEOGRAPHY` | `BinaryValues`: text when the bytes are displayable text, else `0x` hex |
 | `null` | `null`; JSON `null` inside an exported value |
 | `INT96` under the physical toggle | `0x` hex |
 
@@ -239,7 +239,6 @@ This document fixes the text. Colour is added only in dive and follows the tiers
 
 ## Boundaries
 
-- A `BSON` value renders as UTF-8 text on every surface, while core hands it back as bytes (#1206).
 - An annotation the physical type cannot carry makes `print`, `convert` and `dive` fail instead of rendering the stored value (#1090).
 - The column chunk detail's `Size statistics` row restates what the drill menu already shows (#951).
 - `inspect` and dive do not report per-page size statistics beyond their presence; per-page level histograms have no display.
