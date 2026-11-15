@@ -51,13 +51,16 @@ class RowCapRetentionTest {
     @AfterEach
     void clearSpan() {
         System.clearProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY);
+        System.clearProperty(ReadEngine.FETCH_AHEAD_BYTES_PROPERTY);
     }
 
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aReadStoppedAtItsRowCapHoldsNothingInR() throws Exception {
-        // pieces of 16 KiB, so that the one chunk is many requests
+        // pieces of 16 KiB, so that the one chunk is many requests, and two of them fetched ahead,
+        // so that the cap ends the scan while most pieces have not started
         System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, "16384");
+        System.setProperty(ReadEngine.FETCH_AHEAD_BYTES_PROPERTY, "32768");
         CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(file()));
         BatchExchange<?> exchange = BatchExchange.detachingFlat("v", BATCH_SIZE);
         List<NestedLevelComputer.Layers> layers = new ArrayList<>();

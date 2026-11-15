@@ -87,7 +87,7 @@ Two byte ranges are fetched as one request when the gap between them is at most 
 
 A merge bridges the gap between two needed ranges. It never extends a request before the first needed byte or past the last one. A range longer than the span limit is a request of its own.
 
-The gap limit is the serial break-even of a remote request: the bytes that take as long to transfer as one round trip (latency × bandwidth), so fetching a gap costs no more than issuing a second request. The span limit keeps each `readRange` bounded, which lets read-ahead overlap decode and lets a read that stops early leave the rest unfetched. The best gap depends on the storage and on how many requests run in parallel; the rule lives in one class so that a storage-dependent value replaces one constant. The span limit has a tuning override (`hardwood.internal.maxCoalescedBytes`), read once per read, which is not a public option; a value that is not a positive byte count is rejected with `IllegalArgumentException`.
+The gap limit is the serial break-even of a remote request: the bytes that take as long to transfer as one round trip (latency × bandwidth), so fetching a gap costs no more than issuing a second request. The span limit keeps each `readRange` bounded, which lets read-ahead overlap decode and lets a read that stops early leave the rest unfetched. A page decodes only once every range holding it has arrived, so the span limit is also how long a chunk's first pages wait for their bytes; it is a fraction of a typical chunk, so a chunk is several requests that run concurrently and decoding starts after the first of them. A memory-mapped file pays for a cut only by copying each page that straddles it. The best gap depends on the storage and on how many requests run in parallel; the rule lives in one class so that a storage-dependent value replaces one constant. The span limit has a tuning override (`hardwood.internal.maxCoalescedBytes`), read once per read, which is not a public option; a value that is not a positive byte count is rejected with `IllegalArgumentException`.
 
 Tests: `CoalescingPolicyTest`, `CoalescedRequestsTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`.
 
@@ -156,7 +156,7 @@ A page is the smallest fetch and decode unit: a page that straddles the limit is
 |---|---|
 | No row limit | the whole chunk, in pieces of at most S |
 | Row limit, small chunk (below a fixed threshold) | the whole chunk |
-| Row limit, larger chunk | average compressed bytes per value × `m` × a safety factor, between a fixed floor and S |
+| Row limit, larger chunk | the chunk's average bytes per row of its row group × `m` × a safety factor, between a fixed floor and the chunk's length; cut into pieces of at most S like any range, so it is fetched concurrently while the scan fetches the rest one piece at a time |
 
 The estimate trades a possible second request for not fetching a large chunk whose head is all the read needs.
 

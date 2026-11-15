@@ -13,7 +13,6 @@ import java.util.List;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.memory.InternalProperty;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Decides whether two byte ranges a read needs are fetched as one request: when the gap between
@@ -33,8 +32,10 @@ public final class CoalescingPolicy {
     public static final String MAX_SPAN_BYTES_PROPERTY = "hardwood.internal.maxCoalescedBytes";
 
     /// Largest request without the override, so that each `readRange()` stays bounded, enabling
-    /// read-ahead to overlap decode and a read that stops early to leave the rest unfetched.
-    private static final int DEFAULT_MAX_SPAN_BYTES = 128 * 1024 * 1024;
+    /// read-ahead to overlap decode and a read that stops early to leave the rest unfetched. A page
+    /// decodes only once every range holding it has arrived, so a chunk cut into requests of this
+    /// size starts decoding after its first request and is fetched over several connections at once.
+    private static final int DEFAULT_MAX_SPAN_BYTES = 16 * 1024 * 1024;
 
     /// The least first part of a chunk a read under a row limit fetches, so that scanning its page
     /// headers takes no round trip per page.
@@ -152,33 +153,33 @@ public final class CoalescingPolicy {
     /// fetches, the rest following on demand.
     ///
     /// Without `maxRows`, returns at least `maxSpan` (S), so the whole chunk is needed. With
-    /// `maxRows`, estimates the bytes required from the column's average compressed bytes per
-    /// value:
+    /// `maxRows`, estimates the bytes required from the chunk's average compressed bytes per row of
+    /// its row group, which holds for a repeated column as for a flat one:
     ///
     /// ```
-    /// chunkSize = maxRows * (totalCompressedSize / numValues) * safetyFactor
+    /// chunkSize = maxRows * (columnChunkLength / rowGroupRows) * safetyFactor
     /// ```
     ///
     /// The estimate is floored at [#MAX_ROWS_CHUNK_FLOOR] to avoid sub-page round trips while the
-    /// headers are scanned, and capped at `maxSpan`. A chunk of at most
-    /// [#FETCH_WHOLE_COLUMN_THRESHOLD] bytes is fetched whole.
-    public static int computeChunkSize(int columnChunkLength, ColumnMetaData metaData, long maxRows, int maxSpan) {
+    /// headers are scanned, and capped at the chunk's length, not at `maxSpan`: the caller cuts the
+    /// first part into requests of at most S that run concurrently, whereas the scan fetches the
+    /// rest one request after another. A chunk of at most [#FETCH_WHOLE_COLUMN_THRESHOLD] bytes is
+    /// fetched whole.
+    public static int computeChunkSize(int columnChunkLength, long rowGroupRows, long maxRows, int maxSpan) {
         if (maxRows <= 0) {
             return Math.max(columnChunkLength, maxSpan);
         }
         if (columnChunkLength <= FETCH_WHOLE_COLUMN_THRESHOLD) {
             return columnChunkLength;
         }
-        long numValues = metaData.numValues();
-        if (numValues <= 0) {
+        if (rowGroupRows <= 0) {
             return MAX_ROWS_CHUNK_FLOOR;
         }
-        long totalCompressedSize = metaData.totalCompressedSize();
-        // both factors are bounded by the chunk's own counts, so the product cannot overflow
-        long effectiveRows = Math.min(maxRows, numValues);
-        long estimate = Math.ceilDiv(effectiveRows * totalCompressedSize * MAX_ROWS_CHUNK_SAFETY_FACTOR, numValues);
+        // the rows are bounded by the row group's and the length by an int, so the product cannot overflow
+        long effectiveRows = Math.min(maxRows, rowGroupRows);
+        long estimate = Math.ceilDiv(effectiveRows * columnChunkLength * MAX_ROWS_CHUNK_SAFETY_FACTOR, rowGroupRows);
         // a span limit below the floor lowers the floor, so the clamp range stays valid
         long floor = Math.min(MAX_ROWS_CHUNK_FLOOR, maxSpan);
-        return Math.toIntExact(Math.clamp(estimate, floor, maxSpan));
+        return Math.toIntExact(Math.clamp(estimate, floor, columnChunkLength));
     }
 }

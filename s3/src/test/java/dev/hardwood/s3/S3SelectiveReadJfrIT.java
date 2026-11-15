@@ -44,9 +44,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The byte-comparison tests therefore use `page_index_test.parquet`
 /// (170 KB, larger than the tail cache) to ensure the differences are observable.
 ///
-/// The lazy fetch tests override the largest request, `hardwood.internal.maxCoalescedBytes`, to
-/// a small value so that the generated test files stay small while still exercising reads of a
-/// column chunk in several requests.
+/// The lazy fetch tests override the largest request, `hardwood.internal.maxCoalescedBytes`, and
+/// the bytes fetched ahead, `hardwood.internal.fetchAheadBytes`, to small values so that the
+/// generated test files stay small while still exercising reads of a column chunk in several
+/// requests and a read that stops early leaving most of a file unfetched.
 public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
 
     private static final System.Logger LOG = System.getLogger(S3SelectiveReadJfrIT.class.getName());
@@ -89,6 +90,8 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
     /// while still producing multiple chunks per column.
     private static final int TEST_CHUNK_SIZE = 128 * 1024;
 
+    private static final int TEST_FETCH_AHEAD = 2 * TEST_CHUNK_SIZE;
+
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
 
@@ -128,10 +131,11 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         bucket.create();
         pageIndexFileSize = Files.size(TEST_RESOURCES.resolve(PAGE_INDEX_FILE));
 
-        // Override the largest request for this test class. Every assertion below
-        // is calibrated against it, so it has to hold for this class regardless of
-        // what else has already run in this JVM.
+        // Override the largest request and the bytes fetched ahead for this test class.
+        // Every assertion below is calibrated against them, so they have to hold for this
+        // class regardless of what else has already run in this JVM.
         System.setProperty("hardwood.internal.maxCoalescedBytes", String.valueOf(TEST_CHUNK_SIZE));
+        System.setProperty("hardwood.internal.fetchAheadBytes", String.valueOf(TEST_FETCH_AHEAD));
 
         source = S3Source.builder()
                 .endpoint(bucket.endpoint())
@@ -143,6 +147,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
     @AfterAll
     static void tearDown() {
         System.clearProperty("hardwood.internal.maxCoalescedBytes");
+        System.clearProperty("hardwood.internal.fetchAheadBytes");
         source.close();
         bucket.delete();
     }
