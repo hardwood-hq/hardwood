@@ -17,7 +17,6 @@ import java.util.Objects;
 import java.util.StringJoiner;
 
 import dev.hardwood.internal.conversion.FixedWidths;
-import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.internal.reader.row.FieldSchemaAccessor;
@@ -25,6 +24,7 @@ import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -44,22 +44,24 @@ import dev.hardwood.schema.SchemaNode;
 ///
 /// The entry points differ in where the value comes from:
 ///
-/// - [#formatReader(RowReader, int, SchemaNode, boolean, Style, int)] — typed
-///   accessors on a [RowReader]: dive preview cells, the dive record modal and
-///   `convert --format json` leaves.
+/// - [#formatReader(RowReader, int, SchemaNode, boolean, Style, int)] — a field
+///   of a [RowReader]'s current row: dive preview cells, the dive record modal
+///   and `convert --format json` leaves.
 /// - [#formatValue(Object, SchemaNode, Style, int)] — a materialised value:
 ///   `print` cells and `convert` CSV cells.
 /// - [#formatDictionary(Object, ColumnSchema, boolean, int)] — a raw primitive
 ///   out of a parsed `Dictionary`.
 /// - `formatBytes` — raw statistics bytes.
-/// - `formatDecoded` — an already-decoded dictionary entry.
 ///
-/// `formatReader` and `formatValue` render nested values through one walker, so
-/// a struct, list, map or Variant reads the same from both; [Style] picks the
-/// layout, whether control characters are sanitised, and whether nested values
-/// are written as JSON. Statistics and
-/// dictionary entries are display surfaces: a fixed-width payload of the wrong
-/// length renders there as `0x` hex, while the value paths throw on it.
+/// Core decodes every value: the reader and materialised sources hand over what
+/// the reader's `getValue` returns, and the dictionary and statistics sources
+/// decode their stored value through [LogicalTypeConverter#convert]. One leaf
+/// renderer spells the decoded Java value, so the annotation decides text or
+/// bytes in core alone. `formatReader` and `formatValue` render nested values
+/// through one walker; [Style] picks the layout, whether control characters are
+/// sanitised, and whether nested values are written as JSON. Statistics and
+/// dictionary entries come from the file unchecked: a value its annotation
+/// cannot decode renders there in its stored form.
 ///
 /// Budgets are measured in terminal display cells; [BinaryValues#NO_LIMIT]
 /// renders the whole value. Text budgets never cut — a caller that truncates
@@ -101,9 +103,9 @@ public final class ValueFormatter {
         EXPORT
     }
 
-    // ==================== reader source ====================
+    // ==================== reader and materialised sources ====================
 
-    /// Renders the field at `fieldIndex` through the reader's typed accessors.
+    /// Renders the field at `fieldIndex` of a reader's current row.
     /// `useLogicalType=true` renders timestamps, decimals, UUIDs, etc. in their
     /// canonical logical form; `useLogicalType=false` renders the stored physical
     /// value (e.g. `1735689600000000` instead of `2025-01-01T00:00:00Z`). Groups
@@ -115,90 +117,45 @@ public final class ValueFormatter {
         Objects.requireNonNull(field, "field");
         Objects.requireNonNull(style, "style");
         requireBudget(budget);
-        if (reader.isNull(fieldIndex)) {
-            return "null";
-        }
-        if (isNested(field)) {
-            // `getValue` and `getRawValue` return the same flyweight for a group or list, apart
-            // from a FILE group, which renders from its stored fields.
-            return render(valueOf(reader, fieldIndex, field), field, useLogicalType, style, 0, budget);
-        }
-        SchemaNode.PrimitiveNode prim = (SchemaNode.PrimitiveNode) field;
-        if (!useLogicalType) {
-            return formatPhysical(reader, fieldIndex, budget);
-        }
-        if (prim.type() == PhysicalType.INT96) {
-            return reader.getTimestamp(fieldIndex).toString();
-        }
-        LogicalType lt = prim.logicalType();
-        return switch (lt) {
-            case null -> formatPhysical(reader, fieldIndex, budget);
-            case LogicalType.TimestampType ts -> ts.isAdjustedToUTC()
-                    ? reader.getTimestamp(fieldIndex).toString()
-                    : reader.getLocalTimestamp(fieldIndex).toString();
-            case LogicalType.DateType d -> reader.getDate(fieldIndex).toString();
-            case LogicalType.TimeType t -> reader.getTime(fieldIndex).toString();
-            case LogicalType.DecimalType dec -> reader.getDecimal(fieldIndex).toPlainString();
-            case LogicalType.UuidType u -> reader.getUuid(fieldIndex).toString();
-            case LogicalType.StringType s -> text(reader.getString(fieldIndex), style);
-            case LogicalType.EnumType e -> text(reader.getString(fieldIndex), style);
-            case LogicalType.JsonType j -> text(reader.getString(fieldIndex), style);
-            // BSON, geometry and geography carry binary payloads the CLI does not decode:
-            // they render as bytes.
-            case LogicalType.BsonType b -> formatPhysical(reader, fieldIndex, budget);
-            case LogicalType.IntType it when AnnotationKind.ordersUnsigned(it) -> formatUnsignedInt(reader, fieldIndex, prim);
-            case LogicalType.IntType it -> formatPhysical(reader, fieldIndex, budget);
-            case LogicalType.IntervalType i -> formatInterval(reader.getInterval(fieldIndex));
-            // getFloat widens the two-byte half-precision payload.
-            case LogicalType.Float16Type f16 -> Float.toString(reader.getFloat(fieldIndex));
-            case LogicalType.GeometryType g -> formatPhysical(reader, fieldIndex, budget);
-            case LogicalType.GeographyType g -> formatPhysical(reader, fieldIndex, budget);
-            // A NULL column holds only nulls, which the check above has returned.
-            case LogicalType.NullType n -> throw structuralReached(field, lt);
-            // These annotate group nodes, which the check above has walked.
-            case LogicalType.ListType l -> throw structuralReached(field, lt);
-            case LogicalType.MapType m -> throw structuralReached(field, lt);
-            case LogicalType.VariantType v -> throw structuralReached(field, lt);
-            case LogicalType.FileType f -> throw structuralReached(field, lt);
-        };
+        return render(read(reader, fieldIndex, field, useLogicalType), field, useLogicalType, style, 0, budget);
     }
-
-    private static String formatUnsignedInt(RowReader reader, int fieldIndex, SchemaNode.PrimitiveNode prim) {
-        return switch (prim.type()) {
-            case INT32 -> Long.toString(Integer.toUnsignedLong(reader.getInt(fieldIndex)));
-            case INT64 -> Long.toUnsignedString(reader.getLong(fieldIndex));
-            default -> throw new IllegalStateException("Field '" + prim.name() + "' has an unsigned INT annotation on "
-                    + prim.type() + ", which only INT32 and INT64 can carry");
-        };
-    }
-
-    /// The stored physical value: a byte array through [BinaryValues], anything
-    /// else as its Java text.
-    private static String formatPhysical(RowReader reader, int fieldIndex, int budget) {
-        Object raw = reader.getRawValue(fieldIndex);
-        return raw instanceof byte[] bytes ? BinaryValues.render(bytes, budget) : String.valueOf(raw);
-    }
-
-    private static IllegalStateException structuralReached(SchemaNode field, LogicalType lt) {
-        return new IllegalStateException(
-                "Group logical type " + lt + " reached primitive formatter path on field '"
-                        + field.name() + "'");
-    }
-
-    // ==================== materialised source ====================
 
     /// Renders a materialised value — whatever the reader's `getValue` hands back
-    /// for one field. `field` is the value's own schema node; it decides how
-    /// byte-backed leaves decode (annotated strings, UUID, decimal, INTERVAL,
-    /// INT96) and whether integers render unsigned. A `null` or non-group schema
-    /// walks a nested value schema-less, the way legacy list and map layouts
-    /// without resolvable child schemas render. A group schema paired with a
-    /// scalar value throws, and so does a UUID, INTERVAL or INT96 payload of the
-    /// wrong length.
+    /// for one field. `field` is the value's own schema node; it decides whether
+    /// integers render unsigned. A `null` or non-group schema walks a nested
+    /// value schema-less, the way legacy list and map layouts without resolvable
+    /// child schemas render. A group schema paired with a scalar value throws.
     public static String formatValue(Object value, SchemaNode field, Style style, int budget) {
         Objects.requireNonNull(style, "style");
         requireBudget(budget);
         return render(value, field, true, style, 0, budget);
+    }
+
+    /// The value of the field at `fieldIndex` as the formatter renders it: decoded, apart from a
+    /// `FILE` group, which renders as its stored fields so that a file holding an invalid
+    /// reference still prints.
+    public static Object valueOf(StructAccessor accessor, int fieldIndex, SchemaNode field) {
+        return read(accessor, fieldIndex, field, true);
+    }
+
+    /// The field at `fieldIndex`: `null` when absent, read through the raw accessor
+    /// when [#readsRaw], decoded otherwise.
+    private static Object read(StructAccessor accessor, int fieldIndex, SchemaNode field, boolean useLogicalType) {
+        if (accessor.isNull(fieldIndex)) {
+            return null;
+        }
+        return readsRaw(field, useLogicalType) ? accessor.getRawValue(fieldIndex) : accessor.getValue(fieldIndex);
+    }
+
+    /// Whether a value is read through the raw accessors: every value when `useLogicalType` is
+    /// off, and a `FILE` group always, which renders as its stored fields so that a file holding
+    /// an invalid reference still prints.
+    private static boolean readsRaw(SchemaNode schema, boolean useLogicalType) {
+        return !useLogicalType || isFile(schema);
+    }
+
+    private static boolean isFile(SchemaNode schema) {
+        return schema instanceof SchemaNode.GroupNode group && group.isFile();
     }
 
     // ==================== the nested walker ====================
@@ -217,9 +174,7 @@ public final class ValueFormatter {
             return String.valueOf(Strings.ELLIPSIS);
         }
         return switch (value) {
-            case PqVariant variant -> style == Style.EXPORT
-                    ? variantJson(variant)
-                    : renderVariant(variant, style, depth, budget);
+            case PqVariant variant -> renderVariant(variant, style, depth, budget);
             case PqStruct struct -> renderStruct(struct, useLogicalType, style, depth, budget);
             case PqList list -> renderList(list, listElementSchema(schema), useLogicalType, style, depth, budget);
             case PqMap map -> renderMap(map, asGroup(schema), useLogicalType, style, depth, budget);
@@ -227,24 +182,6 @@ public final class ValueFormatter {
                     ? jsonLeaf(value, schema, useLogicalType, budget)
                     : renderLeaf(value, schema, useLogicalType, style, budget);
         };
-    }
-
-    /// The value of the field at `fieldIndex` as the formatter renders it: decoded, apart from a
-    /// `FILE` group, which renders as its stored fields so that a file holding an invalid
-    /// reference still prints.
-    public static Object valueOf(StructAccessor accessor, int fieldIndex, SchemaNode field) {
-        return isFile(field) ? accessor.getRawValue(fieldIndex) : accessor.getValue(fieldIndex);
-    }
-
-    /// Whether a value is read through the raw accessors: every value when `useLogicalType` is
-    /// off, and a `FILE` group always, which renders as its stored fields so that a file holding
-    /// an invalid reference still prints.
-    private static boolean readsRaw(SchemaNode schema, boolean useLogicalType) {
-        return !useLogicalType || isFile(schema);
-    }
-
-    private static boolean isFile(SchemaNode schema) {
-        return schema instanceof SchemaNode.GroupNode group && group.isFile();
     }
 
     /// Reads every field by position: two sibling fields may share a name, and a projected
@@ -256,12 +193,10 @@ public final class ValueFormatter {
         int shown = shownEntries(count, style);
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
-            String name = struct.getFieldName(i);
             SchemaNode childSchema = fieldSchema(struct, i);
-            Object fieldValue = struct.isNull(i) ? null
-                    : readsRaw(childSchema, useLogicalType) ? struct.getRawValue(i) : struct.getValue(i);
-            entries.add(entry(style == Style.EXPORT ? jsonString(name) : text(name, style),
-                    render(fieldValue, childSchema, useLogicalType, style, depth + 1, budget),
+            entries.add(entry(key(struct.getFieldName(i), style),
+                    render(read(struct, i, childSchema, useLogicalType), childSchema, useLogicalType, style,
+                            depth + 1, budget),
                     style));
         }
         return enclose(true, entries, count, style, depth);
@@ -311,7 +246,9 @@ public final class ValueFormatter {
         return switch (variant.type()) {
             case OBJECT -> renderVariantObject(variant.asObject(), style, depth, budget);
             case ARRAY -> renderVariantArray(variant.asArray(), style, depth, budget);
-            default -> variantScalarText(variant, style, budget);
+            default -> style == Style.EXPORT
+                    ? variantJsonScalar(variant, budget)
+                    : variantScalarText(variant, style, budget);
         };
     }
 
@@ -322,7 +259,7 @@ public final class ValueFormatter {
         for (int i = 0; i < shown; i++) {
             // The raw name looks the value up; only the rendered name is sanitised.
             String name = object.getFieldName(i);
-            entries.add(entry(text(name, style),
+            entries.add(entry(key(name, style),
                     render(object.getVariant(name), null, true, style, depth + 1, budget), style));
         }
         return enclose(true, entries, count, style, depth);
@@ -361,6 +298,20 @@ public final class ValueFormatter {
         };
     }
 
+    /// A Variant scalar as JSON, at any depth: `null`, booleans, integers and
+    /// decimals native, a finite float or double a number, and everything else,
+    /// `NaN` and `±Infinity` included, a string.
+    private static String variantJsonScalar(PqVariant variant, int budget) {
+        String text = variantScalarText(variant, Style.EXPORT, budget);
+        boolean nativeJson = switch (variant.type()) {
+            case NULL, BOOLEAN_TRUE, BOOLEAN_FALSE, INT8, INT16, INT32, INT64, DECIMAL4, DECIMAL8, DECIMAL16 -> true;
+            case FLOAT -> Float.isFinite(variant.asFloat());
+            case DOUBLE -> Double.isFinite(variant.asDouble());
+            default -> false;
+        };
+        return nativeJson ? text : jsonString(text);
+    }
+
     /// A Variant timestamp without a time zone carries wall-clock time in an
     /// `Instant`; it renders as a local date-time, the same text a `TIMESTAMP`
     /// column not adjusted to UTC shows.
@@ -378,65 +329,33 @@ public final class ValueFormatter {
             throw new IllegalStateException("Field '" + schema.name() + "' is a group in the schema, but the"
                     + " value is a " + value.getClass().getName());
         }
+        LogicalType lt = useLogicalType && schema instanceof SchemaNode.PrimitiveNode pn ? pn.logicalType() : null;
+        return leaf(value, lt, style, budget);
+    }
+
+    /// The text of a decoded leaf. Core has decided its Java type: a `String` is
+    /// text, a `byte[]` a payload with no decoder, which [BinaryValues] renders.
+    /// `lt` is the annotation the value was decoded under, or `null` for a
+    /// physical value; an unsigned `INT` renders unsigned.
+    private static String leaf(Object value, LogicalType lt, Style style, int budget) {
         return switch (value) {
-            case byte[] bytes -> useLogicalType
-                    ? formatMaterialisedBytes(bytes, schema, style, budget)
-                    : BinaryValues.render(bytes, budget);
+            case byte[] bytes -> BinaryValues.render(bytes, budget);
             case String s -> text(s, style);
             case BigDecimal decimal -> decimal.toPlainString();
             case PqInterval interval -> formatInterval(interval);
-            case Integer i when useLogicalType && isUnsigned(schema) -> Long.toString(Integer.toUnsignedLong(i));
-            case Long l when useLogicalType && isUnsigned(schema) -> Long.toUnsignedString(l);
+            case Integer i when AnnotationKind.ordersUnsigned(lt) -> Long.toString(Integer.toUnsignedLong(i));
+            case Long l when AnnotationKind.ordersUnsigned(lt) -> Long.toUnsignedString(l);
             default -> String.valueOf(value);
         };
     }
 
-    /// Renders a byte-backed leaf. Annotated strings decode as UTF-8; UUID,
-    /// decimal, INTERVAL, a `FIXED_LEN_BYTE_ARRAY(12)` TIMESTAMP and INT96
-    /// decode through their converters and throw on
-    /// a payload of the wrong length rather than render a different value;
-    /// anything else goes through [BinaryValues].
-    private static String formatMaterialisedBytes(byte[] bytes, SchemaNode schema, Style style, int budget) {
-        if (!(schema instanceof SchemaNode.PrimitiveNode pn)) {
-            // No annotation to decode with: the bytes are the only evidence, the
-            // same as for an unannotated column.
-            return BinaryValues.render(bytes, budget);
-        }
-        LogicalType lt = pn.logicalType();
-        if (isAnnotatedString(lt)) {
-            return text(LogicalTypeConverter.bytesToString(bytes), style);
-        }
-        if (lt instanceof LogicalType.UuidType) {
-            requireLength(pn, "UUID", FixedWidths.UUID, bytes);
-            return LogicalTypeConverter.bytesToUuid(bytes).toString();
-        }
-        if (lt instanceof LogicalType.DecimalType dt) {
-            return LogicalTypeConverter.bytesToDecimal(bytes, dt.scale()).toPlainString();
-        }
-        if (lt instanceof LogicalType.IntervalType) {
-            requireLength(pn, "INTERVAL", FixedWidths.INTERVAL, bytes);
-            return formatIntervalBytes(bytes);
-        }
-        if (lt instanceof LogicalType.TimestampType ts) {
-            requireLength(pn, "TIMESTAMP", FixedWidths.FLBA12_TIMESTAMP, bytes);
-            return Flba12Timestamps.toTemporal(bytes, 0, bytes.length, ts).toString();
-        }
-        if (pn.type() == PhysicalType.INT96) {
-            requireLength(pn, "INT96", FixedWidths.INT96, bytes);
-            return LogicalTypeConverter.int96ToInstant(bytes).toString();
-        }
-        return BinaryValues.render(bytes, budget);
-    }
-
-    private static void requireLength(SchemaNode.PrimitiveNode field, String type, int expected, byte[] bytes) {
-        if (bytes.length != expected) {
-            throw new IllegalArgumentException("Field '" + field.name() + "': " + type + " requires exactly "
-                    + expected + " bytes, got " + bytes.length);
-        }
-    }
-
     private static int shownEntries(int total, Style style) {
         return style == Style.PREVIEW ? Math.min(total, MAX_NESTED_ELEMENTS) : total;
+    }
+
+    /// An object key: a JSON string in `EXPORT`, sanitised text otherwise.
+    private static String key(String name, Style style) {
+        return style == Style.EXPORT ? jsonString(name) : text(name, style);
     }
 
     private static String entry(String key, String value, Style style) {
@@ -485,17 +404,6 @@ public final class ValueFormatter {
     /// did not produce, which renders like any value formatted without a schema.
     private static SchemaNode fieldSchema(PqStruct struct, int fieldIndex) {
         return struct instanceof FieldSchemaAccessor accessor ? accessor.getFieldSchema(fieldIndex) : null;
-    }
-
-    private static boolean isUnsigned(SchemaNode schema) {
-        return schema instanceof SchemaNode.PrimitiveNode pn
-                && AnnotationKind.ordersUnsigned(pn.logicalType());
-    }
-
-    private static boolean isAnnotatedString(LogicalType lt) {
-        return lt instanceof LogicalType.StringType
-                || lt instanceof LogicalType.EnumType
-                || lt instanceof LogicalType.JsonType;
     }
 
     /// The text of a string leaf: sanitised for display, verbatim for export.
@@ -549,233 +457,30 @@ public final class ValueFormatter {
         return '"' + JsonStrings.escape(s) + '"';
     }
 
-    // ==================== Variant JSON ====================
-
-    /// A Variant as JSON — quoted keys and strings, native numbers, booleans,
-    /// objects and arrays — the `EXPORT` form of a Variant. Strings are written
-    /// verbatim through JSON escaping; `NaN` and `±Infinity`, which JSON numbers
-    /// cannot express, are strings.
-    private static String variantJson(PqVariant variant) {
-        if (variant == null) {
-            return "null";
-        }
-        StringBuilder sb = new StringBuilder();
-        appendVariantJson(sb, variant);
-        return sb.toString();
-    }
-
-    private static void appendVariantJson(StringBuilder sb, PqVariant variant) {
-        switch (variant.type()) {
-            case NULL -> sb.append("null");
-            case BOOLEAN_TRUE -> sb.append("true");
-            case BOOLEAN_FALSE -> sb.append("false");
-            case INT8, INT16, INT32 -> sb.append(variant.asInt());
-            case INT64 -> sb.append(variant.asLong());
-            case FLOAT -> appendJsonNumber(sb, variant.asFloat());
-            case DOUBLE -> appendJsonNumber(sb, variant.asDouble());
-            case DECIMAL4, DECIMAL8, DECIMAL16 -> sb.append(variant.asDecimal().toPlainString());
-            case STRING -> appendJsonString(sb, variant.asString());
-            case BINARY -> appendJsonString(sb, BinaryValues.render(variant.asBinary()));
-            case DATE -> appendJsonString(sb, variant.asDate().toString());
-            case TIME_NTZ -> appendJsonString(sb, variant.asTime().toString());
-            case TIMESTAMP, TIMESTAMP_NTZ, TIMESTAMP_NANOS, TIMESTAMP_NTZ_NANOS ->
-                    appendJsonString(sb, variantTimestampText(variant));
-            case UUID -> appendJsonString(sb, variant.asUuid().toString());
-            case OBJECT -> appendVariantJsonObject(sb, variant.asObject());
-            case ARRAY -> appendVariantJsonArray(sb, variant.asArray());
-        }
-    }
-
-    private static void appendVariantJsonObject(StringBuilder sb, PqVariantObject object) {
-        sb.append('{');
-        int fieldCount = object.getFieldCount();
-        for (int i = 0; i < fieldCount; i++) {
-            if (i > 0) {
-                sb.append(", ");
-            }
-            String name = object.getFieldName(i);
-            appendJsonString(sb, name);
-            sb.append(": ");
-            PqVariant fieldValue = object.getVariant(name);
-            if (fieldValue == null) {
-                sb.append("null");
-            }
-            else {
-                appendVariantJson(sb, fieldValue);
-            }
-        }
-        sb.append('}');
-    }
-
-    private static void appendVariantJsonArray(StringBuilder sb, PqVariantArray array) {
-        sb.append('[');
-        int size = array.size();
-        for (int i = 0; i < size; i++) {
-            if (i > 0) {
-                sb.append(", ");
-            }
-            PqVariant element = array.get(i);
-            if (element == null) {
-                sb.append("null");
-            }
-            else {
-                appendVariantJson(sb, element);
-            }
-        }
-        sb.append(']');
-    }
-
-    private static void appendJsonNumber(StringBuilder sb, float f) {
-        if (Float.isFinite(f)) {
-            sb.append(f);
-        }
-        else {
-            appendJsonString(sb, Float.toString(f));
-        }
-    }
-
-    private static void appendJsonNumber(StringBuilder sb, double d) {
-        if (Double.isFinite(d)) {
-            sb.append(d);
-        }
-        else {
-            appendJsonString(sb, Double.toString(d));
-        }
-    }
-
-    private static void appendJsonString(StringBuilder sb, String s) {
-        sb.append(jsonString(s));
-    }
-
-    // ==================== dictionary source ====================
+    // ==================== dictionary and statistics sources ====================
 
     /// Renders a raw primitive drawn from a parsed `Dictionary` — an `Integer`,
     /// `Long`, `Float`, `Double` or `byte[]`, matching the five `Dictionary`
     /// subtypes — in the column's canonical display form. `useLogicalType=false`
     /// bypasses the logical type: timestamps render as their stored long,
-    /// decimals as their unscaled bytes. A fixed-width payload of the wrong
-    /// length renders as `0x` hex. `budget` bounds hex building in display cells;
-    /// text renders whole.
+    /// decimals as their unscaled bytes. A value its annotation cannot decode
+    /// renders in its stored form. `budget` bounds hex building in display
+    /// cells; text renders whole.
     public static String formatDictionary(Object rawValue, ColumnSchema col,
                                           boolean useLogicalType, int budget) {
         Objects.requireNonNull(col, "col");
         requireBudget(budget);
-        if (col.type() == PhysicalType.INT96 && rawValue instanceof byte[] bytes) {
-            return formatInt96(bytes, useLogicalType, budget);
+        if (rawValue == null) {
+            return "null";
         }
-        LogicalType lt = useLogicalType ? col.logicalType() : null;
-        return switch (rawValue) {
-            case Integer i -> formatInt(i, lt, col);
-            case Long l -> formatLong(l, lt, col);
-            case Float f -> Float.toString(f);
-            case Double d -> Double.toString(d);
-            case byte[] bytes -> formatDictionaryBytes(bytes, lt, col, budget);
-            case null -> "null";
-            default -> throw unknownDictionaryPrimitive(rawValue);
-        };
-    }
-
-    private static IllegalStateException unknownDictionaryPrimitive(Object rawValue) {
-        return new IllegalStateException(
-                "Dictionary records carry Integer, Long, Float, Double or byte[] values, got "
-                        + rawValue.getClass().getName());
-    }
-
-    /// INT32 entries can only carry logical types backed by `INT32`: `DATE`,
-    /// `TIME(MILLIS)`, `DECIMAL(precision ≤ 9)` and the `INT(8|16|32)` family.
-    /// The `default` arm rejects any other logical type as one the physical type
-    /// cannot carry.
-    private static String formatInt(int raw, LogicalType lt, ColumnSchema col) {
-        return switch (lt) {
-            case null -> Integer.toString(raw);
-            case LogicalType.DateType d -> LogicalTypeConverter.intToDate(raw).toString();
-            case LogicalType.TimeType t -> timeText(raw, t.unit());
-            case LogicalType.IntType it when AnnotationKind.ordersUnsigned(it) -> Long.toString(Integer.toUnsignedLong(raw));
-            case LogicalType.IntType it -> Integer.toString(raw);
-            case LogicalType.DecimalType d -> LogicalTypeConverter.longToDecimal(raw, d.scale()).toPlainString();
-            default -> throw notBackedBy(col, lt, "INT32");
-        };
-    }
-
-    /// INT64 entries can only carry logical types backed by `INT64`: `TIMESTAMP`,
-    /// `TIME(MICROS|NANOS)`, `DECIMAL(10 ≤ precision ≤ 18)` and `INT(64)`. See
-    /// [#formatInt] for the `default` arm.
-    private static String formatLong(long raw, LogicalType lt, ColumnSchema col) {
-        return switch (lt) {
-            case null -> Long.toString(raw);
-            case LogicalType.TimestampType ts -> LogicalTypeConverter.longToTemporal(raw, ts).toString();
-            case LogicalType.TimeType t -> timeText(raw, t.unit());
-            case LogicalType.IntType it when AnnotationKind.ordersUnsigned(it) -> Long.toUnsignedString(raw);
-            case LogicalType.IntType it -> Long.toString(raw);
-            case LogicalType.DecimalType d -> LogicalTypeConverter.longToDecimal(raw, d.scale()).toPlainString();
-            default -> throw notBackedBy(col, lt, "INT64");
-        };
-    }
-
-    /// `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` entries can carry the byte-backed
-    /// logical types: strings, UUID, INTERVAL, FLOAT16, DECIMAL, TIMESTAMP, plus
-    /// the BSON, geometry and geography payloads, which render as bytes. A
-    /// UUID, INTERVAL, FLOAT16 or TIMESTAMP payload of the wrong length is not
-    /// the value its type claims and renders as `0x` hex, as does a TIMESTAMP
-    /// counting past the range of the Java type. See [#formatInt] for the
-    /// `default` arm.
-    private static String formatDictionaryBytes(byte[] raw, LogicalType lt, ColumnSchema col, int budget) {
-        return switch (lt) {
-            case null -> BinaryValues.render(raw, budget);
-            case LogicalType.StringType s -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
-            case LogicalType.EnumType e -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
-            case LogicalType.JsonType j -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
-            case LogicalType.BsonType b -> BinaryValues.render(raw, budget);
-            case LogicalType.DecimalType d -> LogicalTypeConverter.bytesToDecimal(raw, d.scale()).toPlainString();
-            case LogicalType.UuidType u when raw.length == FixedWidths.UUID ->
-                    LogicalTypeConverter.bytesToUuid(raw).toString();
-            case LogicalType.UuidType u -> BinaryValues.toHex(raw, budget);
-            case LogicalType.IntervalType i when raw.length == FixedWidths.INTERVAL -> formatIntervalBytes(raw);
-            case LogicalType.IntervalType i -> BinaryValues.toHex(raw, budget);
-            case LogicalType.Float16Type f when raw.length == FixedWidths.FLOAT16 ->
-                    Float.toString(LogicalTypeConverter.bytesToFloat16(raw));
-            case LogicalType.Float16Type f -> BinaryValues.toHex(raw, budget);
-            case LogicalType.TimestampType ts when raw.length == FixedWidths.FLBA12_TIMESTAMP ->
-                    formatFixedTimestamp(raw, ts, budget);
-            case LogicalType.TimestampType ts -> BinaryValues.toHex(raw, budget);
-            case LogicalType.GeometryType g -> BinaryValues.render(raw, budget);
-            case LogicalType.GeographyType g -> BinaryValues.render(raw, budget);
-            default -> throw notBackedBy(col, lt, "BYTE_ARRAY");
-        };
-    }
-
-    /// A `FIXED_LEN_BYTE_ARRAY(12)` TIMESTAMP as its instant or wall clock. A
-    /// count past the range of `Instant` or `LocalDateTime` is no value the
-    /// accessors return, and renders as `0x` hex.
-    private static String formatFixedTimestamp(byte[] raw, LogicalType.TimestampType ts, int budget) {
-        try {
-            return Flba12Timestamps.toTemporal(raw, 0, raw.length, ts).toString();
+        if (!(rawValue instanceof Integer || rawValue instanceof Long || rawValue instanceof Float
+                || rawValue instanceof Double || rawValue instanceof byte[])) {
+            throw new IllegalStateException(
+                    "Dictionary records carry Integer, Long, Float, Double or byte[] values, got "
+                            + rawValue.getClass().getName());
         }
-        catch (DateTimeException e) {
-            return BinaryValues.toHex(raw, budget);
-        }
+        return formatStored(rawValue, col, useLogicalType, budget);
     }
-
-    /// INT96 carries no logical annotation: logical mode renders the instant;
-    /// physical mode, and a payload that is not the 12 bytes an INT96 is, render
-    /// the raw `0x` hex.
-    private static String formatInt96(byte[] bytes, boolean useLogicalType, int budget) {
-        return useLogicalType && bytes.length == FixedWidths.INT96
-                ? LogicalTypeConverter.int96ToInstant(bytes).toString()
-                : BinaryValues.toHex(bytes, budget);
-    }
-
-    private static IllegalStateException notBackedBy(ColumnSchema col, LogicalType lt, String physical) {
-        return new IllegalStateException(
-                "Column '" + col.fieldPath() + "' has logical type " + lt + ", which " + physical
-                        + " values cannot carry");
-    }
-
-    private static String formatIntervalBytes(byte[] bytes) {
-        return formatInterval(LogicalTypeConverter.bytesToInterval(bytes));
-    }
-
-    // ==================== raw statistics bytes ====================
 
     /// Renders statistics bytes whole: the four-argument `formatBytes` with
     /// [BinaryValues#NO_LIMIT].
@@ -790,8 +495,8 @@ public final class ValueFormatter {
     /// statistics (`null` bytes) render as [Strings#ABSENT_VALUE]; empty ones render as `""` on a
     /// byte-array column. `useLogicalType=false` dispatches on the physical type
     /// only, so TIMESTAMP / DATE / TIME / DECIMAL / UUID columns render in their
-    /// stored int, long or hex form. A fixed-width payload of the wrong length
-    /// renders as `0x` hex.
+    /// stored int, long or hex form. Bytes of the wrong width for the physical
+    /// type, and a value its annotation cannot decode, render in stored form.
     public static String formatBytes(byte[] bytes, ColumnSchema col,
                                      boolean useLogicalType, int budget) {
         requireBudget(budget);
@@ -806,43 +511,60 @@ public final class ValueFormatter {
             // Bytes of the wrong width are not a value of the physical type.
             return BinaryValues.toHex(bytes, budget);
         }
-        LogicalType lt = useLogicalType ? col.logicalType() : null;
-
-        if (lt instanceof LogicalType.DecimalType dt) {
-            return (switch (col.type()) {
-                case INT32 -> LogicalTypeConverter.longToDecimal(StatisticsDecoder.decodeInt(bytes), dt.scale());
-                case INT64 -> LogicalTypeConverter.longToDecimal(StatisticsDecoder.decodeLong(bytes), dt.scale());
-                default -> LogicalTypeConverter.bytesToDecimal(bytes, dt.scale());
-            }).toPlainString();
-        }
-        // A FIXED_LEN_BYTE_ARRAY(12) timestamp is rendered with the other byte-backed types below.
-        if (lt instanceof LogicalType.TimestampType ts && col.type() == PhysicalType.INT64) {
-            return LogicalTypeConverter.longToTemporal(decodeIntegral(bytes, col), ts).toString();
-        }
-        if (lt instanceof LogicalType.DateType) {
-            return LogicalTypeConverter.intToDate(StatisticsDecoder.decodeInt(bytes)).toString();
-        }
-        if (lt instanceof LogicalType.TimeType t) {
-            return timeText(decodeIntegral(bytes, col), t.unit());
-        }
-
-        return switch (col.type()) {
-            case BOOLEAN -> Boolean.toString(StatisticsDecoder.decodeBoolean(bytes));
-            case INT32 -> formatInt32Value(StatisticsDecoder.decodeInt(bytes), lt);
-            case INT64 -> formatInt64Value(StatisticsDecoder.decodeLong(bytes), lt);
-            case FLOAT -> Float.toString(StatisticsDecoder.decodeFloat(bytes));
-            case DOUBLE -> Double.toString(StatisticsDecoder.decodeDouble(bytes));
-            case INT96 -> formatInt96(bytes, useLogicalType, budget);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> formatDictionaryBytes(bytes, lt, col, budget);
+        Object stored = switch (col.type()) {
+            case BOOLEAN -> StatisticsDecoder.decodeBoolean(bytes);
+            case INT32 -> StatisticsDecoder.decodeInt(bytes);
+            case INT64 -> StatisticsDecoder.decodeLong(bytes);
+            case FLOAT -> StatisticsDecoder.decodeFloat(bytes);
+            case DOUBLE -> StatisticsDecoder.decodeDouble(bytes);
+            case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> bytes;
         };
+        return formatStored(stored, col, useLogicalType, budget);
     }
 
-    /// A statistic on an `INT32` or `INT64` column, widened to the `long` the
-    /// converters take. The date, time and timestamp annotations all read one.
-    private static long decodeIntegral(byte[] bytes, ColumnSchema col) {
-        return col.type() == PhysicalType.INT32
-                ? StatisticsDecoder.decodeInt(bytes)
-                : StatisticsDecoder.decodeLong(bytes);
+    /// A value as the file stores it, decoded the way the reader decodes it and
+    /// rendered as a leaf. These values come from the file unchecked, so one the
+    /// annotation cannot decode — a payload of the wrong width, a `TIME` outside
+    /// a day, a `TIMESTAMP` past the range of the Java type, any value of a
+    /// `NULL` column — renders in its stored form: the number, or the bytes as
+    /// `0x` hex. An INT96 timestamp decodes to its instant, and renders as hex in
+    /// physical mode.
+    private static String formatStored(Object stored, ColumnSchema col, boolean useLogicalType, int budget) {
+        if (!useLogicalType) {
+            return col.type() == PhysicalType.INT96
+                    ? BinaryValues.toHex((byte[]) stored, budget)
+                    : leaf(stored, null, Style.COMPACT, budget);
+        }
+        LogicalType lt = col.logicalType();
+        boolean int96 = LogicalTypeConverter.isLegacyInt96Timestamp(col.type(), lt);
+        if (stored instanceof byte[] bytes && bytes.length != decodedWidth(int96, lt, bytes.length)) {
+            return BinaryValues.toHex(bytes, budget);
+        }
+        try {
+            Object value = int96
+                    ? LogicalTypeConverter.int96ToInstant((byte[]) stored)
+                    : LogicalTypeConverter.convert(stored, col.type(), lt);
+            return leaf(value, lt, Style.COMPACT, budget);
+        }
+        catch (DateTimeException | ParquetReadException e) {
+            return stored instanceof byte[] bytes ? BinaryValues.toHex(bytes, budget) : String.valueOf(stored);
+        }
+    }
+
+    /// The width a byte-backed value must have for its decoder: fixed for INT96
+    /// and the UUID, INTERVAL, FLOAT16 and `FIXED_LEN_BYTE_ARRAY` TIMESTAMP
+    /// annotations, `length` itself for any other.
+    private static int decodedWidth(boolean int96, LogicalType lt, int length) {
+        if (int96) {
+            return FixedWidths.INT96;
+        }
+        return switch (lt) {
+            case LogicalType.UuidType u -> FixedWidths.UUID;
+            case LogicalType.IntervalType i -> FixedWidths.INTERVAL;
+            case LogicalType.Float16Type f -> FixedWidths.FLOAT16;
+            case LogicalType.TimestampType t -> FixedWidths.FLBA12_TIMESTAMP;
+            case null, default -> length;
+        };
     }
 
     /// A zero-length value is only meaningful for the variable-length physical
@@ -862,77 +584,9 @@ public final class ValueFormatter {
         };
     }
 
-    // ==================== decoded dictionary entries ====================
-
-    /// Formats an already-decoded `INT32` dictionary entry. Logical types
-    /// `DECIMAL` / `DATE` / `TIME` go through [LogicalTypeConverter]; otherwise
-    /// the raw int is rendered honouring the unsigned [LogicalType.IntType].
-    public static String formatDecoded(int value, ColumnSchema col) {
-        Objects.requireNonNull(col, "col");
-        LogicalType lt = col.logicalType();
-        if (lt instanceof LogicalType.DecimalType) {
-            return decimalText(LogicalTypeConverter.convert(value, col.type(), lt));
-        }
-        if (lt instanceof LogicalType.DateType) {
-            return LogicalTypeConverter.intToDate(value).toString();
-        }
-        if (lt instanceof LogicalType.TimeType t) {
-            return timeText(value, t.unit());
-        }
-        return formatInt32Value(value, lt);
-    }
-
-    /// Formats an already-decoded `INT64` dictionary entry. Logical types
-    /// `DECIMAL` / `TIME` / `TIMESTAMP` go through [LogicalTypeConverter];
-    /// otherwise the raw long is rendered honouring the unsigned
-    /// [LogicalType.IntType].
-    public static String formatDecoded(long value, ColumnSchema col) {
-        Objects.requireNonNull(col, "col");
-        LogicalType lt = col.logicalType();
-        if (lt instanceof LogicalType.DecimalType) {
-            return decimalText(LogicalTypeConverter.convert(value, col.type(), lt));
-        }
-        if (lt instanceof LogicalType.TimeType t) {
-            return timeText(value, t.unit());
-        }
-        if (lt instanceof LogicalType.TimestampType ts) {
-            return LogicalTypeConverter.longToTemporal(value, ts).toString();
-        }
-        return formatInt64Value(value, lt);
-    }
-
-    public static String formatDecoded(float value) {
-        return Float.toString(value);
-    }
-
-    public static String formatDecoded(double value) {
-        return Double.toString(value);
-    }
-
-    /// `LogicalTypeConverter.convert` yields a `BigDecimal` for DECIMAL
-    /// columns; the canonical text is its plain string, never scientific
-    /// notation.
-    private static String decimalText(Object converted) {
-        return ((BigDecimal) converted).toPlainString();
-    }
-
-    private static String formatInt32Value(int v, LogicalType lt) {
-        if (AnnotationKind.ordersUnsigned(lt)) {
-            return Long.toString(Integer.toUnsignedLong(v));
-        }
-        return Integer.toString(v);
-    }
-
-    private static String formatInt64Value(long v, LogicalType lt) {
-        if (AnnotationKind.ordersUnsigned(lt)) {
-            return Long.toUnsignedString(v);
-        }
-        return Long.toString(v);
-    }
-
     // ==================== shared leaf helpers ====================
 
-    public static String formatInterval(PqInterval interval) {
+    private static String formatInterval(PqInterval interval) {
         if (interval == null) {
             return "null";
         }
@@ -956,18 +610,6 @@ public final class ValueFormatter {
             sb.append(interval.milliseconds()).append("ms");
         }
         return sb.toString();
-    }
-
-    /// A TIME value as its canonical text, or as its stored integer when it lies
-    /// outside a day: statistics and dictionary entries come from the file
-    /// unchecked, and no time of day is that value.
-    private static String timeText(long raw, LogicalType.TimeUnit unit) {
-        long perDay = switch (unit) {
-            case MILLIS -> 86_400_000L;
-            case MICROS -> 86_400_000_000L;
-            case NANOS -> 86_400_000_000_000L;
-        };
-        return raw >= 0 && raw < perDay ? LogicalTypeConverter.longToTime(raw, unit).toString() : Long.toString(raw);
     }
 
     /// The budget every entry point accepts: [BinaryValues#NO_LIMIT] for the
