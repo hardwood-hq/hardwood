@@ -178,6 +178,29 @@ class ConvertCommandTest implements ConvertCommandContract {
                 .contains("\"profile_json\":\"");
     }
 
+    /// A `BSON` payload exports as its stored bytes, so bytes that are not UTF-8 survive.
+    @Test
+    void bsonExportsAsItsBytes() throws Exception {
+        Cli.Result json = Cli.launch("convert", "-f", Cli.file("/logical_types_test.parquet"),
+                "-c", "bson_payload", "--format", "json");
+        Cli.Result csv = Cli.launch("convert", "-f", Cli.file("/logical_types_test.parquet"),
+                "-c", "bson_payload", "--format", "csv");
+
+        assertThat(json.exitCode()).isZero();
+        JSONAssert.assertEquals("""
+                [
+                  {"bson_payload": "0x0500000000"},
+                  {"bson_payload": "0x12000000026b0006000000686921800000"},
+                  {"bson_payload": "0x0f00000005780003000000ff00fe0000"}
+                ]""", json.output(), JSONCompareMode.STRICT);
+        assertThat(csv.exitCode()).isZero();
+        assertThat(csv.output()).isEqualTo("""
+                bson_payload
+                0x0500000000
+                0x12000000026b0006000000686921800000
+                0x0f00000005780003000000ff00fe0000""");
+    }
+
     @Test
     void jsonRendersIntAnnotatedColumnsAsNumbers() {
         Cli.Result result = Cli.launch("convert", "-f", Cli.file("/logical_types_test.parquet"),

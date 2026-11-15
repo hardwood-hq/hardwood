@@ -143,16 +143,14 @@ public final class ValueFormatter {
             case LogicalType.StringType s -> text(reader.getString(fieldIndex), style);
             case LogicalType.EnumType e -> text(reader.getString(fieldIndex), style);
             case LogicalType.JsonType j -> text(reader.getString(fieldIndex), style);
-            // `getString` reads text columns only, so the BSON payload is read as bytes
-            // and decoded here, the same rendering the materialised path gives it.
-            case LogicalType.BsonType b ->
-                    text(LogicalTypeConverter.bytesToString(reader.getBinary(fieldIndex)), style);
+            // BSON, geometry and geography carry binary payloads the CLI does not decode:
+            // they render as bytes.
+            case LogicalType.BsonType b -> formatPhysical(reader, fieldIndex, budget);
             case LogicalType.IntType it when AnnotationKind.ordersUnsigned(it) -> formatUnsignedInt(reader, fieldIndex, prim);
             case LogicalType.IntType it -> formatPhysical(reader, fieldIndex, budget);
             case LogicalType.IntervalType i -> formatInterval(reader.getInterval(fieldIndex));
             // getFloat widens the two-byte half-precision payload.
             case LogicalType.Float16Type f16 -> Float.toString(reader.getFloat(fieldIndex));
-            // Geometry and geography carry WKB payloads with no decoder: they render as bytes.
             case LogicalType.GeometryType g -> formatPhysical(reader, fieldIndex, budget);
             case LogicalType.GeographyType g -> formatPhysical(reader, fieldIndex, budget);
             // A NULL column holds only nulls, which the check above has returned.
@@ -497,8 +495,7 @@ public final class ValueFormatter {
     private static boolean isAnnotatedString(LogicalType lt) {
         return lt instanceof LogicalType.StringType
                 || lt instanceof LogicalType.EnumType
-                || lt instanceof LogicalType.JsonType
-                || lt instanceof LogicalType.BsonType;
+                || lt instanceof LogicalType.JsonType;
     }
 
     /// The text of a string leaf: sanitised for display, verbatim for export.
@@ -716,18 +713,19 @@ public final class ValueFormatter {
     }
 
     /// `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` entries can carry the byte-backed
-    /// logical types: strings, BSON, UUID, INTERVAL, FLOAT16, DECIMAL, TIMESTAMP,
-    /// plus geometry and geography WKB. A UUID, INTERVAL, FLOAT16 or TIMESTAMP
-    /// payload of the wrong length is not the value its type claims and renders
-    /// as `0x` hex, as does a TIMESTAMP counting past the range of the Java
-    /// type. See [#formatInt] for the `default` arm.
+    /// logical types: strings, UUID, INTERVAL, FLOAT16, DECIMAL, TIMESTAMP, plus
+    /// the BSON, geometry and geography payloads, which render as bytes. A
+    /// UUID, INTERVAL, FLOAT16 or TIMESTAMP payload of the wrong length is not
+    /// the value its type claims and renders as `0x` hex, as does a TIMESTAMP
+    /// counting past the range of the Java type. See [#formatInt] for the
+    /// `default` arm.
     private static String formatDictionaryBytes(byte[] raw, LogicalType lt, ColumnSchema col, int budget) {
         return switch (lt) {
             case null -> BinaryValues.render(raw, budget);
             case LogicalType.StringType s -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
             case LogicalType.EnumType e -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
             case LogicalType.JsonType j -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
-            case LogicalType.BsonType b -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
+            case LogicalType.BsonType b -> BinaryValues.render(raw, budget);
             case LogicalType.DecimalType d -> LogicalTypeConverter.bytesToDecimal(raw, d.scale()).toPlainString();
             case LogicalType.UuidType u when raw.length == FixedWidths.UUID ->
                     LogicalTypeConverter.bytesToUuid(raw).toString();

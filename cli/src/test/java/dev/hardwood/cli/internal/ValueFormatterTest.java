@@ -1139,18 +1139,18 @@ class ValueFormatterTest {
 
     // ==================== BSON ====================
 
-    /// A `BSON` column holds a payload rather than text, so the string accessor refuses it
-    /// and the formatter reads the bytes and decodes them itself. Both value sources render
-    /// the same characters: the text verbatim in `EXPORT`, its control bytes as `·` in the
-    /// display styles.
+    /// A `BSON` column holds a payload rather than text, so every source renders it as an
+    /// unannotated byte array is rendered: through `BinaryValues`, which shows a document's
+    /// bytes as `0x` hex in every style.
     @Test
-    void bsonRendersAsItsUtf8TextFromEverySource(@TempDir Path tempDir) throws IOException {
+    void bsonRendersAsItsBytesFromEverySource(@TempDir Path tempDir) throws IOException {
         Path file = tempDir.resolve("bson.parquet");
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.bson())
                 .build();
-        // The BSON document { "n": "hi" }.
-        byte[] payload = HexFormat.of().parseHex("0f000000026e000300000068690000");
+        // The BSON document { "n": "hi\u0080" }, whose last string byte is not UTF-8.
+        String hex = "10000000026e00040000006869800000";
+        byte[] payload = HexFormat.of().parseHex(hex);
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
             writer.rowWriter().writeRow(row -> row.setBinary("doc", payload));
         }
@@ -1159,18 +1159,19 @@ class ValueFormatterTest {
              RowReader rowReader = fileReader.rowReader()) {
             FileSchema fileSchema = fileReader.getFileSchema();
             SchemaNode field = fileSchema.getField("doc");
-            int index = fileSchema.getColumn("doc").columnIndex();
+            ColumnSchema column = fileSchema.getColumn("doc");
+            int index = column.columnIndex();
             rowReader.next();
 
-            String text = new String(payload, StandardCharsets.UTF_8);
-            assertThat(ValueFormatter.formatReader(rowReader, index, field, true,
-                    ValueFormatter.Style.EXPORT, NO_LIMIT)).isEqualTo(text);
-            assertThat(ValueFormatter.formatValue(rowReader.getValue(index), field,
-                    ValueFormatter.Style.EXPORT, NO_LIMIT)).isEqualTo(text);
-            assertThat(ValueFormatter.formatReader(rowReader, index, field, true,
-                    ValueFormatter.Style.COMPACT, NO_LIMIT))
-                    .isEqualTo(display(rowReader.getValue(index), field))
-                    .isEqualTo("·····n·····hi··");
+            String bytes = "0x" + hex;
+            for (ValueFormatter.Style style : ValueFormatter.Style.values()) {
+                assertThat(ValueFormatter.formatReader(rowReader, index, field, true, style, NO_LIMIT))
+                        .as("reader, %s", style).isEqualTo(bytes);
+                assertThat(ValueFormatter.formatValue(rowReader.getValue(index), field, style, NO_LIMIT))
+                        .as("value, %s", style).isEqualTo(bytes);
+            }
+            assertThat(ValueFormatter.formatDictionary(payload, column, true, NO_LIMIT)).isEqualTo(bytes);
+            assertThat(ValueFormatter.formatBytes(payload, column, true, NO_LIMIT)).isEqualTo(bytes);
         }
     }
 
