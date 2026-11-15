@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.compression;
 
+import dev.hardwood.internal.compression.CodecLibraries.Library;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 import dev.hardwood.internal.compression.lz4.Lz4Decompressor;
@@ -40,33 +41,23 @@ public class DecompressorFactory {
                 yield new GzipDecompressor();
             }
             case SNAPPY -> {
-                CodecLibraries.require("org.xerial.snappy.Snappy",
-                        "SNAPPY",
-                        "org.xerial.snappy:snappy-java", "read");
+                CodecLibraries.require(Library.SNAPPY, "SNAPPY", "read");
                 yield new SnappyDecompressor();
             }
             case ZSTD -> {
-                CodecLibraries.require("com.github.luben.zstd.Zstd",
-                        "ZSTD",
-                        "com.github.luben:zstd-jni", "read");
+                CodecLibraries.require(Library.ZSTD, "ZSTD", "read");
                 yield new ZstdDecompressor();
             }
             case LZ4 -> {
-                CodecLibraries.require("net.jpountz.lz4.LZ4Factory",
-                        "LZ4",
-                        "at.yawk.lz4:lz4-java", "read");
+                CodecLibraries.require(Library.LZ4, "LZ4", "read");
                 yield new Lz4Decompressor();
             }
             case LZ4_RAW -> {
-                CodecLibraries.require("net.jpountz.lz4.LZ4Factory",
-                        "LZ4_RAW",
-                        "at.yawk.lz4:lz4-java", "read");
+                CodecLibraries.require(Library.LZ4, "LZ4_RAW", "read");
                 yield new Lz4RawDecompressor();
             }
             case BROTLI -> {
-                CodecLibraries.require("com.aayushatharva.brotli4j.Brotli4jLoader",
-                        "BROTLI",
-                        "com.aayushatharva.brotli4j:brotli4j", "read");
+                CodecLibraries.require(Library.BROTLI, "BROTLI", "read");
                 yield new BrotliDecompressor();
             }
             case LZO -> throw new UnsupportedOperationException("LZO compression is not supported");

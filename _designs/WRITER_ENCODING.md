@@ -199,7 +199,7 @@ Tests: `WriterEncodingPolicyTest`, `DeltaBinaryPackedEncoderTest`, `ByteArrayEnc
 | `LZ4_RAW` | lz4-java (optional) | raw block |
 | `BROTLI` | brotli4j (optional) | library default |
 
-The page header records the uncompressed size, so every codec is used in its length-unaware raw form. Each optional library is checked through `CodecLibraries.require`, whose message names the Maven coordinates to add. The default codec is `ZSTD` when zstd-jni is on the classpath and `UNCOMPRESSED` otherwise, so a caller who did not ask to compress is not made to carry the dependency; an explicitly chosen codec still requires its library.
+The page header records the uncompressed size, so every codec is used in its length-unaware raw form. Each optional library is checked through `CodecLibraries.require`, whose message names the Maven coordinates to add; whether a library is present is probed once per run. The default codec is `ZSTD` when zstd-jni is on the classpath and `UNCOMPRESSED` otherwise, so a caller who did not ask to compress is not made to carry the dependency; an explicitly chosen codec still requires its library.
 
 Two codecs are refused permanently:
 

@@ -192,7 +192,7 @@ public final class WriterConfig {
     /// `ZSTD` when its library is loadable, otherwise `UNCOMPRESSED`. The class is only probed
     /// for presence, not initialized, so picking the default never triggers the native load.
     private static CompressionCodec defaultCodec() {
-        return CodecLibraries.isPresent("com.github.luben.zstd.Zstd")
+        return CodecLibraries.Library.ZSTD.isPresent()
                 ? CompressionCodec.ZSTD
                 : CompressionCodec.UNCOMPRESSED;
     }
