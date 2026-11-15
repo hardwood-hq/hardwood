@@ -40,7 +40,7 @@ class ChunkSizeTest {
         // full column length so the column is coalesce-safe.
         int columnLength = 2 * ONE_MIB;
         int chunk = CoalescingPolicy.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
+                columnLength, 100_000, 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(columnLength);
     }
@@ -50,7 +50,7 @@ class ChunkSizeTest {
         // Exactly 4 MB sits at the threshold — included.
         int columnLength = 4 * ONE_MIB;
         int chunk = CoalescingPolicy.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
+                columnLength, 100_000, 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(columnLength);
     }
@@ -62,7 +62,7 @@ class ChunkSizeTest {
         // pulling its full bytes for a 30-row preview.
         int columnLength = 5 * ONE_MIB;
         int chunk = CoalescingPolicy.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 30, 128 * ONE_MIB);
+                columnLength, 100_000, 30, 128 * ONE_MIB);
 
         assertThat(chunk).isEqualTo(ONE_MIB);
     }
@@ -71,14 +71,14 @@ class ChunkSizeTest {
     void dynamicEstimateLandsBetweenFloorAndCeiling() {
         // Above the 4 MB short-circuit, `computeChunkSize` derives the
         // size from `bytesPerValue × maxRows × safetyFactor`. For a
-        // 50 MB column with 100 values (500 KB / value) and head(10),
+        // 50 MB column of 100 rows (500 KB / row) and head(10),
         // the estimate is 10 × 500 KB × 2 = 10 MB — comfortably above
-        // the 1 MB floor and below the 128 MB ceiling. Pins the
+        // the 1 MB floor and below the column's length. Pins the
         // dynamic path so a regression that breaks the interpolation
         // is observable.
         int columnLength = 50 * ONE_MIB;
         int chunk = CoalescingPolicy.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100), 10, 128 * ONE_MIB);
+                columnLength, 100, 10, 128 * ONE_MIB);
 
         assertThat(chunk)
                 .as("dynamic estimate should land between floor and ceiling")
@@ -87,12 +87,45 @@ class ChunkSizeTest {
     }
 
     @Test
+    void estimateAboveTheSpanLimitIsNotCappedByIt() {
+        // 100 MiB column of 100 rows (1 MiB / row) under head(20): the estimate is
+        // 20 × 1 MiB × 2 = 40 MiB, above a 16 MiB span limit. The first part is fetched
+        // as concurrent requests of at most S; capping it at S would leave the rest to the
+        // scan, one request after another.
+        int columnLength = 100 * ONE_MIB;
+        int chunk = CoalescingPolicy.computeChunkSize(
+                columnLength, 100, 20, 16 * ONE_MIB);
+
+        assertThat(chunk).isEqualTo(40 * ONE_MIB);
+    }
+
+    @Test
+    void estimateBeyondTheChunkIsCappedAtItsLength() {
+        // 50 MiB column of 100 rows under head(50): the estimate, 50 MiB × 2, passes the chunk.
+        int columnLength = 50 * ONE_MIB;
+        int chunk = CoalescingPolicy.computeChunkSize(
+                columnLength, 100, 50, 16 * ONE_MIB);
+
+        assertThat(chunk).isEqualTo(columnLength);
+    }
+
+    @Test
+    void estimateIsPerRowOfTheRowGroup() {
+        // 40 MiB chunk of a repeated column in a row group of 1,000 rows, whatever the number of
+        // values per row, under head(100): a tenth of the chunk, doubled, 8 MiB.
+        int columnLength = 40 * ONE_MIB;
+        int chunk = CoalescingPolicy.computeChunkSize(columnLength, 1_000, 100, 16 * ONE_MIB);
+
+        assertThat(chunk).isEqualTo(8 * ONE_MIB);
+    }
+
+    @Test
     void noMaxRowsReturnsDefaultCeiling() {
         // Without head(N), behavior is unchanged: full chunk size up to
         // the configured ceiling.
         int columnLength = 50 * ONE_MIB;
         int chunk = CoalescingPolicy.computeChunkSize(
-                columnLength, fakeMetaData(columnLength, 100_000), 0, 128 * ONE_MIB);
+                columnLength, 100_000, 0, 128 * ONE_MIB);
 
         // computeChunkSize returns the ceiling; the build() caller
         // applies `Math.min(columnChunkLength, ceiling)`.
@@ -105,12 +138,12 @@ class ChunkSizeTest {
         // whatever order the methods run in.
         assertThat(chunkSizeWithoutRowLimit())
                 .as("baseline before any override")
-                .isEqualTo(128 * ONE_MIB);
+                .isEqualTo(16 * ONE_MIB);
 
         // A caller setting the property cannot know, or control, whether some
         // earlier read path already used this class. Reading the property once
         // at class-initialisation broke exactly that: the override was silently
-        // dropped and callers kept the 128 MB default.
+        // dropped and callers kept the default.
         System.setProperty(MAX_SPAN_PROPERTY, String.valueOf(ONE_MIB));
         try {
             assertThat(chunkSizeWithoutRowLimit())
@@ -123,7 +156,7 @@ class ChunkSizeTest {
 
         assertThat(chunkSizeWithoutRowLimit())
                 .as("clearing the override restores the default")
-                .isEqualTo(128 * ONE_MIB);
+                .isEqualTo(16 * ONE_MIB);
     }
 
     @Test
@@ -160,7 +193,7 @@ class ChunkSizeTest {
     private static int chunkSizeWithoutRowLimit() {
         int maxSpan = CoalescingPolicy.maxSpanBytes();
         return Math.min(maxSpan, CoalescingPolicy.computeChunkSize(
-                64 * ONE_MIB, fakeMetaData(64 * ONE_MIB, 1_000_000), 0, maxSpan));
+                64 * ONE_MIB, 1_000_000, 0, maxSpan));
     }
 
     private static ColumnMetaData fakeMetaData(long totalCompressedSize, long numValues) {

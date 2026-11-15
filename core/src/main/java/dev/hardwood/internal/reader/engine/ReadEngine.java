@@ -59,6 +59,11 @@ public final class ReadEngine implements Closeable {
 
     public static final String FETCH_AHEAD_BYTES_PROPERTY = "hardwood.internal.fetchAheadBytes";
 
+    /// F without the override. It counts bytes fetched and not yet consumed, arrived ones included,
+    /// so it is set independently of the largest request ([CoalescingPolicy#maxSpanBytes()]): it
+    /// bounds how many requests are in flight while decoding lags behind the fetches.
+    private static final long DEFAULT_FETCH_AHEAD_BYTES = 256L * 1024 * 1024;
+
     /// Batch byte budgets a read decodes at most ahead of its first unpublished row (READ_PIPELINE.md,
     /// the look-ahead).
     public static final int CAP_BUDGETS = 8;
@@ -97,7 +102,7 @@ public final class ReadEngine implements Closeable {
                     ? BatchExchange.detachingNested(name, batchSize) : BatchExchange.detachingFlat(name, batchSize));
         }
         this.exchanges = List.copyOf(started);
-        driver = new ReadDriver(context, readQueue, defaultFetchAheadBytes(CoalescingPolicy.maxSpanBytes()),
+        driver = new ReadDriver(context, readQueue, fetchAheadBytes(),
                 this::reconcile, t -> readFailure.failAt(0, t));
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
@@ -130,11 +135,10 @@ public final class ReadEngine implements Closeable {
         }
     }
 
-    /// F for a read whose largest request is `maxSpanBytes`: twice that unless overridden through
-    /// [#FETCH_AHEAD_BYTES_PROPERTY]. A value that is not a non-negative byte count is rejected
-    /// rather than replaced by the default.
-    static long defaultFetchAheadBytes(int maxSpanBytes) {
-        return InternalProperty.longValue(FETCH_AHEAD_BYTES_PROPERTY, 2L * maxSpanBytes, 0,
+    /// F: [#DEFAULT_FETCH_AHEAD_BYTES] unless overridden through [#FETCH_AHEAD_BYTES_PROPERTY]. A
+    /// value that is not a non-negative byte count is rejected rather than replaced by the default.
+    static long fetchAheadBytes() {
+        return InternalProperty.longValue(FETCH_AHEAD_BYTES_PROPERTY, DEFAULT_FETCH_AHEAD_BYTES, 0,
                 "a non-negative byte count");
     }
 

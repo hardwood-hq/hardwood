@@ -194,7 +194,7 @@ final class PagePlanner {
                 // a chunk a scan reads under a row limit: its first part, the scan fetching the rest
                 // as it reaches it
                 end = Math.min(end, extent.start() + CoalescingPolicy.computeChunkSize(
-                        Math.toIntExact(end - extent.start()), u.chunks()[extent.column()].metaData(), u.limit(), maxSpan));
+                        Math.toIntExact(end - extent.start()), u.metaData().numRows(), u.limit(), maxSpan));
             }
             for (long piece = extent.start(); piece < end; piece += maxSpan) {
                 needs.add(new CoalescingPolicy.Need(extent.column(), piece, Math.min(end, piece + maxSpan)));

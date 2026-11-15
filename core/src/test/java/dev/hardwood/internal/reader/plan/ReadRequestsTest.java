@@ -76,11 +76,11 @@ class ReadRequestsTest {
         assertThat(data.getFirst().length()).isLessThanOrEqualTo(maxSpan);
     }
 
-    /// A row-limited read that reaches past its chunk's first part fetches the rest as its scan
-    /// reaches it, a piece of at most S at a time, each starting where the one before ends, and no
-    /// byte twice.
+    /// A row-limited read whose estimate passes S plans its chunk's first part as pieces of at most
+    /// S, each starting where the one before ends, up to the end of the chunk where the estimate
+    /// passes it.
     @Test
-    void theRestOfAChunkIsFetchedAsTheScanReachesIt() throws Exception {
+    void aFirstPartLargerThanTheSpanLimitIsCutIntoPieces() throws Exception {
         int rows = 600_000;
         int maxSpan = 1024 * 1024;
         System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(maxSpan));
@@ -97,6 +97,32 @@ class ReadRequestsTest {
                     .isEqualTo(data.get(i - 1).end());
         }
         assertThat(data.getLast().end()).isEqualTo(chunk.chunkStartOffset() + chunkLength);
+    }
+
+    /// A row-limited read that reaches past its chunk's first part, its rows' bytes lying ahead of
+    /// the chunk's average, fetches the rest as its scan reaches it: a piece of at most S at a
+    /// time, each starting where the one before ends, no byte twice, and nothing past what the
+    /// scan reaches.
+    @Test
+    void theRestOfAChunkIsFetchedAsTheScanReachesIt() throws Exception {
+        int maxSpan = 1024 * 1024;
+        System.setProperty(CoalescingPolicy.MAX_SPAN_BYTES_PROPERTY, String.valueOf(maxSpan));
+        // 6 MiB in the first 1,500 rows, then 400,000 rows of one byte: head(10,000) estimates
+        // under 1 MiB, the floor, and needs over 6 MiB
+        byte[] bytes = FooterRewriter.withoutPageIndex(writeFrontLoaded(1_500, 4096, 400_000));
+        ColumnChunk chunk = chunks(bytes)[0];
+
+        List<CountingInputFile.Read> data = dataReads(bytes, chunk, 10_000);
+
+        long chunkEnd = chunk.chunkStartOffset() + chunk.metaData().totalCompressedSize();
+        assertThat(data.getFirst().offset()).isEqualTo(chunk.chunkStartOffset());
+        assertThat(data).as("the first part and the pieces the scan fetched after it").hasSizeGreaterThan(5);
+        assertThat(data).allSatisfy(read -> assertThat(read.length()).isLessThanOrEqualTo(maxSpan));
+        for (int i = 1; i < data.size(); i++) {
+            assertThat(data.get(i).offset()).as("each piece starts where the one before ends")
+                    .isEqualTo(data.get(i - 1).end());
+        }
+        assertThat(data.getLast().end()).as("the rest past the scan is not fetched").isLessThan(chunkEnd);
     }
 
     /// Pages larger than S in chunks without an OffsetIndex, each spanning several requests: a
@@ -244,6 +270,31 @@ class ReadRequestsTest {
 
     /// `rows` rows of required, plain, uncompressed `INT64` columns of the given names, each holding
     /// the row's index, in row groups of `rowsPerRowGroup` and pages of 10,000 rows.
+    /// One row group of one `BYTE_ARRAY` column: `largeRows` values of `largeLength` bytes, then
+    /// `smallRows` values of one byte.
+    private static byte[] writeFrontLoaded(int largeRows, int largeLength, int smallRows) throws Exception {
+        FileSchema schema = FileSchema.builder("front_loaded")
+                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder()
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .encoding(ColumnEncoding.PLAIN)
+                .rowGroupTargetRows(largeRows + smallRows)
+                .pageTargetRows(100)
+                .build();
+        byte[] large = new byte[largeLength];
+        byte[] small = new byte[1];
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            RowWriter rowWriter = writer.rowWriter();
+            for (int i = 0; i < largeRows + smallRows; i++) {
+                byte[] value = i < largeRows ? large : small;
+                rowWriter.writeRow(row -> row.setBinary("b", value));
+            }
+        }
+        return InMemoryFiles.toByteArray(out);
+    }
+
     private static byte[] write(int rows, int rowsPerRowGroup, String... columns) throws Exception {
         FileSchema.Builder schemaBuilder = FileSchema.builder("sequence");
         for (String column : columns) {
