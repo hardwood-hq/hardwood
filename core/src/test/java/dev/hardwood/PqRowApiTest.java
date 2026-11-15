@@ -518,7 +518,11 @@ public class PqRowApiTest {
                 .isExactlyInstanceOf(type)
                 .satisfies(e -> {
                     assertThat(e.getCause()).isExactlyInstanceOf(type);
-                    assertThat(e).hasMessage("[logical_types_test.parquet] " + e.getCause().getMessage());
+                    // once the JIT compiles the throwing path, the JVM may raise a preallocated
+                    // exception without a message, which the context replaces by the type's name
+                    String causeMessage = e.getCause().getMessage();
+                    assertThat(e).hasMessage("[logical_types_test.parquet] "
+                            + (causeMessage != null ? causeMessage : type.getSimpleName()));
                 });
     }
 
