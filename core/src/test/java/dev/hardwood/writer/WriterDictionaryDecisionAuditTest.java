@@ -26,7 +26,6 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -166,7 +165,7 @@ class WriterDictionaryDecisionAuditTest {
         }
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema.build(), WriterConfig.builder()
-                .rowGroupBufferTargetBytes(targetBytes).codec(CompressionCodec.UNCOMPRESSED).build())) {
+                .rowGroupBufferTargetBytes(targetBytes).compression(Compression.uncompressed()).build())) {
             writer.columnWriter().writeBatch(batch -> {
                 for (int c = 0; c < names.length; c++) {
                     new Column(Shape.REQUIRED, keys[c], null, null).set(batch, "c" + c, types[c], null);
@@ -215,7 +214,7 @@ class WriterDictionaryDecisionAuditTest {
         Column column = Column.of(shape, keys);
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema(shape, type),
-                config.codec(CompressionCodec.UNCOMPRESSED).build())) {
+                config.compression(Compression.uncompressed()).build())) {
             writer.columnWriter().writeBatch(batch -> column.fill(batch, type));
         }
         int chunks = 0;

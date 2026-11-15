@@ -128,7 +128,7 @@ Write-time behaviour is configured with an immutable `WriterConfig`, passed to `
 
 ```java
 WriterConfig config = WriterConfig.builder()
-        .codec(CompressionCodec.ZSTD)
+        .compression(Compression.zstd())
         .rowGroupBufferTargetBytes(64L << 20)
         .encoding("temperature", ColumnEncoding.BYTE_STREAM_SPLIT)
         .build();
@@ -140,7 +140,7 @@ WriterConfig config = WriterConfig.builder()
 | `pageTargetRows(int)` | `20,000` | Records before a data page is cut. A page holds whole records, so on a repeated column it counts records, not values. Sets how finely the page index lets a reader skip within a column chunk; it binds on columns whose values encode small, such as dictionary-encoded ones. Must be positive. |
 | `rowGroupTargetRows(long)` | `1,048,576` | Records per row group: row groups hold exactly this many records apart from the last. Must be positive; a target above the structural ceiling of `Integer.MAX_VALUE - 9` records is that ceiling, so `Long.MAX_VALUE` means "cut on bytes alone". |
 | `rowGroupBufferTargetBytes(long)` | `128 MiB` | Bytes the writer holds for the open row group before cutting it: level streams, dictionary indices, value stores and dictionaries. A row group passes it by at most one record. A row group is also cut before a repeated column's chunk would reach `Integer.MAX_VALUE - 8` values and nulls, or before any column chunk would pass `Integer.MAX_VALUE - 8` bytes of `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` values, so a target above 2 GiB can yield smaller row groups. See [The Write Model](../concepts/write-model.md#memory-bounds). Must be positive. |
-| `codec(CompressionCodec)` | `ZSTD`, or `UNCOMPRESSED` when the ZSTD library is absent | Codec each page body is compressed with. |
+| `compression(Compression)` | `Compression.zstd()`, or `Compression.uncompressed()` when the ZSTD library is absent | Codec each page body is compressed with, and its level. See [Compression Codecs](#compression-codecs). |
 | `encoding(ColumnEncoding)` | `AUTO` | Encoding policy for every column without an override of its own. |
 | `encoding(String, ColumnEncoding)` | — | Encoding policy for one leaf column, overriding the file-wide default. |
 | `bloomFilter(String)` | — | Writes a Bloom filter for one leaf column at a false-positive probability of `0.01`. A path naming no leaf column, or a `BOOLEAN` column, fails when the writer is created. See [Bloom filters](#bloom-filters). |
@@ -150,7 +150,7 @@ WriterConfig config = WriterConfig.builder()
 
 A page is cut at whichever of the two page targets is reached first, and in any case at 2,147,483,638 values and nulls, the most a reader takes in one page; a single record holding more is a page of its own. A row group is cut at whichever of the two row-group targets is reached first.
 
-Each option has a getter that reads the configured value back: `pageTargetBytes()`, `pageTargetRows()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `codec()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`, and for the Bloom filter setters, `bloomFilters()`, a map from column path to probability. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
+Each option has a getter that reads the configured value back: `pageTargetBytes()`, `pageTargetRows()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `compression()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`, and for the Bloom filter setters, `bloomFilters()`, a map from column path to probability. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
 
 ## Encodings
 
@@ -185,18 +185,26 @@ No policy demands a dictionary; it is an outcome `AUTO` may arrive at. A `BOOLEA
 
 ## Compression Codecs
 
-| Codec | Produced | Library needed |
-|-------|----------|----------------|
-| `UNCOMPRESSED` | yes | — |
-| `GZIP` | yes | — (JDK) |
-| `SNAPPY` | yes | `org.xerial.snappy:snappy-java` |
-| `ZSTD` | yes | `com.github.luben:zstd-jni` |
-| `LZ4_RAW` | yes | `at.yawk.lz4:lz4-java` |
-| `BROTLI` | yes | `com.aayushatharva.brotli4j:brotli4j` |
-| `LZ4` | no | — |
-| `LZO` | no | — |
+A `Compression` names the codec and, for the codecs that have them, a level. Each written codec has a factory:
 
-A missing library, and either of the two refused codecs, fails when the writer is created rather than mid-file. `LZ4` and `LZO` are refused on write. `LZ4` files are read; `LZO` files are not.
+| Factory | Codec | Library needed | Levels | Default level |
+|---------|-------|----------------|--------|---------------|
+| `Compression.uncompressed()` | `UNCOMPRESSED` | — | — | — |
+| `Compression.gzip()` | `GZIP` | — (JDK) | 0 (stored, not compressed) to 9 | 6 |
+| `Compression.snappy()` | `SNAPPY` | `org.xerial.snappy:snappy-java` | — | — |
+| `Compression.zstd()` | `ZSTD` | `com.github.luben:zstd-jni` | -131072 to 22; 0 selects the default | 3 |
+| `Compression.lz4Raw()` | `LZ4_RAW` | `at.yawk.lz4:lz4-java` | 1 to 17, through LZ4's high compressor (LZ4 HC) | LZ4's fast compressor |
+| `Compression.brotli()` | `BROTLI` | `com.aayushatharva.brotli4j:brotli4j` | 0 to 11 | 11 |
+
+`level(int)` on the factories of codecs with levels returns the codec at that level; a level outside the codec's range is rejected with `IllegalArgumentException`. A higher level writes a smaller file and takes longer to write; reading the file takes about as long at any level. The level is not recorded in the file.
+
+```java
+WriterConfig config = WriterConfig.builder()
+        .compression(Compression.zstd().level(9))
+        .build();
+```
+
+`Compression.of(CompressionCodec)` returns a codec chosen at runtime at its default level. It refuses `LZ4` and `LZO` with `UnsupportedOperationException`: `LZ4` files are read but not written, and `LZO` files are neither read nor written. A missing library fails when the writer is created rather than mid-file.
 
 ## Physical Types and Columnar Setters
 
@@ -394,8 +402,8 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 
 | Exception | When |
 |---|---|
-| `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
-| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `FILE` value that is not valid, or that sets a field its group has no child for; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1) |
+| `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); `Compression.of` given a refused codec (`LZ4`, `LZO`); a codec whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
+| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `FILE` value that is not valid, or that sets a field its group has no child for; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1); a compression level outside the codec's range |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; creating a writer on an `OutputFile` another writer has already used; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded; flushing a row group after the `HardwoodContext` passed to `create` has been closed |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |

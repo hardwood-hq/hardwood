@@ -29,12 +29,12 @@ import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -118,7 +118,7 @@ public class DictionaryPageSetupBenchmark {
         // not whatever a codec squeezed it down to.
         WriterConfig config = WriterConfig.builder()
                 .rowGroupTargetRows(ROWS_PER_ROW_GROUP)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
 
         byte[][] values = new byte[ROWS_PER_ROW_GROUP][];

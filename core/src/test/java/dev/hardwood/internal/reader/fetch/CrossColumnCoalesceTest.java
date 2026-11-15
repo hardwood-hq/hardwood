@@ -21,7 +21,6 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.thrift.FooterRewriter;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.FilterPredicate;
@@ -30,6 +29,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -170,7 +170,7 @@ class CrossColumnCoalesceTest {
                 .addColumn("c", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .encoding("b", ColumnEncoding.PLAIN)
                 .rowGroupTargetRows(rows)
                 .build();

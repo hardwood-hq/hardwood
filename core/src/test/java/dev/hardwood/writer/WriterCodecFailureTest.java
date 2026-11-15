@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
-import dev.hardwood.metadata.CompressionCodec;
 
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,7 +45,7 @@ class WriterCodecFailureTest {
     /// skips compression entirely; the compressor above is what actually runs.
     private static WriterConfig flushPerRecord() {
         return WriterConfig.builder()
-                .codec(CompressionCodec.GZIP)
+                .compression(Compression.gzip())
                 .rowGroupTargetRows(1)
                 .build();
     }
@@ -83,7 +82,7 @@ class WriterCodecFailureTest {
     void closeReportsACodecFailureAsParquetWriteException() throws Exception {
         // No row-group target reached while writing, so the only flush is the one close does.
         ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn(),
-                WriterConfig.builder().codec(CompressionCodec.GZIP).build(), FAILING);
+                WriterConfig.builder().compression(Compression.gzip()).build(), FAILING);
         writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] {1, 2, 3}));
 
         assertThatThrownBy(writer::close)

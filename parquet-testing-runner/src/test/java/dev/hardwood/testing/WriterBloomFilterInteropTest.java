@@ -22,12 +22,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.OutputFile;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -88,7 +88,7 @@ class WriterBloomFilterInteropTest {
                 .addColumn("delta", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .rowGroupTargetRows(ROW_GROUP_ROWS)
                 .encoding("delta", ColumnEncoding.DELTA_BINARY_PACKED)
                 .bloomFilter("i").bloomFilter("l").bloomFilter("f").bloomFilter("d")
@@ -147,7 +147,7 @@ class WriterBloomFilterInteropTest {
                 .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
                 .build();
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .rowGroupTargetRows(ROW_GROUP_ROWS)
                 .bloomFilter("i").bloomFilter("s")
                 .build();

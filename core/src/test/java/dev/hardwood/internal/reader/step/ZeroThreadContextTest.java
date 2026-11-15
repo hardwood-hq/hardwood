@@ -39,7 +39,6 @@ import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -49,6 +48,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -443,7 +443,7 @@ class ZeroThreadContextTest {
                 .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .addColumn("c", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
-        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.ZSTD).rowGroupTargetRows(ROWS_PER_GROUP)
+        WriterConfig config = WriterConfig.builder().compression(Compression.zstd()).rowGroupTargetRows(ROWS_PER_GROUP)
                 .build();
         Path path = dir.resolve("written_on_zero_threads.parquet");
         try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {

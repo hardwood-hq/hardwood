@@ -8,14 +8,12 @@
 package dev.hardwood.writer;
 
 import java.nio.ByteBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.InMemoryFiles;
@@ -36,7 +34,6 @@ import static dev.hardwood.writer.WriterTestSupport.oneOptionalColumn;
 import static dev.hardwood.writer.WriterTestSupport.readInts;
 import static dev.hardwood.writer.WriterTestSupport.readNullable;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Page compression: that a codec is applied, that both sizes are accounted for, and that a
 /// codec the writer refuses fails before any bytes are written.
@@ -109,7 +106,7 @@ class WriterCompressionTest {
         // compressed and uncompressed sizes are equal.
         int[] values = { 1, 2, 3, 4, 5 };
 
-        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).build();
+        WriterConfig config = WriterConfig.builder().compression(Compression.uncompressed()).build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
@@ -121,20 +118,6 @@ class WriterCompressionTest {
             assertThat(meta.totalCompressedSize()).isEqualTo(meta.totalUncompressedSize());
             assertThat(readInts(reader, 0)).containsExactly(values);
         }
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @EnumSource(value = CompressionCodec.class, names = { "LZ4", "LZO" })
-    void refusedCodecFailsBeforeAnyBytesAreWritten(CompressionCodec codec, @TempDir Path dir) {
-        // The codec resolves ahead of out.create(), so a codec this writer does not produce
-        // leaves no file at the destination rather than an empty or headerless one.
-        Path file = dir.resolve("refused.parquet");
-        WriterConfig config = WriterConfig.builder().codec(codec).build();
-
-        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.of(file), oneColumn(), config))
-                .isInstanceOf(UnsupportedOperationException.class);
-
-        assertThat(Files.exists(file)).isFalse();
     }
 
     @Test
@@ -176,7 +159,7 @@ class WriterCompressionTest {
             nulls[i] = i % 7 == 0;
         }
 
-        WriterConfig config = WriterConfig.builder().codec(codec).pageTargetBytes(1024).build();
+        WriterConfig config = WriterConfig.builder().compression(Compression.of(codec)).pageTargetBytes(1024).build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
@@ -196,5 +179,64 @@ class WriterCompressionTest {
             assertThat(readNullable(reader, 0)).as("%s values", codec)
                     .isEqualTo(expectedNullable(values, nulls));
         }
+    }
+
+    @ParameterizedTest(name = "{0} {1} against {2}")
+    @CsvSource({ "ZSTD, 1, 19", "GZIP, 1, 9", "BROTLI, 1, 11", "LZ4_RAW, 1, 17" })
+    void aHigherLevelStoresFewerBytesAndReadsBackTheSameValues(CompressionCodec codec, int low, int high)
+            throws Exception {
+        // Text-like values that the codecs' fastest levels leave room on, so that the level the
+        // writer was given shows in what it stores: the same column at the higher level is
+        // smaller, and both read back identically.
+        int n = 50_000;
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = (i * 7919) % 1013 + (i / 97) * 3;
+        }
+
+        ColumnMetaData lowMeta = writeAtLevel(codec, low, values);
+        ColumnMetaData highMeta = writeAtLevel(codec, high, values);
+
+        assertThat(highMeta.totalCompressedSize()).as("%s level %d against %d", codec, high, low)
+                .isLessThan(lowMeta.totalCompressedSize());
+    }
+
+    @Test
+    void gzipLevelZeroStoresTheBodyWithoutCompressingIt() throws Exception {
+        // Deflate's level 0 emits stored blocks, so the gzip-framed body is a little larger than
+        // the bytes it holds: proof that the level reached the Deflater rather than its default.
+        int[] values = new int[10_000];
+        Arrays.fill(values, 42);
+
+        ColumnMetaData meta = writeAtLevel(CompressionCodec.GZIP, 0, values);
+
+        assertThat(meta.totalCompressedSize()).isGreaterThan(meta.totalUncompressedSize());
+    }
+
+    /// Writes `values` as one PLAIN column at `level` and returns its chunk metadata, after
+    /// checking the values read back.
+    private static ColumnMetaData writeAtLevel(CompressionCodec codec, int level, int[] values) throws Exception {
+        WriterConfig config = WriterConfig.builder().encoding(ColumnEncoding.PLAIN)
+                .compression(((Compression.Leveled) Compression.of(codec)).level(level)).build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
+        }
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
+            assertThat(readInts(reader, 0)).as("%s level %d values", codec, level).containsExactly(values);
+            return columnMeta(reader, 0);
+        }
+    }
+
+    @ParameterizedTest(name = "{0} {1}")
+    @CsvSource({ "ZSTD, -131072", "ZSTD, 22", "GZIP, 0", "GZIP, 9", "BROTLI, 0", "BROTLI, 11", "LZ4_RAW, 1",
+            "LZ4_RAW, 17" })
+    void writesAndReadsBackAtEachEndOfTheLevelRange(CompressionCodec codec, int level) throws Exception {
+        int[] values = new int[5_000];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i % 97;
+        }
+        // writeAtLevel reads the values back and checks them.
+        assertThat(writeAtLevel(codec, level, values).codec()).isEqualTo(codec);
     }
 }

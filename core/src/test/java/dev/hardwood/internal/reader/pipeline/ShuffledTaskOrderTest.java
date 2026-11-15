@@ -28,7 +28,6 @@ import dev.hardwood.Validity;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -37,6 +36,7 @@ import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -213,7 +213,7 @@ class ShuffledTaskOrderTest {
                 .addColumn("dict", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
                 .build();
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .encoding("plain", ColumnEncoding.PLAIN)
                 .pageTargetRows(5)
                 .rowGroupTargetRows(150)
@@ -255,7 +255,7 @@ class ShuffledTaskOrderTest {
                 .list("tags", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .build();
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .encoding(ColumnEncoding.PLAIN)
                 .pageTargetRows(3)
                 .rowGroupTargetRows(150)

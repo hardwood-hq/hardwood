@@ -19,13 +19,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.OutputFile;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -43,7 +43,7 @@ class S3OutputFileIT {
     /// Uncompressed `PLAIN` in row groups of 500,000 rows (4 MB), so that 2,000,000 rows span
     /// several parts and the first part is uploaded before the file is closed.
     private static final WriterConfig CONFIG = WriterConfig.builder()
-            .codec(CompressionCodec.UNCOMPRESSED)
+            .compression(Compression.uncompressed())
             .encoding(ColumnEncoding.PLAIN)
             .rowGroupTargetRows(500_000)
             .build();

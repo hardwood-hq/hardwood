@@ -15,13 +15,13 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.benchmarks.BenchmarkData;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
 import dev.hardwood.writer.ColumnWriter;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -83,7 +83,7 @@ public final class WideSchemaFileGenerator {
                 .pageTargetBytes(ROWS_PER_ROW_GROUP * VALUE_BYTES)
                 .rowGroupBufferTargetBytes(rowGroupBufferTargetBytes)
                 .encoding(ColumnEncoding.PLAIN)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), schema, config)) {

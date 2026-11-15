@@ -20,6 +20,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.testing.InteropCase.Nullability;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.WriterConfig;
 
 import static dev.hardwood.testing.FlatInteropGate.FEW_ROWS;
@@ -33,8 +34,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class WriterCodecInteropTest {
 
     /// The codec axis, over every codec the writer produces. The two it does not — `LZ4`'s
-    /// deprecated Hadoop framing, and `LZO` — fail at writer creation, so they have no file for
-    /// this gate to read back; `WriterRoundTripTest` holds them to failing there.
+    /// deprecated Hadoop framing, and `LZO` — cannot be configured, so they have no file for
+    /// this gate to read back; `CompressionTest` holds `Compression.of` to refusing them.
     ///
     /// What the axis is really checking is framing. Each of these codecs has a raw block form and
     /// a wrapped one, and the wrapped form round-trips perfectly against Hardwood's own reader
@@ -46,7 +47,29 @@ class WriterCodecInteropTest {
     static Stream<InteropCase> codecs() {
         return sweep(PARQUET_JAVA_CODECS,
                 (type, codec) -> InteropCase.of("codec " + codec, type, Nullability.OPTIONAL_SOME_NULL,
-                        64, FEW_ROWS, WriterConfig.builder().codec(codec).build()));
+                        64, FEW_ROWS, WriterConfig.builder().compression(Compression.of(codec)).build()));
+    }
+
+    /// The codec axis at non-default levels, for the codecs with levels that parquet-java reads
+    /// (`BROTLI` is out for the reason [#codecs] gives). A level changes which of a codec's block
+    /// forms are emitted — zstd's negative levels, deflate's stored blocks at 0, LZ4's high compressor — so each case is
+    /// a page body the default level never produces.
+    static Stream<InteropCase> codecLevels() {
+        return Stream.of(
+                new CodecLevel(CompressionCodec.ZSTD, -5),
+                new CodecLevel(CompressionCodec.ZSTD, 1),
+                new CodecLevel(CompressionCodec.ZSTD, 22),
+                new CodecLevel(CompressionCodec.GZIP, 0),
+                new CodecLevel(CompressionCodec.GZIP, 9),
+                new CodecLevel(CompressionCodec.LZ4_RAW, 1),
+                new CodecLevel(CompressionCodec.LZ4_RAW, 17))
+                .flatMap(level -> sweep(List.of(level.codec()),
+                        (type, codec) -> InteropCase.of("codec " + codec + " level " + level.level(), type,
+                                Nullability.OPTIONAL_SOME_NULL, 64, FEW_ROWS,
+                                WriterConfig.builder()
+                                        .compression(((Compression.Leveled) Compression.of(codec))
+                                                .level(level.level()))
+                                        .build())));
     }
 
     /// Every codec the writer produces that the pinned parquet-java can also read, which is all
@@ -81,7 +104,7 @@ class WriterCodecInteropTest {
                                         nullability, 64, FEW_ROWS,
                                         WriterConfig.builder()
                                                 .encoding(axis.encoding())
-                                                .codec(codec)
+                                                .compression(Compression.of(codec))
                                                 .build()))));
     }
 
@@ -90,6 +113,12 @@ class WriterCodecInteropTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource
     void codecs(InteropCase testCase, @TempDir Path dir) throws IOException {
+        verify(testCase, dir);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void codecLevels(InteropCase testCase, @TempDir Path dir) throws IOException {
         verify(testCase, dir);
     }
 
@@ -121,6 +150,9 @@ class WriterCodecInteropTest {
     void parquetJavaHasNoBrotliCodec() {
         assertThatThrownBy(() -> Class.forName("org.apache.hadoop.io.compress.BrotliCodec"))
                 .isInstanceOf(ClassNotFoundException.class);
+    }
+
+    private record CodecLevel(CompressionCodec codec, int level) {
     }
 
     private record EncodingCodecAxis(ColumnEncoding encoding, TypeFixture type) {

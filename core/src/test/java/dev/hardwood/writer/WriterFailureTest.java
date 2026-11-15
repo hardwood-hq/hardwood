@@ -19,7 +19,6 @@ import org.junit.jupiter.api.io.TempDir;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.reader.ParquetFileReader;
 
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
@@ -205,7 +204,7 @@ class WriterFailureTest {
         Path file = dir.resolve("out.parquet");
         // No row-group target reached while writing, so the codec first runs inside close().
         ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), oneColumn(),
-                WriterConfig.builder().codec(CompressionCodec.GZIP).build(), ERROR_CODEC);
+                WriterConfig.builder().compression(Compression.gzip()).build(), ERROR_CODEC);
         writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3 }));
 
         assertThatThrownBy(writer::close)
@@ -368,7 +367,7 @@ class WriterFailureTest {
     /// that is not `UNCOMPRESSED`, which skips compression; [#FAILING_CODEC] is what runs.
     private static WriterConfig flushPerRecord() {
         return WriterConfig.builder()
-                .codec(CompressionCodec.GZIP)
+                .compression(Compression.gzip())
                 .rowGroupTargetRows(1)
                 .build();
     }

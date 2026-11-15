@@ -28,7 +28,6 @@ import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.thrift.BloomFilterReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -365,7 +364,7 @@ class WriterBloomFilterTest {
     }
 
     private static WriterConfig.Builder config() {
-        return WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED);
+        return WriterConfig.builder().compression(Compression.uncompressed());
     }
 
     private static FileSchema ints() {

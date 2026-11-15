@@ -43,7 +43,6 @@ import dev.hardwood.internal.reader.plan.ReadEngines;
 import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -53,6 +52,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -140,7 +140,7 @@ class NestedColumnTest {
                         struct -> struct.addColumn("x", PhysicalType.DOUBLE, RepetitionType.OPTIONAL))
                 .build();
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .encoding(ColumnEncoding.ALP)
                 .encoding("id", ColumnEncoding.PLAIN)
                 .pageTargetRows(5)

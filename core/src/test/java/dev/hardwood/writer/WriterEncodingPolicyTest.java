@@ -809,7 +809,7 @@ class WriterEncodingPolicyTest {
     private static byte[] writeLongs(FileSchema schema, long[] values, ColumnEncoding encoding) throws Exception {
         WriterConfig config = WriterConfig.builder()
                 .encoding(encoding)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
@@ -820,7 +820,7 @@ class WriterEncodingPolicyTest {
 
     private static byte[] writeDoubles(FileSchema schema, double[] values, ColumnEncoding encoding,
             CompressionCodec codec) throws Exception {
-        WriterConfig config = WriterConfig.builder().encoding(encoding).codec(codec).build();
+        WriterConfig config = WriterConfig.builder().encoding(encoding).compression(Compression.of(codec)).build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.doubles("v", values));

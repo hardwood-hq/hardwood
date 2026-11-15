@@ -21,7 +21,6 @@ import org.junit.jupiter.api.io.TempDir;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -105,7 +104,7 @@ class WriterLargeFileTest {
 
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.PLAIN)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .rowGroupBufferTargetBytes(128L << 20)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema(), config)) {
@@ -154,7 +153,7 @@ class WriterLargeFileTest {
                 // Both configured targets put out of the way, so what cuts the group is the
                 // ceiling this case exists to reach.
                 .rowGroupTargetRows(Long.MAX_VALUE)
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .build();
 
         boolean[] values = new boolean[BATCH];

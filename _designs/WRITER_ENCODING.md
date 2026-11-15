@@ -195,9 +195,9 @@ Tests: `WriterEncodingPolicyTest`, `DeltaBinaryPackedEncoderTest`, `ByteArrayEnc
 | `UNCOMPRESSED` | none | the body as it stands |
 | `GZIP` | JDK `Deflater` | gzip wrapper |
 | `SNAPPY` | snappy-java (optional) | raw block, not the framed stream |
-| `ZSTD` | zstd-jni (optional) | library default level |
+| `ZSTD` | zstd-jni (optional) | zstd frame |
 | `LZ4_RAW` | lz4-java (optional) | raw block |
-| `BROTLI` | brotli4j (optional) | library default |
+| `BROTLI` | brotli4j (optional) | brotli stream |
 
 The page header records the uncompressed size, so every codec is used in its length-unaware raw form. Each optional library is checked through `CodecLibraries.require`, whose message names the Maven coordinates to add; whether a library is present is probed once per run. The default codec is `ZSTD` when zstd-jni is on the classpath and `UNCOMPRESSED` otherwise, so a caller who did not ask to compress is not made to carry the dependency; an explicitly chosen codec still requires its library.
 
@@ -206,11 +206,11 @@ Two codecs are refused permanently:
 - **`LZ4`**: the Hadoop-framed variant the format deprecated in favour of `LZ4_RAW`. The reader keeps decompressing it, since files written before the deprecation exist; the refusal points at `LZ4_RAW`.
 - **`LZO`**: no maintained JVM implementation under a licence the project can depend on. The read path refuses it for the same reason.
 
-`ParquetFileWriter.create` resolves the compressor before `OutputFile.create()`, so a refused codec or a missing library fails before the magic bytes are written. A codec that fails on a page body mid-write raises `ParquetWriteException` and fails the writer ([WRITER.md](WRITER.md)).
+`ParquetFileWriter.create` resolves the compressor before `OutputFile.create()`, so a missing library fails before the magic bytes are written. A codec that fails on a page body mid-write raises `ParquetWriteException` and fails the writer ([WRITER.md](WRITER.md)).
 
-Every codec compresses at its library's default. There is no level setting: it would multiply the option surface by the codec list, and the codec choice already expresses the speed-versus-ratio trade-off.
+**Configuration.** `WriterConfig` takes a `Compression`, the codec together with its settings, so a setting is never configured apart from the codec it belongs to. A codec with levels (`ZSTD`, `GZIP`, `BROTLI`, `LZ4_RAW`) has a factory returning `Compression.Leveled`, the only type with a `level(int)`, so a level on a codec without levels does not compile; without one, each compresses at its library's default, and `LZ4_RAW` through LZ4's fast compressor. A further codec setting would be another method on its codec's type. A codec chosen at runtime goes through `Compression.of(CompressionCodec)`, which refuses `LZ4` and `LZO` when it is called. A level selects among block forms every reader of the codec already decodes (zstd's negative levels, deflate's stored blocks, LZ4 HC), so it changes nothing a reader sees and is not recorded in the file. The ranges live in `CompressionLevels` rather than being asked of the libraries, so a level is validated when it is set, without loading a native library or requiring it to be present; the library is required when the writer is created, as for a codec without a level.
 
-Tests: `WriterCompressionTest`, `CompressorFactoryTest`, `WriterCodecFailureTest`.
+Tests: `WriterCompressionTest`, `CompressionTest`, `CompressorFactoryTest`, `WriterCodecFailureTest`; `WriterCodecInteropTest` (parquet-java) and `WriterDifferentialTest` (DuckDB, the only independent `BROTLI` reader) read non-default levels.
 
 ## Statistics
 

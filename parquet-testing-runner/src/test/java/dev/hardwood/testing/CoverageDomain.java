@@ -27,6 +27,7 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -150,12 +151,19 @@ final class CoverageDomain {
     }
 
     /// The codecs the writer produces, found by asking it to compress with each one. `LZO` and
-    /// the Hadoop-framed `LZ4` are the two it refuses, each for a reason of its own.
+    /// the Hadoop-framed `LZ4` are the two it refuses, each for a reason of its own, when the
+    /// codec is configured.
     static List<CompressionCodec> producedCodecs() {
         List<CompressionCodec> codecs = new ArrayList<>();
         for (CompressionCodec codec : CompressionCodec.values()) {
-            if (accepts(PhysicalType.INT32, null, null,
-                    WriterConfig.builder().codec(codec).build())) {
+            Compression compression;
+            try {
+                compression = Compression.of(codec);
+            }
+            catch (UnsupportedOperationException refused) {
+                continue;
+            }
+            if (accepts(PhysicalType.INT32, null, null, WriterConfig.builder().compression(compression).build())) {
                 codecs.add(codec);
             }
         }

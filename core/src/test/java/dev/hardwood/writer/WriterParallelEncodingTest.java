@@ -56,7 +56,7 @@ class WriterParallelEncodingTest {
     @EnumSource(value = CompressionCodec.class, names = { "ZSTD", "UNCOMPRESSED" })
     void writesTheSameBytesWhateverThePoolDoes(CompressionCodec codec) throws Exception {
         WriterConfig config = WriterConfig.builder()
-                .codec(codec)
+                .compression(Compression.of(codec))
                 .pageTargetRows(500)
                 .rowGroupTargetRows(5_000)
                 .bloomFilter("id")
@@ -201,7 +201,7 @@ class WriterParallelEncodingTest {
                 .build();
         // PLAIN pages of a required column are its values alone, so a page body names its column.
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.GZIP)
+                .compression(Compression.gzip())
                 .encoding(ColumnEncoding.PLAIN)
                 .build();
         int[] ok = new int[BATCH];
@@ -324,7 +324,7 @@ class WriterParallelEncodingTest {
     /// other than `UNCOMPRESSED`, so the test's compressor runs.
     private static WriterConfig pagePerBatch() {
         return WriterConfig.builder()
-                .codec(CompressionCodec.GZIP)
+                .compression(Compression.gzip())
                 .encoding(ColumnEncoding.PLAIN)
                 .pageTargetRows(BATCH)
                 .build();
@@ -352,7 +352,7 @@ class WriterParallelEncodingTest {
     /// `UNCOMPRESSED`, which skips the compressor; the test's compressor is what runs.
     private static WriterConfig flushPerBatch() {
         return WriterConfig.builder()
-                .codec(CompressionCodec.GZIP)
+                .compression(Compression.gzip())
                 .rowGroupTargetRows(BATCH)
                 .build();
     }

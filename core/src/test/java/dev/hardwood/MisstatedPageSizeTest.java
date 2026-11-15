@@ -26,6 +26,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -113,7 +114,7 @@ class MisstatedPageSizeTest {
             values[i] = i * 31L;
         }
         WriterConfig config = WriterConfig.builder()
-                .codec(codec)
+                .compression(Compression.of(codec))
                 .encoding(ColumnEncoding.PLAIN)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

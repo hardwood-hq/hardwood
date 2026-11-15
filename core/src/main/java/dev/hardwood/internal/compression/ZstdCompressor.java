@@ -14,10 +14,21 @@ import com.github.luben.zstd.Zstd;
 import dev.hardwood.writer.ParquetWriteException;
 
 /// [Compressor] for the ZSTD codec, the inverse of [ZstdDecompressor]. Compresses at zstd's
-/// default level, the same trade-off point the reference implementations write.
+/// default level, the same trade-off point the reference implementations write, unless given
+/// another.
 public class ZstdCompressor implements Compressor {
 
-    private final int level = Zstd.defaultCompressionLevel();
+    private final int level;
+
+    /// Compresses at zstd's default level.
+    public ZstdCompressor() {
+        this(Zstd.defaultCompressionLevel());
+    }
+
+    /// @param level a level within [CompressionLevels]' range for `ZSTD`
+    public ZstdCompressor(int level) {
+        this.level = level;
+    }
 
     @Override
     public byte[] compress(byte[] data, int offset, int length) {

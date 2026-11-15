@@ -34,7 +34,6 @@ import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PhysicalType;
@@ -45,6 +44,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.Compression;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -281,7 +281,7 @@ class PageHeaderParseTest {
         FileSchema schema = FileSchema.builder("sequence").addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
-                .codec(CompressionCodec.UNCOMPRESSED)
+                .compression(Compression.uncompressed())
                 .encoding(ColumnEncoding.PLAIN)
                 .pageTargetRows(PAGE_ROWS)
                 .build();
