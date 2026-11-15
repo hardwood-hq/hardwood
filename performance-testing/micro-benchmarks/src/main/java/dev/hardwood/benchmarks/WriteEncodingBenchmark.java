@@ -202,7 +202,7 @@ public class WriteEncodingBenchmark {
     public long hardwoodColumnar() throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
         write(out, config);
-        return out.position();
+        return out.buffer().remaining();
     }
 
     /// Hands each batch's column arrays to the writer as they are, exactly as
