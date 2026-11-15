@@ -13,6 +13,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -22,6 +24,7 @@ import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
+import dev.hardwood.row.PqStruct;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ListBuilder;
 import dev.hardwood.writer.MapBuilder;
@@ -331,6 +334,12 @@ final class RowStructNode extends RowNode implements StructBuilder {
     }
 
     @Override
+    public StructBuilder setValue(String name, Object value) {
+        children[claim(name)].writeValue(value);
+        return this;
+    }
+
+    @Override
     public StructBuilder setStruct(String name, Consumer<StructBuilder> filler) {
         return fillStruct(claim(name), filler);
     }
@@ -455,6 +464,12 @@ final class RowStructNode extends RowNode implements StructBuilder {
     }
 
     @Override
+    public StructBuilder setValue(int fieldIndex, Object value) {
+        children[claim(fieldIndex)].writeValue(value);
+        return this;
+    }
+
+    @Override
     public StructBuilder setStruct(int fieldIndex, Consumer<StructBuilder> filler) {
         return fillStruct(claim(fieldIndex), filler);
     }
@@ -472,6 +487,78 @@ final class RowStructNode extends RowNode implements StructBuilder {
     @Override
     public StructBuilder setMap(int fieldIndex, Consumer<MapBuilder> filler) {
         return fillMap(claim(fieldIndex), filler);
+    }
+
+    // ==================== Runtime-typed values ====================
+
+    /// A FILE group takes a [PqFile]; any other struct a [PqStruct], whose fields are copied
+    /// into this struct's by name.
+    @Override
+    void writeValue(Object value) {
+        if (value == null) {
+            appendNullInstance();
+        }
+        else if (file) {
+            if (!(value instanceof PqFile pqFile)) {
+                throw wrongValue(value, "a PqFile");
+            }
+            writeFile(pqFile);
+        }
+        else {
+            if (!(value instanceof PqStruct source)) {
+                throw wrongValue(value, "a PqStruct");
+            }
+            beginScope();
+            copyFields(source);
+            endScope();
+        }
+    }
+
+    /// Sets each of this struct's fields from the field of `source` with the same name, leaving
+    /// a field `source` does not have unset, so it is written as null or fails the record if it
+    /// is `REQUIRED`. A field of `source` this struct does not declare is not written.
+    ///
+    /// @throws IllegalArgumentException if a field this struct declares is the name of more than
+    ///         one field of `source`
+    private void copyFields(PqStruct source) {
+        if (declaresSameFields(source)) {
+            // The row layer requires sibling names to be unique, so a source naming the same
+            // fields in the same order holds each of them once, at this struct's position.
+            for (int c = 0; c < children.length; c++) {
+                setValue(c, source.getValue(c));
+            }
+            return;
+        }
+        Map<String, Integer> sourceFields = new HashMap<>();
+        for (int i = 0; i < source.getFieldCount(); i++) {
+            // A name that occurs twice maps to -1, which a lookup below rejects.
+            sourceFields.merge(source.getFieldName(i), i, (first, second) -> -1);
+        }
+        for (int c = 0; c < children.length; c++) {
+            Integer sourceIndex = sourceFields.get(fieldNames[c]);
+            if (sourceIndex == null) {
+                continue;
+            }
+            if (sourceIndex < 0) {
+                throw new IllegalArgumentException("Field " + children[c].path + " cannot be copied: the struct "
+                        + "it is copied from has more than one field named '" + fieldNames[c] + "'");
+            }
+            setValue(c, source.getValue(sourceIndex));
+        }
+    }
+
+    /// Whether `source` has this struct's fields, by name, in this struct's order and no others:
+    /// the case of a struct copied into the schema it was read from, which needs no lookup.
+    private boolean declaresSameFields(PqStruct source) {
+        if (source.getFieldCount() != children.length) {
+            return false;
+        }
+        for (int c = 0; c < children.length; c++) {
+            if (!fieldNames[c].equals(source.getFieldName(c))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ==================== Nested scopes ====================

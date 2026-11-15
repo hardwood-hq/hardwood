@@ -15,6 +15,7 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.PhysicalValueConverter;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -47,6 +48,9 @@ final class RowLeafNode extends RowNode {
     /// cannot disagree about which values the column may hold.
     private final LogicalTypeValueRange range;
 
+    /// The form [#writeValue] takes, decided once from the declared type.
+    private final ValueForm valueForm;
+
     RowLeafNode(String path, ColumnSchema column, PrecisionLossPolicy precisionLossPolicy) {
         super(path);
         this.precisionLossPolicy = precisionLossPolicy;
@@ -57,10 +61,133 @@ final class RowLeafNode extends RowNode {
         this.optional = column.repetitionType() == RepetitionType.OPTIONAL;
         this.stage = LeafStage.forType(physicalType, typeLength, logicalType);
         this.range = LogicalTypeValueRange.of(column);
+        this.valueForm = ValueForm.of(physicalType, logicalType);
     }
 
     LeafStage stage() {
         return stage;
+    }
+
+    // ==================== Runtime-typed setter ====================
+
+    /// The Java type the reader's `getValue` returns for a column, which is the type
+    /// [#writeValue] takes for it.
+    private enum ValueForm {
+        BOOLEAN(Boolean.class), BYTE(Byte.class), SHORT(Short.class), INT(Integer.class), LONG(Long.class),
+        FLOAT(Float.class), DOUBLE(Double.class), FLOAT16(Float.class), STRING(String.class), BINARY(byte[].class),
+        DATE(LocalDate.class), TIME(LocalTime.class), TIMESTAMP(Instant.class),
+        LOCAL_TIMESTAMP(LocalDateTime.class), DECIMAL(BigDecimal.class), UUID_VALUE(UUID.class),
+        INTERVAL(PqInterval.class), NONE(Void.class);
+
+        final Class<?> type;
+
+        ValueForm(Class<?> type) {
+            this.type = type;
+        }
+
+        static ValueForm of(PhysicalType physicalType, LogicalType logicalType) {
+            if (logicalType == null) {
+                return switch (physicalType) {
+                    case BOOLEAN -> BOOLEAN;
+                    case INT32 -> INT;
+                    case INT64 -> LONG;
+                    case FLOAT -> FLOAT;
+                    case DOUBLE -> DOUBLE;
+                    default -> BINARY;
+                };
+            }
+            return switch (logicalType) {
+                case LogicalType.StringType t -> STRING;
+                case LogicalType.EnumType t -> STRING;
+                case LogicalType.JsonType t -> STRING;
+                case LogicalType.DateType t -> DATE;
+                case LogicalType.TimeType t -> TIME;
+                case LogicalType.TimestampType t -> t.isAdjustedToUTC() ? TIMESTAMP : LOCAL_TIMESTAMP;
+                case LogicalType.DecimalType t -> DECIMAL;
+                case LogicalType.IntType t -> intForm(physicalType, t);
+                case LogicalType.UuidType t -> UUID_VALUE;
+                case LogicalType.IntervalType t -> INTERVAL;
+                case LogicalType.Float16Type t -> FLOAT16;
+                case LogicalType.NullType t -> NONE;
+                case LogicalType.BsonType t -> BINARY;
+                case LogicalType.GeometryType t -> BINARY;
+                case LogicalType.GeographyType t -> BINARY;
+                case LogicalType.ListType t -> throw notALeafAnnotation(logicalType);
+                case LogicalType.MapType t -> throw notALeafAnnotation(logicalType);
+                case LogicalType.VariantType t -> throw notALeafAnnotation(logicalType);
+                case LogicalType.FileType t -> throw notALeafAnnotation(logicalType);
+            };
+        }
+
+        /// The reader narrows a signed `INT(8)` or `INT(16)` to `Byte` or `Short`; every other
+        /// `INT` annotation keeps the physical type's box.
+        private static ValueForm intForm(PhysicalType physicalType, LogicalType.IntType type) {
+            if (physicalType == PhysicalType.INT64) {
+                return LONG;
+            }
+            boolean signed = !AnnotationKind.ordersUnsigned(type);
+            if (signed && type.bitWidth() == 8) {
+                return BYTE;
+            }
+            if (signed && type.bitWidth() == 16) {
+                return SHORT;
+            }
+            return INT;
+        }
+
+        private static IllegalStateException notALeafAnnotation(LogicalType logicalType) {
+            return new IllegalStateException(logicalType + " annotates a group, not a leaf");
+        }
+    }
+
+    @Override
+    void writeValue(Object value) {
+        if (value == null) {
+            setNull();
+            return;
+        }
+        if (valueForm == ValueForm.NONE) {
+            requireValueAllowed("setValue");
+        }
+        if (!valueForm.type.isInstance(value)) {
+            throw wrongValue(value, "a " + valueForm.type.getSimpleName());
+        }
+        switch (valueForm) {
+            case BOOLEAN -> setBoolean((Boolean) value);
+            case BYTE -> setInt((Byte) value);
+            case SHORT -> setInt((Short) value);
+            case INT -> setInt((Integer) value);
+            case LONG -> setLong((Long) value);
+            case FLOAT -> setFloat((Float) value);
+            case DOUBLE -> setDouble((Double) value);
+            case FLOAT16 -> setFloat16((Float) value);
+            case STRING -> setString((String) value);
+            case BINARY -> setBinary((byte[]) value);
+            case DATE -> setDate((LocalDate) value);
+            case TIME -> setTime((LocalTime) value);
+            case TIMESTAMP -> setTimestamp((Instant) value);
+            case LOCAL_TIMESTAMP -> setLocalTimestamp((LocalDateTime) value);
+            case DECIMAL -> setDecimal((BigDecimal) value);
+            case UUID_VALUE -> setUuid((UUID) value);
+            case INTERVAL -> setInterval((PqInterval) value);
+            case NONE -> throw new IllegalStateException("UNKNOWN admits no value: " + path);
+        }
+    }
+
+    /// Stages a `FLOAT16` value, which the reader returns as the `Float` it stands for. A value
+    /// a half cannot hold exactly is rejected rather than rounded.
+    private void setFloat16(float value) {
+        short half = Float.floatToFloat16(value);
+        if (!Float.isNaN(value) && Float.float16ToFloat(half) != value) {
+            throw new RejectedRecordException(path, "Field " + path + ": " + value
+                    + " has no exact FLOAT16 representation");
+        }
+        appendBinary(new byte[] { (byte) half, (byte) (half >>> 8) });
+    }
+
+    @Override
+    String description() {
+        return physicalType + (logicalType == null ? "" : " annotated " + logicalType);
     }
 
     // ==================== Physical setters ====================

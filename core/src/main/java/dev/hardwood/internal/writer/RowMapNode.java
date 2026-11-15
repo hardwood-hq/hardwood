@@ -10,6 +10,7 @@ package dev.hardwood.internal.writer;
 import java.util.function.Consumer;
 
 import dev.hardwood.Validity;
+import dev.hardwood.row.PqMap;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.MapBuilder;
 import dev.hardwood.writer.StructBuilder;
@@ -49,6 +50,30 @@ final class RowMapNode extends RowRepeatedNode implements MapBuilder {
     @Override
     String kind() {
         return "MAP group";
+    }
+
+    /// A MAP group takes a [PqMap], whose entries are copied in order into the entry group's
+    /// key and value fields.
+    @Override
+    void writeValue(Object value) {
+        if (value == null) {
+            appendNullInstance();
+            return;
+        }
+        if (!(value instanceof PqMap source)) {
+            throw wrongValue(value, "a PqMap");
+        }
+        beginScope();
+        for (PqMap.Entry sourceEntry : source.getEntries()) {
+            entry.beginScope();
+            entry.setValue(0, sourceEntry.getKey());
+            if (entry.getFieldCount() > 1) {
+                entry.setValue(1, sourceEntry.getValue());
+            }
+            entry.endScope();
+            countEntry();
+        }
+        endScope();
     }
 
     @Override

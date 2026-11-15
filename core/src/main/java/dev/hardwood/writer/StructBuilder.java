@@ -229,6 +229,50 @@ public interface StructBuilder {
     /// @throws IllegalStateException if this builder's scope has ended
     StructBuilder setMap(String name, Consumer<MapBuilder> filler);
 
+    /// Sets a field from a value whose type is known only at runtime, in the form
+    /// [dev.hardwood.row.StructAccessor#getValue(String)] returns for the field's declared type,
+    /// so a value read from one file can be written to another as it is:
+    ///
+    /// ```java
+    /// for (int i = 0; i < row.getFieldCount(); i++) {
+    ///     out.setValue(row.getFieldName(i), row.getValue(i));
+    /// }
+    /// ```
+    ///
+    /// | Field | Value |
+    /// |-------|-------|
+    /// | `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, `DOUBLE` | `Boolean`, `Integer`, `Long`, `Float`, `Double` |
+    /// | `INT32` annotated signed `INT(8)` / `INT(16)` | `Byte` / `Short` |
+    /// | `STRING`, `ENUM`, `JSON` | `String` |
+    /// | `DATE`, `TIME`, `DECIMAL`, `UUID`, `INTERVAL` | [LocalDate], [LocalTime], [BigDecimal], [UUID], [PqInterval] |
+    /// | `TIMESTAMP`, UTC-adjusted / local | [Instant] / [LocalDateTime] |
+    /// | `FLOAT16` | `Float` |
+    /// | Other `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` | `byte[]` |
+    /// | `FILE` group | [PqFile] |
+    /// | Struct group | [dev.hardwood.row.PqStruct] |
+    /// | `LIST` group | [dev.hardwood.row.PqList] |
+    /// | `MAP` group | [dev.hardwood.row.PqMap] |
+    ///
+    /// The value is written through the typed setter for that form, with the same checks, and a
+    /// `null` value sets the field null. A value of any other type is rejected rather than
+    /// converted; so is a `FLOAT16` value a half-precision float cannot hold exactly.
+    ///
+    /// A struct is copied field by field, by name: each field of this struct's group takes the
+    /// value of the field of the same name in the [dev.hardwood.row.PqStruct], recursively. A
+    /// field the source does not have is left unset, which writes it null and fails the record
+    /// if it is `REQUIRED`; a field of the source this group does not declare is not written.
+    /// A list's elements and a map's keys and values are written the same way, in order.
+    ///
+    /// @param name the field name
+    /// @param value the value, or `null`
+    /// @return this builder, for chaining
+    /// @throws IllegalArgumentException if the schema has no such field, the value is not the
+    ///         form the field's type takes (a `PqVariant` among them, `VARIANT` values not being
+    ///         writable), a nested value is rejected as its typed setter rejects it, or the field
+    ///         is already set in this scope
+    /// @throws IllegalStateException if this builder's scope has ended
+    StructBuilder setValue(String name, Object value);
+
     // ==================== Field positions ====================
 
     /// The number of fields this struct declares — the record's top-level fields for the
@@ -384,4 +428,17 @@ public interface StructBuilder {
     ///         already set in this scope
     /// @throws IllegalStateException if this builder's scope has ended
     StructBuilder setMap(int fieldIndex, Consumer<MapBuilder> filler);
+
+    /// Sets a field by index from a value whose type is known only at runtime. See
+    /// [#setValue(String, Object)].
+    ///
+    /// @param fieldIndex the field index, `0`-based
+    /// @param value the value, or `null`
+    /// @return this builder, for chaining
+    /// @throws IndexOutOfBoundsException if `fieldIndex` is not in `[0, getFieldCount())`
+    /// @throws IllegalArgumentException if the value is not the form the field's type takes, a
+    ///         nested value is rejected as its typed setter rejects it, or the field is already
+    ///         set in this scope
+    /// @throws IllegalStateException if this builder's scope has ended
+    StructBuilder setValue(int fieldIndex, Object value);
 }

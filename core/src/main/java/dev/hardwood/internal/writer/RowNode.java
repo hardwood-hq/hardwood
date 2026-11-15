@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.writer;
 
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.writer.ColumnBatch;
 
 /// One node of the row-oriented layer's plan: the schema tree as the record-shaped API sees
@@ -46,6 +47,29 @@ abstract class RowNode {
 
     /// Describes this node's shape for a message about the wrong verb being used on it.
     abstract String kind();
+
+    /// Stages one instance of this field from `value`, a value in the form the reader's
+    /// `getValue` returns for the field: a null instance for `null`, and otherwise the setter
+    /// the field's declared type takes, recursing into a struct's fields, a list's elements and
+    /// a map's entries.
+    ///
+    /// @throws IllegalArgumentException if `value` is not the form the field's type takes
+    abstract void writeValue(Object value);
+
+    /// The rejection for a value [#writeValue] cannot write into this field.
+    final IllegalArgumentException wrongValue(Object value, String expected) {
+        if (value instanceof PqVariant) {
+            return new IllegalArgumentException("Field " + path
+                    + " was given a PqVariant; VARIANT values cannot be written");
+        }
+        return new IllegalArgumentException("Field " + path + " is " + description() + " and takes " + expected
+                + "; it was given a " + value.getClass().getSimpleName());
+    }
+
+    /// This node's type for [#wrongValue], which a leaf refines with its annotation.
+    String description() {
+        return "a " + kind();
+    }
 
     /// The rejection for a filler that re-enters the scope it is already inside — calling
     /// `writeRow` from within a record's filler, or `addStruct` from within its own. The
