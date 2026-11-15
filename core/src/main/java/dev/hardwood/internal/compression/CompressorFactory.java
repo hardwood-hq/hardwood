@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.compression;
 
+import dev.hardwood.internal.compression.CodecLibraries.Library;
 import dev.hardwood.internal.compression.lz4.Lz4RawCompressor;
 import dev.hardwood.metadata.CompressionCodec;
 
@@ -30,27 +31,19 @@ public class CompressorFactory {
             case UNCOMPRESSED -> new UncompressedCompressor();
             case GZIP -> new GzipCompressor();
             case SNAPPY -> {
-                CodecLibraries.require("org.xerial.snappy.Snappy",
-                        "SNAPPY",
-                        "org.xerial.snappy:snappy-java", "write");
+                CodecLibraries.require(Library.SNAPPY, "SNAPPY", "write");
                 yield new SnappyCompressor();
             }
             case ZSTD -> {
-                CodecLibraries.require("com.github.luben.zstd.Zstd",
-                        "ZSTD",
-                        "com.github.luben:zstd-jni", "write");
+                CodecLibraries.require(Library.ZSTD, "ZSTD", "write");
                 yield new ZstdCompressor();
             }
             case LZ4_RAW -> {
-                CodecLibraries.require("net.jpountz.lz4.LZ4Factory",
-                        "LZ4_RAW",
-                        "at.yawk.lz4:lz4-java", "write");
+                CodecLibraries.require(Library.LZ4, "LZ4_RAW", "write");
                 yield new Lz4RawCompressor();
             }
             case BROTLI -> {
-                CodecLibraries.require("com.aayushatharva.brotli4j.Brotli4jLoader",
-                        "BROTLI",
-                        "com.aayushatharva.brotli4j:brotli4j", "write");
+                CodecLibraries.require(Library.BROTLI, "BROTLI", "write");
                 yield new BrotliCompressor();
             }
             case LZ4 -> throw new UnsupportedOperationException(
