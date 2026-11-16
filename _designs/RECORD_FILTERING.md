@@ -133,7 +133,7 @@ Tests: `BatchMatcherOracleTest`, `PredicatePathAgreementTest`.
 
 A filtered `ColumnReaders` is a grouped read over `decoded()` plus a per-batch **selection**; a single `ColumnReader` with a filter is a one-column group (`ParquetFileReader.buildSingleColumnReader`). `ColumnScan` owns one `ColumnCursor` per decoded column over one shared `ReadEngine`, which keeps all columns row-aligned regardless of each column's page-skip capability.
 
-**Selection, once per batch.** On each advance `ColumnScan` polls the cursors, checks lockstep (every column produced a batch of the same record count, or `IllegalStateException`), and asks `SelectionEngine.computeSelection` for the ascending indices of the matching records. It returns `-1` when every record matches, and compaction is skipped. The selection is computed from the pre-compaction batches and applied to every payload cursor before the next advance; a payload column that is also a predicate column is read before it is compacted.
+**Selection, once per batch.** On each advance `ColumnScan` polls the cursors, checks lockstep (every column produced a batch of the same record count, or `IllegalStateException`), and asks `SelectionEngine.computeSelection` for the ascending indices of the matching records. It returns `-1` when every record matches, and compaction is skipped. The selection is computed from the pre-compaction batches and applied to every payload cursor before the next advance; a payload column that is also a predicate column is read before it is compacted. A batch whose selection is empty is passed over within the same advance, so the caller never sees a batch of no records.
 
 `SelectionEngine` has one of two backends, fixed before the read starts:
 

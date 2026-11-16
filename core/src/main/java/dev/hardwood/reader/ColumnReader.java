@@ -125,7 +125,8 @@ public class ColumnReader implements Closeable {
 
     // ==================== Batch Iteration ====================
 
-    /// Advance to the next batch.
+    /// Advance to the next batch. A batch holds at least one record: under a filter, the
+    /// batches the filter keeps no record of are passed over.
     ///
     /// **One reader advances only itself.** Readers built separately — each from its own
     /// [ParquetFileReader#buildColumnReader(String)] — are independent cursors, and the

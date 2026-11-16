@@ -129,11 +129,12 @@ public class ColumnReaders implements Closeable {
     /// [IllegalStateException].
     ///
     /// All readers share one pipeline, so they always publish batches at the same row
-    /// boundaries. This method advances that pipeline once and returns:
+    /// boundaries. This method advances that pipeline to its next batch and returns:
     ///
     /// - `true` when a new batch is available — callers can then read values via the
     ///   per-column accessors. The aligned record count is exposed through
-    ///   [#getRecordCount()].
+    ///   [#getRecordCount()], and is at least one: under a filter, the batches the filter
+    ///   keeps no record of are passed over.
     /// - `false` when the readers are exhausted — partial advancement is impossible
     ///   because all readers consume from the shared pipeline, so once one is done they
     ///   all are.
