@@ -24,6 +24,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Compari
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.PreparedRead;
@@ -102,9 +103,9 @@ class FlatBinaryViewsTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
             InputFile inputFile = InputFile.of(FILE);
             inputFile.open();
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+            BatchExchange<FlatBatch> exchange = BatchExchange.detaching(
                     schema.getColumn(0).name(), () -> {
-                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        FlatBatch b = new FlatBatch();
                         b.matches = new long[1];
                         return b;
                     }, batch -> batch.capacity, 10);
@@ -115,7 +116,7 @@ class FlatBinaryViewsTest {
             try (ReadEngine engine = prepared.start(decoded, flat, NestedIndexMode.ALL_ITEMS, false, 10, 10,
                     List.of(exchange), new ColumnBatchMatcher[]{ filter })) {
                 List<BinaryBatchValues> batches = new ArrayList<>();
-                BatchExchange.Batch batch;
+                FlatBatch batch;
                 while ((batch = exchange.poll()) != null) {
                     BinaryBatchValues values = (BinaryBatchValues) batch.values;
                     if (readViews && batches.isEmpty()) {

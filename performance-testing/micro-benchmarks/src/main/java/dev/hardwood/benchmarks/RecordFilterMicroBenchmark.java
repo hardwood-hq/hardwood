@@ -38,7 +38,7 @@ import dev.hardwood.internal.predicate.MergePlanEvaluator;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -94,7 +94,7 @@ public class RecordFilterMicroBenchmark {
 
     // Batch-matcher state — populated whenever the predicate is batch-eligible.
     private CompiledBatchFilter batchCompiled;
-    private BatchExchange.Batch[] batchBatches;
+    private FlatBatch[] batchBatches;
     private long[] batchCombined;
     // Per-column match bitmaps, indexed by projected column; entries for
     // columns with no matcher stay null. Reused across invocations.
@@ -152,7 +152,7 @@ public class RecordFilterMicroBenchmark {
             return;
         }
         ColumnBatchMatcher[] fragments = cf.columnMatchers();
-        BatchExchange.Batch[] batches = batchBatches;
+        FlatBatch[] batches = batchBatches;
         long[][] perColumn = batchPerColumnMatches;
         for (int c = 0; c < fragments.length; c++) {
             ColumnBatchMatcher m = fragments[c];
@@ -225,12 +225,12 @@ public class RecordFilterMicroBenchmark {
         return out;
     }
 
-    /// Builds parallel typed-array [BatchExchange.Batch]es from the same row data
+    /// Builds parallel typed-array [FlatBatch]es from the same row data
     /// used by `legacy` and `compiled`, ensuring all three benchmarks evaluate
     /// the same predicate on the same values. The returned array is indexed by
     /// projected column index (id=0, value=1, tag=2, flag=3).
-    private static BatchExchange.Batch[] buildMatcherBatches(StructAccessor[] sourceRows, int columnCount) {
-        BatchExchange.Batch[] out = new BatchExchange.Batch[columnCount];
+    private static FlatBatch[] buildMatcherBatches(StructAccessor[] sourceRows, int columnCount) {
+        FlatBatch[] out = new FlatBatch[columnCount];
         int n = sourceRows.length;
         long[] ids = new long[n];
         double[] values = new double[n];
@@ -250,8 +250,8 @@ public class RecordFilterMicroBenchmark {
         return out;
     }
 
-    private static BatchExchange.Batch batch(Object values, int recordCount) {
-        BatchExchange.Batch b = new BatchExchange.Batch();
+    private static FlatBatch batch(Object values, int recordCount) {
+        FlatBatch b = new FlatBatch();
         b.values = values;
         // Schema is REQUIRED across all columns; `validity = null` is the
         // sparse representation of "every leaf in this batch is present."

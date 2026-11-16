@@ -14,8 +14,8 @@ import java.util.Arrays;
 import dev.hardwood.Experimental;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.LeafCompaction;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
@@ -85,8 +85,8 @@ public class ColumnReader implements Closeable {
     private final boolean groupMember;
 
     // Current batch state, adopted from the payload cursor (flat uses
-    // BatchExchange.Batch, nested uses NestedBatch)
-    private BatchExchange.Batch currentFlatBatch;
+    // FlatBatch, nested uses NestedBatch)
+    private FlatBatch currentFlatBatch;
     private NestedBatch currentNestedBatch;
     private int recordCount;
 

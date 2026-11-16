@@ -11,7 +11,7 @@ import java.util.Arrays;
 
 /// Word-shape bitmap helpers shared by the validity producers
 /// ([dev.hardwood.internal.reader.pipeline.FlatFill], [NestedLevelComputer]). Set-bit-= -present
-/// polarity, matching [BatchExchange.Batch#validity].
+/// polarity, matching [FlatBatch#validity].
 public final class BitmapWords {
 
     private BitmapWords() {

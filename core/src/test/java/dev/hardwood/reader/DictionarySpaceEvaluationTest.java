@@ -22,8 +22,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,7 +47,7 @@ class DictionarySpaceEvaluationTest {
                      .build()) {
             assertThat(rows.hasNext()).isTrue();
 
-            BatchExchange.Batch batch = currentFlatBatch(rows);
+            FlatBatch batch = currentFlatBatch(rows);
             BinaryBatchValues values = (BinaryBatchValues) batch.values;
             int[] activeIndices = Arrays.copyOf(values.dictIndices, batch.recordCount);
             assertThat(activeIndices).contains(-1);
@@ -129,10 +129,10 @@ class DictionarySpaceEvaluationTest {
         return labels;
     }
 
-    private static BatchExchange.Batch currentFlatBatch(RowReader reader)
+    private static FlatBatch currentFlatBatch(RowReader reader)
             throws ReflectiveOperationException {
         Field field = reader.getClass().getDeclaredField("previousBatches");
         field.setAccessible(true);
-        return ((BatchExchange.Batch[]) field.get(reader))[0];
+        return ((FlatBatch[]) field.get(reader))[0];
     }
 }

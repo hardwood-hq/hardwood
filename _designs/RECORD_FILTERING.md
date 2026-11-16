@@ -156,7 +156,7 @@ Tests: `ColumnReaderExactFilterTest`.
 
 ### Homogeneous batches
 
-When a filter is installed, the read's batch plan closes the batch in progress before a row group whose `filterAlwaysMatches` differs from the batch's ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), and every column stamps the plan's flag on the batches it publishes (`Batch.filterAlwaysMatches`, `NestedBatch.filterAlwaysMatches`). Every column of a read follows the one plan, so all columns close their batches at the same rows and a batch is either wholly proven or wholly undecided. Unfiltered reads do not close batches on the flag.
+When a filter is installed, the read's batch plan closes the batch in progress before a row group whose `filterAlwaysMatches` differs from the batch's ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), and every column stamps the plan's flag on the batches it publishes (`FlatBatch.filterAlwaysMatches`, `NestedBatch.filterAlwaysMatches`). Every column of a read follows the one plan, so all columns close their batches at the same rows and a batch is either wholly proven or wholly undecided. Unfiltered reads do not close batches on the flag.
 
 A column reads the flag of its own batch; a reader reads it from the first payload column's batch, which speaks for the step:
 

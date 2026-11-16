@@ -16,10 +16,11 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.schema.ColumnSchema;
 
-/// The work of one column for one planned batch: the batch it fills and the [Segment]s placed
-/// into it in page order.
+/// A flat column's batch under construction: the work of one column for one batch of the
+/// batch plan, the [FlatBatch] it fills and the [Segment]s placed into it in page order.
 ///
 /// A cell goes through these steps, each once:
 ///
@@ -39,7 +40,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// the cell's values without a lock; the validity words at the edges of a segment's bits are
 /// merged atomically ([FlatFill]). A binary column's segments copy their plain bytes into chunks
 /// of their own ([BinaryFill]), so no fill waits for another.
-public final class Cell implements BatchCell<BatchExchange.Batch> {
+public final class Cell implements BatchCell<FlatBatch> {
 
     /// [#plannedRecords] of a cell whose batch the plan leaves open past the row group it opens in.
     static final int UNKNOWN_RECORDS = -1;
@@ -62,15 +63,15 @@ public final class Cell implements BatchCell<BatchExchange.Batch> {
     /// The records the plan puts in the batch when the plan closes it in the row group it opens
     /// in, [#UNKNOWN_RECORDS] otherwise.
     final int plannedRecords;
-    /// The records the batch's arrays take: [#plannedRecords], or the batch capacity when the plan
+    /// The records the arrays of the column's batch take: [#plannedRecords], or the batch capacity when the plan
     /// leaves the batch open.
     final int capacity;
     /// The read's row of the batch's first record.
     final long firstRow;
 
-    /// The batch, created by [#allocate].
-    private BatchExchange.Batch batch;
-    /// Set once [#batch] holds its arrays.
+    /// The column's batch, created by [#allocate].
+    private FlatBatch columnBatch;
+    /// Set once [#columnBatch] holds its arrays.
     private volatile boolean allocated;
     private final ReentrantLock allocation = new ReentrantLock();
 
@@ -117,17 +118,17 @@ public final class Cell implements BatchCell<BatchExchange.Batch> {
         return segment;
     }
 
-    /// Takes the cell's batch from `exchange` and gives it a value array of at least [#capacity]
-    /// values, unless a task already did: a returned holder's array when it is large enough, a new
-    /// one otherwise. Runs on the first task that reaches the cell; another that reaches it
+    /// Takes the holder the cell fills from `exchange` (a returned one, in recycling mode, or a
+    /// new one) and gives it a value array of at least [#capacity] values, unless a task already
+    /// did: a returned holder's array when it is large enough, a new one otherwise. Runs on the first task that reaches the cell; another that reaches it
     /// meanwhile parks on the cell's lock until the array exists, rather than spinning while it is
     /// zeroed, and the lock orders the array's creation before its writes into it.
-    public BatchExchange.Batch allocate(BatchExchange<BatchExchange.Batch> exchange, ColumnSchema column) {
+    public FlatBatch allocate(BatchExchange<FlatBatch> exchange, ColumnSchema column) {
         if (!allocated) {
             allocation.lock();
             try {
                 if (!allocated) {
-                    BatchExchange.Batch taken = exchange.newBatch();
+                    FlatBatch taken = exchange.newBatch();
                     if (taken.values == null || taken.capacity < capacity) {
                         taken.values = BatchExchange.allocateArray(column, capacity);
                         taken.capacity = capacity;
@@ -138,7 +139,7 @@ public final class Cell implements BatchCell<BatchExchange.Batch> {
                     if (taken.values instanceof BinaryBatchValues binary) {
                         binary.prepareForFill();
                     }
-                    batch = taken;
+                    columnBatch = taken;
                     allocated = true;
                 }
             }
@@ -146,7 +147,7 @@ public final class Cell implements BatchCell<BatchExchange.Batch> {
                 allocation.unlock();
             }
         }
-        return batch;
+        return columnBatch;
     }
 
     @Override
@@ -164,17 +165,17 @@ public final class Cell implements BatchCell<BatchExchange.Batch> {
         completed = true;
     }
 
-    /// The batch, once [#allocate] ran.
+    /// The column's batch, once [#allocate] ran.
     @Override
-    public BatchExchange.Batch batch() {
-        return batch;
+    public FlatBatch columnBatch() {
+        return columnBatch;
     }
 
     @Override
     public void release() {
         segments.clear();
         lastPage = null;
-        batch = null;
+        columnBatch = null;
         validity = null;
     }
 

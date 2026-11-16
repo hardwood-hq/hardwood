@@ -25,9 +25,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.internal.predicate.BinaryBatchMatcher;
 import dev.hardwood.internal.predicate.DictionaryBinaryBatchMatcher;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,7 +51,7 @@ class DictionaryBinaryBatchMatcherTest {
         assertThat(delegate.callsFor("match")).isEqualTo(1);
         assertThat(delegate.callsFor("never")).isZero();
 
-        BatchExchange.Batch secondBatch = binaryBatch(
+        FlatBatch secondBatch = binaryBatch(
                 dictionary, new int[]{2, 0, 1}, null,
                 utf8("c"), utf8("a"), utf8("match"));
         assertThat(run(matcher, secondBatch)).containsExactly(1L << 2);
@@ -114,7 +114,7 @@ class DictionaryBinaryBatchMatcherTest {
     void delegatesAPlainBatchToTheOptimizedWholeBatchOperation() {
         CountingMatcher delegate = new CountingMatcher();
         DictionaryBinaryBatchMatcher matcher = new DictionaryBinaryBatchMatcher(delegate);
-        BatchExchange.Batch batch = binaryBatch(
+        FlatBatch batch = binaryBatch(
                 null, null, null, utf8("a"), utf8("match"), utf8("c"));
 
         assertThat(run(matcher, batch)).containsExactly(0b010L);
@@ -128,7 +128,7 @@ class DictionaryBinaryBatchMatcherTest {
             String description, BinaryBatchMatcher delegate, long expected) throws Exception {
         Dictionary.ByteArrayDictionary dictionary =
                 dictionary(utf8("a"), utf8("b"), utf8("c"));
-        BatchExchange.Batch batch = binaryBatch(
+        FlatBatch batch = binaryBatch(
                 dictionary, new int[]{0, 1, 2}, null,
                 utf8("a"), utf8("b"), utf8("c"));
 
@@ -145,8 +145,8 @@ class DictionaryBinaryBatchMatcherTest {
         for (int i = 0; i < indices.length; i++) {
             indices[i] = i;
         }
-        BatchExchange.Batch packed = binaryBatch(null, null, null, values);
-        BatchExchange.Batch dictionaryBacked =
+        FlatBatch packed = binaryBatch(null, null, null, values);
+        FlatBatch dictionaryBacked =
                 binaryBatch(dictionary(values), indices, null, values);
 
         long[] expected = run(delegate, packed);
@@ -274,7 +274,7 @@ class DictionaryBinaryBatchMatcherTest {
                 new BinaryInBatchMatcher(members, comparison), values));
     }
 
-    private static long[] run(BinaryBatchMatcher matcher, BatchExchange.Batch batch) {
+    private static long[] run(BinaryBatchMatcher matcher, FlatBatch batch) {
         long[] out = new long[(batch.recordCount + 63) >>> 6];
         matcher.test(batch, out);
         int tail = batch.recordCount & 63;
@@ -284,7 +284,7 @@ class DictionaryBinaryBatchMatcherTest {
         return out;
     }
 
-    private static BatchExchange.Batch binaryBatch(
+    private static FlatBatch binaryBatch(
             Dictionary.ByteArrayDictionary dictionary, int[] dictionaryIndices,
             long[] validity, byte[]... values) {
         int[] offsets = new int[values.length + 1];
@@ -301,7 +301,7 @@ class DictionaryBinaryBatchMatcherTest {
         binaryValues.dictionary = dictionary;
         binaryValues.dictIndices = dictionaryIndices;
 
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+        FlatBatch batch = new FlatBatch();
         batch.values = binaryValues;
         batch.validity = validity;
         batch.recordCount = values.length;
@@ -337,7 +337,7 @@ class DictionaryBinaryBatchMatcherTest {
         private int valueCalls;
 
         @Override
-        public void test(BatchExchange.Batch batch, long[] outWords) {
+        public void test(FlatBatch batch, long[] outWords) {
             batchCalls++;
             outWords[0] = 0b010L;
         }

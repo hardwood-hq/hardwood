@@ -30,6 +30,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.PreparedRead;
@@ -73,7 +74,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// nullable validity reference on the hot path so the per-row check
     /// stays a single word load + mask. Sized for the largest batch
     /// [BatchSizing] will produce, so any in-range row index reads as
-    /// present. Set-bit-= -present polarity, matching [BatchExchange.Batch#validity].
+    /// present. Set-bit-= -present polarity, matching [FlatBatch#validity].
     static final long[] ALL_PRESENT = allOnes();
 
     /// The survivor bitmap of a batch statistics proved to match in full, sized like
@@ -89,7 +90,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// Sentinel for the `maxRows` / row-limit contract meaning "no limit".
     static final long UNLIMITED = 0L;
 
-    private final BatchExchange<BatchExchange.Batch>[] exchanges;
+    private final BatchExchange<FlatBatch>[] exchanges;
     private final int columnCount;
 
     /// The field position of each column of the caller's projection (see
@@ -127,7 +128,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final double[][] doubleValues;
     private final boolean[][] booleanValues;
     private final BinaryBatchValues[] binaryValues;
-    private final BatchExchange.Batch[] previousBatches;
+    private final FlatBatch[] previousBatches;
 
     /// The struct state, or `null` when every top-level field is a primitive.
     private final FlatStructs structs;
@@ -205,7 +206,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// [dev.hardwood.reader.ParquetFileReader] tracking it.
     private final ReadEngine engine;
 
-    private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges,
+    private FlatRowReader(BatchExchange<FlatBatch>[] exchanges,
                          FileSchema fileSchema, ProjectedSchema payload, FlatStructs structs,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
                          RowMatcher recordMatcher, PredicateView predicateView, RecordFilterTally tally,
@@ -218,7 +219,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.exchanges = exchanges;
         this.columnCount = exchanges.length;
         this.structs = structs;
-        this.previousBatches = new BatchExchange.Batch[columnCount];
+        this.previousBatches = new FlatBatch[columnCount];
         this.matchMerger = matchMerger;
 
         // Cache each field's name and metadata, for the exposed fields only
@@ -307,7 +308,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         //
         // Nothing here asks a question about the read as a whole, so nothing here plans
         // beyond the first file: statistics reach both filtering paths per row group,
-        // on Batch.filterAlwaysMatches (see #1107).
+        // on FlatBatch.filterAlwaysMatches (see #1107).
 
         // Try the batch-matcher path first. tryCompile returns null for any non-eligible
         // predicate; null falls through to the record-matcher path below.
@@ -340,7 +341,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // stay row-aligned. Under a filter the cap counts matching rows: the plan holds it
         // only while statistics prove every row of the row groups it reaches matches.
         @SuppressWarnings("unchecked")
-        BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
+        BatchExchange<FlatBatch>[] buffers = new BatchExchange[projectedColumnCount];
         ColumnBatchMatcher[] columnFilters = new ColumnBatchMatcher[projectedColumnCount];
 
         for (int i = 0; i < projectedColumnCount; i++) {
@@ -348,14 +349,14 @@ public final class FlatRowReader implements FileAwareRowReader {
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
             // Allocate matches[] only when this column actually has a filter installed.
-            // Other columns leave Batch.matches null; the merger reads only the columns its plan references.
+            // Other columns leave FlatBatch.matches null; the merger reads only the columns its plan references.
             final boolean allocateMatches =
                     batchMatchers && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
             // A leaf whose definition levels tell whether a struct above it is null keeps them.
             final boolean keepsLevels = structs != null && structs.keepsLevels(i);
-            BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recyclingEveryHolder(
+            BatchExchange<FlatBatch> buffer = BatchExchange.recyclingEveryHolder(
                     columnSchema.name(), () -> {
-                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        FlatBatch b = new FlatBatch();
                         b.values = BatchExchange.allocateArray(columnSchema, batchSize);
                         if (b.values instanceof BinaryBatchValues binary) {
                             binary.keepChunks();
@@ -1120,7 +1121,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     ///         batch of another size than the first column's
     private boolean pollColumns(int from, int to) throws IOException {
         for (int i = from; i < to; i++) {
-            BatchExchange.Batch batch;
+            FlatBatch batch;
             try {
                 batch = exchanges[i].poll();
             }

@@ -160,7 +160,7 @@ final class BatchPublisher {
                 passed(c, i);
                 continue;
             }
-            if (!b.complete(c) || !exchange.tryPublish(b.cell(c).batch())) {
+            if (!b.complete(c) || !exchange.tryPublish(b.cell(c).columnBatch())) {
                 return;
             }
             b.cell(c).release();

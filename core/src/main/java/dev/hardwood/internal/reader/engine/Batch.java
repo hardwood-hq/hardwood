@@ -13,7 +13,9 @@ import java.util.List;
 import dev.hardwood.internal.reader.pipeline.BatchCell;
 
 /// One batch of a read's batch plan, which may span row groups: per column, the cell its
-/// placement opened for it and whether the cell is complete. Written under the read's lock.
+/// placement opened for it and whether the cell is complete. A batch spans every decoded column
+/// and holds no values: each column's cell builds the column's batch for it (a `FlatBatch` or a
+/// `NestedBatch`), which the column publishes to its consumer. Written under the read's lock.
 final class Batch {
 
     /// the key of its first row, and the key past its last row of the row groups batched so far

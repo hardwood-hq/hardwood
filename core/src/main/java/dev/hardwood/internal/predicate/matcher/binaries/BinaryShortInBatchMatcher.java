@@ -9,8 +9,8 @@ package dev.hardwood.internal.predicate.matcher.binaries;
 
 import dev.hardwood.internal.predicate.BinaryBatchMatcher;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// `value IN (members)`, or `value NOT IN (members)` when negated, over a byte-array column whose
 /// equality is byte equality, where at least one member is at most eight bytes long. Rows are
@@ -48,7 +48,7 @@ public final class BinaryShortInBatchMatcher implements BinaryBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         int n = batch.recordCount;
         equality.test((BinaryBatchValues) batch.values, n, outWords);
         if (negated) {

@@ -220,7 +220,7 @@ public final class BatchFilterCompiler {
         // matchers during recursion; we just splice their sub-plans in. Two
         // mixed-column siblings claiming the same column, or a single-column
         // bucket whose column was already claimed elsewhere, both reject —
-        // `Batch.matches[c]` can hold only one per-row bitmap.
+        // `FlatBatch.matches[c]` can hold only one per-row bitmap.
         Map<Integer, ColumnBatchMatcher> singleColumnBuckets = new LinkedHashMap<>(n);
         Set<Integer> touchedColumns = new HashSet<>(n);
         List<Result> mixedResults = new ArrayList<>(n);

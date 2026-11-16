@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.longs;
 
 import dev.hardwood.internal.predicate.LongBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 public final class LongEqBatchMatcher implements LongBatchMatcher {
 
@@ -19,7 +19,7 @@ public final class LongEqBatchMatcher implements LongBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         long[] vals = (long[]) batch.values;
         int n = batch.recordCount;
         long lit = literal;

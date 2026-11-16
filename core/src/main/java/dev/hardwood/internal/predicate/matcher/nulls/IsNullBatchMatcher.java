@@ -8,14 +8,14 @@
 package dev.hardwood.internal.predicate.matcher.nulls;
 
 import dev.hardwood.internal.predicate.NullBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// IS NULL: bit `i` is set iff row `i` is null. Bulk-inverts the validity
 /// bitmap (set bit = present) across the live range.
 public final class IsNullBatchMatcher implements NullBatchMatcher {
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         long[] validity = batch.validity;
         int wordsForN = (batch.recordCount + 63) >>> 6;
 

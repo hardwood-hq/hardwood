@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.doubles;
 
 import dev.hardwood.internal.predicate.DoubleBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// IN-list matcher for `double` columns. Linear scan over the value list — IN lists
 /// in practice have only a handful of entries. Compares with [Double#compare] to implement
@@ -22,7 +22,7 @@ public final class DoubleInBatchMatcher implements DoubleBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         double[] vals = (double[]) batch.values;
         int n = batch.recordCount;
         int fullWords = n >>> 6;

@@ -10,8 +10,8 @@ package dev.hardwood.internal.reader.batch;
 /// Batch holder for nested schemas, filled by
 /// [dev.hardwood.internal.reader.pipeline.NestedCell#fill].
 ///
-/// This is a separate class from [BatchExchange.Batch] (not a subclass) so
-/// that the JIT's class hierarchy analysis keeps `Batch` as a leaf type,
+/// This is a separate class from [FlatBatch] (not a subclass) so
+/// that the JIT's class hierarchy analysis keeps `FlatBatch` as a leaf type,
 /// preserving field-access optimizations on the flat hot path.
 ///
 /// A nested batch is filled as its cell completes

@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.floats;
 
 import dev.hardwood.internal.predicate.FloatBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// IN-list matcher for `float` columns. Compares with [Float#compare] to implement the total
 /// order, equating all NaNs and distinguishing `-0.0` from `+0.0`.
@@ -21,7 +21,7 @@ public final class FloatInBatchMatcher implements FloatBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         float[] vals = (float[]) batch.values;
         int n = batch.recordCount;
         int fullWords = n >>> 6;

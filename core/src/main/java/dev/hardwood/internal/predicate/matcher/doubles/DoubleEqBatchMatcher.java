@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.doubles;
 
 import dev.hardwood.internal.predicate.DoubleBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 public final class DoubleEqBatchMatcher implements DoubleBatchMatcher {
 
@@ -19,7 +19,7 @@ public final class DoubleEqBatchMatcher implements DoubleBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         double[] vals = (double[]) batch.values;
         int n = batch.recordCount;
         double lit = literal;
