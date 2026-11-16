@@ -78,13 +78,28 @@ public interface Validity {
             return NO_NULLS;
         }
         // set-bit = present, so set a bit for every non-null item and leave nulls clear.
+        // Each word is built in a local with a conditional select rather than a branch,
+        // which mispredicts on random null masks.
         long[] words = new long[(nulls.length + 63) >>> 6];
-        for (int i = 0; i < nulls.length; i++) {
-            if (!nulls[i]) {
-                words[i >>> 6] |= 1L << i;
-            }
+        int fullWords = nulls.length >>> 6;
+        for (int w = 0; w < fullWords; w++) {
+            words[w] = presentBits(nulls, w << 6, 64);
+        }
+        int tail = nulls.length & 63;
+        if (tail != 0) {
+            words[fullWords] = presentBits(nulls, fullWords << 6, tail);
         }
         return new BackedValidity(words);
+    }
+
+    /// Packs `count` (at most 64) entries of `nulls` from `base` into one word, setting
+    /// bit `b` iff `nulls[base + b]` is `false`.
+    private static long presentBits(boolean[] nulls, int base, int count) {
+        long word = 0L;
+        for (int b = 0; b < count; b++) {
+            word |= (nulls[base + b] ? 0L : 1L) << b;
+        }
+        return word;
     }
 
     /// `false` for [#NO_NULLS]; `true` for a backed validity, regardless of
