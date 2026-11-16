@@ -26,7 +26,8 @@ final class BatchPublisher {
     private final int batchRows;
     /// the rows a decode may start past the first row some column has not published
     private final long capRows;
-    /// every batch added, in row order; `null` once every column has published it
+    /// every batch added, in row order; `null` once every column has published it. A batch keeps
+    /// its index, which its cells record as they are opened
     private final List<Batch> batches = new ArrayList<>();
     /// per column, the next batch it publishes, and the next its placement opens a cell in
     private final int[] published;
@@ -59,14 +60,17 @@ final class BatchPublisher {
 
     /// The column's placement opened `cell` at its next batch it is read in.
     void open(int column, BatchCell<?> cell) {
-        Batch b = batches.get(opened[column]++);
+        int i = opened[column]++;
+        Batch b = batches.get(i);
         while (b == null || b.skips(column)) {
-            b = batches.get(opened[column]++);
+            i = opened[column]++;
+            b = batches.get(i);
         }
         if (b.row() != cell.firstRow()) {
             throw new IllegalStateException("Column " + column + " opens a batch at row " + cell.firstRow()
                     + ", the plan at " + b.row());
         }
+        cell.batchIndex(i);
         b.open(column, cell);
     }
 
@@ -78,7 +82,7 @@ final class BatchPublisher {
         publishable.set(column);
     }
 
-    /// The batch holding the column's `cell`: one of the last it opened.
+    /// The batch holding the column's `cell`.
     Batch of(int column, BatchCell<?> cell) {
         Batch b = find(column, cell);
         if (b == null) {
@@ -100,16 +104,11 @@ final class BatchPublisher {
         }
     }
 
-    /// The batch holding the column's `cell`, searched back from the last the column opened;
-    /// `null` where every column has published it.
+    /// The batch holding the column's `cell`, at the index the cell was opened at; `null` where
+    /// the column has published it.
     private Batch find(int column, BatchCell<?> cell) {
-        for (int i = opened[column] - 1; i >= head; i--) {
-            Batch b = batches.get(i);
-            if (b != null && b.cell(column) == cell) {
-                return b;
-            }
-        }
-        return null;
+        Batch b = batches.get(cell.batchIndex());
+        return b != null && b.cell(column) == cell ? b : null;
     }
 
     /// The column's `cell` is complete: its batch can be published.

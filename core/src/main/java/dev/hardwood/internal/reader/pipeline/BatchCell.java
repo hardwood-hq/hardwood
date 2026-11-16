@@ -21,6 +21,11 @@ public interface BatchCell<B> {
     /// The read's row of the batch's first record.
     long firstRow();
 
+    /// The index of its batch among the read's batches, set as the cell is opened.
+    int batchIndex();
+
+    void batchIndex(int index);
+
     /// Whether the cell is completed and waits to be published; read and set under the column
     /// lock.
     boolean isCompleted();

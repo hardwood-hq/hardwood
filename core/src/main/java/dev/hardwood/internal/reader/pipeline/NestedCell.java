@@ -44,6 +44,8 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     final String fileName;
     final boolean alwaysMatches;
     private final long firstRow;
+    /// The index of its batch among the read's batches, set as the cell is opened.
+    private int batchIndex = -1;
 
     private final List<NestedSegment> segments = new ArrayList<>(2);
     private int records;
@@ -142,6 +144,16 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     /// Sets the column's batch the cell's fill produced.
     void filled(NestedBatch columnBatch) {
         this.columnBatch = columnBatch;
+    }
+
+    @Override
+    public int batchIndex() {
+        return batchIndex;
+    }
+
+    @Override
+    public void batchIndex(int index) {
+        batchIndex = index;
     }
 
     @Override
