@@ -499,8 +499,9 @@ final class RowGroupPlanner {
         }
     }
 
-    /// Takes the unit's batches from the batch plan, its first rows continuing the batch the unit
-    /// before left open where the plan says so, and hands its pages and ranges to [PageTracker].
+    /// Takes the unit's batches from the batch plan and hands them to [BatchPublisher], which
+    /// makes each as the read reaches it, its first rows continuing the batch the unit before left
+    /// open where the plan says so; then hands its pages and ranges to [PageTracker].
     private void takeBatches(Unit.Planned planned) {
         UnitListing u = planned.listing();
         BatchPlan.RowGroupBatches batches = batchPlan.plan(u.index(), u.fileIndex(), u.file().name(),
@@ -511,19 +512,13 @@ final class RowGroupPlanner {
             // the row cap ends the read in it: no further file is listed
             budget = 0;
         }
-        long first = u.base();
-        for (int i = 0; i < batches.segmentCount(); i++) {
-            if (i > 0 || batches.continuedRows() == 0) {
-                publisher.add(new Batch(first, batches.readRowsBefore() + first - u.base(), schemas.length));
-            }
-            first += batches.segmentRows(i);
-            publisher.last().extendTo(first);
-            for (int c = 0; c < schemas.length; c++) {
-                if (pages.skips(u, c)) {
-                    publisher.skipLast(c);
-                }
+        BitSet skipped = new BitSet(schemas.length);
+        for (int c = 0; c < schemas.length; c++) {
+            if (pages.skips(u, c)) {
+                skipped.set(c);
             }
         }
+        publisher.add(batches, u.base(), skipped);
         for (int c = 0; c < schemas.length; c++) {
             if (p.plan().preloaded()[c] != null) {
                 chargePreloaded(p, c);

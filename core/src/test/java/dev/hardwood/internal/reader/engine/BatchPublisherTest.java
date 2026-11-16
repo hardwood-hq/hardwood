@@ -7,12 +7,14 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.util.BitSet;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
+import dev.hardwood.internal.reader.plan.BatchPlan;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,9 +32,7 @@ class BatchPublisherTest {
     /// look-ahead: the planning of the next is within need, and the look-ahead reaches to it.
     @Test
     void needReachesTheNextUnitWhileTheLastBatchMayGoOn() {
-        Batch open = new Batch(1000, 0, 1);
-        open.extendTo(1020);
-        publisher.add(open);
+        publisher.add(new BatchPlan(BATCH_ROWS, false, false, 0).plan(0, 0, "a", false, 20), 1000, new BitSet());
 
         JobScheduler.Position at = publisher.position(5000);
 
@@ -45,9 +45,7 @@ class BatchPublisherTest {
     void lookAheadReachesTheCapPastTheFirstUnpublishedRow() {
         BatchPublisher wide = new BatchPublisher(new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
         }, 1, 1000)), new ReadFailure(), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
-        Batch open = new Batch(1000, 0, 1);
-        open.extendTo(1020);
-        wide.add(open);
+        wide.add(new BatchPlan(BATCH_ROWS, false, false, 0).plan(0, 0, "a", false, 20), 1000, new BitSet());
 
         JobScheduler.Position at = wide.position(1020);
 
@@ -58,10 +56,9 @@ class BatchPublisherTest {
     /// A batch the plan has closed, by adding the next, ends the need where it ends.
     @Test
     void needEndsWithAClosedBatch() {
-        Batch closed = new Batch(1000, 0, 1);
-        closed.extendTo(1020);
-        publisher.add(closed);
-        publisher.add(new Batch(1020, 20, 1));
+        BatchPlan plan = new BatchPlan(BATCH_ROWS, true, false, 0);
+        publisher.add(plan.plan(0, 0, "a", false, 20), 1000, new BitSet());
+        publisher.add(plan.plan(1, 0, "a", false, 20), 1020, new BitSet());
 
         assertThat(publisher.position(5000).need()).isEqualTo(1100);
     }

@@ -45,7 +45,7 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     final boolean alwaysMatches;
     private final long firstRow;
     /// The index of its batch among the read's batches, set as the cell is opened.
-    private int batchIndex = -1;
+    private long batchIndex = -1;
 
     private final List<NestedSegment> segments = new ArrayList<>(2);
     private int records;
@@ -147,12 +147,12 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     }
 
     @Override
-    public int batchIndex() {
+    public long batchIndex() {
         return batchIndex;
     }
 
     @Override
-    public void batchIndex(int index) {
+    public void batchIndex(long index) {
         batchIndex = index;
     }
 

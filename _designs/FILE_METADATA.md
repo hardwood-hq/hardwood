@@ -109,6 +109,8 @@ Tests: `NestingDepthBoundTest`, `MalformedMetadataValidationTest`, `SchemaPathBo
 
 Every record holds a value, or a null, in each leaf column, so a chunk's `num_values` is at least its row group's `num_rows`. The read checks a column against its row group's rows through the pages it meets: the page against the chunk in the fetch plans, the records placed against the plan in `ColumnPlacer`. A chunk declaring no values yields no page for either check to meet, so `RowGroupReader` refuses it in a row group with rows.
 
+No row count from the footer sizes an allocation before the pages have confirmed it: the batch plan derives a row group's batches arithmetically from its `num_rows`, and the read makes each batch as it reaches it ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
+
 Tests: `MalformedMetadataValidationTest`.
 
 ### Enum values the reader does not know
