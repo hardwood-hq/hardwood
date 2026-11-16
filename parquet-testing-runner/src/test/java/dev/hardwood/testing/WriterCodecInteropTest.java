@@ -113,7 +113,7 @@ class WriterCodecInteropTest {
     /// store the level streams ahead of it as encoded. Swept over the repetition shapes, since
     /// those decide what is left to compress: a `REQUIRED` page has no level streams, so the
     /// whole page is compressed, and an `OPTIONAL_ALL_NULL` page has an empty value section,
-    /// which is still compressed.
+    /// which is stored as it is with `is_compressed` unset.
     static Stream<InteropCase> codecsV2() {
         return PARQUET_JAVA_CODECS.stream().flatMap(codec -> Stream.of(Nullability.values())
                 .flatMap(nullability -> sweep(List.of(codec), (type, c) -> InteropCase.of(

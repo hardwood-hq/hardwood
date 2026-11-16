@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.writer;
 
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -57,8 +58,10 @@ final class PageCompression {
     /// the place [#tryReserve()] reserved.
     ///
     /// @param levels the bytes stored uncompressed ahead of the body, which its CRC covers too
-    Page offer(Compressor compressor, byte[] levels, byte[] body, int length) {
-        Page page = new Page(compressor, levels, body, 0, length);
+    /// @param rawIfNotSmaller whether the body is stored as it is where compressing it does not
+    ///        shrink it
+    Page offer(Compressor compressor, byte[] levels, byte[] body, int length, boolean rawIfNotSmaller) {
+        Page page = new Page(compressor, levels, body, 0, length, rawIfNotSmaller);
         queue.add(page);
         Thread worker = parked.poll();
         if (worker != null) {
@@ -78,8 +81,11 @@ final class PageCompression {
     /// never queued.
     ///
     /// @param levels the bytes stored uncompressed ahead of the body, which its CRC covers too
-    Page compressHere(Compressor compressor, byte[] levels, byte[] body, int offset, int length) {
-        Page page = new Page(compressor, levels, body, offset, length);
+    /// @param rawIfNotSmaller whether the body is stored as it is where compressing it does not
+    ///        shrink it
+    Page compressHere(Compressor compressor, byte[] levels, byte[] body, int offset, int length,
+                      boolean rawIfNotSmaller) {
+        Page page = new Page(compressor, levels, body, offset, length, rawIfNotSmaller);
         page.claimed.set(true);
         page.run();
         return page;
@@ -124,7 +130,8 @@ final class PageCompression {
 
     /// One page body handed off, and once compressed, what is written for it: the levels a
     /// `DATA_PAGE_V2` stores uncompressed (empty for a `DATA_PAGE`, whose levels are part of the
-    /// body), then the compressed body.
+    /// body), then the body, compressed or, for a page that may store it raw and where compressing
+    /// does not shrink it, as it is.
     final class Page {
 
         private final Compressor compressor;
@@ -133,19 +140,23 @@ final class PageCompression {
         private byte[] body;
         private final int offset;
         private final int length;
+        private final boolean rawIfNotSmaller;
         /// Set once the body is compressed or has failed; the fields below are read after it.
         private volatile boolean done;
         private volatile Thread waiter;
         private byte[] stored;
+        private boolean compressed;
         private int crc;
         private Throwable failure;
 
-        private Page(Compressor compressor, byte[] levels, byte[] body, int offset, int length) {
+        private Page(Compressor compressor, byte[] levels, byte[] body, int offset, int length,
+                     boolean rawIfNotSmaller) {
             this.compressor = compressor;
             this.levels = levels;
             this.body = body;
             this.offset = offset;
             this.length = length;
+            this.rawIfNotSmaller = rawIfNotSmaller;
         }
 
         /// Takes the body for the calling thread to compress; `false` where another thread has.
@@ -161,7 +172,10 @@ final class PageCompression {
         /// it included, recording a failure for the chunk to raise.
         void run() {
             try {
-                stored = compressor.compress(body, offset, length);
+                byte[] out = compressor.compress(body, offset, length);
+                compressed = !rawIfNotSmaller || out.length < length;
+                // Copied: the body may be the chunk's buffer, which its next page overwrites.
+                stored = compressed ? out : Arrays.copyOfRange(body, offset, offset + length);
                 CRC32 checksum = new CRC32();
                 checksum.update(levels, 0, levels.length);
                 checksum.update(stored, 0, stored.length);
@@ -199,6 +213,11 @@ final class PageCompression {
 
         byte[] stored() {
             return stored;
+        }
+
+        /// Whether [#stored()] is the body compressed, rather than the body as it is.
+        boolean compressed() {
+            return compressed;
         }
 
         int crc() {

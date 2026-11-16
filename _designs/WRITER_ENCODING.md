@@ -51,7 +51,7 @@ A data page holds `[rep levels?][def levels?][value section]`, each level stream
 |---|---|---|
 | Level streams | each prefixed by its 4-byte little-endian length | unprefixed; their byte lengths are in the header |
 | Compressed | the whole body | the value section only; the level streams are stored as encoded, ahead of it |
-| `is_compressed` | — | `false` under `UNCOMPRESSED`, `true` under every other codec, an empty value section included |
+| `is_compressed` | — | `true` where the codec shrinks the value section, which is then stored compressed; `false` where it does not, an empty value section and every page under `UNCOMPRESSED` included, the value section then stored as encoded |
 | Header counts | `num_values` | `num_values`, `num_nulls` (entries without a value) and `num_rows` (the records the page holds) |
 
 A V2 page's `compressed_page_size` and `uncompressed_page_size` both include its level streams. The value section is the same bytes under either version, and so is the page cut: it charges no framing, and a page holds whole records under both.
@@ -60,7 +60,7 @@ The value section of an `RLE_DICTIONARY` page is `[1-byte index bit width][RLE/b
 
 The dictionary page is a `DICTIONARY_PAGE` header with `num_values` equal to the dictionary size and encoding `PLAIN`, over the distinct values `PLAIN`-encoded in index order. Indices are assigned in first-seen order. `is_sorted` is not written.
 
-Every page body, dictionary page included, is compressed with the file's codec before framing, a V2 page's level streams excepted, and every page header carries a CRC-32 over the page as stored: for a V2 page, its level streams followed by its compressed value section. No data page carries inline statistics: its bounds are in the page index.
+Every page body, dictionary page included, is compressed with the file's codec before framing, except a V2 page's level streams and a V2 value section the codec does not shrink, and every page header carries a CRC-32 over the page as stored: for a V2 page, its level streams followed by its compressed value section. No data page carries inline statistics: its bounds are in the page index.
 
 **Each page decodes without the page before it**, since a reader may seek to any page. A page encodes its value range standalone: its own `DELTA_BINARY_PACKED` header and first value, its own `DELTA_BYTE_ARRAY` prefix baseline (the page's first value has prefix length zero), its own byte streams for `BYTE_STREAM_SPLIT`, its own header, offset array and vectors for `ALP`. The only chunk-level state a page depends on is the encoding choice and, for `RLE_DICTIONARY`, the dictionary page.
 
