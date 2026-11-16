@@ -304,16 +304,23 @@ final class CellWriter {
     /// `failedAt`, and none past it: for a failure between two units, the batch open across them
     /// is published. A column short of the plan, where every unit before the failure is batched
     /// (`batchedToIt`), abandons its open cell, which moves the failure to it.
-
     void sealAt(Throwable failure, long failedAt, boolean batchedToIt) {
         for (int c = 0; c < columns.count(); c++) {
             long next = placers.get(c).nextRow();
-            // a column that placed all it was given up to the failure and stops short of it holds
+            // a column that placed all it was given before the failure and stops short of it holds
             // fewer rows than the plan
-            if (!placers.get(c).stopped() && (next == failedAt || next < failedAt && batchedToIt && placements.get(c).isEmpty())) {
+            if (!placers.get(c).stopped()
+                    && (next == failedAt || next < failedAt && batchedToIt && nothingBefore(c, failedAt))) {
                 stop(c, failure);
             }
         }
+    }
+
+    /// Whether `column` has no page left to place before the read's row `failedAt`: none given,
+    /// or only those of units at or past it, whose pages no job past the failure measures.
+    private boolean nothingBefore(int column, long failedAt) {
+        ChunkPlacement next = placements.get(column).peekFirst();
+        return next == null || next.placed == 0 && next.unit().listing().base() >= failedAt;
     }
 
     /// Stops `column`'s placement at `failure`: its open cell is sealed where the plan lets it
