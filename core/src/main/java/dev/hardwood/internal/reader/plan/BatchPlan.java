@@ -215,7 +215,7 @@ public final class BatchPlan {
         }
 
         /// Rows of the segments before segment `i`.
-        long rowsBefore(int i) {
+        public long rowsBefore(int i) {
             if (i == 0) {
                 return 0;
             }

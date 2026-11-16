@@ -22,9 +22,9 @@ public interface BatchCell<B> {
     long firstRow();
 
     /// The index of its batch among the read's batches, set as the cell is opened.
-    int batchIndex();
+    long batchIndex();
 
-    void batchIndex(int index);
+    void batchIndex(long index);
 
     /// Whether the cell is completed and waits to be published; read and set under the column
     /// lock.
