@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader.plan;
 import java.util.List;
 
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// The batch boundaries of one read, decided once for every decoded column.
@@ -151,7 +152,13 @@ public final class BatchPlan {
         int firstRows = (int) Math.min(capacity - openRows, rows);
         long rest = rows - firstRows;
         int lastRows = rest == 0 ? firstRows : (int) (rest % capacity == 0 ? capacity : rest % capacity);
-        int segmentCount = Math.toIntExact(1 + (rest + capacity - 1) / capacity);
+        long segments = 1 + rest / capacity + (rest % capacity == 0 ? 0 : 1);
+        if (segments > Integer.MAX_VALUE) {
+            // the footer's count, which no page has confirmed yet
+            throw new ParquetReadException("Malformed Parquet metadata: the read takes " + keptRows + " rows from the row group, more than "
+                    + Integer.MAX_VALUE + " batches of " + capacity + " rows");
+        }
+        int segmentCount = (int) segments;
         int rowsInLastBatch = segmentCount == 1 ? openRows + firstRows : lastRows;
         boolean lastOpen = !endsRead && !endsAtRowGroups && rowsInLastBatch < capacity;
 

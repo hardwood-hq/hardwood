@@ -101,6 +101,12 @@ final class ColumnContext {
         return withContext(null, e, fileName, rowGroup, ExceptionContext.UNKNOWN_PAGE);
     }
 
+    /// `e` met batching a row group, as [#withContext(Exception, String, int)] gives it: a
+    /// runtime failure stays one.
+    RuntimeException rowGroupFailure(RuntimeException e, String fileName, int rowGroup) {
+        return (RuntimeException) withContext(null, e, fileName, rowGroup, ExceptionContext.UNKNOWN_PAGE);
+    }
+
     private Exception withContext(String columnPath, Exception e, String fileName, int rowGroup, int page) {
         if (HardwoodContextImpl.isContextClosed(e)) {
             // the context's, not the file's, whichever thread of the read met the refusal first
