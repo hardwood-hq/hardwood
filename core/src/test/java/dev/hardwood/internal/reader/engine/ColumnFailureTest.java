@@ -112,8 +112,8 @@ class ColumnFailureTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void aPlacementFailureEndsTheReadAtItsRow(boolean throughLevels, int threads) throws Exception {
         assertReadEndsAt(withOverlongChunk(), threads, throughLevels, ROWS_OVERLONG,
-                "[<memory>: row group 2, column 'a', page 0] Batch plan mismatch: the column holds more than the "
-                        + "50 rows the plan takes from the row group");
+                "[<memory>: row group 2, column 'a', page 0] Invalid column chunk: the column holds more than the "
+                        + "50 rows the read takes from its row group");
     }
 
     /// The last row group declares 60 rows and its chunks hold 50: the columns are short of the
@@ -124,8 +124,8 @@ class ColumnFailureTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void aShortfallAtTheReadsEndEndsTheReadAtItsLastPage(boolean throughLevels, int threads) throws Exception {
         assertReadEndsAt(withShortLastRowGroup(), threads, throughLevels, ROWS_SHORT,
-                "[<memory>: row group 2, column 'a', page 0] Batch plan mismatch: the column holds 50 of the 60 "
-                        + "rows the plan takes from the row group");
+                "[<memory>: row group 2, column 'a', page 0] Invalid column chunk: the column holds 50 of the 60 "
+                        + "rows the read takes from its row group");
     }
 
     /// Reads `file` in lockstep: `rows` rows, then the failure, `message`.

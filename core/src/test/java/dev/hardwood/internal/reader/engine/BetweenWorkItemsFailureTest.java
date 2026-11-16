@@ -28,6 +28,7 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -38,7 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// A failure between two work items, here the planning of the second row group, is met by every
 /// column at the same row: a column that holds every row of its row group the plan takes publishes
 /// its partial batch ahead of the failure, and a column short of the plan abandons it, with the
-/// shortfall attached to the failure as a suppressed "Batch plan mismatch" (READ_PIPELINE.md,
+/// shortfall attached to the failure as a suppressed `ParquetReadException` (READ_PIPELINE.md,
 /// Error propagation).
 class BetweenWorkItemsFailureTest {
 
@@ -67,9 +68,9 @@ class BetweenWorkItemsFailureTest {
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage(PLANNING_FAILURE)
                 .satisfies(e -> assertThat(e.getSuppressed()).singleElement(InstanceOfAssertFactories.THROWABLE)
-                        .isInstanceOf(IllegalStateException.class)
-                        .hasMessage("[<memory>: row group 0, column 'v'] Batch plan mismatch: the column holds 100 "
-                                + "of the 120 rows the plan takes from the row group"));
+                        .isInstanceOf(ParquetReadException.class)
+                        .hasMessage("[<memory>: row group 0, column 'v'] Invalid column chunk: the column holds 100 "
+                                + "of the 120 rows the read takes from its row group"));
         assertThat(published).containsExactly(64);
     }
 
