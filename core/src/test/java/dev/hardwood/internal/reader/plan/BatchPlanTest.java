@@ -17,6 +17,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.plan.BatchPlan.RowGroupBatches;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,6 +26,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// Verifies the batch boundaries [BatchPlan] decides for a read, row group by row group, by
 /// replaying the planned segments the way a column places them.
 class BatchPlanTest {
+
+    /// A row group's batches are counted in an `int`; a footer declaring more rows than that many
+    /// batches hold is refused.
+    @Test
+    void aRowGroupOfMoreBatchesThanTheReadCountsFails() {
+        BatchPlan plan = new BatchPlan(4, false, false, 0);
+
+        assertThatThrownBy(() -> plan.plan(0, 0, "a", false, Long.MAX_VALUE))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed Parquet metadata: the read takes 9223372036854775807 rows from the row group, more than "
+                        + "2147483647 batches of 4 rows");
+    }
 
     @Test
     void batchesCloseAtCapacityAcrossRowGroupsOfOneFile() {

@@ -28,6 +28,7 @@ import dev.hardwood.internal.reader.plan.UnitListing;
 import dev.hardwood.internal.reader.plan.UnitPlan;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import jdk.jfr.Event;
@@ -504,8 +505,17 @@ final class RowGroupPlanner {
     /// open where the plan says so; then hands its pages and ranges to [PageTracker].
     private void takeBatches(Unit.Planned planned) {
         UnitListing u = planned.listing();
-        BatchPlan.RowGroupBatches batches = batchPlan.plan(u.index(), u.fileIndex(), u.file().name(),
-                u.alwaysMatches(), planned.plan().matching().rowCount(u.metaData().numRows()));
+        BatchPlan.RowGroupBatches batches;
+        try {
+            batches = batchPlan.plan(u.index(), u.fileIndex(), u.file().name(), u.alwaysMatches(),
+                    planned.plan().matching().rowCount(u.metaData().numRows()));
+        }
+        catch (ParquetReadException e) {
+            // a row count the plan cannot take: the read fails at the unit's first row, and no unit
+            // after it is batched
+            readFailure.failAt(u.base(), columns.rowGroupFailure(e, u.file().name(), u.rowGroup()));
+            return;
+        }
         Unit.Batched p = planned.batched(batches);
         set(p);
         if (batches.endsRead()) {

@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.sun.management.ThreadMXBean;
 
@@ -26,6 +27,7 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -135,6 +137,26 @@ class InflatedRowCountTest {
         });
     }
 
+    /// A row group declaring more batches than a read counts fails the read with the file's
+    /// fault, on the thread that plans it as on any other.
+    @ParameterizedTest(name = "threads: {0}")
+    @ValueSource(ints = { 0, 4 })
+    void aRowGroupOfMoreBatchesThanAReadCountsFails(int threads) throws IOException {
+        byte[] overlong = FooterRewriter.rewrite(file, metaData -> withFirstRowGroupDeclaring(metaData, 100_000_000_000_000_000L));
+        assertThatThrownBy(() -> {
+            try (HardwoodContext context = HardwoodContext.create(threads);
+                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(overlong)), context);
+                 ColumnReader column = reader.buildColumnReader("id").batchSize(64).build()) {
+                while (column.nextBatch()) {
+                    // read to the end
+                }
+            }
+        })
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>: row group 0] Malformed Parquet metadata: the read takes 100000000000000000 rows from the row group, more than"
+                        + " 2147483647 batches of 64 rows");
+    }
+
     @Test
     void anOffsetIndexPageSpanningTheCountFails() {
         assertThatThrownBy(() -> {
@@ -168,13 +190,18 @@ class InflatedRowCountTest {
         return ParquetFileReader.open(input, context);
     }
 
-    /// `metaData` with its first row group declaring [#DECLARED_ROWS] rows, and the file as many
-    /// more as that row group holds beyond its own.
+    /// `metaData` with its first row group declaring [#DECLARED_ROWS] rows.
     private static FileMetaData inflated(FileMetaData metaData) {
+        return withFirstRowGroupDeclaring(metaData, DECLARED_ROWS);
+    }
+
+    /// `metaData` with its first row group declaring `rows` rows, and the file as many more as
+    /// that row group holds beyond its own.
+    private static FileMetaData withFirstRowGroupDeclaring(FileMetaData metaData, long rows) {
         RowGroup first = metaData.rowGroups().get(0);
         RowGroup second = metaData.rowGroups().get(1);
-        return new FileMetaData(metaData.version(), metaData.schema(), DECLARED_ROWS + second.numRows(),
-                List.of(new RowGroup(first.columns(), first.totalByteSize(), DECLARED_ROWS), second),
+        return new FileMetaData(metaData.version(), metaData.schema(), rows + second.numRows(),
+                List.of(new RowGroup(first.columns(), first.totalByteSize(), rows), second),
                 metaData.keyValueMetadata(), metaData.createdBy(), metaData.columnOrders());
     }
 }
