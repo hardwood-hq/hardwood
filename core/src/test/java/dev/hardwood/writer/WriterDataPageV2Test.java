@@ -12,6 +12,7 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
@@ -79,7 +80,8 @@ class WriterDataPageV2Test {
                 assertThat((long) v2.numNulls()).as("page %d nulls", p).isEqualTo(pageNulls);
                 assertThat(v2.repetitionLevelsByteLength()).as("page %d repetition levels", p).isZero();
                 assertThat(v2.definitionLevelsByteLength()).as("page %d definition levels", p).isPositive();
-                assertThat(v2.isCompressed()).as("page %d compressed", p).isTrue();
+                // The page of nulls alone has no values to compress.
+                assertThat(v2.isCompressed()).as("page %d compressed", p).isEqualTo(pageNulls < PAGE_ROWS);
                 assertThat(v2.encoding()).isEqualTo(Encoding.PLAIN);
                 assertThat(header.crc()).as("page %d CRC over levels and values as stored", p)
                         .isEqualTo(crc(file, pages.get(p).bodyStart(), header.compressedPageSize()));
@@ -141,6 +143,62 @@ class WriterDataPageV2Test {
         }
     }
 
+    /// A page whose values do not shrink under the codec stores them as they are and says so,
+    /// page by page: here the pages of a constant run compress, and those of random values do not.
+    @Test
+    void storesValuesThatDoNotCompressAsTheyAre() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT64, RepetitionType.OPTIONAL)
+                .build();
+        long[] values = new long[ROWS];
+        boolean[] nulls = new boolean[ROWS];
+        Random random = new Random(1820);
+        for (int i = 0; i < ROWS; i++) {
+            values[i] = i < ROWS / 2 ? 42 : random.nextLong();
+            nulls[i] = i % 9 == 0;
+        }
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, v2(CompressionCodec.ZSTD))) {
+            writer.columnWriter().writeBatch(batch -> batch.longs("v", values, nulls));
+        }
+        byte[] file = InMemoryFiles.toByteArray(out);
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+            List<Page> pages = dataPages(file, columnMeta(reader, 0));
+            assertThat(pages).hasSize(ROWS / PAGE_ROWS);
+            for (int p = 0; p < pages.size(); p++) {
+                PageHeader header = pages.get(p).header();
+                boolean randomPage = p >= pages.size() / 2;
+                assertThat(header.dataPageHeaderV2().isCompressed()).as("page %d compressed", p)
+                        .isEqualTo(!randomPage);
+                if (randomPage) {
+                    assertThat(header.compressedPageSize()).as("page %d stored size", p)
+                            .isEqualTo(header.uncompressedPageSize());
+                }
+                else {
+                    assertThat(header.compressedPageSize()).as("page %d stored size", p)
+                            .isLessThan(header.uncompressedPageSize());
+                }
+                assertThat(header.crc()).as("page %d CRC", p)
+                        .isEqualTo(crc(file, pages.get(p).bodyStart(), header.compressedPageSize()));
+            }
+            int row = 0;
+            try (ColumnReader column = reader.columnReader(0)) {
+                while (column.nextBatch()) {
+                    long[] read = column.getLongs();
+                    Validity validity = column.getLeafValidity();
+                    for (int i = 0; i < column.getRecordCount(); i++, row++) {
+                        assertThat(validity.isNull(i)).as("row %d null", row).isEqualTo(nulls[row]);
+                        if (!nulls[row]) {
+                            assertThat(read[i]).as("row %d", row).isEqualTo(values[row]);
+                        }
+                    }
+                }
+            }
+            assertThat(row).isEqualTo(ROWS);
+        }
+    }
+
     /// A dictionary chunk keeps its dictionary page; only its data pages change type.
     @Test
     void dictionaryChunkCountsItsDataPagesAsV2() throws Exception {
@@ -165,7 +223,7 @@ class WriterDataPageV2Test {
         }
     }
 
-    /// A page with no present value has an empty value section, which a codec still compresses.
+    /// A page with no present value has an empty value section, which compressing would only grow.
     @ParameterizedTest
     @EnumSource(value = CompressionCodec.class,
             names = { "UNCOMPRESSED", "SNAPPY", "GZIP", "ZSTD", "LZ4_RAW", "BROTLI" })
@@ -177,7 +235,10 @@ class WriterDataPageV2Test {
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             for (Page page : dataPages(file, columnMeta(reader, 0))) {
-                assertThat(page.header().dataPageHeaderV2().numNulls()).isEqualTo(PAGE_ROWS);
+                DataPageHeaderV2 v2 = page.header().dataPageHeaderV2();
+                assertThat(v2.numNulls()).isEqualTo(PAGE_ROWS);
+                assertThat(v2.isCompressed()).as("an empty value section is stored as it is").isFalse();
+                assertThat(page.header().compressedPageSize()).isEqualTo(v2.definitionLevelsByteLength());
             }
             assertThat(readNullable(reader, 0)).containsExactly(expectedNullable(values, nulls));
         }

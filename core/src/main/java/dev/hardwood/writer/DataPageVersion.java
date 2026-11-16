@@ -18,8 +18,8 @@ public enum DataPageVersion {
     /// as one body, each level stream prefixed by its length.
     V1,
 
-    /// `DATA_PAGE_V2`: the levels are stored uncompressed ahead of the values and only the values
-    /// are compressed. The header states each level stream's length and the page's row and null
-    /// counts.
+    /// `DATA_PAGE_V2`: the levels are stored uncompressed ahead of the values, and the values are
+    /// compressed where that makes them smaller. The header states each level stream's length,
+    /// whether the values are compressed, and the page's row and null counts.
     V2
 }

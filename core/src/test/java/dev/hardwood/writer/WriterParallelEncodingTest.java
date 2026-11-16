@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.HardwoodContext;
@@ -97,9 +98,12 @@ class WriterParallelEncodingTest {
 
     /// A worker with no chunk of its own compresses pages another chunk hands off, so a single
     /// chunk's pages are compressed on whichever threads are idle, and the file is the one the
-    /// caller writes alone. Each page takes a little while, so workers find bodies to take.
-    @Test
-    void writesTheSameBytesWhicheverThreadsCompressTheOnlyChunksPages() throws Exception {
+    /// caller writes alone. Each page takes a little while, so workers find bodies to take. The
+    /// compressor shrinks nothing, so under [DataPageVersion#V2] every page's values are stored as
+    /// they are, whichever thread found that out.
+    @ParameterizedTest
+    @EnumSource(DataPageVersion.class)
+    void writesTheSameBytesWhicheverThreadsCompressTheOnlyChunksPages(DataPageVersion version) throws Exception {
         Compressor slow = new TestCompressor() {
             @Override
             public byte[] compress(byte[] data, int offset, int length) {
@@ -107,11 +111,11 @@ class WriterParallelEncodingTest {
                 return Arrays.copyOfRange(data, offset, offset + length);
             }
         };
-        byte[] serial = onBusyPool(context -> writeIds(context, slow));
+        byte[] serial = onBusyPool(context -> writeIds(context, slow, version));
 
         try (HardwoodContext context = HardwoodContext.create(4)) {
             for (int run = 0; run < 3; run++) {
-                assertThat(writeIds(context, slow)).as("run %d", run).isEqualTo(serial);
+                assertThat(writeIds(context, slow, version)).as("run %d", run).isEqualTo(serial);
             }
         }
     }
@@ -141,7 +145,7 @@ class WriterParallelEncodingTest {
         };
         for (int run = 0; run < 3; run++) {
             try (HardwoodContext context = HardwoodContext.create(4)) {
-                ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), idSchema(), pagePerBatch(),
+                ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), idSchema(), pagePerBatch(DataPageVersion.V1),
                         context, failingOnePage);
                 fillIds(writer);
 
@@ -324,17 +328,20 @@ class WriterParallelEncodingTest {
 
     /// One row group of many pages, so a single chunk has pages to hand off. `GZIP` names a codec
     /// other than `UNCOMPRESSED`, so the test's compressor runs.
-    private static WriterConfig pagePerBatch() {
+    private static WriterConfig pagePerBatch(DataPageVersion version) {
         return WriterConfig.builder()
+                .dataPageVersion(version)
                 .compression(Compression.gzip())
                 .encoding(ColumnEncoding.PLAIN)
                 .pageTargetRows(BATCH)
                 .build();
     }
 
-    private static byte[] writeIds(HardwoodContext context, Compressor compressor) throws IOException {
+    private static byte[] writeIds(HardwoodContext context, Compressor compressor, DataPageVersion version)
+            throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, idSchema(), pagePerBatch(), context, compressor)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, idSchema(), pagePerBatch(version), context,
+                compressor)) {
             fillIds(writer);
         }
         return bytes(out);
