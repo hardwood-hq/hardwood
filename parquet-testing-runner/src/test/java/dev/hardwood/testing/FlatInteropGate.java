@@ -35,6 +35,7 @@ import dev.hardwood.schema.FileSchema;
 import dev.hardwood.testing.ParquetJavaReader.PageIndex;
 import dev.hardwood.testing.ParquetJavaReader.Pages;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.RowWriter;
 
@@ -73,7 +74,9 @@ final class FlatInteropGate {
         assertStatistics(testCase, footer);
         assertDistinctCounts(testCase, file);
         assertEncodings(testCase, footer, pages);
-        assertEncodingStats(footer, pages);
+        assertThat(pages.pageVersions()).as("data page versions")
+                .containsExactly(testCase.config().dataPageVersion());
+        assertEncodingStats(footer, pages, testCase.config().dataPageVersion());
         assertPageIndex(testCase, file, footer, pages, ParquetJavaReader.readPageIndex(file));
         return new Verified(footer, pages);
     }
@@ -312,9 +315,10 @@ final class FlatInteropGate {
 
     /// parquet-java's decoding of each chunk's `encoding_stats` agrees with the pages it walked:
     /// the same data-page encodings, a dictionary entry exactly where the chunk has a dictionary
-    /// page, and data-page counts that add up to the pages in the file. These complete stats provide
-    /// the metadata needed for dictionary-based row-group pruning when a reader applies that filter.
-    private static void assertEncodingStats(ParquetMetadata footer, Pages pages) {
+    /// page, data-page counts that add up to the pages in the file, and the page type the pages
+    /// were written as. These complete stats provide the metadata needed for dictionary-based
+    /// row-group pruning when a reader applies that filter.
+    private static void assertEncodingStats(ParquetMetadata footer, Pages pages, DataPageVersion version) {
         List<ColumnChunkMetaData> chunks = chunks(footer);
         int dataPages = 0;
         for (int i = 0; i < chunks.size(); i++) {
@@ -323,6 +327,8 @@ final class FlatInteropGate {
             assertThat(stats).as("encoding_stats of chunk %d", i).isNotNull();
             assertThat(stats.getDataEncodings()).as("data-page encodings of chunk %d", i)
                     .containsExactlyInAnyOrderElementsOf(pages.chunkValueEncodings().get(i));
+            assertThat(stats.usesV2Pages()).as("encoding_stats of chunk %d name DATA_PAGE_V2", i)
+                    .isEqualTo(version == DataPageVersion.V2);
             assertThat(stats.hasDictionaryPages()).as("dictionary page entry of chunk %d", i)
                     .isEqualTo(chunk.hasDictionaryPage());
             if (stats.hasDictionaryPages()) {

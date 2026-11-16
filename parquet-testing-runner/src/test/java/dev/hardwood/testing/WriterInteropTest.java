@@ -31,6 +31,7 @@ import dev.hardwood.testing.FlatInteropGate.Verified;
 import dev.hardwood.testing.FlatInteropGate.WritePath;
 import dev.hardwood.testing.InteropCase.Nullability;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -171,6 +172,41 @@ class WriterInteropTest {
                         WriterConfig.builder().pageTargetBytes(1024).rowGroupBufferTargetBytes(8192).build())));
     }
 
+    /// The page-version axis: the floor, the encoding choices and the optional encodings in
+    /// every repetition shape, and a file crossing page and row-group boundaries, written as
+    /// `DATA_PAGE_V2`. Every other axis writes the default `DATA_PAGE`.
+    ///
+    /// A V2 page carries the same level streams and value section as a V1 page, framed
+    /// differently: the levels unprefixed and outside the compressed region, the value decoder
+    /// handed the value section alone, and the page's row and null counts in its header, which
+    /// the page walk holds to the levels.
+    static Stream<InteropCase> pageVersionV2() {
+        return Stream.of(
+                sweep(List.of(Nullability.values()), (type, nullability) -> InteropCase.of(
+                        "V2 single-entry dictionary", type, nullability, 1, 200, v2().build())),
+                sweep(List.of(Nullability.values()), (type, nullability) -> InteropCase.of(
+                        "V2 multi-entry dictionary", type, nullability, 64, FEW_ROWS, v2().build())),
+                sweep(List.of(Nullability.OPTIONAL_SOME_NULL), (type, nullability) -> new InteropCase(
+                        "V2 all-distinct column written PLAIN", type, nullability, FEW_ROWS, FEW_ROWS,
+                        v2().build(), true)),
+                Stream.of(TypeFixture.values()).flatMap(type -> Stream.of(
+                        ColumnEncoding.PLAIN, ColumnEncoding.DELTA_BINARY_PACKED,
+                        ColumnEncoding.DELTA_LENGTH_BYTE_ARRAY, ColumnEncoding.DELTA_BYTE_ARRAY,
+                        ColumnEncoding.BYTE_STREAM_SPLIT)
+                        .filter(encoding -> legal(encoding, type))
+                        .flatMap(encoding -> Stream.of(Nullability.values())
+                                .map(nullability -> InteropCase.of("V2 encoding " + encoding, type,
+                                        nullability, 64, FEW_ROWS, v2().encoding(encoding).build())))),
+                sweep(List.of(Nullability.OPTIONAL_SOME_NULL), (type, nullability) -> InteropCase.of(
+                        "V2 across pages and row groups", type, nullability, 64, MANY_ROWS,
+                        v2().pageTargetBytes(1024).rowGroupBufferTargetBytes(8192).build())))
+                .flatMap(cases -> cases);
+    }
+
+    private static WriterConfig.Builder v2() {
+        return WriterConfig.builder().dataPageVersion(DataPageVersion.V2);
+    }
+
     // ==================== Tests ====================
 
     @ParameterizedTest(name = "{0}")
@@ -237,6 +273,12 @@ class WriterInteropTest {
             assertThat(rowGroups).as("row groups").isGreaterThanOrEqualTo(layoutCase.rowGroups());
             assertThat(dataPages).as("data pages").isGreaterThanOrEqualTo(layoutCase.dataPages());
         }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void pageVersionV2(InteropCase testCase, @TempDir Path dir) throws IOException {
+        verify(testCase, dir);
     }
 
     @ParameterizedTest(name = "{0}")

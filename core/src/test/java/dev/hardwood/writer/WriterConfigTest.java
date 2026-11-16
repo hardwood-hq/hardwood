@@ -26,6 +26,7 @@ class WriterConfigTest {
         assertThat(config.rowGroupBufferTargetBytes()).isEqualTo(WriterConfig.DEFAULT_ROW_GROUP_BUFFER_TARGET_BYTES);
         assertThat(config.rowGroupTargetRows()).isEqualTo(WriterConfig.DEFAULT_ROW_GROUP_TARGET_ROWS);
         assertThat(config.compression()).isEqualTo(WriterConfig.DEFAULT_COMPRESSION);
+        assertThat(config.dataPageVersion()).isEqualTo(DataPageVersion.V1);
         // zstd-jni is on the build classpath, so the classpath-conditional default resolves to
         // ZSTD at its default level here; it degrades to UNCOMPRESSED only when the library is
         // absent.
@@ -36,6 +37,19 @@ class WriterConfigTest {
     void compressionOverrideIsRetained() {
         assertThat(WriterConfig.builder().compression(Compression.gzip().level(9)).build().compression())
                 .isEqualTo(Compression.gzip().level(9));
+    }
+
+    @Test
+    void dataPageVersionOverrideIsRetained() {
+        assertThat(WriterConfig.builder().dataPageVersion(DataPageVersion.V2).build().dataPageVersion())
+                .isEqualTo(DataPageVersion.V2);
+    }
+
+    @Test
+    void rejectsNullDataPageVersion() {
+        assertThatThrownBy(() -> WriterConfig.builder().dataPageVersion(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("dataPageVersion must not be null");
     }
 
     @Test

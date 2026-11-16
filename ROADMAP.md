@@ -209,6 +209,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Page compression (UNCOMPRESSED, GZIP, SNAPPY, ZSTD, LZ4_RAW, BROTLI; `LZ4`'s deprecated
   Hadoop framing and `LZO` are refused by `Compression.of`)
 - [x] Compression levels for ZSTD, GZIP, BROTLI and LZ4_RAW, set through `Compression` (#1530)
+- [x] `DATA_PAGE_V2` data pages, chosen file-wide through `WriterConfig.dataPageVersion` (#1820)
 - [x] Footer writing
 - [x] Footer key-value metadata, and `created_by` alongside it, set on `ParquetFileWriter`
   rather than `WriterConfig` (#1029)

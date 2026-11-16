@@ -98,6 +98,9 @@ public final class WriterConfig {
     /// the size comparison the writer makes once the row group is buffered.
     public static final ColumnEncoding DEFAULT_ENCODING = ColumnEncoding.AUTO;
 
+    /// Default data page version: [DataPageVersion#V1].
+    public static final DataPageVersion DEFAULT_DATA_PAGE_VERSION = DataPageVersion.V1;
+
     /// Default false-positive probability of a column's Bloom filter: 1%.
     public static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
 
@@ -110,6 +113,7 @@ public final class WriterConfig {
     private final Map<String, Double> bloomFilters;
     private final int statisticsTruncationLength;
     private final Compression compression;
+    private final DataPageVersion dataPageVersion;
     private final PrecisionLossPolicy precisionLossPolicy;
     private final List<SortingColumn> sortingColumns;
 
@@ -123,6 +127,7 @@ public final class WriterConfig {
         this.bloomFilters = Map.copyOf(builder.bloomFilters);
         this.statisticsTruncationLength = builder.statisticsTruncationLength;
         this.compression = builder.compression;
+        this.dataPageVersion = builder.dataPageVersion;
         this.precisionLossPolicy = builder.precisionLossPolicy;
         this.sortingColumns = builder.sortingColumns;
     }
@@ -195,6 +200,11 @@ public final class WriterConfig {
         return compression;
     }
 
+    /// The header and layout every data page is written with.
+    public DataPageVersion dataPageVersion() {
+        return dataPageVersion;
+    }
+
     /// What [RowWriter] does with a value carrying more precision than its column can hold.
     public PrecisionLossPolicy precisionLossPolicy() {
         return precisionLossPolicy;
@@ -226,6 +236,7 @@ public final class WriterConfig {
         private final Map<String, Double> bloomFilters = new LinkedHashMap<>();
         private int statisticsTruncationLength = DEFAULT_STATISTICS_TRUNCATION_LENGTH;
         private Compression compression = DEFAULT_COMPRESSION;
+        private DataPageVersion dataPageVersion = DEFAULT_DATA_PAGE_VERSION;
         private PrecisionLossPolicy precisionLossPolicy = DEFAULT_PRECISION_LOSS_POLICY;
         private List<SortingColumn> sortingColumns = List.of();
 
@@ -383,6 +394,16 @@ public final class WriterConfig {
                 throw new IllegalArgumentException("compression must not be null");
             }
             this.compression = compression;
+            return this;
+        }
+
+        /// Sets the header and layout every data page is written with; must be non-null. Defaults
+        /// to [DataPageVersion#V1].
+        public Builder dataPageVersion(DataPageVersion dataPageVersion) {
+            if (dataPageVersion == null) {
+                throw new IllegalArgumentException("dataPageVersion must not be null");
+            }
+            this.dataPageVersion = dataPageVersion;
             return this;
         }
 

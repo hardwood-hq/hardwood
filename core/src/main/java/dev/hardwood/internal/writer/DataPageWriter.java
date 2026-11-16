@@ -20,9 +20,14 @@ import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.writer.DataPageVersion;
 
 /// Writes one column chunk's data pages to its sink in page order, each body compressed on the
 /// chunk's thread or, while a flush thread is idle, handed to [PageCompression].
+///
+/// A `DATA_PAGE` compresses its whole body, levels included. A `DATA_PAGE_V2` stores its level
+/// streams as encoded and compresses only the value section after them; its CRC covers both, as
+/// stored.
 ///
 /// A page's header carries its stored size and CRC, and its place in the file follows the pages
 /// before it, so a page handed off is written once its compression is done and every page before
@@ -31,9 +36,12 @@ import dev.hardwood.metadata.PageLocation;
 /// whichever thread compressed which body.
 final class DataPageWriter {
 
+    private static final byte[] NO_LEVELS = new byte[0];
+
     private final ChunkSink sink;
     private final CompressionCodec codec;
     private final Compressor compressor;
+    private final DataPageVersion version;
     /// Where bodies are handed off; `null` where every body is compressed here.
     private final PageCompression handoff;
     private final long firstPageOffset;
@@ -44,20 +52,40 @@ final class DataPageWriter {
     private long storedBytes;
     private long uncompressedBytes;
 
-    private record Pending(PageCompression.Page page, int entries, int uncompressedLength, Encoding encoding,
-                           long firstRow) {
+    /// What one data page's header states besides its sizes and CRC, and where the page's rows
+    /// start.
+    ///
+    /// @param entries the page's level entries, nulls included
+    /// @param nulls the entries carrying no value
+    /// @param rows the records the page holds
+    /// @param repetitionLevelsLength the byte length of the page's repetition level stream, which
+    ///        opens its body
+    /// @param definitionLevelsLength the byte length of the definition level stream after it
+    /// @param encoding the encoding of the page's values
+    /// @param firstRow the index within the row group of the page's first row
+    record Shape(int entries, int nulls, int rows, int repetitionLevelsLength, int definitionLevelsLength,
+                 Encoding encoding, long firstRow) {
+
+        int levelsLength() {
+            return repetitionLevelsLength + definitionLevelsLength;
+        }
+    }
+
+    private record Pending(PageCompression.Page page, Shape shape, int uncompressedLength) {
     }
 
     /// @param sink takes the chunk's bytes
     /// @param codec the codec `compressor` applies; `UNCOMPRESSED` bodies are stored as built
     /// @param compressor compresses each body
+    /// @param version the header and layout of every page
     /// @param handoff where bodies are handed off, or `null` to compress every body here
     /// @param firstPageOffset the chunk-relative offset of the first data page
-    DataPageWriter(ChunkSink sink, CompressionCodec codec, Compressor compressor, PageCompression handoff,
-                   long firstPageOffset) {
+    DataPageWriter(ChunkSink sink, CompressionCodec codec, Compressor compressor, DataPageVersion version,
+                   PageCompression handoff, long firstPageOffset) {
         this.sink = sink;
         this.codec = codec;
         this.compressor = compressor;
+        this.version = version;
         this.handoff = codec == CompressionCodec.UNCOMPRESSED ? null : handoff;
         this.firstPageOffset = firstPageOffset;
     }
@@ -65,34 +93,44 @@ final class DataPageWriter {
     /// Writes the page whose body `body` holds, or hands the body off and writes the page once it
     /// is compressed. `body` may be reused once this returns.
     ///
-    /// @param entries the page's level entries
-    /// @param encoding the encoding of the page's values
-    /// @param firstRow the index within the row group of the page's first row
-    void write(ByteArrayBuilder body, int entries, Encoding encoding, long firstRow) throws IOException {
+    /// @param body the page's level streams, then its value section
+    /// @param shape what the page's header states besides its sizes and CRC
+    void write(ByteArrayBuilder body, Shape shape) throws IOException {
         int length = body.length();
+        if (codec == CompressionCodec.UNCOMPRESSED) {
+            // Stored as it stands, written straight out of the body buffer, which the next page
+            // overwrites.
+            CRC32 crc = new CRC32();
+            crc.update(body.array(), 0, length);
+            frame(shape, length, NO_LEVELS, 0, false, body.array(), length, (int) crc.getValue(), true);
+            return;
+        }
+        // The bytes stored ahead of the compressed region: a V2 page's level streams.
+        int prefix = version == DataPageVersion.V2 ? shape.levelsLength() : 0;
         if (handoff != null && handoff.tryReserve()) {
-            PageCompression.Page page = handoff.offer(compressor, Arrays.copyOf(body.array(), length), length);
-            pending.add(new Pending(page, entries, length, encoding, firstRow));
+            byte[] levels = prefix > 0 ? Arrays.copyOf(body.array(), prefix) : NO_LEVELS;
+            PageCompression.Page page = handoff.offer(compressor, levels,
+                    Arrays.copyOfRange(body.array(), prefix, length), length - prefix);
+            pending.add(new Pending(page, shape, length));
             writeDone();
             return;
         }
         if (!pending.isEmpty()) {
             // Compressed here without waiting for the pages handed off before it, which a worker
             // polling for bodies takes up a moment after they are queued, and written after them.
-            pending.add(new Pending(handoff.compressHere(compressor, body.array(), length), entries, length, encoding,
-                    firstRow));
+            byte[] levels = prefix > 0 ? Arrays.copyOf(body.array(), prefix) : NO_LEVELS;
+            pending.add(new Pending(handoff.compressHere(compressor, levels, body.array(), prefix, length - prefix),
+                    shape, length));
             writeDone();
             return;
         }
-        // UNCOMPRESSED stores the body as it stands, so the page is written straight out of the
-        // body buffer; every other codec produces its own array.
-        byte[] stored = codec == CompressionCodec.UNCOMPRESSED ? body.array() : compressor.compress(body.array(), 0, length);
-        int storedLength = codec == CompressionCodec.UNCOMPRESSED ? length : stored.length;
+        byte[] stored = compressor.compress(body.array(), prefix, length - prefix);
         CRC32 crc = new CRC32();
-        crc.update(stored, 0, storedLength);
-        // The body buffer is overwritten by the next page; a compressor's output is not.
-        frame(entries, length, stored, storedLength, (int) crc.getValue(), encoding, firstRow,
-                stored == body.array());
+        crc.update(body.array(), 0, prefix);
+        crc.update(stored, 0, stored.length);
+        // The levels are read out of the body buffer, which the next page overwrites; a
+        // compressor's output is not.
+        frame(shape, length, body.array(), prefix, true, stored, stored.length, (int) crc.getValue(), false);
     }
 
     /// Writes every page handed off and not yet written.
@@ -158,19 +196,34 @@ final class DataPageWriter {
         if (failure != null) {
             throw new IllegalStateException("Compressing a page failed", failure);
         }
-        frame(p.entries(), p.uncompressedLength(), page.stored(), page.stored().length, page.crc(), p.encoding(),
-                p.firstRow(), false);
+        byte[] levels = page.levels();
+        frame(p.shape(), p.uncompressedLength(), levels, levels.length, false, page.stored(), page.stored().length,
+                page.crc(), false);
     }
 
-    private void frame(int entries, int uncompressedLength, byte[] stored, int storedLength, int crc,
-                       Encoding encoding, long firstRow, boolean reused) throws IOException {
+    /// Writes the header of a page, then the `levelsLength` bytes of `levels` stored ahead of its
+    /// compressed region, then its `storedLength` bytes of `stored`.
+    private void frame(Shape shape, int uncompressedLength, byte[] levels, int levelsLength, boolean levelsReused,
+                       byte[] stored, int storedLength, int crc, boolean reused) throws IOException {
+        int pageLength = levelsLength + storedLength;
         ThriftCompactWriter header = new ThriftCompactWriter();
-        PageHeaderWriter.writeDataPageV1(header, entries, uncompressedLength, storedLength, crc, encoding);
+        if (version == DataPageVersion.V2) {
+            PageHeaderWriter.writeDataPageV2(header, shape.entries(), shape.nulls(), shape.rows(), uncompressedLength,
+                    pageLength, crc, shape.encoding(), shape.definitionLevelsLength(),
+                    shape.repetitionLevelsLength(), codec != CompressionCodec.UNCOMPRESSED);
+        }
+        else {
+            PageHeaderWriter.writeDataPageV1(header, shape.entries(), uncompressedLength, pageLength, crc,
+                    shape.encoding());
+        }
         byte[] headerBytes = header.toByteArray();
         sink.write(headerBytes, 0, headerBytes.length, false);
+        if (levelsLength > 0) {
+            sink.write(levels, 0, levelsLength, levelsReused);
+        }
         sink.write(stored, 0, storedLength, reused);
-        long pageBytes = (long) headerBytes.length + storedLength;
-        locations.add(new PageLocation(firstPageOffset + storedBytes, Math.toIntExact(pageBytes), firstRow));
+        long pageBytes = (long) headerBytes.length + pageLength;
+        locations.add(new PageLocation(firstPageOffset + storedBytes, Math.toIntExact(pageBytes), shape.firstRow()));
         storedBytes += pageBytes;
         uncompressedBytes += headerBytes.length + uncompressedLength;
     }

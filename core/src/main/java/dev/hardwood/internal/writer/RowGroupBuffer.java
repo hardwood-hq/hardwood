@@ -22,6 +22,7 @@ import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.DataPageVersion;
 
 /// Buffers the column chunks of a single row group. A record range's shredded levels are
 /// appended across all columns; at flush the column chunks are written contiguously in
@@ -66,6 +67,7 @@ public final class RowGroupBuffer {
     /// @param statisticsTruncationLength the maximum `BYTE_ARRAY` `min` / `max` bound length
     /// @param compressor compresses each page body before it is buffered
     /// @param codec the codec `compressor` applies, recorded in each chunk's metadata
+    /// @param pageVersion the header and layout of every data page
     /// @param bloomFilterFpps each leaf column's Bloom filter false-positive probability, in schema
     ///        order, `0` for a column without one
     /// @param sortOrder holds each row group to its declared sort order, or `null` where none is
@@ -73,9 +75,10 @@ public final class RowGroupBuffer {
     public RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                           long rowGroupTargetRows, ColumnEncoding[] encodings,
                           int statisticsTruncationLength, Compressor compressor, CompressionCodec codec,
-                          double[] bloomFilterFpps, SortOrderCheck sortOrder) {
+                          DataPageVersion pageVersion, double[] bloomFilterFpps, SortOrderCheck sortOrder) {
         this(schema, pageTargetBytes, pageTargetRows, rowGroupBufferTargetBytes, rowGroupTargetRows, encodings,
-                statisticsTruncationLength, compressor, codec, bloomFilterFpps, sortOrder, MAX_STORE_CAPACITY);
+                statisticsTruncationLength, compressor, codec, pageVersion, bloomFilterFpps, sortOrder,
+                MAX_STORE_CAPACITY);
     }
 
     /// A buffer whose column chunks are capped at `storeCapacity` rather than at
@@ -84,8 +87,8 @@ public final class RowGroupBuffer {
     /// out of a test's reach, so the tests of the cut it forces lower it instead.
     RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                    long rowGroupTargetRows, ColumnEncoding[] encodings, int statisticsTruncationLength,
-                   Compressor compressor, CompressionCodec codec, double[] bloomFilterFpps, SortOrderCheck sortOrder,
-                   int storeCapacity) {
+                   Compressor compressor, CompressionCodec codec, DataPageVersion pageVersion, double[] bloomFilterFpps,
+                   SortOrderCheck sortOrder, int storeCapacity) {
         this.schema = schema;
         this.sortOrder = sortOrder;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
@@ -96,7 +99,8 @@ public final class RowGroupBuffer {
         long budgetBytesPerColumn = rowGroupBufferTargetBytes / columns.length;
         for (int c = 0; c < columns.length; c++) {
             columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, pageTargetRows,
-                    PageLimit.MAX_PAGE_VALUES, budgetBytesPerColumn, targetRows, encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
+                    PageLimit.MAX_PAGE_VALUES, budgetBytesPerColumn, targetRows, encodings[c], statisticsTruncationLength,
+                    compressor, codec, pageVersion, storeCapacity, bloomFilterFpps[c]);
         }
     }
 

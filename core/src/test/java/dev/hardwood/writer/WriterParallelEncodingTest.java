@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.HardwoodContext;
@@ -51,12 +51,14 @@ class WriterParallelEncodingTest {
     private static final int BATCH = 1_000;
 
     /// `UNCOMPRESSED` hands the sink a page body the next page overwrites, which a chunk buffered
-    /// ahead of its turn has to copy; `ZSTD` hands it a fresh array per page.
-    @ParameterizedTest
-    @EnumSource(value = CompressionCodec.class, names = { "ZSTD", "UNCOMPRESSED" })
-    void writesTheSameBytesWhateverThePoolDoes(CompressionCodec codec) throws Exception {
+    /// ahead of its turn has to copy; `ZSTD` hands it a fresh array per page, and under
+    /// [DataPageVersion#V2] the level streams ahead of it out of the body buffer.
+    @ParameterizedTest(name = "{0} {1}")
+    @CsvSource({ "ZSTD, V1", "UNCOMPRESSED, V1", "ZSTD, V2", "UNCOMPRESSED, V2" })
+    void writesTheSameBytesWhateverThePoolDoes(CompressionCodec codec, DataPageVersion version) throws Exception {
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.of(codec))
+                .dataPageVersion(version)
                 .pageTargetRows(500)
                 .rowGroupTargetRows(5_000)
                 .bloomFilter("id")

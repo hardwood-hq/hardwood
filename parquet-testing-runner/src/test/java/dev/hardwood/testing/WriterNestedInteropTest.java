@@ -21,6 +21,9 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.Parameter;
+import org.junit.jupiter.params.ParameterizedClass;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
@@ -31,6 +34,7 @@ import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnBatch;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
@@ -46,8 +50,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// a definition level — are exactly what a level-stream defect erases, and none of them is
 /// visible from the values alone.
 ///
+/// Every case runs under each [DataPageVersion]: the versions differ in how a page carries its
+/// level streams, which every shape here exercises.
+///
 /// The flat matrix is in [WriterInteropTest] and [WriterCodecInteropTest].
+@ParameterizedClass(name = "{0}")
+@EnumSource(DataPageVersion.class)
 class WriterNestedInteropTest {
+
+    @Parameter
+    DataPageVersion pageVersion;
 
     // ==================== Structs ====================
 
@@ -404,7 +416,7 @@ class WriterNestedInteropTest {
             elementNulls[e] = e % 7 == 0;
         }
 
-        WriterConfig config = WriterConfig.builder().pageTargetBytes(1024).rowGroupBufferTargetBytes(4096).build();
+        WriterConfig config = config().pageTargetBytes(1024).rowGroupBufferTargetBytes(4096).build();
         Path file = write(dir, schema, config, batch -> batch
                 .list("v", offsets, Validity.ofNulls(listNulls))
                 .ints("v.list.element", elements, elementNulls));
@@ -630,7 +642,7 @@ class WriterNestedInteropTest {
             elements[e] = e;
         }
 
-        WriterConfig config = WriterConfig.builder().pageTargetBytes(100).build();
+        WriterConfig config = config().pageTargetBytes(100).build();
         Path file = write(dir, schema, config, batch -> batch.list("v", offsets).ints("v.list.element", elements));
 
         assertThat(ParquetJavaReader.readPages(file).dataPageCount()).as("data pages").isGreaterThan(10);
@@ -687,15 +699,15 @@ class WriterNestedInteropTest {
 
     private List<Group> writeRowsAndRead(Path dir, FileSchema schema, RowWrite filler) throws IOException {
         Path file = dir.resolve("nested-rows.parquet");
-        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config().build())) {
             filler.accept(writer.rowWriter());
         }
-        ParquetJavaReader.assertPageIndex(file);
+        assertWritten(file);
         return ParquetJavaReader.readGroups(file);
     }
 
     private List<Group> writeAndRead(Path dir, FileSchema schema, Consumer<ColumnBatch> filler) throws IOException {
-        return ParquetJavaReader.readGroups(write(dir, schema, WriterConfig.defaults(), filler));
+        return ParquetJavaReader.readGroups(write(dir, schema, config().build(), filler));
     }
 
     private Path write(Path dir, FileSchema schema, WriterConfig config, Consumer<ColumnBatch> filler)
@@ -704,8 +716,21 @@ class WriterNestedInteropTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
             writer.columnWriter().writeBatch(filler);
         }
-        ParquetJavaReader.assertPageIndex(file);
+        assertWritten(file);
         return file;
+    }
+
+    /// The configuration every case writes with: the defaults under this run's page version.
+    private WriterConfig.Builder config() {
+        return WriterConfig.builder().dataPageVersion(pageVersion);
+    }
+
+    /// The page index agrees with the pages, and every page is of this run's version, which the
+    /// page walk holds a V2 page's row and null counts to.
+    private void assertWritten(Path file) throws IOException {
+        ParquetJavaReader.assertPageIndex(file);
+        assertThat(ParquetJavaReader.readPages(file).pageVersions()).as("data page versions")
+                .containsExactly(pageVersion);
     }
 
     /// How many instances of a field a group holds; zero means the field is absent, which is how

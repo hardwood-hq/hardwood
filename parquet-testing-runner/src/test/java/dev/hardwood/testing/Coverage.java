@@ -11,6 +11,7 @@ import org.apache.parquet.column.Encoding;
 
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.writer.DataPageVersion;
 
 /// The vocabulary of the write-path coverage assertion described in
 /// `_designs/WRITER_VALIDATION.md`: what a cell is, and how one is spelled.
@@ -53,7 +54,21 @@ final class Coverage {
         /// Logical-type annotation against the storage form of the chunk carrying it. An
         /// annotation's comparator governs the chunk's bounds in either form, and the dictionary
         /// path reaches those bounds through a different accumulator.
-        ANNOTATION_STORAGE
+        ANNOTATION_STORAGE,
+
+        /// Data page version against the encoding its pages declare. A `DATA_PAGE_V2` hands a
+        /// value decoder the value section alone, where a `DATA_PAGE` hands it the body past the
+        /// level streams.
+        PAGE_VERSION_ENCODING,
+
+        /// Data page version against codec. A `DATA_PAGE_V2` compresses its value section alone
+        /// and stores its level streams uncompressed ahead of it.
+        PAGE_VERSION_CODEC,
+
+        /// Data page version against repetition shape, nested columns included. A
+        /// `DATA_PAGE_V2` carries its level streams outside the compressed body, unprefixed, with
+        /// their lengths and the page's row and null counts in its header.
+        PAGE_VERSION_REPETITION
     }
 
     /// The repetition shape of a column chunk, as the footer reports it. The three `OPTIONAL`
@@ -111,6 +126,21 @@ final class Coverage {
     /// The cell for one `FIXED_LEN_BYTE_ARRAY` length carrying one page encoding.
     static String fixedLengthEncoding(int typeLength, Encoding encoding) {
         return cell(Projection.FIXED_LENGTH_ENCODING, Integer.toString(typeLength), encoding.name());
+    }
+
+    /// The cell for one data page version carrying one page encoding.
+    static String pageVersionEncoding(DataPageVersion version, Encoding encoding) {
+        return cell(Projection.PAGE_VERSION_ENCODING, version.name(), encoding.name());
+    }
+
+    /// The cell for one data page version compressed with one codec.
+    static String pageVersionCodec(DataPageVersion version, CompressionCodec codec) {
+        return cell(Projection.PAGE_VERSION_CODEC, version.name(), codec.name());
+    }
+
+    /// The cell for one data page version in one repetition shape.
+    static String pageVersionRepetition(DataPageVersion version, RepetitionShape shape) {
+        return cell(Projection.PAGE_VERSION_REPETITION, version.name(), shape.name());
     }
 
     /// The cell for one annotation on one carrier, stored one way.

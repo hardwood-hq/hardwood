@@ -55,8 +55,10 @@ final class PageCompression {
 
     /// Hands `length` bytes of `body`, which the caller no longer touches, to an idle worker, in
     /// the place [#tryReserve()] reserved.
-    Page offer(Compressor compressor, byte[] body, int length) {
-        Page page = new Page(compressor, body, length);
+    ///
+    /// @param levels the bytes stored uncompressed ahead of the body, which its CRC covers too
+    Page offer(Compressor compressor, byte[] levels, byte[] body, int length) {
+        Page page = new Page(compressor, levels, body, 0, length);
         queue.add(page);
         Thread worker = parked.poll();
         if (worker != null) {
@@ -72,9 +74,12 @@ final class PageCompression {
         }
     }
 
-    /// Compresses `length` bytes of `body` on the calling thread, as a page that is never queued.
-    Page compressHere(Compressor compressor, byte[] body, int length) {
-        Page page = new Page(compressor, body, length);
+    /// Compresses `length` bytes of `body` from `offset` on the calling thread, as a page that is
+    /// never queued.
+    ///
+    /// @param levels the bytes stored uncompressed ahead of the body, which its CRC covers too
+    Page compressHere(Compressor compressor, byte[] levels, byte[] body, int offset, int length) {
+        Page page = new Page(compressor, levels, body, offset, length);
         page.claimed.set(true);
         page.run();
         return page;
@@ -117,12 +122,16 @@ final class PageCompression {
         }
     }
 
-    /// One page body handed off, and once compressed, what is written for it.
+    /// One page body handed off, and once compressed, what is written for it: the levels a
+    /// `DATA_PAGE_V2` stores uncompressed (empty for a `DATA_PAGE`, whose levels are part of the
+    /// body), then the compressed body.
     final class Page {
 
         private final Compressor compressor;
         private final AtomicBoolean claimed = new AtomicBoolean();
+        private final byte[] levels;
         private byte[] body;
+        private final int offset;
         private final int length;
         /// Set once the body is compressed or has failed; the fields below are read after it.
         private volatile boolean done;
@@ -131,9 +140,11 @@ final class PageCompression {
         private int crc;
         private Throwable failure;
 
-        private Page(Compressor compressor, byte[] body, int length) {
+        private Page(Compressor compressor, byte[] levels, byte[] body, int offset, int length) {
             this.compressor = compressor;
+            this.levels = levels;
             this.body = body;
+            this.offset = offset;
             this.length = length;
         }
 
@@ -146,12 +157,13 @@ final class PageCompression {
             return false;
         }
 
-        /// Compresses the claimed body and takes the CRC of what is stored, recording a failure
-        /// for the chunk to raise.
+        /// Compresses the claimed body and takes the CRC of what is stored, the levels ahead of
+        /// it included, recording a failure for the chunk to raise.
         void run() {
             try {
-                stored = compressor.compress(body, 0, length);
+                stored = compressor.compress(body, offset, length);
                 CRC32 checksum = new CRC32();
+                checksum.update(levels, 0, levels.length);
                 checksum.update(stored, 0, stored.length);
                 crc = (int) checksum.getValue();
             }
@@ -178,6 +190,11 @@ final class PageCompression {
             while (!done) {
                 LockSupport.park(this);
             }
+        }
+
+        /// The levels stored uncompressed ahead of [#stored()].
+        byte[] levels() {
+            return levels;
         }
 
         byte[] stored() {

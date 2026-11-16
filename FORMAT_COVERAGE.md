@@ -157,7 +157,7 @@ All fields (xmin..mmax, ids 1–8) ✅.
 | 5 | data_page_header | ✅ | |
 | 6 | index_page_header | ❌ | INDEX_PAGE unused in practice |
 | 7 | dictionary_page_header | ✅ | |
-| 8 | data_page_header_v2 | ✅ | |
+| 8 | data_page_header_v2 | ✅ | written when `WriterConfig.dataPageVersion` is `V2` (#1820) |
 
 ### DataPageHeader
 All fields (ids 1–5: num_values, encoding, definition_level_encoding,

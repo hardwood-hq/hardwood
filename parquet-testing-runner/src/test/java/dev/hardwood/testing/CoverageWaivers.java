@@ -19,6 +19,7 @@ import org.apache.parquet.column.Encoding;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.writer.DataPageVersion;
 
 /// The cells no test produces, each with the reason it does not.
 ///
@@ -111,6 +112,12 @@ final class CoverageWaivers {
         }
         for (Encoding encoding : producible) {
             waivers.add(new Waiver(Coverage.encodingCodec(encoding, CompressionCodec.BROTLI),
+                    "parquet-java cannot resolve the BROTLI codec class; covered against DuckDB by"
+                            + " WriterDifferentialTest, with the reason pinned by"
+                            + " WriterCodecInteropTest.parquetJavaHasNoBrotliCodec"));
+        }
+        for (DataPageVersion version : DataPageVersion.values()) {
+            waivers.add(new Waiver(Coverage.pageVersionCodec(version, CompressionCodec.BROTLI),
                     "parquet-java cannot resolve the BROTLI codec class; covered against DuckDB by"
                             + " WriterDifferentialTest, with the reason pinned by"
                             + " WriterCodecInteropTest.parquetJavaHasNoBrotliCodec"));

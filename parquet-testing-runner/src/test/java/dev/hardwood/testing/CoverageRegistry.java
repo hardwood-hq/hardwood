@@ -23,6 +23,7 @@ import org.apache.parquet.column.Encoding;
 
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.writer.DataPageVersion;
 
 import static dev.hardwood.testing.Coverage.RepetitionShape;
 import static dev.hardwood.testing.Coverage.StorageForm;
@@ -67,17 +68,28 @@ final class CoverageRegistry {
     /// @param typeLength its declared length, or `null` where the type has none
     /// @param annotationKey the column's annotation, spelled by [LogicalTypeKey]
     /// @param pageEncodings the encodings this chunk's data pages declared
+    /// @param pageVersions the versions of this chunk's data pages
     /// @param codec the codec its page bodies are compressed with
     /// @param shape its repetition shape, or `null` where the chunk does not state the null count
     ///        the three `OPTIONAL` shapes are told apart by
     static void observeColumnChunk(PhysicalType type, Integer typeLength, String annotationKey,
-            Set<Encoding> pageEncodings, CompressionCodec codec, RepetitionShape shape) {
+            Set<Encoding> pageEncodings, Set<DataPageVersion> pageVersions, CompressionCodec codec,
+            RepetitionShape shape) {
 
         for (Encoding encoding : pageEncodings) {
             CELLS.add(Coverage.typeEncoding(type, encoding));
             CELLS.add(Coverage.encodingCodec(encoding, codec));
             if (typeLength != null) {
                 CELLS.add(Coverage.fixedLengthEncoding(typeLength, encoding));
+            }
+            for (DataPageVersion version : pageVersions) {
+                CELLS.add(Coverage.pageVersionEncoding(version, encoding));
+            }
+        }
+        for (DataPageVersion version : pageVersions) {
+            CELLS.add(Coverage.pageVersionCodec(version, codec));
+            if (shape != null) {
+                CELLS.add(Coverage.pageVersionRepetition(version, shape));
             }
         }
         if (shape != null) {

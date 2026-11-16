@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Timeout;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.ParquetWriteException;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,13 +49,13 @@ class PageHandOffTest {
                 Thread.sleep(1);
             }
             DataPageWriter pages = new DataPageWriter(new ChunkSink.Buffered(), CompressionCodec.GZIP,
-                    failing, handoff, 0);
+                    failing, DataPageVersion.V1, handoff, 0);
             ByteArrayBuilder body = new ByteArrayBuilder();
             body.writeBytes(new byte[]{ 1, 2, 3, 4 });
 
             // The worker may take the body and fail before the write returns, which then raises it
             assertThatThrownBy(() -> {
-                pages.write(body, 4, Encoding.PLAIN, 0);
+                pages.write(body, new DataPageWriter.Shape(4, 0, 4, 0, 0, Encoding.PLAIN, 0));
                 pages.finish();
             }).isSameAs(failure);
         }

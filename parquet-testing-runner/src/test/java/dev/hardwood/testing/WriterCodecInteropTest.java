@@ -21,6 +21,7 @@ import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.testing.InteropCase.Nullability;
 import dev.hardwood.writer.ColumnEncoding;
 import dev.hardwood.writer.Compression;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.WriterConfig;
 
 import static dev.hardwood.testing.FlatInteropGate.FEW_ROWS;
@@ -108,6 +109,21 @@ class WriterCodecInteropTest {
                                                 .build()))));
     }
 
+    /// The codec axis under `DATA_PAGE_V2`, whose pages compress the value section alone and
+    /// store the level streams ahead of it as encoded. Swept over the repetition shapes, since
+    /// those decide what is left to compress: a `REQUIRED` page has no level streams, so the
+    /// whole page is compressed, and an `OPTIONAL_ALL_NULL` page has an empty value section,
+    /// which is still compressed.
+    static Stream<InteropCase> codecsV2() {
+        return PARQUET_JAVA_CODECS.stream().flatMap(codec -> Stream.of(Nullability.values())
+                .flatMap(nullability -> sweep(List.of(codec), (type, c) -> InteropCase.of(
+                        "V2 codec " + codec, type, nullability, 64, FEW_ROWS,
+                        WriterConfig.builder()
+                                .dataPageVersion(DataPageVersion.V2)
+                                .compression(Compression.of(codec))
+                                .build()))));
+    }
+
     // ==================== Tests ====================
 
     @ParameterizedTest(name = "{0}")
@@ -119,6 +135,12 @@ class WriterCodecInteropTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource
     void codecLevels(InteropCase testCase, @TempDir Path dir) throws IOException {
+        verify(testCase, dir);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void codecsV2(InteropCase testCase, @TempDir Path dir) throws IOException {
         verify(testCase, dir);
     }
 

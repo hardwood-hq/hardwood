@@ -24,20 +24,20 @@ A dictionary-encoded chunk is laid out as:
 
 ```
 <dictionary page>   DICTIONARY_PAGE header, PLAIN body       ← dictionary_page_offset
-<data page 0>       DATA_PAGE header, RLE_DICTIONARY values  ← data_page_offset
+<data page 0>       data page header, RLE_DICTIONARY values  ← data_page_offset
 <data page 1>       ...
 ```
 
 Any other chunk is its data pages alone, starting at `data_page_offset`, with `dictionary_page_offset` absent. The dictionary page comes first and `dictionary_page_offset` is always set when it exists; the writer does not use the format's implicit-dictionary form.
 
-**A chunk is encoded one way throughout.** Every data page of a chunk carries the same value encoding, and a dictionary page is written only for a chunk whose data pages are `RLE_DICTIONARY`. The encoding may differ between chunks of one column: under `AUTO` each chunk is decided on what it holds.
+**A chunk is encoded one way throughout.** Every data page of a chunk carries the same value encoding, and a dictionary page is written only for a chunk whose data pages are `RLE_DICTIONARY`. Every data page of a file is of the version `WriterConfig.dataPageVersion` names: `DATA_PAGE` (V1, the default) or `DATA_PAGE_V2`. The encoding may differ between chunks of one column: under `AUTO` each chunk is decided on what it holds.
 
 `ColumnMetaData` records what the chunk uses:
 
 | Field | Written as |
 |---|---|
 | `encodings` | `RLE` where the column has a level stream; then `PLAIN` and `RLE_DICTIONARY` for a dictionary chunk, or the chunk's one value encoding otherwise. `PLAIN` appears only where something in the chunk is plain |
-| `encoding_stats` | A dictionary chunk: one `DICTIONARY_PAGE`/`PLAIN` entry with count 1 and one `DATA_PAGE`/`RLE_DICTIONARY` entry counting its data pages. Any other chunk: one `DATA_PAGE` entry under its value encoding. A flushed row group holds at least one row, so the list is never empty |
+| `encoding_stats` | A dictionary chunk: one `DICTIONARY_PAGE`/`PLAIN` entry with count 1 and one data-page entry under `RLE_DICTIONARY` counting its data pages. Any other chunk: one data-page entry under its value encoding. A data-page entry is of page type `DATA_PAGE` or `DATA_PAGE_V2`, as the file's pages are. A flushed row group holds at least one row, so the list is never empty |
 | `codec` | The file-wide codec |
 | sizes | Compressed size is what was written; uncompressed size restores each body to its pre-compression length. Both include the page headers |
 
@@ -45,13 +45,22 @@ The complete `encoding_stats` inventory is what lets a reader prove a Hardwood-w
 
 ### Pages
 
-Every data page is a V1 `DATA_PAGE`. Its body is `[rep levels?][def levels?][value section]`, each level stream RLE/bit-packed through `LevelEncoder` and prefixed by its 4-byte little-endian length. A flat `REQUIRED` column has neither stream. `num_values` counts every level entry, nulls included; only present values reach the value section.
+A data page holds `[rep levels?][def levels?][value section]`, each level stream RLE/bit-packed through `LevelEncoder`. A flat `REQUIRED` column has neither stream. `num_values` counts every level entry, nulls included; only present values reach the value section. The two page versions frame the same streams differently:
+
+| | `DATA_PAGE` (V1) | `DATA_PAGE_V2` |
+|---|---|---|
+| Level streams | each prefixed by its 4-byte little-endian length | unprefixed; their byte lengths are in the header |
+| Compressed | the whole body | the value section only; the level streams are stored as encoded, ahead of it |
+| `is_compressed` | — | `false` under `UNCOMPRESSED`, `true` under every other codec, an empty value section included |
+| Header counts | `num_values` | `num_values`, `num_nulls` (entries without a value) and `num_rows` (the records the page holds) |
+
+A V2 page's `compressed_page_size` and `uncompressed_page_size` both include its level streams. The value section is the same bytes under either version, and so is the page cut: it charges no framing, and a page holds whole records under both.
 
 The value section of an `RLE_DICTIONARY` page is `[1-byte index bit width][RLE/bit-packed indices]`, running to the end of the page and not length-prefixed. Each page declares its own bit width, sized from its own largest index, so a page whose values sit low in the dictionary pays only for the bits they need. A single-entry dictionary gives a zero bit width. Every other page's value section is its present values under the chunk's value encoding, produced by `ValueEncoder.encodeInto`.
 
 The dictionary page is a `DICTIONARY_PAGE` header with `num_values` equal to the dictionary size and encoding `PLAIN`, over the distinct values `PLAIN`-encoded in index order. Indices are assigned in first-seen order. `is_sorted` is not written.
 
-Every page body, dictionary page included, is compressed with the file's codec before framing, and every page header carries a CRC-32 over the body as stored. No data page carries inline statistics: its bounds are in the page index.
+Every page body, dictionary page included, is compressed with the file's codec before framing, a V2 page's level streams excepted, and every page header carries a CRC-32 over the page as stored: for a V2 page, its level streams followed by its compressed value section. No data page carries inline statistics: its bounds are in the page index.
 
 **Each page decodes without the page before it**, since a reader may seek to any page. A page encodes its value range standalone: its own `DELTA_BINARY_PACKED` header and first value, its own `DELTA_BYTE_ARRAY` prefix baseline (the page's first value has prefix length zero), its own byte streams for `BYTE_STREAM_SPLIT`, its own header, offset array and vectors for `ALP`. The only chunk-level state a page depends on is the encoding choice and, for `RLE_DICTIONARY`, the dictionary page.
 
@@ -67,7 +76,7 @@ The record target exists for the page index. Without it, a column whose values e
 
 **A page holds at most as many entries as a reader accepts.** The reader refuses a data page declaring more values, or more uncompressed bytes, than fit the longest array its decode allocates ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), so the cut also ends a page at that many entries (`PageLimit.MAX_PAGE_VALUES`), through the same overflow as the byte target, and clamps the byte target to half the longest page a reader accepts (`ColumnChunkBuffer.MAX_PAGE_TARGET_BYTES`): the cut does not charge a page's framing (run headers, level length prefixes), so a page cut at the bound itself could pass it. At the default targets neither binds; they bind only for a caller who raises both targets. A single record of more entries or bytes is still a page of its own, which no reader opens.
 
-Tests: `WriterLayoutTest`, `WriterDictionaryTest`, `WriterEncodingPolicyTest`, `ColumnMetaDataWriterTest`, `RowGroupDictionaryFilterSourceTest`, `PageEntryLimitTest`, `WriterInteropTest` (parquet-testing-runner).
+Tests: `WriterLayoutTest`, `WriterDictionaryTest`, `WriterEncodingPolicyTest`, `ColumnMetaDataWriterTest`, `RowGroupDictionaryFilterSourceTest`, `PageEntryLimitTest`, `WriterDataPageV2Test`, `WriterInteropTest` (parquet-testing-runner).
 
 ## Encoding selection
 
@@ -349,7 +358,6 @@ Tests: `WriterBloomFilterTest`, `SplitBlockBloomFilterBuilderTest`, `WriterBloom
 
 - **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes, without recovery, or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
 - **`GeospatialStatistics`** is not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.
-- **Data page V2** is not produced; every data page is V1.
 - **Per-row-group settings.** The codec and the named policies hold for the whole file. The writer does not choose a codec per chunk, which `ColumnMetaData.codec` would permit.
 - **Automatic delta or byte-stream-split selection**, `RLE` for `BOOLEAN` data pages, and compression levels are not provided.
 - **Sorted dictionaries** and `DictionaryPageHeader.is_sorted` are not written (#1258).
