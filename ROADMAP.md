@@ -625,7 +625,7 @@ Remaining Failures by Category (7 total):
   - [x] Map with struct values (map<string, struct>)
   - [x] List of maps (list<map<string, int>>)
 - [ ] Cross-compatibility tests (write files, read with other implementations)
-- [ ] Fuzz testing (random schemas and data)
+- [x] Fuzz testing: Jazzer targets over the footer, page headers, page index, bloom filters, a column chunk's pages, the decompressors and whole files, replayed in every build (`TESTING.md` § Fuzzing)
 - [ ] Edge cases (empty files, single values, max nesting)
 - [x] Performance benchmarks vs parquet-java (JMH micro-benchmarks + end-to-end performance tests)
 - [x] Write-path performance benchmark vs parquet-java (`FlatWriteBenchmark` — the columnar and

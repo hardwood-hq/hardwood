@@ -1,6 +1,6 @@
 # File metadata
 
-Describes how the reader turns a file's metadata bytes into the records everything else plans against: locating and reading the footer, the malformed-input policy of the Thrift compact-protocol parser, the public metadata records and what their absent fields look like, the parse and consistency checks of statistics, the page index and bloom filters, the per-file cache that holds the parsed footers of one `ParquetFileReader`, and the footers a caller supplies through a `MetadataSource` and how they are checked against the file.
+Describes how the reader turns a file's metadata bytes into the records everything else plans against: locating and reading the footer, the malformed-input policy of the Thrift compact-protocol parser, the bounds every size, count and length a file declares is held to before it reaches an allocation, the public metadata records and what their absent fields look like, the parse and consistency checks of statistics, the page index and bloom filters, the per-file cache that holds the parsed footers of one `ParquetFileReader`, and the footers a caller supplies through a `MetadataSource` and how they are checked against the file.
 
 Related documents:
 
@@ -10,6 +10,8 @@ Related documents:
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): what pruning concludes from the parsed statistics
 - [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md): the exception types and how a failure is placed in the file
 - [READ_PIPELINE.md](READ_PIPELINE.md): how the read pipeline plans files and prefetches the next footer
+- [VALUE_DECODE.md](VALUE_DECODE.md): the page limit, the codec expansion bound and the working-set limit a page's decode is held to
+- [TESTING.md](../TESTING.md#fuzzing): the fuzz targets that look for inputs these bounds miss
 - [THREADING.md](THREADING.md): the threads a footer read and a footer load run on
 - [docs/content/how-to/metadata.md](../docs/content/how-to/metadata.md), [docs/content/reference/error-handling.md](../docs/content/reference/error-handling.md) and [docs/content/concepts/parquet-layout.md](../docs/content/concepts/parquet-layout.md): the user-facing pages
 
@@ -130,6 +132,21 @@ An enum that raises in the footer parse makes the whole file's metadata unreadab
 A parse failure names the struct and field the reader stood on (`ColumnMetaData.data_page_offset — must be non-negative but was -1`). Each struct reader enters its struct with `ThriftCompactReader.pushFieldIdContext(ThriftStruct)` and restores the enclosing struct and field id on exit, so the innermost struct is the one named; a struct entered without a name (a union's empty marker, a struct `skipField` walks past) is reported without one. `ThriftStruct` lists every field id the format defines for each struct, including those no reader reads, so an id reads as its field name only where the format defines it; `ThriftStructOracleTest` checks the list against parquet-format's generated metadata. The footer is parsed once per file and `ParquetMetadataReader` prefixes its failures with the file name. The page index is parsed per column chunk inside the read pipeline, which adds the file, row group and column on the way out ([Page index](#page-index)).
 
 Tests: `MalformedMetadataValidationTest`, `FooterRequiredFieldsTest`, `PageHeaderRequiredFieldsTest`, `MetadataRequiredFieldsTest`, `PageEncodingStatsReaderTest`, `ThriftCompactReaderTest`, `ThriftFieldNamingTest`, `CorruptFooterNamingTest`, `ThriftStructOracleTest`, `MalformedMetadataFileTest`.
+
+## Bounds on what a file declares
+
+A file can declare any value in any field, so no size, count or length taken from it reaches an allocation before one of these bounds holds. A file breaking a bound fails with a `ParquetReadException` before the allocation, naming the field it broke or, for the working-set limit, the page and what it needs. The batch capacity fails nothing: it caps what a batch holds, whatever the file declares.
+
+| Bound | Holds | Where |
+|---|---|---|
+| The bytes present: the Thrift buffer's remainder, the enclosing region, the file | every list count and binary length of the footer, page index and page headers; every offset and region length the footer declares; a page header's extent within its chunk | [Thrift parse policy](#sizes-counts-lengths-and-offsets-are-validated-where-they-are-read), [FETCH_PLANNING.md](FETCH_PLANNING.md), [VALUE_DECODE.md](VALUE_DECODE.md#page-decode) |
+| The bytes decoded: a count against the bytes that must back it | dictionary entries; `DELTA_BYTE_ARRAY` lengths; a page's declared uncompressed size against what its codec can expand its stored bytes to | [VALUE_DECODE.md](VALUE_DECODE.md#page-decode) |
+| The page limit, the longest Java array (`PageLimit`) | a page's uncompressed size; a page's value count, less one for a binary page's offsets; an OffsetIndex page's row span | [VALUE_DECODE.md](VALUE_DECODE.md#page-decode), [Page index](#page-index) |
+| The working-set limit and the read-ahead buffer | what a read holds at once, and the large tasks it runs beside the one its consumer needs | [VALUE_DECODE.md](VALUE_DECODE.md#page-decode), [READ_PIPELINE.md](READ_PIPELINE.md) |
+| The batch capacity, and batches made as the read reaches them | rows and values per batch, whatever a row group or chunk declares; the batches a row group's declared rows plan | [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes) |
+| Nesting depth | Thrift structures and schemas nested past the bounds the parser holds | [Nesting depth](#nesting-depth-is-bounded-where-it-is-read) |
+
+The page limit keeps each size a header declares within the array it sizes, so no arithmetic sizing an array overflows; a page past it, such as one declaring 2^31 - 1 values in a single run, fails and is not read in windows. A legitimate large page, such as a single binary value of hundreds of MiB, reads wherever the working-set limit lets it; the internal property `hardwood.internal.maxWorkingSetBytes` raises the limit, for the CLI as for the library.
 
 ## Metadata model
 
