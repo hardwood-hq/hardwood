@@ -321,7 +321,7 @@ public final class DataPages {
         return values(values, type, 0);
     }
 
-    /// The values of a numeric page's entries from `from` on, read through a view whose first
+    /// The values of a numeric page's entries from `from` on, read through a cursor whose first
     /// read starts there.
     static Object values(FlatPageValues values, PhysicalType type, int from) {
         int length = values.size() - from;
@@ -333,7 +333,7 @@ public final class DataPages {
             case DOUBLE -> new double[length];
             default -> throw new IllegalArgumentException("Not a numeric type: " + type);
         };
-        values.view().copy(from, out, 0, length);
+        values.cursor().copy(from, out, 0, length);
         return out;
     }
 
@@ -343,27 +343,27 @@ public final class DataPages {
         return values(values, maxDefinitionLevel, 0);
     }
 
-    /// The values of a binary page's entries from `from` on, read through a view whose first read
+    /// The values of a binary page's entries from `from` on, read through a cursor whose first read
     /// starts there.
     static byte[][] values(BinaryPageValues values, int maxDefinitionLevel, int from) {
-        BinaryPageValues view = values.view();
-        int length = view.size() - from;
+        BinaryPageValues cursor = values.cursor();
+        int length = cursor.size() - from;
         int[] starts = new int[length];
         int[] ends = new int[length];
         byte[][] out = new byte[length][];
-        if (view.dictionary() != null) {
+        if (cursor.dictionary() != null) {
             int[] ids = new int[length];
-            view.copyIds(from, length, ids, starts, ends, new int[length], 0);
+            cursor.copyIds(from, length, ids, starts, ends, new int[length], 0);
             for (int i = 0; i < length; i++) {
-                out[i] = ids[i] < 0 ? null : view.dictionary().entry(ids[i]);
+                out[i] = ids[i] < 0 ? null : cursor.dictionary().entry(ids[i]);
             }
             return out;
         }
         BinaryBatchValues chunks = new BinaryBatchValues(length);
         int[] bufferIds = new int[length];
-        view.copyPlain(from, length, starts, ends, bufferIds, 0, new PlainBytes(chunks, view.bytes(from, view.size())));
+        cursor.copyPlain(from, length, starts, ends, bufferIds, 0, new PlainBytes(chunks, cursor.bytes(from, cursor.size())));
         byte[][] buffers = chunks.buffers();
-        int[] definitionLevels = view.definitionLevels();
+        int[] definitionLevels = cursor.definitionLevels();
         for (int i = 0; i < length; i++) {
             if (definitionLevels == null || definitionLevels[from + i] == maxDefinitionLevel) {
                 out[i] = Arrays.copyOfRange(buffers[bufferIds[i]], starts[i], ends[i]);

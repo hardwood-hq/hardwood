@@ -29,7 +29,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// ([NestedIndex]).
 ///
 /// Each segment's values are one contiguous run of its page's kept values, read in place from the
-/// page's bytes through a view of its own, and through its kept runs for a masked page. A segment
+/// page's bytes through a cursor of its own, and through its kept runs for a masked page. A segment
 /// writes:
 ///
 /// - values: decoded straight into the cell for primitive values; for binary values each value's
@@ -213,9 +213,9 @@ final class NestedFill {
     /// @return the value slots written
     private static int fillBinary(NestedSegment segment, BinaryBatchValues out, PlainBytes dest,
                                   boolean[] wroteIds, int index, int valueStart, int slotLevel) {
-        // Each fill reads through a view of its own: in-place values keep a cursor, and two cells
-        // sharing the page may be filled from it at once
-        BinaryPageValues values = segment.page.measure.binary().view();
+        // Each fill reads through a cursor of its own: two cells sharing the page may be filled
+        // from it at once
+        BinaryPageValues values = segment.page.measure.binary().cursor();
         KeptRuns runs = segment.page.inPlace.runs();
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         int[] ids = null;
@@ -253,7 +253,7 @@ final class NestedFill {
     /// @return the value slots written
     private static int copyInPlace(NestedSegment segment, Object out, int valueStart, int slotLevel) {
         PageDecoder.InPlaceNestedPage inPlace = segment.page.inPlace;
-        FlatPageValues values = inPlace.flat().view();
+        FlatPageValues values = inPlace.flat().cursor();
         KeptRuns runs = inPlace.runs();
         if (runs == null) {
             return values.copy(segment.valueStart, out, valueStart, segment.values(), slotLevel);

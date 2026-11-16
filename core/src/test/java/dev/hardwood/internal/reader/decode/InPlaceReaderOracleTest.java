@@ -47,7 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// `V2` with its values compressed and `V2` with its values stored under a codec. The uncompressed
 /// `V1` page and the stored `V2` page are also read from a direct buffer at an odd address, as a
 /// page whose values are read where they lie in a file's mapping, as is a `V2` page flagged
-/// compressed in a chunk with codec `UNCOMPRESSED`, as parquet-java writes one. Each page is read from its first entry and through views starting at
+/// compressed in a chunk with codec `UNCOMPRESSED`, as parquet-java writes one. Each page is read from its first entry and through cursors starting at
 /// every entry, as a fill that starts mid-page reads it, and a flat column also through the
 /// nested entry point, as a struct leaf is read.
 class InPlaceReaderOracleTest {
@@ -119,10 +119,10 @@ class InPlaceReaderOracleTest {
                 new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
         int size = levels.size();
         for (int from = 0; from < size; from++) {
-            Object view = nested.flat() != null
+            Object read = nested.flat() != null
                     ? DataPages.values(nested.flat(), type, from)
                     : DataPages.values(nested.binary(), column.maxDefinitionLevel(), from);
-            assertThat(view).as("view from entry %d", from).isEqualTo(tail(expected, from));
+            assertThat(read).as("cursor from entry %d", from).isEqualTo(tail(expected, from));
         }
     }
 
