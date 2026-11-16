@@ -80,13 +80,17 @@ public final class FlatFill {
         int[] ids = batch.dictionaryIds != null && dictionary != null && batch.dictionary == dictionary
                 ? batch.dictionaryIds : null;
         Object out = ids == null ? segment.cell.ensureValues(column) : batch.values;
+        segment.wroteIds = ids != null;
+        segment.wroteValues = out != null;
+        if (ids == null) {
+            fill(segment, values, out, maxDefinitionLevel);
+            return;
+        }
         ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel);
         forEachRun(segment, (pageRow, destPos, length) -> {
             values.copy(pageRow, out, ids, destPos, length);
             validity.mark(values.definitionLevels(), pageRow, destPos, length);
         });
-        segment.wroteIds = ids != null;
-        segment.wroteValues = out != null;
     }
 
     /// Finishes a completed cell's batch that keeps entry ids: the values of the segments that
