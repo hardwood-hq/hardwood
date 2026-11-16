@@ -15,6 +15,7 @@ import java.util.Map;
 
 import dev.hardwood.internal.EncryptedFileException;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -22,6 +23,8 @@ import dev.hardwood.metadata.SchemaElement;
 
 /// Reader for FileMetaData from Thrift Compact Protocol.
 public class FileMetaDataReader {
+
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(FileMetaDataReader.class.getName()));
 
     /// A footer as read, together with what [FileMetaData] cannot record: which leaf columns the
     /// footer annotated with a logical type this reader does not decode.
@@ -149,9 +152,30 @@ public class FileMetaDataReader {
         }
 
         ThriftCompactReader.requireFields(ThriftStruct.FILE_META_DATA, seen, REQUIRED_FIELDS);
+        checkRowCount(numRows, rowGroups);
 
         return new ReadFooter(new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata,
                 createdBy, columnOrders), logicalTypeUnread);
+    }
+
+    /// Logs a file whose `num_rows` is not the sum of its row groups'. A read takes its rows from
+    /// the row groups, held to their pages, so the file's count serves only what is answered
+    /// from the footer alone.
+    private static void checkRowCount(long numRows, List<RowGroup> rowGroups) {
+        long sum = 0;
+        for (RowGroup rowGroup : rowGroups) {
+            sum += rowGroup.numRows();
+            if (sum < 0) {
+                break;
+            }
+        }
+        if (sum != numRows) {
+            long rowGroupRows = sum;
+            LOG.get().log(System.Logger.Level.WARNING, () -> ThriftStruct.FILE_META_DATA.structName() + " declares "
+                    + numRows + " rows in " + ThriftStruct.FILE_META_DATA.fieldName(3) + ", but its "
+                    + rowGroups.size() + " row groups declare "
+                    + (rowGroupRows < 0 ? "more than " + Long.MAX_VALUE : rowGroupRows));
+        }
     }
 
     private static List<SchemaElement> elements(List<SchemaElementReader.ReadElement> elements) {
