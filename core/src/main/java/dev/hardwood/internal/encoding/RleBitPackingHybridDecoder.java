@@ -184,13 +184,21 @@ public class RleBitPackingHybridDecoder {
     /// Where [#skipBitPacked] decodes the values it passes over inside a group; made on first use.
     private int[] discard;
 
+    /// The leading groups of `groups`, each `width` bytes from `pos`, whose two-word read of 16
+    /// bytes from the group start ends at `dataEnd` or before. Computed once so that the extraction
+    /// loop has a single exit and counts its iterations up front.
+    private static int fittingGroups(int pos, int dataEnd, int groups, int width) {
+        int room = dataEnd - pos - 16;
+        return room < 0 ? 0 : Math.min(groups, room / width + 1);
+    }
+
     /// Extracts up to `groups` groups of eight 9-bit values, starting at byte `pos`, into `out`
     /// from `o`, reading two little-endian words per group. Stops early when fewer than 16 bytes
     /// remain before `dataEnd`, and returns the number of groups extracted. `unpack10` to
     /// `unpack16` are the same for their own width.
     private static int unpack9(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 9, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 9);
+        for (int g = 0; g < n; g++, pos += 9, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0x1ff);
@@ -202,12 +210,12 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) ((lo >>> 54) & 0x1ff);
             out[o + 7] = (int) (((lo >>> 63) | (hi << 1)) & 0x1ff);
         }
-        return g;
+        return n;
     }
 
     private static int unpack10(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 10, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 10);
+        for (int g = 0; g < n; g++, pos += 10, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0x3ff);
@@ -219,12 +227,12 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) (((lo >>> 60) | (hi << 4)) & 0x3ff);
             out[o + 7] = (int) ((hi >>> 6) & 0x3ff);
         }
-        return g;
+        return n;
     }
 
     private static int unpack11(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 11, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 11);
+        for (int g = 0; g < n; g++, pos += 11, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0x7ff);
@@ -236,12 +244,12 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) ((hi >>> 2) & 0x7ff);
             out[o + 7] = (int) ((hi >>> 13) & 0x7ff);
         }
-        return g;
+        return n;
     }
 
     private static int unpack12(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 12, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 12);
+        for (int g = 0; g < n; g++, pos += 12, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0xfff);
@@ -253,12 +261,12 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) ((hi >>> 8) & 0xfff);
             out[o + 7] = (int) ((hi >>> 20) & 0xfff);
         }
-        return g;
+        return n;
     }
 
     private static int unpack13(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 13, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 13);
+        for (int g = 0; g < n; g++, pos += 13, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0x1fff);
@@ -270,12 +278,12 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) ((hi >>> 14) & 0x1fff);
             out[o + 7] = (int) ((hi >>> 27) & 0x1fff);
         }
-        return g;
+        return n;
     }
 
     private static int unpack14(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 14, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 14);
+        for (int g = 0; g < n; g++, pos += 14, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0x3fff);
@@ -287,12 +295,12 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) ((hi >>> 20) & 0x3fff);
             out[o + 7] = (int) ((hi >>> 34) & 0x3fff);
         }
-        return g;
+        return n;
     }
 
     private static int unpack15(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 15, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 15);
+        for (int g = 0; g < n; g++, pos += 15, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0x7fff);
@@ -304,12 +312,12 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) ((hi >>> 26) & 0x7fff);
             out[o + 7] = (int) ((hi >>> 41) & 0x7fff);
         }
-        return g;
+        return n;
     }
 
     private static int unpack16(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
-        int g = 0;
-        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 16, o += 8) {
+        int n = fittingGroups(pos, dataEnd, groups, 16);
+        for (int g = 0; g < n; g++, pos += 16, o += 8) {
             long lo = (long) LONG_LE.get(data, pos);
             long hi = (long) LONG_LE.get(data, pos + 8);
             out[o + 0] = (int) (lo & 0xffff);
@@ -321,7 +329,7 @@ public class RleBitPackingHybridDecoder {
             out[o + 6] = (int) ((hi >>> 32) & 0xffff);
             out[o + 7] = (int) ((hi >>> 48) & 0xffff);
         }
-        return g;
+        return n;
     }
 
     private void readNextRun() {
@@ -458,8 +466,8 @@ public class RleBitPackingHybridDecoder {
         // and the extraction is no faster than the one-read-per-value path below.
         //
         // Only while the buffer is empty, because this bypasses it, and only while 16 bytes
-        // remain: the second word runs up to 7 bytes past the group, though `pos` advances by just
-        // the group's bytes, so over-reading would leave the cursor inside the next run's header.
+        // remain: the second word runs up to 7 bytes past the group, and the data may end where
+        // its array does. The bits read past the group are masked off.
         else if (width <= 16 && bitsInBuffer == 0) {
             int groups = count >>> 3;
             int done = switch (width) {
@@ -483,8 +491,8 @@ public class RleBitPackingHybridDecoder {
         // Nothing is carried between values, which is what the bit buffer below cannot do.
         //
         // Only while the buffer is empty, because this bypasses it, and only while the reads stay
-        // inside the data: they run past the bytes the group owns, though `pos` advances by just
-        // those, so over-reading would leave the cursor inside the next run's header.
+        // inside the data: they run past the bytes the group owns, and the data may end where its
+        // array does. The bits read past a value are masked off.
         else if (width <= 32) {
             int groupSpan = ((7 * width) >>> 3) + Long.BYTES;
             while (count >= 8 && bitsInBuffer == 0 && pos + groupSpan <= dataEnd) {

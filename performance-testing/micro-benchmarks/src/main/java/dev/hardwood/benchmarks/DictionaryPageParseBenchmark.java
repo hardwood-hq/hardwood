@@ -30,10 +30,11 @@ import org.openjdk.jmh.annotations.Warmup;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
-import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -45,7 +46,6 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
-import dev.hardwood.internal.reader.decode.DataPage;
 
 /// Setting up one dictionary page, through each of [DictionaryParser]'s two entry points.
 ///
