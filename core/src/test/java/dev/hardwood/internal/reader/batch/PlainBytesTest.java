@@ -73,8 +73,8 @@ class PlainBytesTest {
         out.installViews();
         PlainBytes dest = new PlainBytes(out, (long) VALUES * WIDTH);
         int half = VALUES / 2;
-        page.view().copyPlain(0, half, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), 0, dest);
-        page.view().copyPlain(half, VALUES - half, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), half, dest);
+        page.cursor().copyPlain(0, half, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), 0, dest);
+        page.cursor().copyPlain(half, VALUES - half, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), half, dest);
         out.finishFill(VALUES, new BinaryBatchValues.ViewDemand());
 
         assertValues(out, VALUES);

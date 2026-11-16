@@ -256,7 +256,7 @@ class PageTrimmerTest {
     /// The kept values of a trimmed numeric page, read through its runs as a fill reads them.
     private static int[] keptInts(PageDecoder.InPlaceNestedPage trimmed) {
         int[] out = new int[trimmed.size()];
-        FlatPageValues values = trimmed.flat().view();
+        FlatPageValues values = trimmed.flat().cursor();
         KeptRuns runs = trimmed.runs();
         int kept = 0;
         while (kept < trimmed.size()) {
@@ -271,7 +271,7 @@ class PageTrimmerTest {
     /// The kept values of a trimmed binary page, `null` at a null, read through its runs.
     private static byte[][] keptBytes(PageDecoder.InPlaceNestedPage trimmed, int maxDef) {
         int size = trimmed.size();
-        BinaryPageValues values = trimmed.binary().view();
+        BinaryPageValues values = trimmed.binary().cursor();
         KeptRuns runs = trimmed.runs();
         int[] starts = new int[size];
         int[] ends = new int[size];

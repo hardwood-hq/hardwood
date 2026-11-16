@@ -31,7 +31,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// | ids | a dictionary-encoded page | one id per non-null value |
 ///
 /// The fill writes the page's rows in page order, so the values are read with one forward cursor,
-/// as [FlatPageValues] is; a fill that starts elsewhere reads through a [#view()] of its own. The
+/// as [FlatPageValues] is; a fill that starts elsewhere reads through a [#cursor()] of its own. The
 /// definition levels, ids and byte prefix live in the scratch the page is decoded with, and the
 /// bytes in that scratch or the decompressor's buffer, for as long as the page's fills run.
 public final class BinaryPageValues {
@@ -339,7 +339,7 @@ public final class BinaryPageValues {
 
     /// A reader of the same values with a cursor of its own at the page's first row, so that two
     /// fills can read one page at once.
-    public BinaryPageValues view() {
+    public BinaryPageValues cursor() {
         return new BinaryPageValues(kind, numValues, definitionLevels, maxDefinitionLevel, allPresent, bytePrefix,
                 data, plainOffset, width, prefixed, stride, ids, dictionary);
     }

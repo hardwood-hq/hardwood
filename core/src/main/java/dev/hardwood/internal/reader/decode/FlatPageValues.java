@@ -30,7 +30,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// A fill writes its rows in page order, so the values are read with one forward cursor: [#copy]
 /// moves it to the run's first row, counting the non-null values it passes, then writes the run.
 /// A page whose mask drops rows passes them on the way. A fill that starts elsewhere reads through
-/// a [#view()] of its own.
+/// a [#cursor()] of its own.
 ///
 /// The ids and the definition levels live in the scratch the page is decoded with, for as long
 /// as the page's fills run.
@@ -62,11 +62,11 @@ public final class FlatPageValues {
     /// `BYTE_STREAM_SPLIT` values: the non-null values, which is the distance between two of a
     /// value's bytes; `0` for any other encoding.
     private final int stride;
-    /// `ALP` values: the value section's end and the non-null values, from which each view makes
+    /// `ALP` values: the value section's end and the non-null values, from which each cursor makes
     /// a decoder of its own; `alpLimit` is `0` for any other encoding.
     private final int alpLimit;
     private final int alpValues;
-    /// `ALP` only: this view's decoder, `log2` of its vector size (a power of two, so that a
+    /// `ALP` only: this cursor's decoder, `log2` of its vector size (a power of two, so that a
     /// value's vector is a shift), the vector in the vector buffer and the buffer itself.
     private AlpDecoder alp;
     private int alpLogVectorSize;
@@ -75,7 +75,7 @@ public final class FlatPageValues {
     private double[] alpDoubles;
     /// `DELTA_BINARY_PACKED` values: the value section's end, `0` for any other encoding.
     private final int deltaLimit;
-    /// `DELTA_BINARY_PACKED` only: this view's decoder and the non-null values it has passed.
+    /// `DELTA_BINARY_PACKED` only: this cursor's decoder and the non-null values it has passed.
     private DeltaBinaryPackedDecoder delta;
     private int deltaPos;
 
@@ -148,7 +148,7 @@ public final class FlatPageValues {
     }
 
     /// `DELTA_BINARY_PACKED` values of `type` (`INT32` or `INT64`) from `offset` in `data`, ending
-    /// at `limit`. The fill decodes them in order; a view that starts past the page's first value
+    /// at `limit`. The fill decodes them in order; a cursor that starts past the page's first value
     /// decodes the values before it and passes over them.
     static FlatPageValues delta(PhysicalType type, int[] definitionLevels, int maxDefinitionLevel, int numValues,
                                 byte[] data, int offset, int limit) {
@@ -245,7 +245,7 @@ public final class FlatPageValues {
 
     /// A reader of the same values with a cursor of its own at the page's first row, so that two
     /// fills can read one page at once.
-    public FlatPageValues view() {
+    public FlatPageValues cursor() {
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, plain, plainOffset,
                 plainValues, ids, dictionaryValues, stride, alpLimit, alpValues, deltaLimit);
     }
@@ -382,7 +382,7 @@ public final class FlatPageValues {
         return bytes.order(ByteOrder.LITTLE_ENDIAN);
     }
 
-    /// This view's delta decoder, positioned at non-null value `src`.
+    /// This cursor's delta decoder, positioned at non-null value `src`.
     private DeltaBinaryPackedDecoder deltaAt(int src) {
         if (delta == null) {
             delta = new DeltaBinaryPackedDecoder(plain, plainOffset, deltaLimit);
@@ -396,7 +396,7 @@ public final class FlatPageValues {
     }
 
     /// Writes the non-null values `[src, src + length)` of an `ALP` page from the vectors that hold
-    /// them, each decoded once into this view's vector buffer.
+    /// them, each decoded once into this cursor's vector buffer.
     private void copyAlp(Object out, int destPos, int src, int length) {
         int vectorSize = alpDecoder().vectorSize();
         while (length > 0) {
@@ -412,7 +412,7 @@ public final class FlatPageValues {
     }
 
     /// Writes the non-null `ALP` value `src` to `out[dest]` from its vector, decoded once into this
-    /// view's vector buffer.
+    /// cursor's vector buffer.
     private void copyAlpOne(Object out, int dest, int src) {
         alpDecoder();
         int vector = src >>> alpLogVectorSize;
@@ -426,7 +426,7 @@ public final class FlatPageValues {
         }
     }
 
-    /// This view's `ALP` decoder, made with its vector buffer on first use.
+    /// This cursor's `ALP` decoder, made with its vector buffer on first use.
     private AlpDecoder alpDecoder() {
         if (alp == null) {
             alp = new AlpDecoder(plain, plainOffset, alpLimit, alpValues, type);
@@ -441,7 +441,7 @@ public final class FlatPageValues {
         return alp;
     }
 
-    /// Decodes `vector` into this view's vector buffer unless it is the vector already there.
+    /// Decodes `vector` into this cursor's vector buffer unless it is the vector already there.
     private void bufferAlpVector(int vector) {
         if (vector != alpVector) {
             alp.decodeVector(vector, alpFloats, alpDoubles);
