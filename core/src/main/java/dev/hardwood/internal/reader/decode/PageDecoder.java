@@ -721,11 +721,58 @@ public class PageDecoder {
         int[] levels = scratch.repetitionLevels(numValues);
         if (bitPacked) {
             BitPackedLevelDecoder.decode(levelData, offset, getBitWidth(maxLevel), levels, numValues);
-            return levels;
+            requireWithinMaximum(levels, numValues, maxLevel, "repetition");
         }
-        RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, getBitWidth(maxLevel));
-        decoder.readInts(levels, 0, numValues);
+        else {
+            RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length,
+                    getBitWidth(maxLevel));
+            readWithinMaximum(decoder, levels, numValues, maxLevel, "repetition");
+        }
         return levels;
+    }
+
+    /// Whether a level stored at the bit width of `maxLevel` can exceed it: wherever the maximum
+    /// is not one less than a power of two. Such a level names no position in the schema, and a
+    /// read on it would turn a value into a null.
+    private static boolean canExceed(int maxLevel) {
+        return Integer.bitCount(maxLevel + 1) != 1;
+    }
+
+    /// Decodes `count` levels from `decoder` into `levels`, checking them against `maxLevel`
+    /// where they can exceed it. The decoder reports the largest level as it decodes, so the
+    /// check takes no pass of its own over the levels.
+    ///
+    /// @param kind `"repetition"` or `"definition"`
+    /// @throws ParquetReadException naming the largest level, if it exceeds `maxLevel`
+    private static void readWithinMaximum(RleBitPackingHybridDecoder decoder, int[] levels, int count, int maxLevel,
+            String kind) {
+        if (!canExceed(maxLevel)) {
+            decoder.readInts(levels, 0, count);
+            return;
+        }
+        requireWithinMaximum(decoder.readLevels(levels, count), maxLevel, kind);
+    }
+
+    /// Checks that none of the first `count` of `levels`, decoded from the deprecated
+    /// `BIT_PACKED` encoding, exceeds `maxLevel`.
+    ///
+    /// @param kind `"repetition"` or `"definition"`
+    /// @throws ParquetReadException naming the largest level, if it exceeds `maxLevel`
+    private static void requireWithinMaximum(int[] levels, int count, int maxLevel, String kind) {
+        if (!canExceed(maxLevel)) {
+            return;
+        }
+        int max = 0;
+        for (int i = 0; i < count; i++) {
+            max = Math.max(max, levels[i]);
+        }
+        requireWithinMaximum(max, maxLevel, kind);
+    }
+
+    private static void requireWithinMaximum(int max, int maxLevel, String kind) {
+        if (max > maxLevel) {
+            throw new ParquetReadException("Invalid column chunk: " + kind + " level " + max + " exceeds the column's maximum of " + maxLevel);
+        }
     }
 
     /// Decode definition levels, applying the all-present fast path: when the
@@ -747,6 +794,7 @@ public class PageDecoder {
         if (bitPacked) {
             int[] levels = scratch.definitionLevels(numValues);
             BitPackedLevelDecoder.decode(levelData, offset, bitWidth, levels, numValues);
+            requireWithinMaximum(levels, numValues, maxDef, "definition");
             return levels;
         }
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, bitWidth);
@@ -756,7 +804,7 @@ public class PageDecoder {
             return null;
         }
         int[] levels = scratch.definitionLevels(numValues);
-        decoder.readInts(levels, 0, numValues);
+        readWithinMaximum(decoder, levels, numValues, maxDef, "definition");
         return levels;
     }
 

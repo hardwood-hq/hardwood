@@ -62,10 +62,27 @@ public class RleBitPackingHybridDecoder {
     ///
     /// @throws ParquetReadException if the stream ends before `count` values
     public void readInts(int[] buffer, int offset, int count) {
+        decode(buffer, offset, count, false);
+    }
+
+    /// Decodes the next `count` values into `buffer` from `0`, as [#readInts] does, and returns
+    /// the largest of them, `0` where there are none. An RLE run contributes its value once,
+    /// without a pass over its repeats; the values of a bit-packed run are compared right after
+    /// they are unpacked, while they are still in cache.
+    ///
+    /// @throws ParquetReadException if the stream ends before `count` values
+    public int readLevels(int[] buffer, int count) {
+        return decode(buffer, 0, count, true);
+    }
+
+    /// Decodes `count` values into `buffer` from `offset`; with `trackMax`, returns the largest
+    /// of them, otherwise `0`.
+    private int decode(int[] buffer, int offset, int count, boolean trackMax) {
         if (bitWidth == 0) {
-            return;
+            return 0;
         }
 
+        int max = 0;
         int outPos = offset;
         int remaining = count;
 
@@ -82,9 +99,13 @@ public class RleBitPackingHybridDecoder {
             if (isRleRun) {
                 Arrays.fill(buffer, outPos, outPos + toRead, currentValue);
                 decoded = toRead;
+                max = Math.max(max, currentValue);
             }
             else {
                 decoded = decodeBitPacked(buffer, outPos, toRead);
+                if (trackMax) {
+                    max = Math.max(max, max(buffer, outPos, decoded));
+                }
             }
 
             outPos += decoded;
@@ -101,6 +122,16 @@ public class RleBitPackingHybridDecoder {
             throw new ParquetReadException("Insufficient RLE/Bit-Packing data: decoded "
                     + (count - remaining) + " of " + count + " requested values");
         }
+        return trackMax ? max : 0;
+    }
+
+    /// The largest of the `count` values in `buffer` from `from`, `0` where there are none.
+    private static int max(int[] buffer, int from, int count) {
+        int max = 0;
+        for (int i = from, end = from + count; i < end; i++) {
+            max = Math.max(max, buffer[i]);
+        }
+        return max;
     }
 
     /// The values left in the current run where it is an RLE run, the next run read where the
