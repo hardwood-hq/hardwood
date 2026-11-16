@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -19,10 +20,15 @@ import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.junit.jupiter.api.Named;
 
 import dev.hardwood.MisstatedPageFile;
+import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.thrift.DeepNestingFile;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
@@ -33,6 +39,7 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.schema.FileSchema;
 
 /// The seed inputs of the fuzz targets: the small Parquet files of the core test resources and
 /// files crafted to break a bound, and the footers, page headers and page indexes cut from them.
@@ -42,10 +49,18 @@ final class Seeds {
     private static final long MAX_FILE_BYTES = 64 * 1024;
     /// Page headers taken from each column chunk, from its first page.
     private static final int PAGES_PER_CHUNK = 3;
+    /// The longest run of a chunk's first pages a page seed holds.
+    private static final int MAX_CHUNK_BYTES = 16 * 1024;
 
     private static final Path RESOURCES = Path.of("src/test/resources");
 
     private static final List<Named<byte[]>> FILES = readFiles();
+
+    static {
+        // The reader logs a warning for most malformed inputs, which a fuzzing run writes millions
+        // of; every target takes its seeds from here, so loading them silences it
+        Configurator.setLevel("dev.hardwood", Level.OFF);
+    }
 
     private Seeds() {
     }
@@ -68,6 +83,20 @@ final class Seeds {
     /// The headers of the first pages of each column chunk.
     static Stream<Named<byte[]>> pageHeaders() {
         return slices(Seeds::pageHeaders);
+    }
+
+    /// The first pages of the first row group's column chunks, each with its column's shape and
+    /// its codec ([ChunkInput]).
+    static Stream<Named<byte[]>> chunks() {
+        return slices(Seeds::chunks);
+    }
+
+    /// Compressed bytes for each decompressor ([DecompressorFuzzTest]): the bodies of the first
+    /// pages of each column chunk, with the size their headers declare, and samples compressed by
+    /// each codec's compressor, each from a heap buffer and from a direct one.
+    static Stream<Named<byte[]>> compressed() {
+        Stream<Named<byte[]>> samples = Stream.of(CompressionCodec.values()).flatMap(Seeds::samples);
+        return Stream.concat(samples, slices(Seeds::pageBodies));
     }
 
     /// The offset index of each column chunk that has one.
@@ -148,20 +177,129 @@ final class Seeds {
         List<byte[]> headers = new ArrayList<>();
         for (RowGroup rowGroup : metaData(file).rowGroups()) {
             for (ColumnChunk chunk : rowGroup.columns()) {
-                ColumnMetaData metaData = chunk.metaData();
-                long at = metaData.dictionaryPageOffset() != null && metaData.dictionaryPageOffset() > 0
-                        ? metaData.dictionaryPageOffset()
-                        : metaData.dataPageOffset();
-                long end = at + metaData.totalCompressedSize();
-                for (int page = 0; page < PAGES_PER_CHUNK && at < end; page++) {
-                    ThriftCompactReader reader = reader(Arrays.copyOfRange(file, Math.toIntExact(at), file.length));
-                    PageHeader header = PageHeaderReader.read(reader);
-                    headers.add(Arrays.copyOfRange(file, Math.toIntExact(at), Math.toIntExact(at + reader.getBytesRead())));
-                    at += reader.getBytesRead() + header.compressedPageSize();
+                for (Page page : pages(file, chunk.metaData())) {
+                    headers.add(Arrays.copyOfRange(file, page.at(), page.bodyAt()));
                 }
             }
         }
         return headers;
+    }
+
+    private static List<byte[]> chunks(byte[] file) {
+        FileMetaData metaData = metaData(file);
+        FileSchema schema = ParquetMetadataReader.schemaOf(metaData);
+        List<byte[]> chunks = new ArrayList<>();
+        if (metaData.rowGroups().isEmpty()) {
+            return chunks;
+        }
+        List<ColumnChunk> columns = metaData.rowGroups().get(0).columns();
+        for (int c = 0; c < columns.size(); c++) {
+            ColumnMetaData chunk = columns.get(c).metaData();
+            int from = Math.toIntExact(firstPageOffset(chunk));
+            int to = from;
+            for (Page page : pages(file, chunk)) {
+                if (page.end() - from > MAX_CHUNK_BYTES) {
+                    break;
+                }
+                to = page.end();
+            }
+            byte[] input = ChunkInput.encode(schema.getColumn(c), chunk.codec(), Arrays.copyOfRange(file, from, to));
+            if (to > from && input != null) {
+                chunks.add(input);
+            }
+        }
+        return chunks;
+    }
+
+    /// The compressed body of each of the first pages of each column chunk, after the selector of
+    /// each decompressor of the chunk's codec and the size the page header declares.
+    private static List<byte[]> pageBodies(byte[] file) {
+        List<byte[]> bodies = new ArrayList<>();
+        for (RowGroup rowGroup : metaData(file).rowGroups()) {
+            for (ColumnChunk column : rowGroup.columns()) {
+                ColumnMetaData chunk = column.metaData();
+                for (Page page : pages(file, chunk)) {
+                    PageHeader header = page.header();
+                    byte[] body = Arrays.copyOfRange(file, page.bodyAt(), page.end());
+                    // a V2 page compresses its values alone, after the levels its header counts
+                    int levels = header.dataPageHeaderV2() == null ? 0
+                            : header.dataPageHeaderV2().repetitionLevelsByteLength()
+                                    + header.dataPageHeaderV2().definitionLevelsByteLength();
+                    if (levels > body.length) {
+                        continue;
+                    }
+                    for (int selector : DecompressorFuzzTest.selectors(chunk.codec())) {
+                        bodies.add(compressedInput(selector, header.uncompressedPageSize() - levels,
+                                Arrays.copyOfRange(body, levels, body.length)));
+                    }
+                }
+            }
+        }
+        return bodies;
+    }
+
+    /// Samples compressed by `codec`'s compressor, for each of its decompressors, from a heap
+    /// buffer and from a direct one; none for a codec without a compressor.
+    private static Stream<Named<byte[]>> samples(CompressionCodec codec) {
+        Compressor compressor;
+        try {
+            compressor = new CompressorFactory().getCompressor(codec);
+        }
+        catch (UnsupportedOperationException e) {
+            return Stream.empty();
+        }
+        byte[] repeated = new byte[4096];
+        Arrays.fill(repeated, (byte) 'a');
+        byte[] counting = new byte[1024];
+        for (int i = 0; i < counting.length; i++) {
+            counting[i] = (byte) (i * 31);
+        }
+        List<Named<byte[]>> samples = new ArrayList<>();
+        for (byte[] sample : List.of(new byte[0], "Hardwood".getBytes(StandardCharsets.US_ASCII), repeated, counting)) {
+            byte[] compressed = compressor.compress(sample, 0, sample.length);
+            for (int selector : DecompressorFuzzTest.selectors(codec)) {
+                for (int direct : new int[]{ 0, DecompressorFuzzTest.DIRECT_BIT }) {
+                    samples.add(Named.of(codec + " sample of " + sample.length + " bytes, selector " + (selector | direct),
+                            compressedInput(selector | direct, sample.length, compressed)));
+                }
+            }
+        }
+        return samples.stream();
+    }
+
+    private static byte[] compressedInput(int selector, int size, byte[] compressed) {
+        byte[] input = new byte[DecompressorFuzzTest.HEADER_BYTES + compressed.length];
+        input[0] = (byte) selector;
+        input[1] = (byte) size;
+        input[2] = (byte) (size >>> 8);
+        input[3] = (byte) (size >>> 16);
+        System.arraycopy(compressed, 0, input, DecompressorFuzzTest.HEADER_BYTES, compressed.length);
+        return input;
+    }
+
+    /// A page of a file: where its header starts, where its body starts and ends, and its header.
+    private record Page(int at, int bodyAt, int end, PageHeader header) {
+    }
+
+    /// The first [#PAGES_PER_CHUNK] pages of a column chunk.
+    private static List<Page> pages(byte[] file, ColumnMetaData chunk) {
+        List<Page> pages = new ArrayList<>();
+        int at = Math.toIntExact(firstPageOffset(chunk));
+        long end = at + chunk.totalCompressedSize();
+        for (int page = 0; page < PAGES_PER_CHUNK && at < end; page++) {
+            ThriftCompactReader reader = reader(Arrays.copyOfRange(file, at, file.length));
+            PageHeader header = PageHeaderReader.read(reader);
+            int bodyAt = Math.toIntExact(at + reader.getBytesRead());
+            pages.add(new Page(at, bodyAt, Math.addExact(bodyAt, header.compressedPageSize()), header));
+            at = pages.getLast().end();
+        }
+        return pages;
+    }
+
+    private static long firstPageOffset(ColumnMetaData chunk) {
+        return chunk.dictionaryPageOffset() != null && chunk.dictionaryPageOffset() > 0
+                ? chunk.dictionaryPageOffset()
+                : chunk.dataPageOffset();
     }
 
     private static List<byte[]> chunkRegions(byte[] file, Function<ColumnChunk, long[]> region) {
