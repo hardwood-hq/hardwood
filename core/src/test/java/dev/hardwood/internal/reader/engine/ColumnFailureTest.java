@@ -26,6 +26,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
@@ -179,7 +180,7 @@ class ColumnFailureTest {
             for (BatchExchange<?> exchange : exchanges) {
                 Object batch = exchange.poll();
                 records = batch instanceof NestedBatch nested ? nested.recordCount
-                        : batch == null ? 0 : ((BatchExchange.Batch) batch).recordCount;
+                        : batch == null ? 0 : ((FlatBatch) batch).recordCount;
                 if (records == 0) {
                     exchange.checkError();
                     return;

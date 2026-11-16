@@ -9,9 +9,9 @@ package dev.hardwood.internal.reader.row;
 
 import dev.hardwood.internal.predicate.MergePlan;
 import dev.hardwood.internal.predicate.MergePlanEvaluator;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
-/// Combines the per-column [BatchExchange.Batch#matches] bitmaps a compiled
+/// Combines the per-column [FlatBatch#matches] bitmaps a compiled
 /// batch filter produces into the one per-row survivor bitmap its consumer
 /// iterates. Each column ran its matcher fragment into its batch's own `matches`
 /// array as the batch's cell completed, so the merge reseats pointers and copies
@@ -97,7 +97,7 @@ public final class BatchMatchMerger {
     /// @param batches the batches being served, indexed by projected column
     ///         index; only [#referencedColumns] are dereferenced
     /// @param recordCount rows in the batch
-    public long[] merge(BatchExchange.Batch[] batches, int recordCount) {
+    public long[] merge(FlatBatch[] batches, int recordCount) {
         if (aliasedColumn >= 0) {
             return batches[aliasedColumn].matches;
         }

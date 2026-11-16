@@ -21,8 +21,8 @@ import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValuesFixtures;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -47,7 +47,7 @@ class ShortValueEqualityTest {
             BitSet nulls = nulls();
             // Packed exactly, so the last short values end within eight bytes of the array's end
             // and take the byte-by-byte fallback.
-            BatchExchange.Batch batch = batch(nulls, values);
+            FlatBatch batch = batch(nulls, values);
             byte[][] literals = {valueOfLength(values, 0), valueOfLength(values, 7), valueOfLength(values, 8),
                     valueOfLength(values, 9), values[ROWS - 1], values[ROWS - 2], "absent".getBytes()};
 
@@ -79,7 +79,7 @@ class ShortValueEqualityTest {
     void valuesDifferingOnlyPastTheirLength_areNotEqual() {
         // "ab" read as eight bytes picks up the next value's bytes; the mask must drop them, and
         // "ab\0" must not match "ab" even though both mask to the same leading bytes.
-        BatchExchange.Batch batch = batch(null, "ab".getBytes(), "abab".getBytes(),
+        FlatBatch batch = batch(null, "ab".getBytes(), "abab".getBytes(),
                 new byte[]{'a', 'b', 0}, "ab".getBytes(), "padding-so-every-row-reads-eight-bytes".getBytes());
         assertThat(run(eq("ab"), batch)).containsExactly(0b01001L);
     }
@@ -87,7 +87,7 @@ class ShortValueEqualityTest {
     @Test
     void arrayUnderEightBytes_comparesEveryRowByteWise() {
         // Three bytes in all: no row can be read as eight, so every row takes the fallback.
-        BatchExchange.Batch batch = batch(null, "ab".getBytes(), "c".getBytes());
+        FlatBatch batch = batch(null, "ab".getBytes(), "c".getBytes());
         assertThat(run(eq("ab"), batch)).containsExactly(0b01L);
         assertThat(run(eq("c"), batch)).containsExactly(0b10L);
     }
@@ -142,7 +142,7 @@ class ShortValueEqualityTest {
 
     /// Packs `values` back to back into an array sized exactly to them, so the last values end at the
     /// array's end, with `nulls` absent.
-    private static BatchExchange.Batch batch(BitSet nulls, byte[]... values) {
+    private static FlatBatch batch(BitSet nulls, byte[]... values) {
         int[] offsets = new int[values.length + 1];
         for (int i = 0; i < values.length; i++) {
             offsets[i + 1] = offsets[i] + values[i].length;
@@ -151,7 +151,7 @@ class ShortValueEqualityTest {
         for (int i = 0; i < values.length; i++) {
             System.arraycopy(values[i], 0, bytes, offsets[i], values[i].length);
         }
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+        FlatBatch batch = new FlatBatch();
         batch.values = BinaryBatchValuesFixtures.contiguous(bytes, offsets);
         if (nulls != null && !nulls.isEmpty()) {
             long[] validity = new long[(values.length + 63) >>> 6];
@@ -167,7 +167,7 @@ class ShortValueEqualityTest {
     }
 
     /// Runs `matcher` and clears the bits past the record count, which a matcher leaves unspecified.
-    private static long[] run(ColumnBatchMatcher matcher, BatchExchange.Batch batch) {
+    private static long[] run(ColumnBatchMatcher matcher, FlatBatch batch) {
         long[] out = new long[(batch.recordCount + 63) >>> 6];
         matcher.test(batch, out);
         int tail = batch.recordCount & 63;

@@ -7,9 +7,9 @@
  */
 package dev.hardwood.internal.predicate;
 
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
-/// Per-column predicate fragment evaluated against a just-filled [BatchExchange.Batch], by the
+/// Per-column predicate fragment evaluated against a just-filled [FlatBatch], by the
 /// job that completes a flat column's batch.
 ///
 /// Implementations write a per-batch matches mask into the caller-provided
@@ -24,5 +24,5 @@ public sealed interface ColumnBatchMatcher
         permits LongBatchMatcher, DoubleBatchMatcher, IntBatchMatcher, FloatBatchMatcher,
         BooleanBatchMatcher, BinaryBatchMatcher, NullBatchMatcher, AndBatchMatcher, OrBatchMatcher {
 
-    void test(BatchExchange.Batch batch, long[] outWords);
+    void test(FlatBatch batch, long[] outWords);
 }

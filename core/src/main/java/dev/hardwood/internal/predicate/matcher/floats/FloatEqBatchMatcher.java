@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.floats;
 
 import dev.hardwood.internal.predicate.FloatBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 public final class FloatEqBatchMatcher implements FloatBatchMatcher {
 
@@ -19,7 +19,7 @@ public final class FloatEqBatchMatcher implements FloatBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         float[] vals = (float[]) batch.values;
         int n = batch.recordCount;
         float lit = literal;

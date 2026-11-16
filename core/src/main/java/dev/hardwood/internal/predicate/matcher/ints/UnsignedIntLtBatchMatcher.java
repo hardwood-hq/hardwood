@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.ints;
 
 import dev.hardwood.internal.predicate.IntBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// [IntLtBatchMatcher] for a column annotated `INT(32, isSigned = false)`, whose values order by
 /// unsigned magnitude. Both sides are biased by `Integer.MIN_VALUE`, which moves the sign bit
@@ -25,7 +25,7 @@ public final class UnsignedIntLtBatchMatcher implements IntBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         int[] vals = (int[]) batch.values;
         int n = batch.recordCount;
         int lit = biasedLiteral;

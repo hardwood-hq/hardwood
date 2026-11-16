@@ -18,6 +18,7 @@ import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.LeafCompaction;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
@@ -275,7 +276,7 @@ final class ColumnScan implements Closeable {
     /// `values[]` allocation on the common path. Variable-length
     /// (`BinaryBatchValues`) leaves can't gather in place and get a compacted
     /// copy; validity is rebuilt only when a kept record is null.
-    private static void compactFlatBatchInPlace(BatchExchange.Batch batch, int[] kept, int count) {
+    private static void compactFlatBatchInPlace(FlatBatch batch, int[] kept, int count) {
         Object values = batch.values;
         if (values instanceof BinaryBatchValues binary) {
             batch.values = LeafCompaction.compactBinary(binary, kept, count);
@@ -300,7 +301,7 @@ final class ColumnScan implements Closeable {
 
     /// Gathers the present/null bits at the kept record positions into a fresh
     /// bitmap. Mirrors the set-bit-=-present polarity of
-    /// [BatchExchange.Batch#validity]; returns `null` when no kept record is
+    /// [FlatBatch#validity]; returns `null` when no kept record is
     /// null (the sparse "all present" representation).
     private static long[] compactValidity(long[] src, int[] kept, int count) {
         if (src == null) {

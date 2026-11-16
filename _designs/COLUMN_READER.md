@@ -65,7 +65,7 @@ Values at a position where the leaf or an enclosing scope is null are unspecifie
 
 **Bit layout.** Set bit means present. Word `w` covers items `[w*64, w*64+64)`, lowest bit lowest item. Bits at or past the scope's item count are undefined and never read. The accessors are named for nullability (`isNull`, `isNotNull`, `hasNulls`, `nullCount`, `nextNull`, `nextNotNull`), matching `RowReader.isNull`, while storage keeps Arrow's present polarity.
 
-**The sparse "no nulls" signal.** Throughout the pipeline a `null` bitmap reference means every item at that scope is present: `BatchExchange.Batch.validity` for a flat batch, `NestedBatch.elementValidity`, and each slot of `RealView.layerValidity` / `RealView.leafValidity`. Producers allocate a bitmap lazily on the first absent item, back-filling the present bits before it, so an all-present batch allocates none. `Validity.of(long[])` maps `null` to `NO_NULLS`. The `hasNulls() == true` answer of the backed shape therefore relies on every internal producer publishing `null` rather than an all-set bitmap; `BackedValidity` does not inspect its words. Untested for producers.
+**The sparse "no nulls" signal.** Throughout the pipeline a `null` bitmap reference means every item at that scope is present: `FlatBatch.validity` for a flat batch, `NestedBatch.elementValidity`, and each slot of `RealView.layerValidity` / `RealView.leafValidity`. Producers allocate a bitmap lazily on the first absent item, back-filling the present bits before it, so an all-present batch allocates none. `Validity.of(long[])` maps `null` to `NO_NULLS`. The `hasNulls() == true` answer of the backed shape therefore relies on every internal producer publishing `null` rather than an all-set bitmap; `BackedValidity` does not inspect its words. Untested for producers.
 
 **Caller-owned sizing.** `BackedValidity` carries no item count and performs no bounds check, so `isNull(i)` is one word load and mask. The count-taking methods take `count` because `NO_NULLS` has no intrinsic length. Whoever hands an array to `Validity.of` guarantees at least `(count + 63) >>> 6` words for every `count` and index later used, and does not mutate the array afterwards. Internal producers trim their bitmaps to exactly that word count.
 
@@ -130,7 +130,7 @@ Internally a nested batch (`NestedBatch`) is **raw-counting**: every position in
 
 An unfiltered read builds the view on the thread that fills the batch, before publish, which keeps the per-batch level scan off the single consumer thread; a filtered read builds it lazily in `ColumnReader` from the levels record selection compacted ([NESTED_DECODE.md](NESTED_DECODE.md#index-modes), [RECORD_FILTERING.md](RECORD_FILTERING.md#column-readers)).
 
-**Routing.** Only a column decoded through its levels (`ColumnCursor.isNested`, [NESTED_DECODE.md](NESTED_DECODE.md#which-columns-are-nested)) has a real view. A flat column publishes a `BatchExchange.Batch` with a typed value array and one leaf bitmap, which are already real-items. `ColumnReader` applies the same rule to choose its accessor path.
+**Routing.** Only a column decoded through its levels (`ColumnCursor.isNested`, [NESTED_DECODE.md](NESTED_DECODE.md#which-columns-are-nested)) has a real view. A flat column publishes a `FlatBatch` with a typed value array and one leaf bitmap, which are already real-items. `ColumnReader` applies the same rule to choose its accessor path.
 
 Tests: `ColumnReaderLayerModelTest`, `FixedSizeListFastPathReadTest`, `ColumnReaderExactFilterTest`.
 

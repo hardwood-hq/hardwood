@@ -12,7 +12,7 @@ import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.row.BatchMatchMerger;
 import dev.hardwood.internal.reader.row.PredicateView;
@@ -44,7 +44,7 @@ final class SelectionEngine {
     /// here rather than passed straight through because the merger takes the
     /// batches, and this engine holds cursors. `null` on the record-matcher
     /// backend.
-    private final BatchExchange.Batch[] stagedBatches;
+    private final FlatBatch[] stagedBatches;
     /// The projected indices [#merger] reads — its own set, read once at
     /// construction, so nothing here re-derives which columns the plan touches.
     /// `null` on the record-matcher backend.
@@ -57,7 +57,7 @@ final class SelectionEngine {
     private final PredicateView predicateView;
     /// The batches [#predicateView] reads, indexed by projected column index and
     /// refreshed per evaluated batch. `null` on the batch-matcher backend.
-    private final BatchExchange.Batch[] flatBatches;
+    private final FlatBatch[] flatBatches;
     private final NestedBatch[] nestedBatches;
 
     /// Reusable buffer holding the matching record indices of the current batch
@@ -73,12 +73,12 @@ final class SelectionEngine {
                             ColumnCursor[] cursorsByProjectedIndex,
                             RowMatcher rowMatcher, PredicateView predicateView, int batchSize) {
         this.merger = merger;
-        this.stagedBatches = merger != null ? new BatchExchange.Batch[columnCount] : null;
+        this.stagedBatches = merger != null ? new FlatBatch[columnCount] : null;
         this.stagedColumns = merger != null ? merger.referencedColumns() : null;
         this.cursorsByProjectedIndex = cursorsByProjectedIndex;
         this.rowMatcher = rowMatcher;
         this.predicateView = predicateView;
-        this.flatBatches = predicateView != null ? new BatchExchange.Batch[columnCount] : null;
+        this.flatBatches = predicateView != null ? new FlatBatch[columnCount] : null;
         this.nestedBatches = predicateView != null ? new NestedBatch[columnCount] : null;
         this.batchSize = batchSize;
     }

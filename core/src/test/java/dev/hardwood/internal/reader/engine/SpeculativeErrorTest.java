@@ -23,6 +23,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.plan.ReadEngines;
@@ -49,7 +50,7 @@ class SpeculativeErrorTest {
     void anErrorReadAheadFailsTheReadAtOnce(int threads) throws Exception {
         LastRowGroupErrorFile file = new LastRowGroupErrorFile(InputFile.of(FILE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("__row__", 10);
+            BatchExchange<FlatBatch> exchange = BatchExchange.detachingFlat("__row__", 10);
             ReadEngine engine = start(ReadEngines.prepared(List.of(file), context, ROW, null, 0), exchange);
             engine.awaitQuiescent();
             assertThat(file.failed.getCount()).as("the last row group's request failed").isZero();
@@ -66,7 +67,7 @@ class SpeculativeErrorTest {
     void anErrorOfAFooterReadAheadFailsTheReadAtOnce(int threads) throws Exception {
         FooterErrorFile third = new FooterErrorFile(InputFile.of(FILE));
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("__row__", 10);
+            BatchExchange<FlatBatch> exchange = BatchExchange.detachingFlat("__row__", 10);
             ReadEngine engine = start(ReadEngines.prepared(
                     List.of(InputFile.of(FILE), InputFile.of(FILE), third), context, ROW, null, 0), exchange);
             engine.awaitQuiescent();
@@ -80,7 +81,7 @@ class SpeculativeErrorTest {
 
     /// Starts `read` of the row number into `exchange`, in batches of 10 rows, a read-ahead of one
     /// row.
-    private static ReadEngine start(PreparedRead read, BatchExchange<BatchExchange.Batch> exchange)
+    private static ReadEngine start(PreparedRead read, BatchExchange<FlatBatch> exchange)
             throws IOException {
         FileSchema schema;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
@@ -93,7 +94,7 @@ class SpeculativeErrorTest {
     }
 
     /// The rows taken from `exchange` before it throws `error`.
-    private static long rowsUntilThrown(BatchExchange<BatchExchange.Batch> exchange, Error error) {
+    private static long rowsUntilThrown(BatchExchange<FlatBatch> exchange, Error error) {
         long[] rows = new long[1];
         assertThatThrownBy(() -> {
             while (true) {
@@ -103,8 +104,8 @@ class SpeculativeErrorTest {
         return rows[0];
     }
 
-    private static int takeBatch(BatchExchange<BatchExchange.Batch> exchange) throws Exception {
-        BatchExchange.Batch batch = exchange.poll();
+    private static int takeBatch(BatchExchange<FlatBatch> exchange) throws Exception {
+        FlatBatch batch = exchange.poll();
         if (batch == null) {
             exchange.checkError();
             return 0;

@@ -18,6 +18,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.PreparedRead;
@@ -83,7 +84,7 @@ class ReadRetentionTest {
     private static boolean takeBatch(List<BatchExchange<?>> exchanges) throws Exception {
         boolean taken = false;
         for (BatchExchange<?> exchange : exchanges) {
-            BatchExchange.Batch batch = (BatchExchange.Batch) exchange.poll();
+            FlatBatch batch = (FlatBatch) exchange.poll();
             if (batch == null || batch.recordCount == 0) {
                 exchange.checkError();
             }

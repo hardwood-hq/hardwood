@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.schema.ColumnSchema;
@@ -25,14 +26,14 @@ final class ColumnCursor {
 
     private final ColumnSchema column;
     private final boolean nested;
-    private final BatchExchange<BatchExchange.Batch> flatExchange;
+    private final BatchExchange<FlatBatch> flatExchange;
     private final BatchExchange<NestedBatch> nestedExchange;
 
-    private BatchExchange.Batch flatBatch;
+    private FlatBatch flatBatch;
     private NestedBatch nestedBatch;
     private boolean exhausted;
 
-    private ColumnCursor(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatExchange,
+    private ColumnCursor(ColumnSchema column, BatchExchange<FlatBatch> flatExchange,
                          BatchExchange<NestedBatch> nestedExchange) {
         this.column = column;
         this.nested = nestedExchange != null;
@@ -52,7 +53,7 @@ final class ColumnCursor {
     @SuppressWarnings("unchecked")
     static ColumnCursor of(ColumnSchema column, BatchExchange<?> exchange, boolean nested) {
         return nested ? new ColumnCursor(column, null, (BatchExchange<NestedBatch>) exchange)
-                : new ColumnCursor(column, (BatchExchange<BatchExchange.Batch>) exchange, null);
+                : new ColumnCursor(column, (BatchExchange<FlatBatch>) exchange, null);
     }
 
     /// Takes the next batch from the exchange.
@@ -109,7 +110,7 @@ final class ColumnCursor {
     }
 
     /// The current flat batch; `null` for a nested column or when no batch is current.
-    BatchExchange.Batch flatBatch() {
+    FlatBatch flatBatch() {
         return flatBatch;
     }
 

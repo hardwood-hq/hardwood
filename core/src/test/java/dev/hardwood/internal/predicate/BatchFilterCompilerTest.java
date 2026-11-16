@@ -18,7 +18,7 @@ import dev.hardwood.internal.predicate.matcher.ints.IntInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -84,7 +84,7 @@ class BatchFilterCompilerTest {
                 new ResolvedPredicate.UnsignedIntPredicate(0, Operator.GT, 7),
                 schema(leaf("v", PhysicalType.INT32)), IntUnaryOperator.identity())[0];
 
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+        FlatBatch batch = new FlatBatch();
         batch.values = new int[] { 0, fourBillion, 7, 8 };
         batch.recordCount = 4;
         long[] out = new long[1];

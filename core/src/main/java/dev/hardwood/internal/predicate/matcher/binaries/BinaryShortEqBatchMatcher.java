@@ -10,8 +10,8 @@ package dev.hardwood.internal.predicate.matcher.binaries;
 import dev.hardwood.internal.predicate.BinaryBatchMatcher;
 import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// `value = literal`, or `value != literal` when negated, over a byte-array column whose equality is
 /// byte equality, for a literal of at most eight bytes. A row of at most eight bytes is compared as one
@@ -50,7 +50,7 @@ public final class BinaryShortEqBatchMatcher implements BinaryBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         BinaryBatchValues vals = (BinaryBatchValues) batch.values;
         byte[][] buffers = vals.buffers();
         int[] bufferIds = vals.bufferIds();

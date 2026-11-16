@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// Composes two [ColumnBatchMatcher]s evaluated against the same column and
 /// word-AND merges their bit masks. Used when an eligible `And` has multiple
@@ -31,7 +31,7 @@ public final class AndBatchMatcher implements ColumnBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         if (scratch == null || scratch.length < outWords.length) {
             scratch = new long[outWords.length];
         }

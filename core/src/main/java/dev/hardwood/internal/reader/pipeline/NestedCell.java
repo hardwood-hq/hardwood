@@ -21,8 +21,9 @@ import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
-/// The work of one column decoded through levels for one planned batch: the [NestedSegment]s of the
-/// measured pages placed into it, in page order.
+/// A column's batch under construction, for a column decoded through levels: the work of one column
+/// for one batch of the batch plan, the [NestedBatch] its fill produces and the [NestedSegment]s of
+/// the measured pages placed into it, in page order.
 ///
 /// A cell goes through these steps, each once:
 ///
@@ -53,7 +54,7 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     /// The page of the last segment placed, which a failure while filling the cell is placed with.
     private PageTask lastPage;
 
-    private NestedBatch batch;
+    private NestedBatch columnBatch;
     /// Guarded by the column lock: whether the cell is completed and waits to be published.
     private boolean completed;
 
@@ -122,7 +123,6 @@ public final class NestedCell implements BatchCell<NestedBatch> {
         lastPage = null;
     }
 
-    /// Sets the batch the cell's fill produced.
     /// Fills the sealed cell ([NestedFill]) and drops its segments, returning the scratch of each
     /// page whose cells are then all filled to `pool`.
     public void fill(BatchExchange<NestedBatch> exchange, ColumnSchema column, NestedLevelComputer.Layers layers,
@@ -139,8 +139,9 @@ public final class NestedCell implements BatchCell<NestedBatch> {
         dropSegments();
     }
 
-    void filled(NestedBatch batch) {
-        this.batch = batch;
+    /// Sets the column's batch the cell's fill produced.
+    void filled(NestedBatch columnBatch) {
+        this.columnBatch = columnBatch;
     }
 
     @Override
@@ -159,14 +160,14 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     }
 
     @Override
-    public NestedBatch batch() {
-        return batch;
+    public NestedBatch columnBatch() {
+        return columnBatch;
     }
 
     @Override
     public void release() {
         segments.clear();
         lastPage = null;
-        batch = null;
+        columnBatch = null;
     }
 }

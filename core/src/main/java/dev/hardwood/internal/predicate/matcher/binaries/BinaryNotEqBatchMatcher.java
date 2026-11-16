@@ -10,8 +10,8 @@ package dev.hardwood.internal.predicate.matcher.binaries;
 import dev.hardwood.internal.predicate.BinaryBatchMatcher;
 import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.schema.ByteColumnOrder;
 
 /// `value != literal` over a byte-array column.
@@ -28,7 +28,7 @@ public final class BinaryNotEqBatchMatcher implements BinaryBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         BinaryBatchValues vals = (BinaryBatchValues) batch.values;
         byte[][] buffers = vals.buffers();
         int[] bufferIds = vals.bufferIds();

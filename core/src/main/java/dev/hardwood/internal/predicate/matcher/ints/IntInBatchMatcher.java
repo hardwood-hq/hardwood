@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.ints;
 
 import dev.hardwood.internal.predicate.IntBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// IN-list matcher for `int` columns. Linear scan over the value list — IN lists
 /// in practice have only a handful of entries.
@@ -21,7 +21,7 @@ public final class IntInBatchMatcher implements IntBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         int[] vals = (int[]) batch.values;
         int n = batch.recordCount;
         int fullWords = n >>> 6;

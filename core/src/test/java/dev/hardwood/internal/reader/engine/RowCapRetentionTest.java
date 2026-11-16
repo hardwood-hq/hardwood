@@ -22,6 +22,7 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
@@ -71,8 +72,8 @@ class RowCapRetentionTest {
                      layers, NestedIndexMode.ALL_ITEMS, false, BATCH_SIZE, BATCH_SIZE, List.of(exchange), null)) {
             long rows = 0;
             Object batch;
-            while ((batch = exchange.poll()) != null && ((BatchExchange.Batch) batch).recordCount > 0) {
-                rows += ((BatchExchange.Batch) batch).recordCount;
+            while ((batch = exchange.poll()) != null && ((FlatBatch) batch).recordCount > 0) {
+                rows += ((FlatBatch) batch).recordCount;
             }
             exchange.checkError();
 

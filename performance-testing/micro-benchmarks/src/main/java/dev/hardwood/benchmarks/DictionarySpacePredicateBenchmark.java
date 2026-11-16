@@ -34,9 +34,9 @@ import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.metadata.PhysicalType;
 
 /// Compares [DictionaryBinaryBatchMatcher] with the ordinary per-value loop of its delegate over
@@ -85,10 +85,10 @@ public class DictionarySpacePredicateBenchmark {
     @Param({"65536"})
     private int rows;
 
-    private BatchExchange.Batch batch;
+    private FlatBatch batch;
     /// The same values as [#batch] without their dictionary, for the packed contender, which reads
     /// every value's view.
-    private BatchExchange.Batch packedBatch;
+    private FlatBatch packedBatch;
     private BinaryBatchMatcher packedMatcher;
     private BinaryBatchMatcher coldDictionaryMatcher;
     private BinaryBatchMatcher hotDictionaryMatcher;
@@ -139,10 +139,10 @@ public class DictionarySpacePredicateBenchmark {
                 Arrays.copyOf(offsets, rows), Arrays.copyOfRange(offsets, 1, rows + 1));
         values.dictionary = dictionary;
         values.dictIndices = dictionaryIndices;
-        batch = new BatchExchange.Batch();
+        batch = new FlatBatch();
         batch.values = values;
         batch.recordCount = rows;
-        packedBatch = new BatchExchange.Batch();
+        packedBatch = new FlatBatch();
         packedBatch.values = new BinaryBatchValues(bytes,
                 Arrays.copyOf(offsets, rows), Arrays.copyOfRange(offsets, 1, rows + 1));
         packedBatch.recordCount = rows;

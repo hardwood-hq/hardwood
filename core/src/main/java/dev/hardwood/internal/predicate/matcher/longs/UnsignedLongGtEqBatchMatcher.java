@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.longs;
 
 import dev.hardwood.internal.predicate.LongBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// [LongGtEqBatchMatcher] for a column annotated `INT(64, isSigned = false)`, whose values order by
 /// unsigned magnitude. Both sides are biased by `Long.MIN_VALUE`, which moves the sign bit
@@ -25,7 +25,7 @@ public final class UnsignedLongGtEqBatchMatcher implements LongBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         long[] vals = (long[]) batch.values;
         int n = batch.recordCount;
         long lit = biasedLiteral;

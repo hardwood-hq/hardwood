@@ -34,17 +34,17 @@ import dev.hardwood.internal.predicate.matcher.longs.LongGtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BinaryBatchValuesFixtures;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 class ColumnBatchMatcherTest {
 
-    private static BatchExchange.Batch longBatch(long[] values, BitSet nulls) {
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+    private static FlatBatch longBatch(long[] values, BitSet nulls) {
+        FlatBatch batch = new FlatBatch();
         batch.values = values;
         batch.validity = toValidity(nulls, values.length);
         batch.recordCount = values.length;
@@ -71,7 +71,7 @@ class ColumnBatchMatcherTest {
         return words.length < wordsLen ? copyOf(words, wordsLen) : words;
     }
 
-    private static long[] runMatcher(ColumnBatchMatcher matcher, BatchExchange.Batch batch) {
+    private static long[] runMatcher(ColumnBatchMatcher matcher, FlatBatch batch) {
         long[] out = new long[(batch.recordCount + 63) >>> 6];
         matcher.test(batch, out);
         return out;
@@ -88,7 +88,7 @@ class ColumnBatchMatcherTest {
     @Test
     void longGt_keepsValuesGreaterThanLiteralAndExcludesNulls() {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
-        BatchExchange.Batch batch = longBatch(vals, nullsAt(3));
+        FlatBatch batch = longBatch(vals, nullsAt(3));
         // Row 2 (6 > 5) matches. Row 3 (10 > 5) is NULL → excluded.
         assertArrayEquals(new long[]{bits(2)}, runMatcher(new LongGtBatchMatcher(5L), batch));
     }
@@ -96,7 +96,7 @@ class ColumnBatchMatcherTest {
     @Test
     void longLt_excludesEqualAndNulls() {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
-        BatchExchange.Batch batch = longBatch(vals, nullsAt(0));
+        FlatBatch batch = longBatch(vals, nullsAt(0));
         // Row 0 (1<5) NULL → excluded. Row 4 (0<5) matches.
         assertArrayEquals(new long[]{bits(4)}, runMatcher(new LongLtBatchMatcher(5L), batch));
     }
@@ -104,21 +104,21 @@ class ColumnBatchMatcherTest {
     @Test
     void longLtEq_includesEqual() {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
-        BatchExchange.Batch batch = longBatch(vals, null);
+        FlatBatch batch = longBatch(vals, null);
         assertArrayEquals(new long[]{bits(0, 1, 4)}, runMatcher(new LongLtEqBatchMatcher(5L), batch));
     }
 
     @Test
     void longGtEq_includesEqual() {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
-        BatchExchange.Batch batch = longBatch(vals, null);
+        FlatBatch batch = longBatch(vals, null);
         assertArrayEquals(new long[]{bits(1, 2, 3)}, runMatcher(new LongGtEqBatchMatcher(5L), batch));
     }
 
     @Test
     void longEq_matchesOnlyExactValueAndExcludesNulls() {
         long[] vals = {5L, 5L, 6L, 5L, 0L};
-        BatchExchange.Batch batch = longBatch(vals, nullsAt(1));
+        FlatBatch batch = longBatch(vals, nullsAt(1));
         // Row 1 is NULL → excluded even though stored value is 5.
         assertArrayEquals(new long[]{bits(0, 3)}, runMatcher(new LongEqBatchMatcher(5L), batch));
     }
@@ -126,7 +126,7 @@ class ColumnBatchMatcherTest {
     @Test
     void longNotEq_excludesNullsLikeOtherOps() {
         long[] vals = {5L, 5L, 6L, 5L, 0L};
-        BatchExchange.Batch batch = longBatch(vals, nullsAt(1));
+        FlatBatch batch = longBatch(vals, nullsAt(1));
         // Row 1 NULL → excluded (NULL != x is unknown → false). Row 2 (6 != 5) and row 4 (0 != 5) match.
         assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new LongNotEqBatchMatcher(5L), batch));
     }
@@ -137,7 +137,7 @@ class ColumnBatchMatcherTest {
         for (int i = 0; i < vals.length; i++) {
             vals[i] = i; // matches > 5 → rows 6..69
         }
-        BatchExchange.Batch batch = longBatch(vals, null);
+        FlatBatch batch = longBatch(vals, null);
         long[] out = runMatcher(new LongGtBatchMatcher(5L), batch);
         long w0 = 0;
         for (int b = 6; b < 64; b++) w0 |= 1L << b;
@@ -146,8 +146,8 @@ class ColumnBatchMatcherTest {
         assertArrayEquals(new long[]{w0, w1}, out);
     }
 
-    private static BatchExchange.Batch doubleBatch(double[] values, BitSet nulls) {
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+    private static FlatBatch doubleBatch(double[] values, BitSet nulls) {
+        FlatBatch batch = new FlatBatch();
         batch.values = values;
         batch.validity = toValidity(nulls, values.length);
         batch.recordCount = values.length;
@@ -157,42 +157,42 @@ class ColumnBatchMatcherTest {
     @Test
     void doubleGt_keepsValuesGreaterThanLiteralAndExcludesNulls() {
         double[] vals = {1.0, 5.0, 6.5, 10.0, 0.0};
-        BatchExchange.Batch batch = doubleBatch(vals, nullsAt(3));
+        FlatBatch batch = doubleBatch(vals, nullsAt(3));
         assertArrayEquals(new long[]{bits(2)}, runMatcher(new DoubleGtBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleLt_excludesEqualAndNulls() {
         double[] vals = {1.0, 5.0, 6.0, 10.0, 0.0};
-        BatchExchange.Batch batch = doubleBatch(vals, nullsAt(0));
+        FlatBatch batch = doubleBatch(vals, nullsAt(0));
         assertArrayEquals(new long[]{bits(4)}, runMatcher(new DoubleLtBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleLtEq_includesEqual() {
         double[] vals = {1.0, 5.0, 6.0, 10.0, 0.0};
-        BatchExchange.Batch batch = doubleBatch(vals, null);
+        FlatBatch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(0, 1, 4)}, runMatcher(new DoubleLtEqBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleGtEq_includesEqual() {
         double[] vals = {1.0, 5.0, 6.0, 10.0, 0.0};
-        BatchExchange.Batch batch = doubleBatch(vals, null);
+        FlatBatch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(1, 2, 3)}, runMatcher(new DoubleGtEqBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleEq_matchesOnlyExactValueAndExcludesNulls() {
         double[] vals = {5.0, 5.0, 6.0, 5.0, 0.0};
-        BatchExchange.Batch batch = doubleBatch(vals, nullsAt(1));
+        FlatBatch batch = doubleBatch(vals, nullsAt(1));
         assertArrayEquals(new long[]{bits(0, 3)}, runMatcher(new DoubleEqBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleNotEq_excludesNulls() {
         double[] vals = {5.0, 5.0, 6.0, 5.0, 0.0};
-        BatchExchange.Batch batch = doubleBatch(vals, nullsAt(1));
+        FlatBatch batch = doubleBatch(vals, nullsAt(1));
         assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new DoubleNotEqBatchMatcher(5.0), batch));
     }
 
@@ -201,28 +201,28 @@ class ColumnBatchMatcherTest {
     @Test
     void doubleGt_nanMatchesGreaterThanAnyFiniteLiteral() {
         double[] vals = {Double.NaN, Double.POSITIVE_INFINITY};
-        BatchExchange.Batch batch = doubleBatch(vals, null);
+        FlatBatch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(0, 1)}, runMatcher(new DoubleGtBatchMatcher(1.0e9), batch));
     }
 
     @Test
     void doubleEq_nanLiteralMatchesNaNValuesOnly() {
         double[] vals = {Double.NaN, 1.0, Double.NaN};
-        BatchExchange.Batch batch = doubleBatch(vals, null);
+        FlatBatch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(0, 2)}, runMatcher(new DoubleEqBatchMatcher(Double.NaN), batch));
     }
 
     @Test
     void doubleLt_nanIsNotLessThanAnything() {
         double[] vals = {Double.NaN, 0.0};
-        BatchExchange.Batch batch = doubleBatch(vals, null);
+        FlatBatch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(1)}, runMatcher(new DoubleLtBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleIn_matchesOnlyExactValuesAndExcludesNulls() {
         double[] vals = {1.5, 2.5, -0.0, +0.0, Double.NaN, 3.5};
-        BatchExchange.Batch batch = doubleBatch(vals, nullsAt(1));
+        FlatBatch batch = doubleBatch(vals, nullsAt(1));
         double[] inValues = {2.5, -0.0, Double.NaN};
         assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new DoubleInBatchMatcher(inValues), batch));
     }
@@ -233,13 +233,13 @@ class ColumnBatchMatcherTest {
         for (int i = 0; i < vals.length; i++) {
             vals[i] = (double) i;
         }
-        BatchExchange.Batch batch = doubleBatch(vals, null);
+        FlatBatch batch = doubleBatch(vals, null);
         long[] out = runMatcher(new DoubleInBatchMatcher(new double[]{5.0, 65.0}), batch);
         assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
     }
 
-    private static BatchExchange.Batch floatBatch(float[] values, BitSet nulls) {
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+    private static FlatBatch floatBatch(float[] values, BitSet nulls) {
+        FlatBatch batch = new FlatBatch();
         batch.values = values;
         batch.validity = toValidity(nulls, values.length);
         batch.recordCount = values.length;
@@ -249,7 +249,7 @@ class ColumnBatchMatcherTest {
     @Test
     void floatIn_matchesOnlyExactValuesAndExcludesNulls() {
         float[] vals = {0.5f, 1.5f, -0.0f, +0.0f, Float.NaN, 0.1f};
-        BatchExchange.Batch batch = floatBatch(vals, nullsAt(1));
+        FlatBatch batch = floatBatch(vals, nullsAt(1));
         float[] inValues = {1.5f, -0.0f, Float.NaN, 0.1f};
         assertArrayEquals(new long[]{bits(2, 4, 5)}, runMatcher(new FloatInBatchMatcher(inValues), batch));
     }
@@ -260,7 +260,7 @@ class ColumnBatchMatcherTest {
         for (int i = 0; i < vals.length; i++) {
             vals[i] = (float) i;
         }
-        BatchExchange.Batch batch = floatBatch(vals, null);
+        FlatBatch batch = floatBatch(vals, null);
         long[] out = runMatcher(new FloatInBatchMatcher(new float[]{5.0f, 65.0f}), batch);
         assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
     }
@@ -292,7 +292,7 @@ class ColumnBatchMatcherTest {
         double customNan1 = Double.longBitsToDouble(0x7ff8000000000001L);
         double customNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
         double[] vals = {customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 1.0};
-        BatchExchange.Batch batch = doubleBatch(vals, null);
+        FlatBatch batch = doubleBatch(vals, null);
 
         // Probe with canonical NaN matches customNan1
         assertArrayEquals(new long[]{bits(0)},
@@ -331,7 +331,7 @@ class ColumnBatchMatcherTest {
         float customFloatNan1 = Float.intBitsToFloat(0x7fc00001);
         float customFloatNan2 = Float.intBitsToFloat(0x7fc00042);
         float[] vals = {customFloatNan1, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 1.0f};
-        BatchExchange.Batch batch = floatBatch(vals, null);
+        FlatBatch batch = floatBatch(vals, null);
 
         // Probe with canonical NaN matches customFloatNan1
         assertArrayEquals(new long[]{bits(0)},
@@ -384,7 +384,7 @@ class ColumnBatchMatcherTest {
     /// holds. A `null` entry occupies an empty slice; nullness itself comes from `nulls`, so a
     /// row can be marked null while still holding bytes — the scratch a null fixed-length slot
     /// keeps.
-    private static BatchExchange.Batch binaryBatch(BitSet nulls, byte[]... values) {
+    private static FlatBatch binaryBatch(BitSet nulls, byte[]... values) {
         int[] offsets = new int[values.length + 1];
         for (int i = 0; i < values.length; i++) {
             offsets[i + 1] = offsets[i] + (values[i] == null ? 0 : values[i].length);
@@ -395,7 +395,7 @@ class ColumnBatchMatcherTest {
                 System.arraycopy(values[i], 0, bytes, offsets[i], values[i].length);
             }
         }
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+        FlatBatch batch = new FlatBatch();
         batch.values = BinaryBatchValuesFixtures.contiguous(bytes, offsets);
         batch.validity = toValidity(nulls, values.length);
         batch.recordCount = values.length;
@@ -441,7 +441,7 @@ class ColumnBatchMatcherTest {
 
     @Test
     void binaryEq_matchesExactBytesAndExcludesNulls() {
-        BatchExchange.Batch batch = binaryBatch(nullsAt(2),
+        FlatBatch batch = binaryBatch(nullsAt(2),
                 utf8("apple"), utf8("app"), utf8("apple"), utf8("apples"), utf8(""));
         // Row 2 holds "apple" but is NULL → excluded. The prefix "app" and extension "apples" differ.
         assertArrayEquals(new long[]{bits(0)},
@@ -450,7 +450,7 @@ class ColumnBatchMatcherTest {
 
     @Test
     void binaryNotEq_excludesNulls() {
-        BatchExchange.Batch batch = binaryBatch(nullsAt(1),
+        FlatBatch batch = binaryBatch(nullsAt(1),
                 utf8("apple"), null, utf8("pear"), utf8(""));
         // Row 1 NULL → excluded (NULL != x is unknown → false).
         assertArrayEquals(new long[]{bits(2, 3)},
@@ -460,7 +460,7 @@ class ColumnBatchMatcherTest {
     @Test
     void binaryOrderingOps_byteStringComparesUnsignedLexicographically() {
         // A proper prefix sorts before the literal; 0xFF sorts after every ASCII byte unsigned.
-        BatchExchange.Batch batch = binaryBatch(null,
+        FlatBatch batch = binaryBatch(null,
                 utf8("app"), utf8("apple"), utf8("apples"), new byte[]{(byte) 0xFF}, utf8(""), utf8("b"));
         byte[] literal = utf8("apple");
         assertArrayEquals(new long[]{bits(0, 4)},
@@ -476,7 +476,7 @@ class ColumnBatchMatcherTest {
     @Test
     void binaryOrderingOps_fixedDecimalComparesAsTwosComplement() {
         // -1 (0xFFFF) and -256 (0xFF00) sort below zero only under signed order. Row 4 (-300) is NULL.
-        BatchExchange.Batch batch = binaryBatch(nullsAt(4),
+        FlatBatch batch = binaryBatch(nullsAt(4),
                 int16(-1), int16(1), int16(-256), int16(256), int16(-300));
         byte[] zero = int16(0);
         assertArrayEquals(new long[]{bits(0, 2)},
@@ -492,7 +492,7 @@ class ColumnBatchMatcherTest {
     void binaryFixedDecimal_skipsNullSlotsInsteadOfComparingThem() {
         // Row 1 is NULL with an empty slice, which reads as zero under a signed comparison — so
         // comparing it would answer against a value the row does not hold.
-        BatchExchange.Batch batch = binaryBatch(nullsAt(1), int16(5), null, int16(-5));
+        FlatBatch batch = binaryBatch(nullsAt(1), int16(5), null, int16(-5));
         assertArrayEquals(new long[]{bits(0)},
                 runMatcher(new BinaryGtBatchMatcher(int16(0), Comparison.FIXED_DECIMAL), batch));
         assertArrayEquals(new long[]{bits(2)},
@@ -505,7 +505,7 @@ class ColumnBatchMatcherTest {
     @Test
     void binaryOrderingOps_variableDecimalSignExtendsBeforeComparing() {
         // 1.27 -> 7F, 1.28 -> 00 80, -1.00 -> 9C, -2.56 -> FF 00
-        BatchExchange.Batch batch = binaryBatch(null,
+        FlatBatch batch = binaryBatch(null,
                 new byte[]{0x7F}, new byte[]{0x00, (byte) 0x80},
                 new byte[]{(byte) 0x9C}, new byte[]{(byte) 0xFF, 0x00});
         byte[] oneTwentyEight = {0x00, (byte) 0x80};
@@ -522,7 +522,7 @@ class ColumnBatchMatcherTest {
     @Test
     void binaryOrderingOps_fixedTimestampComparesLittleEndian() {
         // 1, 256, -1, 2^40 (a count no INT64 nanosecond timestamp could carry as a date).
-        BatchExchange.Batch batch = binaryBatch(nullsAt(4),
+        FlatBatch batch = binaryBatch(nullsAt(4),
                 flba12(1), flba12(256), flba12(-1), flba12(1L << 40), flba12(7));
         assertArrayEquals(new long[]{bits(2)},
                 runMatcher(new BinaryLtBatchMatcher(flba12(0), Comparison.FIXED_TIMESTAMP), batch));
@@ -540,7 +540,7 @@ class ColumnBatchMatcherTest {
     @Test
     void binaryOps_int96ComparesByTheInstantEncoded() {
         long nanosPerDay = 86_400_000_000_000L;
-        BatchExchange.Batch batch = binaryBatch(nullsAt(4),
+        FlatBatch batch = binaryBatch(nullsAt(4),
                 int96(0, 2_460_000),                       // midnight on day 2460000
                 int96(nanosPerDay, 2_459_999),             // the same instant, spelled a day earlier
                 int96(nanosPerDay - 1, 2_459_999),         // one nanosecond earlier
@@ -564,7 +564,7 @@ class ColumnBatchMatcherTest {
     /// cannot be byte equality: `00 7F` is another spelling of the `7F` the literal carries.
     @Test
     void binaryEq_variableDecimalMatchesAPaddedSpellingOfTheSameValue() {
-        BatchExchange.Batch batch = binaryBatch(null,
+        FlatBatch batch = binaryBatch(null,
                 new byte[]{0x7F}, new byte[]{0x00, 0x7F}, new byte[]{0x00, 0x00, 0x7F}, new byte[]{(byte) 0x80});
         assertArrayEquals(new long[]{bits(0, 1, 2)},
                 runMatcher(new BinaryEqBatchMatcher(new byte[]{0x7F}, Comparison.VARIABLE_DECIMAL), batch));
@@ -579,7 +579,7 @@ class ColumnBatchMatcherTest {
         for (int i = 0; i < vals.length; i++) {
             vals[i] = new byte[]{(byte) i}; // matches > 5 → rows 6..69
         }
-        BatchExchange.Batch batch = binaryBatch(null, vals);
+        FlatBatch batch = binaryBatch(null, vals);
         long[] out = runMatcher(new BinaryGtBatchMatcher(new byte[]{5}, Comparison.BYTE_STRING), batch);
         long w0 = 0;
         for (int b = 6; b < 64; b++) w0 |= 1L << b;
@@ -590,7 +590,7 @@ class ColumnBatchMatcherTest {
 
     @Test
     void binaryIn_matchesAnyMemberAndExcludesNulls() {
-        BatchExchange.Batch batch = binaryBatch(nullsAt(3),
+        FlatBatch batch = binaryBatch(nullsAt(3),
                 utf8("a"), utf8("bb"), utf8(""), utf8("bb"), utf8("ccc"), utf8("b"));
         // Rows 1 ("bb") and 2 ("") are members; row 3 is NULL; "b" is only a prefix of "bb".
         byte[][] members = {utf8("bb"), utf8(""), utf8("zz")};
@@ -600,7 +600,7 @@ class ColumnBatchMatcherTest {
 
     @Test
     void binaryIn_variableDecimalMatchesAPaddedSpellingOfAMember() {
-        BatchExchange.Batch batch = binaryBatch(null,
+        FlatBatch batch = binaryBatch(null,
                 new byte[]{0x00, 0x7F}, new byte[]{(byte) 0xFF, (byte) 0x80}, new byte[]{0x01});
         byte[][] members = {new byte[]{0x7F}, new byte[]{(byte) 0x80}};
         // 0x00 0x7F is 127 and 0xFF 0x80 is -128: both members, spelled one byte wider.

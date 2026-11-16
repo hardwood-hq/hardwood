@@ -20,9 +20,9 @@ import java.util.UUID;
 import java.util.function.IntPredicate;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BinaryValueTest;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.schema.ColumnRequests;
@@ -100,7 +100,7 @@ public final class PredicateView implements InPlaceBinaryAccessor {
     /// @param decoded the columns the reader decodes, predicate columns included ([dev.hardwood.internal.schema.ReadProjection#decoded()])
     /// @param resolved the predicate
     /// @param nestedAt whether the column at an decoded column index arrives as a
-    ///        [NestedBatch] rather than a flat [BatchExchange.Batch]
+    ///        [NestedBatch] rather than a flat [FlatBatch]
     /// @param deriveElementValidity whether the nested batches arrive without
     ///        [NestedBatch#elementValidity], for [#refresh] to derive it
     public static PredicateView create(FileSchema schema, ProjectedSchema decoded,
@@ -253,9 +253,9 @@ public final class PredicateView implements InPlaceBinaryAccessor {
     /// @param nestedBatches the nested batches by decoded column index; only the nested
     ///        predicate columns' entries are read
     /// @param fileName the file the batches came from
-    public void refresh(BatchExchange.Batch[] flatBatches, NestedBatch[] nestedBatches, String fileName) {
+    public void refresh(FlatBatch[] flatBatches, NestedBatch[] nestedBatches, String fileName) {
         for (int slot = 0; slot < flatProjected.length; slot++) {
-            BatchExchange.Batch batch = flatBatches[flatProjected[slot]];
+            FlatBatch batch = flatBatches[flatProjected[slot]];
             flatValues[slot] = batch.values;
             flatValidity[slot] = batch.validity;
         }

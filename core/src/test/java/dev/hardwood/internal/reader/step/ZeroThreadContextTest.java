@@ -39,6 +39,7 @@ import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -413,7 +414,7 @@ class ZeroThreadContextTest {
     @Test
     void aPollNothingCanServeFails() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("c", 10);
+            BatchExchange<FlatBatch> exchange = BatchExchange.detachingFlat("c", 10);
             exchange.setQueue(new ReadQueue(context));
 
             assertThatThrownBy(exchange::poll)

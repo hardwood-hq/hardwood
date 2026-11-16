@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.booleans;
 
 import dev.hardwood.internal.predicate.BooleanBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 public final class BooleanEqBatchMatcher implements BooleanBatchMatcher {
 
@@ -19,7 +19,7 @@ public final class BooleanEqBatchMatcher implements BooleanBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         boolean[] vals = (boolean[]) batch.values;
         int n = batch.recordCount;
         boolean lit = literal;

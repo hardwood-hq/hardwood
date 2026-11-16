@@ -21,6 +21,7 @@ import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BitmapWords;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.decode.BinaryPageValues;
@@ -45,8 +46,8 @@ import dev.hardwood.metadata.Encoding;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Writes each column's pages into the cells of a read's batch plan: places them, decodes and fills
-/// them, and completes each cell into its exchange's batch. Pages are placed through Hardwood's
-/// [ColumnPlacer], in page order: a column's chunks unit after unit, a chunk's pages as they are known
+/// them, and completes each cell into the column's batch it took from its exchange. Pages are placed
+/// through Hardwood's [ColumnPlacer], in page order: a column's chunks unit after unit, a chunk's pages as they are known
 /// (planned, once their unit is batched, or found by a scan), each once it can be. A flat page can be placed at
 /// once; its job then decodes it and fills its segments, and its cell completes at its last fill
 /// or its seal, whichever comes last. A page decoded through levels can be placed once its job has
@@ -136,7 +137,7 @@ final class CellWriter {
     private final List<ArrayDeque<ChunkPlacement>> placements = new ArrayList<>();
     private final List<ArrayBlockingQueue<PageDecoder.LevelScratch>> scratch = new ArrayList<>();
     private final BinaryBatchValues.ViewDemand[] views;
-    /// per flat column, its filter fragment, which writes each batch's matches as it completes;
+    /// per flat column, its filter fragment, which writes the matches of each of its batches as it completes;
     /// `null` for none
     private final ColumnBatchMatcher[] filters;
     /// per column, the last page it placed, which a shortfall at the read's end is placed with
@@ -344,7 +345,7 @@ final class CellWriter {
             List<Cell> completed = new ArrayList<>(1);
             for (Segment segment : task.segments()) {
                 Cell cell = segment.cell();
-                BatchExchange.Batch batch = cell.allocate(exchange(column), columns.schema(column));
+                FlatBatch batch = cell.allocate(exchange(column), columns.schema(column));
                 if (binary) {
                     BinaryFill.fill(segment, bytes, (BinaryBatchValues) batch.values, maxDefinitionLevel);
                 }
@@ -380,11 +381,11 @@ final class CellWriter {
         }
     }
 
-    /// Writes the batch's matches for the column's filter fragment `filter`: all ones when
+    /// Writes the matches of the column's batch for the column's filter fragment `filter`: all ones when
     /// statistics proved every record matches, else the matcher's verdict, while the values are in
     /// this job's cache. A matcher keeps scratch between calls, and cells complete on several jobs
     /// at once, so its calls are serialized.
-    private static void testFilter(ColumnBatchMatcher filter, BatchExchange.Batch batch, int records) {
+    private static void testFilter(ColumnBatchMatcher filter, FlatBatch batch, int records) {
         if (batch.filterAlwaysMatches) {
             BitmapWords.fillAllOnes(batch.matches, records);
             return;
@@ -395,13 +396,13 @@ final class CellWriter {
     }
 
     @SuppressWarnings("unchecked")
-    private BatchExchange<BatchExchange.Batch> exchange(int column) {
-        return (BatchExchange<BatchExchange.Batch>) exchanges.get(column);
+    private BatchExchange<FlatBatch> exchange(int column) {
+        return (BatchExchange<FlatBatch>) exchanges.get(column);
     }
 
-    /// Completes a flat cell's batch once its last fill and its seal are both done.
+    /// Completes the column's batch of a flat cell once its last fill and its seal are both done.
     private void complete(int column, Cell cell) {
-        BatchExchange.Batch batch = cell.allocate(exchange(column), columns.schema(column));
+        FlatBatch batch = cell.allocate(exchange(column), columns.schema(column));
         int records = cell.records();
         batch.recordCount = records;
         FlatFill.backfillValidity(cell);

@@ -135,7 +135,7 @@ The read path in `core` is split into packages by responsibility. Each package d
 | `internal.io` | `InputFile` implementations and the validation of requested ranges | [INPUT_FILES.md](_designs/INPUT_FILES.md) |
 | `internal.reader.select` | Row selection: `RowRanges` and per-page `PageRowMask`s | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |
 | `internal.reader.step` | How a read's work runs without blocking: the queue of a context of zero threads and the count of its jobs, the parses over bytes a read holds | [THREADING.md](_designs/THREADING.md) |
-| `internal.reader.batch` | The batches a read hands its consumers: `BatchExchange`, `NestedBatch`, `BinaryBatchValues`, `Dictionary`, the layers `NestedLevelComputer` derives from levels | [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) |
+| `internal.reader.batch` | The batches a read hands its consumers: `BatchExchange`, `FlatBatch`, `NestedBatch`, `BinaryBatchValues`, `Dictionary`, the layers `NestedLevelComputer` derives from levels | [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) |
 | `internal.reader.memory` | The working-set limit and the context's read-ahead buffer | [VALUE_DECODE.md](_designs/VALUE_DECODE.md#page-decode) |
 | `internal.reader.decode` | Page bytes to page values: `PageDecoder`, the page values, dictionary parsing | [VALUE_DECODE.md](_designs/VALUE_DECODE.md) |
 | `internal.reader.fetch` | The ranges a read requests: their coalescing (`CoalescingPolicy`, `CoalescedRequests`) and a file's tail (`TailedInputFile`) | [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) |

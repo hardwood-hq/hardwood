@@ -9,9 +9,9 @@ package dev.hardwood.internal.predicate;
 
 import java.util.Arrays;
 
-import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 /// Evaluates a binary matcher once per referenced dictionary entry and answers
 /// encoded rows from the cached outcomes.
@@ -36,7 +36,7 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         BinaryBatchValues values = (BinaryBatchValues) batch.values;
         Dictionary.ByteArrayDictionary dictionary = values.dictionary;
         if (dictionary == null) {

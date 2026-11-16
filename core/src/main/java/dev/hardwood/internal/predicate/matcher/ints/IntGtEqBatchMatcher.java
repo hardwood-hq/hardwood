@@ -8,7 +8,7 @@
 package dev.hardwood.internal.predicate.matcher.ints;
 
 import dev.hardwood.internal.predicate.IntBatchMatcher;
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 
 public final class IntGtEqBatchMatcher implements IntBatchMatcher {
 
@@ -19,7 +19,7 @@ public final class IntGtEqBatchMatcher implements IntBatchMatcher {
     }
 
     @Override
-    public void test(BatchExchange.Batch batch, long[] outWords) {
+    public void test(FlatBatch batch, long[] outWords) {
         int[] vals = (int[]) batch.values;
         int n = batch.recordCount;
         int lit = literal;

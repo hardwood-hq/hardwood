@@ -47,50 +47,10 @@ import dev.hardwood.schema.ColumnSchema;
 /// rows, the queue holds what two full batches hold however the batches are cut. A batch counts
 /// the rows its arrays were allocated for, not the rows it holds, so that the limit bounds memory.
 ///
-/// @param <B> the batch type (e.g. [Batch] for flat, [NestedBatch] for nested)
+/// @param <B> the batch type (e.g. [FlatBatch] for flat, [NestedBatch] for nested)
 public class BatchExchange<B> {
 
     static final int READY_QUEUE_CAPACITY = 2;
-
-    /// A mutable batch holder for flat columns, reused in recycling mode. The column's pipeline
-    /// writes into it, the consumer reads from it.
-    ///
-    /// `validity` carries set-bit-= -present semantics: a set bit at position
-    /// `i` means the leaf value at that position is present. Packed into
-    /// `long[]` of length `(recordCount + 63) >>> 6` (each word covers 64
-    /// consecutive rows, low bit = lowest row). `null` is the sparse
-    /// representation of "every leaf in this batch is present."
-    ///
-    /// `values` is a typed primitive array (`int[]`, `long[]`, …) for
-    /// fixed-width physical types and a [BinaryBatchValues] for byte-array
-    /// types.
-    public static final class Batch {
-        public Object values;
-        public long[] validity;
-        /// The definition level of each row, for a leaf whose levels tell a reader more than
-        /// [#validity] does: whether a struct above it is null. `null` for any other column,
-        /// which the fill then leaves at its validity alone. When non-null, sized to the
-        /// batch capacity and overwritten on every fill.
-        public int[] definitionLevels;
-        public int recordCount;
-        /// The rows [#values] was allocated for, at least [#recordCount]. A batch ended early,
-        /// at a file or by a row cap, can hold far fewer rows than its arrays have room for, and
-        /// a detaching exchange limits its ready queue by this so that the limit bounds memory.
-        public int capacity;
-        public String fileName;
-        /// Per-batch matches mask, populated by
-        /// [dev.hardwood.internal.predicate.ColumnBatchMatcher] on the task that completes the
-        /// batch when batch-matcher filtering is enabled. `null` means "no fragment for this
-        /// column" — [dev.hardwood.internal.reader.row.BatchMatchMerger] never reads those columns,
-        /// since it visits exactly the ones its plan references. When non-null, sized to
-        /// `(batchCapacity + 63) >>> 6` and overwritten on every batch-matcher test call.
-        public long[] matches;
-
-        /// Whether statistics proved every record of this batch matches the filter
-        /// predicate, making [#matches] all-ones without per-record evaluation.
-        /// Only set on the batch-matcher filter path; `false` is always safe.
-        public boolean filterAlwaysMatches;
-    }
 
     /// Handed to the consumer by [#finish()] so that a poll already waiting on the queue learns
     /// of the end of the stream from the queue itself. See [#finish()] for why offering it can be
@@ -195,31 +155,31 @@ public class BatchExchange<B> {
     }
 
     /// Creates a detaching exchange for flat batches. A flat batch counts the rows its value
-    /// array was allocated for ([Batch#capacity]), since a batch ended early keeps full-size
+    /// array was allocated for ([FlatBatch#capacity]), since a batch ended early keeps full-size
     /// arrays.
     ///
     /// @param columnName column name for error messages
     /// @param batchCapacity the most rows a batch holds
-    /// @return a detaching [BatchExchange] of [Batch]es
-    public static BatchExchange<Batch> detachingFlat(String columnName, int batchCapacity) {
+    /// @return a detaching [BatchExchange] of [FlatBatch]es
+    public static BatchExchange<FlatBatch> detachingFlat(String columnName, int batchCapacity) {
         return detachingFlat(columnName, batchCapacity, false);
     }
 
     /// Creates a detaching exchange for flat batches, as [#detachingFlat(String, int)] does,
-    /// whose batches carry a [Batch#matches] array for the column's filter fragment when
+    /// whose batches carry a [FlatBatch#matches] array for the column's filter fragment when
     /// `matches` is set.
     ///
     /// @param columnName column name for error messages
     /// @param batchCapacity the most rows a batch holds
-    /// @param matches whether each batch carries a [Batch#matches] array of `batchCapacity` bits
-    /// @return a detaching [BatchExchange] of [Batch]es
-    public static BatchExchange<Batch> detachingFlat(String columnName, int batchCapacity, boolean matches) {
+    /// @param matches whether each batch carries a [FlatBatch#matches] array of `batchCapacity` bits
+    /// @return a detaching [BatchExchange] of [FlatBatch]es
+    public static BatchExchange<FlatBatch> detachingFlat(String columnName, int batchCapacity, boolean matches) {
         int matchWords = (batchCapacity + 63) >>> 6;
-        Supplier<Batch> factory = matches ? () -> {
-            Batch batch = new Batch();
+        Supplier<FlatBatch> factory = matches ? () -> {
+            FlatBatch batch = new FlatBatch();
             batch.matches = new long[matchWords];
             return batch;
-        } : Batch::new;
+        } : FlatBatch::new;
         return detaching(columnName, factory, batch -> batch.capacity, batchCapacity);
     }
 

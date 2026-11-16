@@ -60,7 +60,7 @@ class BatchExchangeRowLimitTest {
 
     @Test
     void aFlatBatchCountsTheRowsItsArrayHoldsNotItsRecords() {
-        BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat("c", CAPACITY);
+        BatchExchange<FlatBatch> exchange = BatchExchange.detachingFlat("c", CAPACITY);
         assertThat(exchange.tryPublish(flatBatch(1, CAPACITY))).isTrue();
         assertThat(exchange.tryPublish(flatBatch(1, CAPACITY))).isTrue();
 
@@ -76,8 +76,8 @@ class BatchExchangeRowLimitTest {
         assertThat(exchange.tryPublish(nestedBatch(2))).isFalse();
     }
 
-    private static BatchExchange.Batch flatBatch(int records, int capacity) {
-        BatchExchange.Batch batch = new BatchExchange.Batch();
+    private static FlatBatch flatBatch(int records, int capacity) {
+        FlatBatch batch = new FlatBatch();
         batch.recordCount = records;
         batch.capacity = capacity;
         return batch;

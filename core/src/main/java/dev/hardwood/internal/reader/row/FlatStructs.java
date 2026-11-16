@@ -9,7 +9,7 @@ package dev.hardwood.internal.reader.row;
 
 import java.util.List;
 
-import dev.hardwood.internal.reader.batch.BatchExchange;
+import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnSchema;
@@ -25,7 +25,7 @@ import dev.hardwood.schema.SchemaNode;
 /// A flat batch reduces each leaf's definition levels to a present bit, which cannot tell a
 /// null leaf from a null struct above it. For every struct that can be null, the leaf the
 /// struct's nullness is read from (its first projected leaf, as [PqStructImpl] reads it) keeps
-/// its definition levels in [BatchExchange.Batch#definitionLevels]. From them each batch
+/// its definition levels in [FlatBatch#definitionLevels]. From them each batch
 /// derives, for a top-level struct, a bitmap of the rows that hold it, which the reader keeps in
 /// the struct field's validity slot.
 ///
@@ -107,13 +107,13 @@ final class FlatStructs {
     ///
     /// @param batches the current batch of each decoded column, the payload's first
     /// @param records the rows of the batches
-    void load(BatchExchange.Batch[] batches, int records, String fileName, long[][] validity) {
+    void load(FlatBatch[] batches, int records, String fileName, long[][] validity) {
         int columnCount = columnSchemas.length;
         Object[] values = new Object[columnCount];
         long[][] columnValidity = new long[columnCount][];
         int[][] levels = new int[columnCount][];
         for (int column = 0; column < columnCount; column++) {
-            BatchExchange.Batch columnBatch = batches[column];
+            FlatBatch columnBatch = batches[column];
             values[column] = columnBatch.values;
             columnValidity[column] = columnBatch.validity;
             levels[column] = keepsLevels[column] ? columnBatch.definitionLevels : null;
@@ -134,9 +134,9 @@ final class FlatStructs {
     /// struct reads. The validity bitmap is the batch's own already.
     ///
     /// @param batches the current batch of each decoded column, the payload's first
-    void detach(BatchExchange.Batch[] batches) {
+    void detach(FlatBatch[] batches) {
         for (int column = 0; column < belowStruct.length; column++) {
-            BatchExchange.Batch columnBatch = batches[column];
+            FlatBatch columnBatch = batches[column];
             if (belowStruct[column] && columnBatch != null) {
                 columnBatch.values = null;
                 if (columnBatch.definitionLevels != null) {

@@ -12,7 +12,7 @@ each one costs, and the order in which they are merged.
 | --- | --- | --- | --- |
 | Fetch, scheduling, page read | — | — | `ReadEngine`, `PageWalk`, `PageDecoder`, `FlatPageValues`, `BinaryPageValues` |
 | Decoded column | `FlatColumn` (`Cell`, `FlatFill`) | `NestedColumn` (`NestedCell`, `PageMeasure`, `NestedFill`) | `DecodedColumn`, `Placer` |
-| Batch | `BatchExchange.Batch` | `NestedBatch` | `BatchExchange`, `BinaryBatchValues` |
+| Batch | `FlatBatch` | `NestedBatch` | `BatchExchange`, `BinaryBatchValues` |
 | Reader | `FlatRowReader` | `NestedRowReader` → `NestedBatchDataView` | `StructAccessor` |
 | Flyweights | — | `PqStructImpl`, `PqListImpl`, `PqMapImpl` | `NestedBatchIndex` |
 | Leaf decode | — | — | `LeafDecoder`, `LogicalTypeConverter`, `LeafKind` |
@@ -162,8 +162,8 @@ in a nested shape.
 
 Two constraints come with it, both named by #732 and neither designed away here:
 
-- **The reader holds two batch types.** `BatchExchange.Batch` and `NestedBatch` are
-  separate classes so `Batch` stays a leaf type for the JIT, so the reader dispatches
+- **The reader holds two batch types.** `FlatBatch` and `NestedBatch` are
+  separate classes so `FlatBatch` stays a leaf type for the JIT, so the reader dispatches
   addressing per column rather than over one uniform batch.
 - **The fully-flat path must not regress.** Finding 1 puts part of today's gap in
   accessor indirection, so the flat case survives as a performance specialization of one
@@ -291,7 +291,7 @@ The scalar columns of a mixed projection gain batch-matcher filtering, which exi
 only on the flat column.
 
 The work is the heterogeneous batch set: reconciling addressing and the batch-matcher
-intersect-matches logic across `BatchExchange.Batch` and `NestedBatch`. #732 prices this
+intersect-matches logic across `FlatBatch` and `NestedBatch`. #732 prices this
 as one hoistable per-column branch in the accessor. `ColumnReader` is the existence
 proof — it has selected its pipeline per column since it shipped — though it splits on
 shape rather than repetition; `ColumnCursor.isNested` moves to the repetition predicate
@@ -317,12 +317,12 @@ and this plan is deleted.
 
 ## Not in scope
 
-`BatchExchange.Batch` and `NestedBatch` stay separate classes: `Batch` is a leaf type so
+`FlatBatch` and `NestedBatch` stay separate classes: `FlatBatch` is a leaf type so
 the JIT keeps its field accesses monomorphic on the flat hot path. Aligning the names of
-the fields that mean the same thing (`Batch.validity` and `NestedBatch.elementValidity`,
+the fields that mean the same thing (`FlatBatch.validity` and `NestedBatch.elementValidity`,
 same polarity) costs nothing and is worth doing.
 
-Batch-matcher filtering (`Batch.matches`, `BatchMatchMerger`, `ColumnBatchMatcher`)
+Batch-matcher filtering (`FlatBatch.matches`, `BatchMatchMerger`, `ColumnBatchMatcher`)
 exists only on the flat path, so a mixed schema loses it for its scalar columns as well.
 Stage 5 reads those columns flat and gives them the filter; a genuinely repeated
 column still has none, which is a capability gap in the neighbourhood of #222.

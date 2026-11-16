@@ -173,7 +173,7 @@ public final class PreparedRead {
     /// @param indexMode what the batches of a column decoded through levels carry for their reader
     /// @param budgetRows the rows of the read's batch byte budget, which bound its look-ahead
     /// @param exchanges the exchange each decoded column publishes into, in decoded order: a flat
-    ///        column's of [BatchExchange.Batch], one decoded through levels of
+    ///        column's of [FlatBatch], one decoded through levels of
     ///        [dev.hardwood.internal.reader.batch.NestedBatch]; `null` for detaching exchanges
     /// @param filters the filter fragment of each flat decoded column, `null` for a column without
     ///        one; `null` for none
