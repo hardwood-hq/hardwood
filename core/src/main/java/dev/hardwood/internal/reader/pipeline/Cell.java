@@ -68,6 +68,8 @@ public final class Cell implements BatchCell<FlatBatch> {
     final int capacity;
     /// The read's row of the batch's first record.
     final long firstRow;
+    /// The index of its batch among the read's batches, set as the cell is opened.
+    private int batchIndex = -1;
 
     /// The column's batch, created by [#allocate].
     private FlatBatch columnBatch;
@@ -148,6 +150,16 @@ public final class Cell implements BatchCell<FlatBatch> {
             }
         }
         return columnBatch;
+    }
+
+    @Override
+    public int batchIndex() {
+        return batchIndex;
+    }
+
+    @Override
+    public void batchIndex(int index) {
+        batchIndex = index;
     }
 
     @Override
