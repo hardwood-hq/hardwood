@@ -7,7 +7,11 @@
  */
 package dev.hardwood;
 
+import java.util.function.IntPredicate;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -264,5 +268,44 @@ class ValidityTest {
         assertThat(v.nullCount(130)).isEqualTo(2);
         assertThat(v.nextNull(0, 130)).isEqualTo(65);
         assertThat(v.nextNull(66, 130)).isEqualTo(128);
+    }
+
+    /// Checks `ofNulls` item by item at lengths around the 64-bit word boundaries, for
+    /// masks that are all present, all null, alternate, or hold a single null in the last item.
+    @ParameterizedTest
+    @ValueSource(ints = { 1, 63, 64, 65, 127, 128, 130 })
+    void ofNullsMatchesMaskAtWordBoundaries(int length) {
+        assertMatchesMask(length, i -> false);
+        assertMatchesMask(length, i -> true);
+        assertMatchesMask(length, i -> (i & 1) == 0);
+        assertMatchesMask(length, i -> (i & 1) == 1);
+        assertMatchesMask(length, i -> i == length - 1);
+        assertMatchesMask(length, i -> i % 3 == 0);
+    }
+
+    private static void assertMatchesMask(int length, IntPredicate isNull) {
+        boolean[] nulls = new boolean[length];
+        int nullCount = 0;
+        for (int i = 0; i < length; i++) {
+            nulls[i] = isNull.test(i);
+            nullCount += nulls[i] ? 1 : 0;
+        }
+        Validity v = Validity.ofNulls(nulls);
+        if (nullCount == 0) {
+            assertThat(v).isSameAs(Validity.NO_NULLS);
+            return;
+        }
+
+        for (int i = 0; i < length; i++) {
+            assertThat(v.isNull(i)).as("isNull(%d) of %d", i, length).isEqualTo(nulls[i]);
+        }
+        assertThat(v.nullCount(length)).isEqualTo(nullCount);
+        long[] words = v.words();
+        assertThat(words).hasSize((length + 63) >>> 6);
+        int tail = length & 63;
+        if (tail != 0) {
+            // Bits past the last item stay clear.
+            assertThat(words[words.length - 1] >>> tail).isZero();
+        }
     }
 }
