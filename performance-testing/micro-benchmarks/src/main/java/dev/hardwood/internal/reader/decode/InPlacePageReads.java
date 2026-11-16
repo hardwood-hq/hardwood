@@ -10,10 +10,10 @@ package dev.hardwood.internal.reader.decode;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.DecodeBuffers;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.batch.PlainBytes;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Reads a data page through [PageDecoder]'s in-place entry points and writes its values as a fill
 /// does, into arrays it reuses across pages, for benchmarks outside the reader's package.
