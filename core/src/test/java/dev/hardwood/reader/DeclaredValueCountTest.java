@@ -69,8 +69,8 @@ class DeclaredValueCountTest {
         try {
             assertThatThrownBy(() -> countRows(RleExpansionFile.build(values, 1, values)))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 25769803663 bytes "
-                            + "to decode, which takes the read's working set to 25769803671 bytes, more than its "
+                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 17179869111 bytes "
+                            + "to decode, which takes the read's working set to 17179869120 bytes, more than its "
                             + "limit of 1048576 (hardwood.internal.maxWorkingSetBytes)");
         }
         finally {
@@ -87,8 +87,8 @@ class DeclaredValueCountTest {
         try {
             assertThatThrownBy(() -> countRows(RleExpansionFile.build(values, 1, values)))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 805306386 bytes to "
-                            + "decode, which takes the read's working set to 805306394 bytes, more than its limit "
+                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 536870926 bytes to "
+                            + "decode, which takes the read's working set to 536870936 bytes, more than its limit "
                             + "of 1048576 (hardwood.internal.maxWorkingSetBytes)");
         }
         finally {

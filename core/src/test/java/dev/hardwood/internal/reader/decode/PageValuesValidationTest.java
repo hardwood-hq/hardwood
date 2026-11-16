@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader.decode;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// The checks the in-place readers ([FlatPageValues], [BinaryPageValues]) make of a malformed value
 /// section, on hand-built pages read through [PageDecoder]'s entry points. The `PLAIN` checks are
-/// in [PageDecoderPlainSizeTest], the dictionary ids of a binary page in
+/// in [PageDecoderPlainSizeTest], those of a binary page's ids against its dictionary in
 /// [dev.hardwood.internal.reader.batch.ByteArrayDictionaryInternTest].
 class PageValuesValidationTest {
 
@@ -138,6 +139,132 @@ class PageValuesValidationTest {
     }
 
     @Test
+    void rejectsAnIdBeyondANumericDictionaryOnAPageWithNulls() {
+        Dictionary dictionary = new Dictionary.LongDictionary(new long[]{ 10, 20 });
+        byte[] section = DataPages.dictionaryIds(3, 0, 1, 5);
+        FlatPageValues values = FlatPageValues.dictionary(PhysicalType.INT64, 4, new int[]{ 1, 0, 1, 1 }, 1,
+                section, 0, section.length, dictionary);
+
+        assertThatThrownBy(() -> DataPages.values(values, PhysicalType.INT64))
+                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .hasMessage("Dictionary index 5 out of bounds for a dictionary of 2 entries");
+    }
+
+    /// A cursor that starts past an id passes over it undecoded: only the ids a fill reads are
+    /// checked.
+    @Test
+    void readsPastAnIdBeyondTheDictionaryThatACursorPassesOver() {
+        Dictionary dictionary = new Dictionary.IntDictionary(new int[]{ 10, 20 });
+        byte[] section = DataPages.dictionaryIds(3, 7, 1, 0, 1);
+        FlatPageValues values = FlatPageValues.dictionary(PhysicalType.INT32, 4, null, 0, section, 0,
+                section.length, dictionary);
+
+        assertThat((int[]) DataPages.values(values, PhysicalType.INT32, 2)).containsExactly(10, 20);
+    }
+
+    /// Ids are decoded a chunk at a time: one out of range in a later chunk fails as one in the first.
+    @Test
+    void rejectsAnIdBeyondANumericDictionaryInALaterChunk() {
+        int count = DictionaryIndices.CHUNK * 2 + 3;
+        int[] ids = new int[count];
+        ids[DictionaryIndices.CHUNK + 5] = 3;
+        Dictionary dictionary = new Dictionary.DoubleDictionary(new double[]{ 1.5, 2.5, 3.5 });
+        byte[] section = DataPages.dictionaryIds(2, ids);
+        FlatPageValues values = FlatPageValues.dictionary(PhysicalType.DOUBLE, count, null, 0, section, 0,
+                section.length, dictionary);
+
+        assertThatThrownBy(() -> DataPages.values(values, PhysicalType.DOUBLE))
+                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .hasMessage("Dictionary index 3 out of bounds for a dictionary of 3 entries");
+    }
+
+    /// A cursor from mid-page of a page with nulls reads the ids of its present rows only, across
+    /// chunk boundaries.
+    @Test
+    void readsNumericIdsFromMidPageAcrossChunks() {
+        int numValues = DictionaryIndices.CHUNK * 3;
+        int[] definitionLevels = new int[numValues];
+        int[] ids = new int[numValues];
+        int idCount = 0;
+        for (int r = 0; r < numValues; r++) {
+            if (r % 3 != 1) {
+                definitionLevels[r] = 1;
+                ids[idCount++] = r % 5;
+            }
+        }
+        Dictionary dictionary = new Dictionary.IntDictionary(new int[]{ 100, 101, 102, 103, 104 });
+        byte[] section = DataPages.dictionaryIds(3, Arrays.copyOf(ids, idCount));
+        FlatPageValues values = FlatPageValues.dictionary(PhysicalType.INT32, numValues, definitionLevels, 1,
+                section, 0, section.length, dictionary);
+        int from = DictionaryIndices.CHUNK + 7;
+
+        int[] read = (int[]) DataPages.values(values, PhysicalType.INT32, from);
+
+        for (int r = from; r < numValues; r++) {
+            assertThat(read[r - from]).as("row %d", r).isEqualTo(r % 3 != 1 ? 100 + r % 5 : 0);
+        }
+    }
+
+    /// Runs of one id, one longer than a chunk, between bit-packed ids: each run is written as its
+    /// value repeated, read whole, from mid-page, and through one cursor in runs with gaps.
+    @Test
+    void readsNumericRunsOfOneIdAmongBitPackedIds() {
+        int[] ids = new int[DictionaryIndices.CHUNK * 3];
+        int pos = 0;
+        for (int[] run : new int[][]{ { 3, 100 }, { -1, 37 }, { 1, DictionaryIndices.CHUNK + 200 }, { -1, 64 },
+                { 4, 9 }, { -1, 50 } }) {
+            for (int i = 0; i < run[1]; i++) {
+                ids[pos++] = run[0] >= 0 ? run[0] : (pos * 7) % 5;
+            }
+        }
+        int[] page = Arrays.copyOf(ids, pos);
+        Dictionary dictionary = new Dictionary.LongDictionary(new long[]{ 10, 11, 12, 13, 14 });
+        byte[] section = DataPages.dictionaryIds(3, page);
+        FlatPageValues values = FlatPageValues.dictionary(PhysicalType.INT64, page.length, null, 0, section, 0,
+                section.length, dictionary);
+        long[] expected = new long[page.length];
+        for (int i = 0; i < page.length; i++) {
+            expected[i] = 10 + page[i];
+        }
+
+        for (int from : new int[]{ 0, 50, 137, 600, DictionaryIndices.CHUNK + 300 }) {
+            assertThat((long[]) DataPages.values(values, PhysicalType.INT64, from)).as("from %d", from)
+                    .containsExactly(Arrays.copyOfRange(expected, from, expected.length));
+        }
+        long[] inRuns = (long[]) DataPages.valuesInRuns(values, PhysicalType.INT64, 90, 7);
+        for (int i = 0; i < page.length; i++) {
+            assertThat(inRuns[i]).as("entry %d", i).isEqualTo(i % 97 < 90 ? expected[i] : 0);
+        }
+    }
+
+    /// A run that declares no values, RLE or bit-packed, between two RLE runs of an all-present page,
+    /// whose fill passes the first run over whole and reaches the empty one's header first.
+    @Test
+    void rejectsARunOfNoIdsBetweenRunsOfOneId() {
+        Dictionary dictionary = new Dictionary.LongDictionary(new long[]{ 10, 20, 30, 40 });
+
+        // Bit width 2: an RLE run of 5 × id 1, an empty RLE run, then 5 × id 2
+        assertThatThrownBy(() -> DataPages.readRequired(Encoding.RLE_DICTIONARY, PhysicalType.INT64, null, 10,
+                new byte[]{ 2, 10, 1, 0, 0, 10, 2 }, dictionary))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid RLE/Bit-Packing run: a run of 0 values");
+        // The same with an empty bit-packed run
+        assertThatThrownBy(() -> DataPages.readRequired(Encoding.RLE_DICTIONARY, PhysicalType.INT64, null, 10,
+                new byte[]{ 2, 10, 1, 1, 10, 2 }, dictionary))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid RLE/Bit-Packing run: a run of 0 values");
+    }
+
+    @Test
+    void readsASingleEntryNumericDictionaryOfBitWidthZero() {
+        Dictionary dictionary = new Dictionary.LongDictionary(new long[]{ 42 });
+        FlatPageValues values = FlatPageValues.dictionary(PhysicalType.INT64, 3, new int[]{ 1, 0, 1 }, 1,
+                new byte[]{ 0 }, 0, 1, dictionary);
+
+        assertThat((long[]) DataPages.values(values, PhysicalType.INT64)).containsExactly(42, 0, 42);
+    }
+
+    @Test
     void rejectsAnIndexBitWidthAboveThirtyTwo() {
         Dictionary dictionary = new Dictionary.LongDictionary(new long[]{ 10 });
 
@@ -147,12 +274,40 @@ class PageValuesValidationTest {
                 .hasMessage("Invalid dictionary index bit width: 33. Must be between 0 and 32");
     }
 
-    /// An `RLE` stream of width 1 decodes `0` and `1` only; the reader still refuses another value.
+    // ==================== Dictionary ids of a binary page ====================
+
+    /// A cursor from mid-page decodes its ids straight into the batch's entry ids, across chunk
+    /// boundaries, on a page with nulls and on one without.
     @Test
-    void rejectsAnRleBooleanOtherThanZeroOrOne() {
-        assertThatThrownBy(() -> FlatPageValues.rleBooleans(2, null, 0, new int[]{ 0, 2 }, 2))
-                .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Invalid RLE boolean value: 2");
+    void readsBinaryIdsFromMidPageAcrossChunks() {
+        Dictionary.ByteArrayDictionary dictionary = TestDictionaries.byteArrays(
+                new byte[][]{ { 'a' }, { 'b' }, { 'c' } });
+        int numValues = DictionaryIndices.CHUNK * 3;
+        int[] definitionLevels = new int[numValues];
+        int[] presentIds = new int[numValues];
+        int[] allIds = new int[numValues];
+        int idCount = 0;
+        for (int r = 0; r < numValues; r++) {
+            allIds[r] = r % 3;
+            if (r % 4 != 0) {
+                definitionLevels[r] = 1;
+                presentIds[idCount++] = r % 3;
+            }
+        }
+        byte[] withNulls = DataPages.dictionaryIds(2, Arrays.copyOf(presentIds, idCount));
+        byte[] allPresent = DataPages.dictionaryIds(2, allIds);
+        int from = DictionaryIndices.CHUNK - 5;
+
+        byte[][] sparse = DataPages.values(BinaryPageValues.ids(definitionLevels, 1, numValues, withNulls, 0,
+                withNulls.length, dictionary), 1, from);
+        byte[][] dense = DataPages.values(BinaryPageValues.ids(null, 0, numValues, allPresent, 0,
+                allPresent.length, dictionary), 0, from);
+
+        for (int r = from; r < numValues; r++) {
+            byte[] entry = { (byte) ('a' + r % 3) };
+            assertThat(sparse[r - from]).as("row %d", r).isEqualTo(r % 4 != 0 ? entry : null);
+            assertThat(dense[r - from]).as("row %d", r).isEqualTo(entry);
+        }
     }
 
     // ==================== DELTA_LENGTH_BYTE_ARRAY ====================

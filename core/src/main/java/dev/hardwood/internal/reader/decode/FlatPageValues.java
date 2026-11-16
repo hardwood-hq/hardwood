@@ -11,6 +11,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.AlpDecoder;
 import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
@@ -21,19 +22,19 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
 /// The values of a data page of a fixed-width numeric or boolean column, read in place by its
-/// fills, and the page's definition levels. The values are the page's own bytes in any encoding
-/// but the ids ones (`PLAIN`, `BYTE_STREAM_SPLIT`, `ALP`, `DELTA_BINARY_PACKED`), or ids decoded
-/// into scratch (a dictionary's, or `RLE` booleans). `PLAIN` values stored uncompressed in a direct
-/// buffer (a slice of a file's mapping, a buffer from an S3 `GET`) are read from that buffer and
-/// never copied; any other values are read from an array.
+/// fills, and the page's definition levels. The values are the page's own bytes in every encoding.
+/// Ids (a dictionary's, or `RLE` booleans) are decoded as the fill reads them, a chunk at a time,
+/// and gathered straight into the batch ([DictionaryIndices]). `PLAIN` values stored uncompressed in a
+/// direct buffer (a slice of a file's mapping, a buffer from an S3 `GET`) are read from that buffer
+/// and never copied; any other values are read from an array.
 ///
 /// A fill writes its rows in page order, so the values are read with one forward cursor: [#copy]
 /// moves it to the run's first row, counting the non-null values it passes, then writes the run.
 /// A page whose mask drops rows passes them on the way. A fill that starts elsewhere reads through
 /// a [#cursor()] of its own.
 ///
-/// The ids and the definition levels live in the scratch the page is decoded with, for as long
-/// as the page's fills run.
+/// The definition levels live in the scratch the page is decoded with, for as long as the page's
+/// fills run.
 public final class FlatPageValues {
 
     private static final VarHandle INT = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
@@ -56,8 +57,10 @@ public final class FlatPageValues {
     /// for values in an array. A heap buffer is read through its array, so that the reads here
     /// see direct buffer classes only and stay inlined.
     private final ByteBuffer plainValues;
-    /// Dictionary ids of the non-null values, and the dictionary's values; `null` for `PLAIN`.
-    private final int[] ids;
+    /// The ids of the non-null values, this cursor's reader of them, and the values they index;
+    /// `null` for any encoding but the ids ones.
+    private final DictionaryIndices indices;
+    private final DictionaryIndices.SpanCursor ids;
     private final Object dictionaryValues;
     /// `BYTE_STREAM_SPLIT` values: the non-null values, which is the distance between two of a
     /// value's bytes; `0` for any other encoding.
@@ -84,7 +87,7 @@ public final class FlatPageValues {
     private int nonNull;
 
     private FlatPageValues(PhysicalType type, int numValues, int[] definitionLevels, int maxDefinitionLevel,
-                           byte[] plain, int plainOffset, ByteBuffer plainValues, int[] ids,
+                           byte[] plain, int plainOffset, ByteBuffer plainValues, DictionaryIndices indices,
                            Object dictionaryValues, int stride, int alpLimit, int alpValues, int deltaLimit) {
         this.type = type;
         this.numValues = numValues;
@@ -93,7 +96,8 @@ public final class FlatPageValues {
         this.plain = plain;
         this.plainOffset = plainOffset;
         this.plainValues = plainValues;
-        this.ids = ids;
+        this.indices = indices;
+        this.ids = indices == null ? null : indices.spanCursor();
         this.dictionaryValues = dictionaryValues;
         this.stride = stride;
         this.alpLimit = alpLimit;
@@ -186,12 +190,14 @@ public final class FlatPageValues {
                 null, Math.max(1, nonNull), 0, 0, 0);
     }
 
-    /// Dictionary ids already decoded into `ids`, one per non-null value, and the values of the
-    /// dictionary they refer to.
+    /// Dictionary ids in the value section `[offset, limit)` of `data`, one per non-null value, and
+    /// the values of the dictionary they refer to. The ids are checked against the dictionary as
+    /// a fill decodes them.
     ///
-    /// @throws ArrayIndexOutOfBoundsException if an id lies outside the dictionary
+    /// @throws ParquetReadException if the section's bit width is missing or above `32`
     static FlatPageValues dictionary(PhysicalType type, int numValues, int[] definitionLevels,
-                                     int maxDefinitionLevel, int[] ids, int idCount, Dictionary dictionary) {
+                                     int maxDefinitionLevel, byte[] data, int offset, int limit,
+                                     Dictionary dictionary) {
         Object values = switch (dictionary) {
             case Dictionary.IntDictionary d when type == PhysicalType.INT32 -> d.values();
             case Dictionary.LongDictionary d when type == PhysicalType.INT64 -> d.values();
@@ -199,30 +205,21 @@ public final class FlatPageValues {
             case Dictionary.DoubleDictionary d when type == PhysicalType.DOUBLE -> d.values();
             default -> throw new ParquetReadException("A " + type + " page refers to a dictionary of another type");
         };
-        int size = dictionary.size();
-        for (int i = 0; i < idCount; i++) {
-            int id = ids[i];
-            if (id < 0 || id >= size) {
-                throw new ArrayIndexOutOfBoundsException("Dictionary index " + id
-                        + " out of bounds for a dictionary of " + size + " entries");
-            }
-        }
-        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0, null, ids, values, 0,
-                0, 0, 0);
+        DictionaryIndices indices = DictionaryIndices.ofDictionaryPage(data, offset, limit,
+                countNonNull(definitionLevels, maxDefinitionLevel, numValues), dictionary.size());
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0, null, indices, values,
+                0, 0, 0, 0);
     }
 
     private static final boolean[] BOOLEAN_IDS = { false, true };
 
-    /// `RLE` booleans already decoded into `ids`, one `0` or `1` per non-null value.
-    static FlatPageValues rleBooleans(int numValues, int[] definitionLevels, int maxDefinitionLevel, int[] ids,
-                                      int idCount) {
-        for (int i = 0; i < idCount; i++) {
-            if ((ids[i] & ~1) != 0) {
-                throw new ParquetReadException("Invalid RLE boolean value: " + ids[i]);
-            }
-        }
+    /// `RLE` booleans in `[offset, limit)` of `data`, one bit-wide `0` or `1` per non-null value.
+    static FlatPageValues rleBooleans(int numValues, int[] definitionLevels, int maxDefinitionLevel, byte[] data,
+                                      int offset, int limit) {
+        DictionaryIndices indices = DictionaryIndices.of(data, offset, limit, 1,
+                countNonNull(definitionLevels, maxDefinitionLevel, numValues), BOOLEAN_IDS.length);
         return new FlatPageValues(PhysicalType.BOOLEAN, numValues, definitionLevels, maxDefinitionLevel, null, 0, null,
-                ids, BOOLEAN_IDS, 0, 0, 0, 0);
+                indices, BOOLEAN_IDS, 0, 0, 0, 0);
     }
 
     /// The non-null values among a page's first `numValues`.
@@ -247,7 +244,8 @@ public final class FlatPageValues {
     /// fills can read one page at once.
     public FlatPageValues cursor() {
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, plain, plainOffset,
-                plainValues, ids, dictionaryValues, stride, alpLimit, alpValues, deltaLimit);
+                plainValues, indices, dictionaryValues, stride, alpLimit, alpValues,
+                deltaLimit);
     }
 
     /// The page's values, nulls included.
@@ -277,6 +275,9 @@ public final class FlatPageValues {
             copyDense(out, destPos, length);
             nonNull += length;
         }
+        else if (ids != null) {
+            slots = copyPresentIds(pageRow, out, destPos, length, slotLevel);
+        }
         else {
             int dest = destPos;
             for (int i = 0; i < length; i++) {
@@ -296,7 +297,11 @@ public final class FlatPageValues {
         if (pageRow < row) {
             throw new IllegalStateException("Page rows read out of order: row " + pageRow + " after " + row);
         }
-        nonNull += countNonNull(definitionLevels, maxDefinitionLevel, row, pageRow);
+        int skipped = countNonNull(definitionLevels, maxDefinitionLevel, row, pageRow);
+        if (ids != null) {
+            ids.skip(skipped);
+        }
+        nonNull += skipped;
         row = pageRow;
     }
 
@@ -304,44 +309,7 @@ public final class FlatPageValues {
     private void copyDense(Object out, int destPos, int length) {
         int src = nonNull;
         if (ids != null) {
-            switch (type) {
-                case BOOLEAN -> {
-                    boolean[] dest = (boolean[]) out;
-                    boolean[] dict = (boolean[]) dictionaryValues;
-                    for (int i = 0; i < length; i++) {
-                        dest[destPos + i] = dict[ids[src + i]];
-                    }
-                }
-                case INT32 -> {
-                    int[] dest = (int[]) out;
-                    int[] dict = (int[]) dictionaryValues;
-                    for (int i = 0; i < length; i++) {
-                        dest[destPos + i] = dict[ids[src + i]];
-                    }
-                }
-                case INT64 -> {
-                    long[] dest = (long[]) out;
-                    long[] dict = (long[]) dictionaryValues;
-                    for (int i = 0; i < length; i++) {
-                        dest[destPos + i] = dict[ids[src + i]];
-                    }
-                }
-                case FLOAT -> {
-                    float[] dest = (float[]) out;
-                    float[] dict = (float[]) dictionaryValues;
-                    for (int i = 0; i < length; i++) {
-                        dest[destPos + i] = dict[ids[src + i]];
-                    }
-                }
-                case DOUBLE -> {
-                    double[] dest = (double[]) out;
-                    double[] dict = (double[]) dictionaryValues;
-                    for (int i = 0; i < length; i++) {
-                        dest[destPos + i] = dict[ids[src + i]];
-                    }
-                }
-                default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
-            }
+            copyIds(out, destPos, length);
             return;
         }
         if (alpLimit > 0) {
@@ -370,6 +338,116 @@ public final class FlatPageValues {
             case INT64 -> plainBytes(src * 8, length * 8).asLongBuffer().get((long[]) out, destPos, length);
             case FLOAT -> plainBytes(src * 4, length * 4).asFloatBuffer().get((float[]) out, destPos, length);
             case DOUBLE -> plainBytes(src * 8, length * 8).asDoubleBuffer().get((double[]) out, destPos, length);
+            default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
+        }
+    }
+
+    /// Writes the next `length` ids' values, every one present: a run of one id as its value
+    /// repeated, any other ids decoded a chunk at a time and gathered from the dictionary's values.
+    private void copyIds(Object out, int destPos, int length) {
+        while (length > 0) {
+            int n = ids.take(length);
+            if (ids.run()) {
+                fill(out, destPos, n, ids.id());
+            }
+            else {
+                gather(ids.chunk(), ids.from(), n, out, destPos);
+            }
+            destPos += n;
+            length -= n;
+        }
+    }
+
+    /// Writes page rows `[pageRow, pageRow + length)` of a page with nulls through its ids, as
+    /// [#copy(int, Object, int, int, int)] does: each present row takes the next id, taken a span
+    /// at a time and no more than the rows' present values.
+    ///
+    /// @return the slots written
+    private int copyPresentIds(int pageRow, Object out, int destPos, int length, int slotLevel) {
+        int present = countNonNull(definitionLevels, maxDefinitionLevel, pageRow, pageRow + length);
+        nonNull += present;
+        int dest = destPos;
+        int span = 0;
+        int used = 0;
+        for (int i = 0; i < length; i++) {
+            int level = definitionLevels[pageRow + i];
+            if (level == maxDefinitionLevel) {
+                if (used == span) {
+                    span = ids.take(present);
+                    present -= span;
+                    used = 0;
+                }
+                putId(out, dest, ids.run() ? ids.id() : ids.chunk()[ids.from() + used]);
+                used++;
+            }
+            dest += level >= slotLevel ? 1 : 0;
+        }
+        return dest - destPos;
+    }
+
+    /// Writes the value of `id` to `out[dest]`.
+    private void putId(Object out, int dest, int id) {
+        switch (type) {
+            case BOOLEAN -> ((boolean[]) out)[dest] = ((boolean[]) dictionaryValues)[id];
+            case INT32 -> ((int[]) out)[dest] = ((int[]) dictionaryValues)[id];
+            case INT64 -> ((long[]) out)[dest] = ((long[]) dictionaryValues)[id];
+            case FLOAT -> ((float[]) out)[dest] = ((float[]) dictionaryValues)[id];
+            case DOUBLE -> ((double[]) out)[dest] = ((double[]) dictionaryValues)[id];
+            default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
+        }
+    }
+
+    /// Writes the value of `id` to `out` `n` times from `destPos`.
+    private void fill(Object out, int destPos, int n, int id) {
+        int to = destPos + n;
+        switch (type) {
+            case BOOLEAN -> Arrays.fill((boolean[]) out, destPos, to, ((boolean[]) dictionaryValues)[id]);
+            case INT32 -> Arrays.fill((int[]) out, destPos, to, ((int[]) dictionaryValues)[id]);
+            case INT64 -> Arrays.fill((long[]) out, destPos, to, ((long[]) dictionaryValues)[id]);
+            case FLOAT -> Arrays.fill((float[]) out, destPos, to, ((float[]) dictionaryValues)[id]);
+            case DOUBLE -> Arrays.fill((double[]) out, destPos, to, ((double[]) dictionaryValues)[id]);
+            default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
+        }
+    }
+
+    /// Writes the values of ids `[from, from + n)` of `chunk` to `out` from `destPos`.
+    private void gather(int[] chunk, int from, int n, Object out, int destPos) {
+        switch (type) {
+            case BOOLEAN -> {
+                boolean[] dest = (boolean[]) out;
+                boolean[] dict = (boolean[]) dictionaryValues;
+                for (int i = 0; i < n; i++) {
+                    dest[destPos + i] = dict[chunk[from + i]];
+                }
+            }
+            case INT32 -> {
+                int[] dest = (int[]) out;
+                int[] dict = (int[]) dictionaryValues;
+                for (int i = 0; i < n; i++) {
+                    dest[destPos + i] = dict[chunk[from + i]];
+                }
+            }
+            case INT64 -> {
+                long[] dest = (long[]) out;
+                long[] dict = (long[]) dictionaryValues;
+                for (int i = 0; i < n; i++) {
+                    dest[destPos + i] = dict[chunk[from + i]];
+                }
+            }
+            case FLOAT -> {
+                float[] dest = (float[]) out;
+                float[] dict = (float[]) dictionaryValues;
+                for (int i = 0; i < n; i++) {
+                    dest[destPos + i] = dict[chunk[from + i]];
+                }
+            }
+            case DOUBLE -> {
+                double[] dest = (double[]) out;
+                double[] dict = (double[]) dictionaryValues;
+                for (int i = 0; i < n; i++) {
+                    dest[destPos + i] = dict[chunk[from + i]];
+                }
+            }
             default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
         }
     }
@@ -461,18 +539,6 @@ public final class FlatPageValues {
 
     /// Writes the non-null value `src` to `out[dest]`.
     private void copyOne(Object out, int dest, int src) {
-        if (ids != null) {
-            int id = ids[src];
-            switch (type) {
-                case BOOLEAN -> ((boolean[]) out)[dest] = ((boolean[]) dictionaryValues)[id];
-                case INT32 -> ((int[]) out)[dest] = ((int[]) dictionaryValues)[id];
-                case INT64 -> ((long[]) out)[dest] = ((long[]) dictionaryValues)[id];
-                case FLOAT -> ((float[]) out)[dest] = ((float[]) dictionaryValues)[id];
-                case DOUBLE -> ((double[]) out)[dest] = ((double[]) dictionaryValues)[id];
-                default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
-            }
-            return;
-        }
         if (alpLimit > 0) {
             copyAlpOne(out, dest, src);
             return;

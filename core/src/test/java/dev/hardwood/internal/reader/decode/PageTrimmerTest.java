@@ -78,7 +78,7 @@ class PageTrimmerTest {
                 new byte[][]{ { 'a' }, { 'b' }, { 'c' } });
         int[] rep = { 0, 0, 0, 1 };
         int[] def = { 3, 3, 1, 3 };
-        BinaryPageValues values = BinaryPageValues.ids(def, 3, 4, new int[]{ 0, 1, 2 }, 3, dictionary);
+        BinaryPageValues values = idsPage(def, 4, dictionary, 0, 1, 2);
         PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(4, def, rep, 0, null, values, null);
 
         PageDecoder.InPlaceNestedPage trimmed = trim(page, 1, 3);
@@ -177,7 +177,7 @@ class PageTrimmerTest {
         // Records [null], [a, null], [c], [b]
         int[] rep = { 0, 0, 1, 0, 0 };
         int[] def = { 1, 3, 2, 3, 3 };
-        BinaryPageValues values = BinaryPageValues.ids(def, 3, 5, new int[]{ 0, 2, 1 }, 3, dictionary);
+        BinaryPageValues values = idsPage(def, 5, dictionary, 0, 2, 1);
         PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(5, def, rep, 0, null, values, null);
 
         PageDecoder.InPlaceNestedPage trimmed = trim(page, 3, 4);
@@ -301,5 +301,13 @@ class PageTrimmerTest {
             }
         }
         return out;
+    }
+
+    /// A page of `numValues` values at definition levels `def` (maximum `3`) whose non-null values
+    /// are `ids` into `dictionary`.
+    private static BinaryPageValues idsPage(int[] def, int numValues, Dictionary.ByteArrayDictionary dictionary,
+                                            int... ids) {
+        byte[] section = DataPages.dictionaryIds(2, ids);
+        return BinaryPageValues.ids(def, 3, numValues, section, 0, section.length, dictionary);
     }
 }
