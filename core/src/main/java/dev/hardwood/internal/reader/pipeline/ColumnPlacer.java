@@ -17,7 +17,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// into segments, one per batch they fall into, opens a cell at a batch's first record and seals
 /// it when the batch holds every record it will hold. It checks the column against the plan, and
 /// a column that holds more or fewer rows than the plan takes from a row group fails with a
-/// "Batch plan mismatch".
+/// `ParquetReadException`, the file's fault.
 ///
 /// A record never spans two batches. A column without repetition seals a batch as soon as its
 /// last planned record is placed, and is placed from its pages' metadata ([#place(PageTask)]). A
@@ -60,11 +60,15 @@ public final class ColumnPlacer<C> {
 
     private final Sink<C> sink;
     private final int batchCapacity;
+    /// The column's path, for failures.
+    private final String column;
 
     /// The batches of the row group being placed, `null` before the first page.
     private BatchPlan.RowGroupBatches rowGroupBatches;
     /// The row group of the column chunk the current row group's pages come from, for failures.
     private int rowGroup = ExceptionContext.UNKNOWN_ROW_GROUP;
+    /// The ordinal of the page entered last, for failures.
+    private int page = ExceptionContext.UNKNOWN_PAGE;
     /// The segment of [#rowGroupBatches] the next records go to.
     private int segment;
     /// Records the current plan segment still takes.
@@ -83,9 +87,11 @@ public final class ColumnPlacer<C> {
     private boolean stopped;
 
     /// @param batchCapacity the read's batch capacity, which every row group's batches must have
-    public ColumnPlacer(Sink<C> sink, int batchCapacity) {
+    /// @param column the column's path, which a failure the placer raises names
+    public ColumnPlacer(Sink<C> sink, int batchCapacity, String column) {
         this.sink = sink;
         this.batchCapacity = batchCapacity;
+        this.column = column;
     }
 
     /// Places the next page of a column without repetition, whose kept records its metadata
@@ -120,10 +126,15 @@ public final class ColumnPlacer<C> {
             return false;
         }
         if (page.batches == rowGroupBatches) {
+            this.page = page.pageIndex;
             return true;
         }
+        if (!enterRowGroup(page.batches)) {
+            return false;
+        }
         rowGroup = page.rowGroup;
-        return enterRowGroup(page.batches);
+        this.page = page.pageIndex;
+        return true;
     }
 
     /// Ends the stream of pages: checks the last row group, and ends the read.
@@ -137,7 +148,7 @@ public final class ColumnPlacer<C> {
     /// the plan takes from its last row group ends its batch at the same row there, so the open
     /// cell, if any, is sealed; a column short of the plan holds a batch no other column ends at
     /// that row, and its open cell is returned unsealed, as [#abandonOpenCell] does. The
-    /// shortfall is attached to `failure` as a suppressed "Batch plan mismatch" naming the file,
+    /// shortfall is attached to `failure` as a suppressed `ParquetReadException` naming the file,
     /// row group and column, since a failure between work items can be one every column shares.
     ///
     /// @param failure the failure that ended the read
@@ -165,9 +176,10 @@ public final class ColumnPlacer<C> {
         return batches == null || segment >= batches.segmentCount() - 1 && segmentRowsLeft == 0;
     }
 
-    private IllegalStateException shortOfPlan() {
-        return new IllegalStateException("Batch plan mismatch: the column holds " + rowsPlaced + " of the "
-                + rowGroupBatches.plannedRows() + " rows the plan takes from the row group");
+    /// The column's rows fall short of its row group's `num_rows`: a file's fault.
+    private ParquetReadException shortOfPlan() {
+        return new ParquetReadException("Invalid column chunk: the column holds " + rowsPlaced + " of the "
+                + rowGroupBatches.plannedRows() + " rows the read takes from its row group");
     }
 
     /// Stops without sealing the open cell, and returns it: the read failed inside a work item,
@@ -320,7 +332,9 @@ public final class ColumnPlacer<C> {
         }
         int last = batches.segmentCount() - 1;
         if (!placedRowGroup()) {
-            throw shortOfPlan();
+            // placed at the last page of the row group it falls short in, not at the page that
+            // finds it, which may lie in the next
+            throw ExceptionContext.addReadContext(batches.fileName(), rowGroup, column, page, shortOfPlan());
         }
         if (last >= 0 && batches.closes(last) && openCell != null) {
             return closeSegmentBatch();
@@ -351,11 +365,12 @@ public final class ColumnPlacer<C> {
 
     /// Moves to the row group's next plan segment once the current one is complete.
     ///
-    /// @throws IllegalStateException if the plan takes no more records from the row group
+    /// @throws ParquetReadException if the plan takes no more records from the row group: the
+    ///         column holds more rows than its row group's `num_rows`, a file's fault
     private void nextSegment() {
         if (segment + 1 >= rowGroupBatches.segmentCount()) {
-            throw new IllegalStateException("Batch plan mismatch: the column holds more than the "
-                    + rowGroupBatches.plannedRows() + " rows the plan takes from the row group");
+            throw new ParquetReadException("Invalid column chunk: the column holds more than the "
+                    + rowGroupBatches.plannedRows() + " rows the read takes from its row group");
         }
         segment++;
         segmentRowsLeft = rowGroupBatches.segmentRows(segment);

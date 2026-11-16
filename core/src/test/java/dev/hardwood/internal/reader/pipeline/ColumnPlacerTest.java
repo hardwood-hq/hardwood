@@ -38,7 +38,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 10);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
 
         assertThat(placer.place(flatPage(rowGroup, 10))).isTrue();
 
@@ -61,7 +61,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 6);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
 
         placer.place(flatPage(rowGroup, 3));
         placer.place(flatPage(rowGroup, 3));
@@ -79,7 +79,7 @@ class ColumnPlacerTest {
         BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, false, 4);
         BatchPlan.RowGroupBatches second = plan.plan(1, 0, FILE_A, false, 6);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
 
         placer.place(flatPage(first, 4));
         assertThat(placer.nextRow()).isEqualTo(4);
@@ -95,7 +95,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 6);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 10);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
 
         assertThat(placer.place(flatPage(rowGroup, 10))).isFalse();
 
@@ -112,7 +112,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(2, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 4);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 2);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 2, "c");
 
         placer.place(nestedPage(rowGroup), measure(0, 1, 0, 1, 0), true);
 
@@ -136,7 +136,7 @@ class ColumnPlacerTest {
     void aChunkBeginningInsideARecordFails() {
         BatchPlan plan = new BatchPlan(2, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 1);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 2);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 2, "c");
 
         assertThatThrownBy(() -> placer.place(nestedPage(rowGroup), measure(1, 0), true))
                 .isInstanceOf(ParquetReadException.class)
@@ -150,7 +150,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, false, 1);
         BatchPlan.RowGroupBatches second = plan.plan(1, 0, FILE_A, false, 1);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
         placer.place(nestedPage(first), measure(0, 1), true);
 
         assertThatThrownBy(() -> placer.place(nestedPage(second), measure(2, 0), true))
@@ -164,7 +164,7 @@ class ColumnPlacerTest {
     void leadingValuesAfterAMaskedPageDroppingItsLastRecordFail() {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
         placer.place(nestedPage(rowGroup), maskedMeasure(PageRowMask.of(new int[]{ 0, 2 }), 0, 1, 0, 0, 1, 0, 0, 1), true);
 
         assertThatThrownBy(() -> placer.place(nestedPage(rowGroup), measure(1, 0), true))
@@ -179,7 +179,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
 
         placer.place(nestedPage(rowGroup), maskedMeasure(PageRowMask.of(new int[]{ 3, 5 }), 0, 1, 0, 0, 1, 0, 0, 1), true);
         placer.place(nestedPage(rowGroup), measure(1, 0), true);
@@ -198,7 +198,7 @@ class ColumnPlacerTest {
     void leadingValuesAfterASkippedPageFail() {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
         placer.place(nestedPage(rowGroup, 0), measure(0, 1, 0), true);
 
         assertThatThrownBy(() -> placer.place(nestedPage(rowGroup, 2), measure(1, 0), true))
@@ -213,7 +213,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 1);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
 
         assertThat(placer.place(nestedPage(rowGroup), measure(0, 1), true)).isTrue();
         assertThat(placer.stopped()).isFalse();
@@ -229,7 +229,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(2, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 2);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 2, "c");
         PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(9, null, null, 3, null, null, null);
 
         placer.place(task(rowGroup, PageInfo.UNKNOWN_RECORDS),
@@ -248,7 +248,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(2, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 2);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 2, "c");
         PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(3, null, null, 0, null, null, null);
 
         placer.place(task(rowGroup, 3), PageMeasure.of(page, 3, new PageDecoder.LevelScratch()), false);
@@ -265,7 +265,7 @@ class ColumnPlacerTest {
         BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, false, 3);
         BatchPlan.RowGroupBatches second = plan.plan(1, 1, FILE_B, false, 3);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
 
         placer.place(flatPage(first, 3));
         assertThat(sink.sealed).isEmpty();
@@ -280,30 +280,31 @@ class ColumnPlacerTest {
     void aColumnHoldingMoreRowsThanPlannedFails() {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 4);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
 
         assertThatThrownBy(() -> placer.place(flatPage(rowGroup, 5)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Batch plan mismatch: the column holds more than the 4 rows the plan takes from the row group");
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid column chunk: the column holds more than the 4 rows the read takes from its row group");
     }
 
     @Test
     void aColumnHoldingFewerRowsThanPlannedFails() {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 6);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
         placer.place(flatPage(rowGroup, 5));
 
         assertThatThrownBy(placer::end)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Batch plan mismatch: the column holds 5 of the 6 rows the plan takes from the row group");
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[a.parquet: row group 0, column 'c', page 0] Invalid column chunk: the column holds 5 of the 6 rows "
+                        + "the read takes from its row group");
     }
 
     @Test
     void aRowGroupOfAnotherCapacityFails() {
         BatchPlan plan = new BatchPlan(8, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 6);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
 
         assertThatThrownBy(() -> placer.place(flatPage(rowGroup, 6)))
                 .isInstanceOf(IllegalStateException.class)
@@ -315,7 +316,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 2);
         plan.plan(0, 0, FILE_A, false, 2);
         BatchPlan.RowGroupBatches past = plan.plan(1, 0, FILE_A, false, 2);
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
 
         assertThatThrownBy(() -> placer.place(nestedPage(past), measure(0), true))
                 .isInstanceOf(IllegalStateException.class)
@@ -327,7 +328,7 @@ class ColumnPlacerTest {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 6);
         RecordingSink sink = new RecordingSink();
-        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
         placer.place(flatPage(rowGroup, 6));
 
         TestCell abandoned = placer.abandonOpenCell();

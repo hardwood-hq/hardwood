@@ -63,7 +63,7 @@ class ShortNestedColumnChunkTest {
     }
 
     private static final String SHORT_OF_THE_ROW_GROUP = "[<memory>: row group 0, column 'foo.list.element.b', "
-            + "page 0] Batch plan mismatch: the column holds 1 of the 2 rows the plan takes from the row group";
+            + "page 0] Invalid column chunk: the column holds 1 of the 2 rows the read takes from its row group";
 
     @Test
     void columnReadersFail() {

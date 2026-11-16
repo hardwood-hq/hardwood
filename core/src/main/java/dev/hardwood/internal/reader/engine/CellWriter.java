@@ -159,8 +159,9 @@ final class CellWriter {
         this.views = new BinaryBatchValues.ViewDemand[n];
         this.last = new PageTask[n];
         for (int c = 0; c < n; c++) {
-            placers.add(columns.nested(c) ? new ColumnPlacer<>(new NestedSink(c), batchCapacity)
-                    : new ColumnPlacer<>(new Sink(c), batchCapacity));
+            String path = columns.schema(c).fieldPath().toString();
+            placers.add(columns.nested(c) ? new ColumnPlacer<>(new NestedSink(c), batchCapacity, path)
+                    : new ColumnPlacer<>(new Sink(c), batchCapacity, path));
             placements.add(new ArrayDeque<>());
             scratch.add(new ArrayBlockingQueue<>(SCRATCH_POOL));
             views[c] = new BinaryBatchValues.ViewDemand();
