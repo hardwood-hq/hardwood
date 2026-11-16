@@ -38,6 +38,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.DataPageVersion;
 
 /// Accumulates one column's chunk for the current row group in two phases.
 ///
@@ -70,15 +71,16 @@ import dev.hardwood.writer.ColumnEncoding;
 /// one, and page by page at flush. Both paths pass only source positions, so this buffer never
 /// sees a typed value.
 ///
-/// A page body is `[rep levels?][def levels?][value section]`, each level stream prefixed by its
-/// 4-byte little-endian length. The value section is `[1-byte index bit width][RLE/bit-packed
-/// indices]` for a dictionary-encoded chunk (`RLE_DICTIONARY`), and otherwise the present values
-/// under whichever encoding the column's [ColumnEncoding] resolves to — `PLAIN`, one of the
-/// delta encodings, or `BYTE_STREAM_SPLIT`. The assembled body is compressed with the chunk's
-/// [Compressor] before framing, and
-/// the page header records both the uncompressed and the stored compressed size; the dictionary
-/// page body is compressed the same way. The CRC-32 is taken over the stored bytes, matching what
-/// the reader validates.
+/// A page body is `[rep levels?][def levels?][value section]`. The value section is `[1-byte
+/// index bit width][RLE/bit-packed indices]` for a dictionary-encoded chunk (`RLE_DICTIONARY`),
+/// and otherwise the present values under whichever encoding the column's [ColumnEncoding]
+/// resolves to — `PLAIN`, one of the delta encodings, `BYTE_STREAM_SPLIT` or `ALP`. Under
+/// [DataPageVersion#V1] each level stream is prefixed by its 4-byte little-endian length and the
+/// whole body is compressed with the chunk's [Compressor]; under [DataPageVersion#V2] the stream
+/// lengths go into the page header and only the value section is compressed ([DataPageWriter]).
+/// The page header records both the uncompressed and the stored size; the dictionary page body is
+/// compressed whole. The CRC-32 is taken over the page as stored, matching what the reader
+/// validates.
 ///
 /// **A chunk is encoded one way throughout**, under the column's [ColumnEncoding].
 ///
@@ -168,6 +170,11 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
 
     private final Compressor compressor;
     private final CompressionCodec codec;
+    private final DataPageVersion pageVersion;
+    /// The byte lengths of the repetition and definition level streams [#buildBody] last wrote,
+    /// length prefixes excluded.
+    private int pageRepetitionLevelsLength;
+    private int pageDefinitionLevelsLength;
 
     private final ValueEncoder values;
     private final boolean boundedStatistics; // whether min/max are well defined for this column's order
@@ -261,6 +268,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// @param encoding this column's resolved encoding policy
     /// @param compressor compresses each page body before framing
     /// @param codec the codec `compressor` applies, recorded in the chunk metadata
+    /// @param pageVersion the header and layout of every data page
     /// @param storeCapacity the most any of this chunk's `int`-indexed stores may hold
     /// @param bloomFilterFpp the false-positive probability of the column's Bloom filter, or
     ///        [#NO_BLOOM_FILTER]
@@ -268,7 +276,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// @param targetRows the records at which the row group is cut
     ColumnChunkBuffer(ColumnSchema column, int pageTargetBytes, int pageTargetRows, int maxPageEntries,
                       long budgetBytesPerColumn, int targetRows, ColumnEncoding encoding, int statisticsTruncationLength,
-                      Compressor compressor, CompressionCodec codec, int storeCapacity, double bloomFilterFpp) {
+                      Compressor compressor, CompressionCodec codec, DataPageVersion pageVersion, int storeCapacity,
+                      double bloomFilterFpp) {
         this.budgetBytes = budgetBytesPerColumn;
         this.targetRows = targetRows;
         this.type = column.type();
@@ -299,6 +308,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         this.repLevels = maxRepLevel > 0 ? new ByteArrayBuilder(startingCapacity) : null;
         this.compressor = compressor;
         this.codec = codec;
+        this.pageVersion = pageVersion;
         this.storeCapacity = storeCapacity;
         this.bloomFilterFpp = bloomFilterFpp;
     }
@@ -819,7 +829,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         SizeStatisticsBuilder sizes = new SizeStatisticsBuilder(column);
         byte[] repetitions = maxRepLevel > 0 ? repLevels.array() : null;
         byte[] definitions = maxDefLevel > 0 ? defLevels.array() : null;
-        DataPageWriter pages = new DataPageWriter(sink, codec, compressor, handoff, dataPageOffset);
+        DataPageWriter pages = new DataPageWriter(sink, codec, compressor, pageVersion, handoff, dataPageOffset);
         int dataPageCount = 0;
         int entryFrom = 0;
         int valueFrom = 0;
@@ -849,9 +859,12 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                         : 0;
                 sizes.add(repetitions, definitions, entryFrom, entries, unencodedBytes);
                 buildBody(entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
-                pages.write(body, entries, dictionarySize > 0 ? Encoding.RLE_DICTIONARY : valueEncoding(), firstRow);
+                int rows = records(entryFrom, entries);
+                pages.write(body, new DataPageWriter.Shape(entries, entries - valueCount, rows,
+                        pageRepetitionLevelsLength, pageDefinitionLevelsLength,
+                        dictionarySize > 0 ? Encoding.RLE_DICTIONARY : valueEncoding(), firstRow));
                 dataPageCount++;
-                firstRow += records(entryFrom, entries);
+                firstRow += rows;
                 entryFrom += entries;
                 valueFrom += valueCount;
                 numValues += entries;
@@ -864,6 +877,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
             pages.abandon();
             throw t;
         }
+        PageType dataPageType = pageVersion == DataPageVersion.V2 ? PageType.DATA_PAGE_V2 : PageType.DATA_PAGE;
         // Page headers are stored uncompressed either way; only the bodies differ, so the
         // compressed total is what was actually written and the uncompressed total restores
         // each body to its pre-compression size.
@@ -887,8 +901,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                 hasDictionary
                         ? List.of(
                                 new PageEncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
-                                new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dataPageCount))
-                        : List.of(new PageEncodingStats(PageType.DATA_PAGE, valueEncoding(), dataPageCount)),
+                                new PageEncodingStats(dataPageType, Encoding.RLE_DICTIONARY, dataPageCount))
+                        : List.of(new PageEncodingStats(dataPageType, valueEncoding(), dataPageCount)),
                 sizes.build());
         return new Flushed(metaData,
                 columnIndex.build(sizes.repetitionLevelHistograms(), sizes.definitionLevelHistograms()),
@@ -1049,8 +1063,10 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         return ((long) entries << Integer.SIZE) | Integer.toUnsignedLong(valueCount);
     }
 
-    /// Frames one page's body: the repetition and definition level streams (each RLE, each
-    /// prefixed by a 4-byte little-endian length) ahead of the value section. For a dictionary
+    /// Frames one page's body: the repetition and definition level streams (each RLE, and under
+    /// [DataPageVersion#V1] each prefixed by a 4-byte little-endian length) ahead of the value
+    /// section, recording the streams' lengths in [#pageRepetitionLevelsLength] and
+    /// [#pageDefinitionLevelsLength]. For a dictionary
     /// page the value section is a 1-byte index bit width followed by the RLE/bit-packed indices
     /// (running to the page end, not length-prefixed); otherwise it is the page's present values
     /// under [#storedEncoding]. `dictionarySize` is the chunk's dictionary size, which says only
@@ -1059,12 +1075,12 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     private void buildBody(int entryFrom, int entries, int valueFrom, int valueCount, int dictionarySize,
                            int maxIndex) {
         body.reset();
-        if (maxRepLevel > 0) {
-            writeLevels(body, repLevels, entryFrom, entries, maxRepLevel);
-        }
-        if (maxDefLevel > 0) {
-            writeLevels(body, defLevels, entryFrom, entries, maxDefLevel);
-        }
+        pageRepetitionLevelsLength = maxRepLevel > 0
+                ? writeLevels(body, repLevels, entryFrom, entries, maxRepLevel)
+                : 0;
+        pageDefinitionLevelsLength = maxDefLevel > 0
+                ? writeLevels(body, defLevels, entryFrom, entries, maxDefLevel)
+                : 0;
         if (dictionarySize > 0) {
             // Each page declares its own index bit width, so a page carries only the bits its own
             // largest index needs rather than the bits the dictionary's final size would need.
@@ -1210,18 +1226,24 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         return encodings;
     }
 
-    /// Appends one level stream to the page body: a 4-byte little-endian length, then the stream.
-    /// The length is only known once the stream is encoded, so its four bytes are reserved and
-    /// filled afterwards rather than the stream being built elsewhere to be measured and copied.
-    private void writeLevels(ByteArrayBuilder body, ByteArrayBuilder levels, int from, int count,
-                             int maxLevel) {
-        int lengthAt = body.reserve(Integer.BYTES);
+    /// Appends one level stream to the page body and returns its length: under
+    /// [DataPageVersion#V1] a 4-byte little-endian length, then the stream; under
+    /// [DataPageVersion#V2] the stream alone, its length going into the page header. The length
+    /// is only known once the stream is encoded, so its four bytes are reserved and filled
+    /// afterwards rather than the stream being built elsewhere to be measured and copied.
+    private int writeLevels(ByteArrayBuilder body, ByteArrayBuilder levels, int from, int count, int maxLevel) {
+        boolean prefixed = pageVersion == DataPageVersion.V1;
+        int lengthAt = prefixed ? body.reserve(Integer.BYTES) : -1;
         int start = body.length();
         LevelEncoder.writeInto(rle, levels.array(), from, count, maxLevel);
         int encoded = rle.finished();
         body.write(rle.buffer(), 0, encoded);
-        // After the stream has been written: appending may have replaced the backing array.
-        writeIntLittleEndian(body.array(), lengthAt, body.length() - start);
+        int length = body.length() - start;
+        if (prefixed) {
+            // After the stream has been written: appending may have replaced the backing array.
+            writeIntLittleEndian(body.array(), lengthAt, length);
+        }
+        return length;
     }
 
     private static void writeIntLittleEndian(byte[] dest, int at, int value) {

@@ -237,8 +237,9 @@ class WriterDifferentialTest {
         assertThat(zips).containsExactly(null, null, 200, 300);
     }
 
-    @Test
-    void duckDbReadsListOfInts(@TempDir Path dir) throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(DataPageVersion.class)
+    void duckDbReadsListOfInts(DataPageVersion version, @TempDir Path dir) throws Exception {
         // required int32 r; optional list<optional int32> phones. Absent list, empty list,
         // and a null element must all survive to DuckDB distinctly.
         FileSchema schema = FileSchema.builder("schema")
@@ -253,7 +254,8 @@ class WriterDifferentialTest {
         boolean[] elementNulls = { false, false, false, true, false };
 
         Path file = dir.resolve("listofints.parquet");
-        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+        WriterConfig config = WriterConfig.builder().dataPageVersion(version).build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .ints("r", r)
                     .list("phones", offsets, listNulls)
@@ -681,6 +683,62 @@ class WriterDifferentialTest {
         // accepts — the framing question every one of these codecs poses.
         assertDuckDbReadsCompressed(WriterConfig.builder().encoding(ColumnEncoding.PLAIN).compression(Compression.of(codec)).build(),
                 codec.toString(), dir);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = CompressionCodec.class,
+            names = { "UNCOMPRESSED", "GZIP", "SNAPPY", "ZSTD", "LZ4_RAW", "BROTLI" })
+    void duckDbReadsV2PagesUnderEveryWritableCodec(CompressionCodec codec, @TempDir Path dir) throws Exception {
+        // A V2 page stores its level streams ahead of the value section and compresses the value
+        // section alone, which is empty in an all-null page; DuckDB is BROTLI's only independent
+        // reader here.
+        int n = 20_000;
+        int[] r = new int[n];
+        int[] v = new int[n];
+        boolean[] vNulls = new boolean[n];
+        int[] empty = new int[n];
+        boolean[] allNull = new boolean[n];
+        long sum = 0;
+        long present = 0;
+        for (int i = 0; i < n; i++) {
+            r[i] = i;
+            v[i] = i % 100;
+            vNulls[i] = i % 3 == 0;
+            allNull[i] = true;
+            if (!vNulls[i]) {
+                sum += v[i];
+                present++;
+            }
+        }
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .addColumn("e", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .build();
+        WriterConfig config = WriterConfig.builder()
+                .encoding(ColumnEncoding.PLAIN)
+                .dataPageVersion(DataPageVersion.V2)
+                .compression(Compression.of(codec))
+                .pageTargetRows(2_000)
+                .build();
+        Path file = dir.resolve("v2.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
+            writer.columnWriter().writeBatch(batch -> batch.ints("r", r).ints("v", v, vNulls).ints("e", empty, allNull));
+        }
+
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT count(*) AS n, count(v) AS present, sum(v) AS s, count(e) AS e,"
+                                + " count(*) FILTER (WHERE (v IS NULL) <> (r % 3 = 0)) AS misplaced"
+                                + " FROM read_parquet('" + file.toAbsolutePath() + "')")) {
+            rs.next();
+            assertThat(rs.getLong("n")).as("V2 %s row count", codec).isEqualTo(n);
+            assertThat(rs.getLong("present")).as("V2 %s present values", codec).isEqualTo(present);
+            assertThat(rs.getLong("s")).as("V2 %s value sum", codec).isEqualTo(sum);
+            assertThat(rs.getLong("e")).as("V2 %s all-null column", codec).isZero();
+            assertThat(rs.getLong("misplaced")).as("V2 %s nulls at the wrong rows", codec).isZero();
+        }
     }
 
     @ParameterizedTest(name = "{0} {1}")

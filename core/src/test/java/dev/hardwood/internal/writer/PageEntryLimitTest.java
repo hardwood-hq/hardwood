@@ -23,6 +23,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -107,7 +108,7 @@ class PageEntryLimitTest {
         ColumnChunkBuffer buffer = new ColumnChunkBuffer(schema.getColumn(0), 1 << 30, Integer.MAX_VALUE,
                 MAX_PAGE_ENTRIES, 1 << 20, RowGroupBuffer.MAX_ROWS, ColumnEncoding.AUTO, 64,
                 new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED), CompressionCodec.UNCOMPRESSED,
-                RowGroupBuffer.MAX_STORE_CAPACITY, ColumnChunkBuffer.NO_BLOOM_FILTER);
+                DataPageVersion.V1, RowGroupBuffer.MAX_STORE_CAPACITY, ColumnChunkBuffer.NO_BLOOM_FILTER);
         buffer.append(shredder, source, 0, 0, records);
         InMemoryOutputFile out = OutputFile.inMemory();
         out.create();

@@ -180,7 +180,8 @@ public final class ParquetFileWriter implements Closeable {
         // largest allocation is made once per file rather than once per row group.
         this.current = new RowGroupBuffer(schema, config.pageTargetBytes(), config.pageTargetRows(),
                 config.rowGroupBufferTargetBytes(), config.rowGroupTargetRows(), encodings,
-                config.statisticsTruncationLength(), compressor, config.compression().codec(), bloomFilterFpps,
+                config.statisticsTruncationLength(), compressor, config.compression().codec(),
+                config.dataPageVersion(), bloomFilterFpps,
                 sortingColumns.isEmpty() ? null : new SortOrderCheck(schema, config.sortingColumns(), sortingColumns));
         this.sortingColumns = sortingColumns;
     }

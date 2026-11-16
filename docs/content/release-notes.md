@@ -41,6 +41,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - Row readers resolve most field names passed as string literals, or taken from the file's schema, by comparing references rather than characters ([#681](https://github.com/hardwood-hq/hardwood/issues/681))
 - `Compression` sets the writer's compression level for `ZSTD`, `GZIP`, `BROTLI` and `LZ4_RAW`, as in `Compression.zstd().level(9)` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - `WriterConfig.Builder.sortingColumns` declares the order rows are sorted in; each row group records it as `sorting_columns`, and a row out of that order fails the write ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
+- `WriterConfig.Builder.dataPageVersion(DataPageVersion.V2)` writes every data page as `DATA_PAGE_V2` ([#1820](https://github.com/hardwood-hq/hardwood/issues/1820))
 - `StructBuilder.setValue` writes a field from a value in the form `getValue` returns, so rows can be copied without switching on field types ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - A filtered `ColumnReader` or `ColumnReaders` returns no batch without rows: `nextBatch()` passes over the batches the filter keeps no row of ([#1815](https://github.com/hardwood-hq/hardwood/issues/1815))
 

@@ -33,7 +33,7 @@ With 42 and 43 the writer's flat path matches DuckDB on a narrow schema and pass
 
 Changing the `WriterConfig` at a caller-placed boundary (`endRowGroup(WriterConfig)`, so a file mixes codecs or encodings across row groups) was dropped from stage 30 for want of a use case: neither Arrow C++, arrow-rs nor parquet-java offers it, and `AUTO` already re-decides each chunk's encoding per row group. It is picked up when a caller names a need two files cannot serve.
 
-Sequenced as separate later milestones, each its own design and sequence: DataPage V2, the Avro write adapter, and a CLI write/convert command.
+Sequenced as separate later milestones, each its own design and sequence: the Avro write adapter, and a CLI write/convert command.
 
 ## Parallel write model
 

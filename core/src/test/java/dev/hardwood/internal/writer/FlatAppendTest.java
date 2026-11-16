@@ -32,6 +32,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -162,7 +163,7 @@ class FlatAppendTest {
         // Small pages, so a chunk has many and the page cuts are compared too.
         return new ColumnChunkBuffer(schema.getColumn(0), 4096, WriterConfig.DEFAULT_PAGE_TARGET_ROWS,
                 PageLimit.MAX_PAGE_VALUES, 1 << 20, RowGroupBuffer.MAX_ROWS, encoding, 64, new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
-                CompressionCodec.UNCOMPRESSED, RowGroupBuffer.MAX_STORE_CAPACITY, bloomFilterFpp);
+                CompressionCodec.UNCOMPRESSED, DataPageVersion.V1, RowGroupBuffer.MAX_STORE_CAPACITY, bloomFilterFpp);
     }
 
     private static FileSchema schema(PhysicalType type, Shape shape) {

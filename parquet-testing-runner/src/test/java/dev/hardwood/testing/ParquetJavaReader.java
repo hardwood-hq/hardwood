@@ -37,10 +37,12 @@ import org.apache.parquet.column.ValuesType;
 import org.apache.parquet.column.impl.ColumnReadStoreImpl;
 import org.apache.parquet.column.page.DataPage;
 import org.apache.parquet.column.page.DataPageV1;
+import org.apache.parquet.column.page.DataPageV2;
 import org.apache.parquet.column.page.PageReadStore;
 import org.apache.parquet.column.page.PageReader;
 import org.apache.parquet.column.values.ValuesReader;
 import org.apache.parquet.column.values.bloomfilter.BloomFilter;
+import org.apache.parquet.column.values.rle.RunLengthBitPackingHybridDecoder;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.convert.GroupRecordConverter;
 import org.apache.parquet.filter2.compat.FilterCompat;
@@ -70,6 +72,7 @@ import org.apache.parquet.schema.Type;
 
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.writer.DataPageVersion;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -187,7 +190,8 @@ final class ParquetJavaReader {
     /// encoding, and those do distinguish them.
     ///
     /// Each page is materialized on the way past, so a page that does not decompress or whose
-    /// header does not parse fails here.
+    /// header does not parse fails here. A `DATA_PAGE_V2` header's row and null counts, which
+    /// parquet-java carries but does not check, are held to the levels the page decodes to.
     ///
     /// @param file the file to read
     /// @return what the walk found
@@ -195,6 +199,7 @@ final class ParquetJavaReader {
     static Pages readPages(Path file) throws IOException {
         observe(file);
         int count = 0;
+        Set<DataPageVersion> versions = EnumSet.noneOf(DataPageVersion.class);
         List<Set<Encoding>> chunkValueEncodings = new ArrayList<>();
         List<List<Long>> chunkPageRecords = new ArrayList<>();
         List<List<Integer>> chunkPageEntries = new ArrayList<>();
@@ -213,16 +218,23 @@ final class ParquetJavaReader {
                     DataPage page;
                     while ((page = pageReader.readPage()) != null) {
                         chunkEncodings.add(valueEncoding(page));
+                        versions.add(version(page));
                         pageEntries.add(page.getValueCount());
+                        long records;
                         if (column.getMaxRepetitionLevel() == 0) {
-                            pageRecords.add((long) page.getValueCount());
-                            continue;
+                            records = page.getValueCount();
                         }
-                        int[] levels = repetitionLevels(column, page);
-                        if (levels[0] != 0) {
-                            pagesMidRecord++;
+                        else {
+                            int[] levels = repetitionLevels(column, page);
+                            if (levels[0] != 0) {
+                                pagesMidRecord++;
+                            }
+                            records = Arrays.stream(levels).filter(level -> level == 0).count();
                         }
-                        pageRecords.add(Arrays.stream(levels).filter(level -> level == 0).count());
+                        pageRecords.add(records);
+                        if (page instanceof DataPageV2 v2) {
+                            assertV2Counts(column, v2, records);
+                        }
                     }
                     count += pageRecords.size();
                     chunkValueEncodings.add(chunkEncodings);
@@ -232,7 +244,33 @@ final class ParquetJavaReader {
             }
         }
         return new Pages(count, List.copyOf(chunkValueEncodings), List.copyOf(chunkPageRecords),
-                List.copyOf(chunkPageEntries), pagesMidRecord);
+                List.copyOf(chunkPageEntries), pagesMidRecord, Set.copyOf(versions));
+    }
+
+    /// A `DATA_PAGE_V2` header states the records the page holds and the entries without a value,
+    /// which a reader may act on without decoding the levels: the row count to locate a row, the
+    /// null count to prune the page. Both are held to what the levels say.
+    private static void assertV2Counts(ColumnDescriptor column, DataPageV2 page, long records) throws IOException {
+        assertThat((long) page.getRowCount()).as("num_rows of a V2 page of %s", column).isEqualTo(records);
+        long nulls = 0;
+        if (column.getMaxDefinitionLevel() > 0) {
+            int[] levels = hybridLevels(page.getDefinitionLevels().toByteArray(), column.getMaxDefinitionLevel(),
+                    page.getValueCount());
+            nulls = Arrays.stream(levels).filter(level -> level < column.getMaxDefinitionLevel()).count();
+        }
+        assertThat((long) page.getNullCount()).as("num_nulls of a V2 page of %s", column).isEqualTo(nulls);
+    }
+
+    /// `count` levels of an RLE/bit-packed hybrid stream with no length prefix, as a
+    /// `DATA_PAGE_V2` stores each level stream.
+    private static int[] hybridLevels(byte[] stream, int maxLevel, int count) throws IOException {
+        RunLengthBitPackingHybridDecoder decoder = new RunLengthBitPackingHybridDecoder(
+                32 - Integer.numberOfLeadingZeros(maxLevel), new ByteArrayInputStream(stream));
+        int[] levels = new int[count];
+        for (int i = 0; i < count; i++) {
+            levels[i] = decoder.readInt();
+        }
+        return levels;
     }
 
     /// Each data page's level histograms and unencoded `BYTE_ARRAY` bytes, counted from the levels
@@ -375,6 +413,10 @@ final class ParquetJavaReader {
 
     /// A page's repetition levels, one per entry: a 0 starts a record.
     private static int[] repetitionLevels(ColumnDescriptor column, DataPage page) throws IOException {
+        if (page instanceof DataPageV2 v2) {
+            return hybridLevels(v2.getRepetitionLevels().toByteArray(), column.getMaxRepetitionLevel(),
+                    v2.getValueCount());
+        }
         DataPageV1 v1 = (DataPageV1) page;
         ValuesReader reader = v1.getRlEncoding().getValuesReader(column, ValuesType.REPETITION_LEVEL);
         reader.initFromPage(v1.getValueCount(), v1.getBytes().toInputStream());
@@ -547,8 +589,8 @@ final class ParquetJavaReader {
 
     /// The index bit width each data page declares, for a file of one flat `REQUIRED` column.
     ///
-    /// A V1 page body is `[rep levels?][def levels?][value section]`, so with neither level stream
-    /// present the first body byte *is* the value section's leading bit width. Reading it is the
+    /// With neither level stream present, the first byte of a V1 page body, and of a V2 page's
+    /// value section, *is* the value section's leading bit width. Reading it is the
     /// only way to hold the per-page width to anything: the width a page declares is independent
     /// of how many entries the chunk's dictionary holds, so a file whose values still decode
     /// correctly proves nothing about which width was written.
@@ -578,7 +620,10 @@ final class ParquetJavaReader {
                         throw new IllegalStateException(
                                 "Page declares " + encoding + ", so it carries no index stream to size");
                     }
-                    widths.add(((DataPageV1) page).getBytes().toByteArray()[0] & 0xFF);
+                    byte[] values = page instanceof DataPageV2 v2
+                            ? v2.getData().toByteArray()
+                            : ((DataPageV1) page).getBytes().toByteArray();
+                    widths.add(values[0] & 0xFF);
                 }
             }
         }
@@ -644,21 +689,23 @@ final class ParquetJavaReader {
                 }
                 for (ColumnDescriptor column : columns) {
                     Set<Encoding> encodings = EnumSet.noneOf(Encoding.class);
+                    Set<DataPageVersion> versions = EnumSet.noneOf(DataPageVersion.class);
                     PageReader pageReader = rowGroup.getPageReader(column);
                     DataPage page;
                     while ((page = pageReader.readPage()) != null) {
                         encodings.add(valueEncoding(page));
+                        versions.add(version(page));
                     }
-                    observeChunk(column, chunks.get(String.join(".", column.getPath())), encodings);
+                    observeChunk(column, chunks.get(String.join(".", column.getPath())), encodings, versions);
                 }
             }
         }
     }
 
-    /// Records one column chunk under the physical type, length, annotation, encodings, codec and
-    /// repetition shape parquet-java reports for it.
+    /// Records one column chunk under the physical type, length, annotation, encodings, page
+    /// versions, codec and repetition shape parquet-java reports for it.
     private static void observeChunk(ColumnDescriptor column, ColumnChunkMetaData chunk,
-            Set<Encoding> encodings) {
+            Set<Encoding> encodings, Set<DataPageVersion> versions) {
 
         if (chunk == null || encodings.isEmpty()) {
             return;
@@ -672,6 +719,7 @@ final class ParquetJavaReader {
                 typeLength,
                 LogicalTypeKey.of(primitive.getLogicalTypeAnnotation()),
                 encodings,
+                versions,
                 CompressionCodec.valueOf(chunk.getCodec().name()),
                 repetitionShape(column, chunk));
     }
@@ -765,19 +813,27 @@ final class ParquetJavaReader {
     /// @param chunkPageEntries the level entries each data page of each column chunk holds, in the
     ///        same order
     /// @param pagesMidRecord data pages of repeated columns whose first entry continues a record
+    /// @param pageVersions the versions of the file's data pages
     record Pages(int dataPageCount, List<Set<Encoding>> chunkValueEncodings, List<List<Long>> chunkPageRecords,
-                 List<List<Integer>> chunkPageEntries, int pagesMidRecord) {
+                 List<List<Integer>> chunkPageEntries, int pagesMidRecord, Set<DataPageVersion> pageVersions) {
     }
 
-    /// The encoding a data page declares for its values. The writer produces DataPage V1 only, so
-    /// anything else is a change in what is being written rather than a case this reader should
-    /// quietly accommodate.
+    /// The encoding a data page declares for its values.
     private static Encoding valueEncoding(DataPage page) {
-        if (!(page instanceof DataPageV1 v1)) {
-            throw new IllegalStateException(
-                    "Expected a V1 data page but got " + page.getClass().getSimpleName());
-        }
-        return v1.getValueEncoding();
+        return switch (page) {
+            case DataPageV1 v1 -> v1.getValueEncoding();
+            case DataPageV2 v2 -> v2.getDataEncoding();
+            default -> throw new IllegalStateException("Unknown data page " + page.getClass().getSimpleName());
+        };
+    }
+
+    /// The version of a data page.
+    private static DataPageVersion version(DataPage page) {
+        return switch (page) {
+            case DataPageV1 v1 -> DataPageVersion.V1;
+            case DataPageV2 v2 -> DataPageVersion.V2;
+            default -> throw new IllegalStateException("Unknown data page " + page.getClass().getSimpleName());
+        };
     }
 
     private static org.apache.hadoop.fs.Path hadoopPath(Path file) {

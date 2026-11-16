@@ -28,6 +28,7 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
 import dev.hardwood.writer.Compression;
+import dev.hardwood.writer.DataPageVersion;
 import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
@@ -64,6 +65,16 @@ final class CoverageDomain {
             RepetitionShape.OPTIONAL_ALL_PRESENT,
             RepetitionShape.OPTIONAL_SOME_NULL,
             RepetitionShape.OPTIONAL_ALL_NULL);
+
+    /// The repetition shapes required of each data page version: the flat shapes and
+    /// [RepetitionShape#REPEATED], since the page versions differ in how they carry the level
+    /// streams, a repetition-level stream included.
+    private static final List<RepetitionShape> VERSIONED_SHAPES = List.of(
+            RepetitionShape.REQUIRED,
+            RepetitionShape.OPTIONAL_ALL_PRESENT,
+            RepetitionShape.OPTIONAL_SOME_NULL,
+            RepetitionShape.OPTIONAL_ALL_NULL,
+            RepetitionShape.REPEATED);
 
     /// The name of the single column of the schemas this domain declares, and so of the column a
     /// test driven by it writes.
@@ -115,6 +126,18 @@ final class CoverageDomain {
         for (Encoding encoding : producible) {
             for (CompressionCodec codec : producedCodecs()) {
                 cells.add(Coverage.encodingCodec(encoding, codec));
+            }
+        }
+
+        for (DataPageVersion version : DataPageVersion.values()) {
+            for (Encoding encoding : producible) {
+                cells.add(Coverage.pageVersionEncoding(version, encoding));
+            }
+            for (CompressionCodec codec : producedCodecs()) {
+                cells.add(Coverage.pageVersionCodec(version, codec));
+            }
+            for (RepetitionShape shape : VERSIONED_SHAPES) {
+                cells.add(Coverage.pageVersionRepetition(version, shape));
             }
         }
 
