@@ -288,7 +288,9 @@ final class JobScheduler {
     }
 
     /// Runs a started job's work outside the lock; returns what to apply under it once the job has
-    /// ended: its `onValue` takes the value its work produced, or its `onFailure` the failure. A CPU
+    /// ended: its `onValue` takes the value its work produced, or its `onFailure` the failure, which
+    /// is also what an `onValue` that throws ends the job with, so that no failure leaves the read
+    /// through whichever thread applies the end. A CPU
     /// job's charge, the buffers its work holds, is returned as it ends; a fetch's stays with what it
     /// fetched. A fetch that fails with an exception is run once more: the one place a transient
     /// fault is retried.
@@ -305,7 +307,12 @@ final class JobScheduler {
             if (job.cpu() && job.charge() != null) {
                 release(job.charge());
             }
-            job.onValue().accept(value);
+            try {
+                job.onValue().accept(value);
+            }
+            catch (RuntimeException e) {
+                job.onFailure().accept(e);
+            }
         };
     }
 
