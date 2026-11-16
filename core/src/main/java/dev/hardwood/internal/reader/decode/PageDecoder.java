@@ -70,7 +70,7 @@ public class PageDecoder {
         public void trim() {
             repetitionLevels = retained(repetitionLevels);
             definitionLevels = retained(definitionLevels);
-            ids = retained(ids);
+            prefixLengths = retained(prefixLengths);
             bytePrefix = retained(bytePrefix);
             recordStarts = retained(recordStarts);
             bytes = retained(bytes);
@@ -108,13 +108,14 @@ public class PageDecoder {
             return definitionLevels;
         }
 
-        private int[] ids;
+        private int[] prefixLengths;
 
-        public int[] ids(int size) {
-            if (ids == null || ids.length < size) {
-                ids = new int[size];
+        /// The prefix lengths of a page's `DELTA_BYTE_ARRAY` values.
+        int[] prefixLengths(int size) {
+            if (prefixLengths == null || prefixLengths.length < size) {
+                prefixLengths = new int[size];
             }
-            return ids;
+            return prefixLengths;
         }
 
         private int[] bytePrefix;
@@ -265,7 +266,7 @@ public class PageDecoder {
     /// repetition whose values a fill reads in place, in any encoding the format defines for its
     /// type.
     ///
-    /// The returned values hold `scratch`'s definition levels and ids, and the task's
+    /// The returned values hold `scratch`'s definition levels and the task's
     /// [#transientBytes] or the fetched page, until the fill is done.
     ///
     /// @throws ParquetReadException if the page is malformed, or its encoding is not defined over
@@ -282,7 +283,7 @@ public class PageDecoder {
     /// Reads a data page (`V1` or `V2`) of a binary column without repetition whose values a fill
     /// reads in place, in any encoding the format defines for its type.
     ///
-    /// The returned values hold `scratch`'s definition levels, ids and byte prefix, and the
+    /// The returned values hold `scratch`'s definition levels and byte prefix, and the
     /// task's [#transientBytes] or the fetched page, until the fill is done.
     ///
     /// @throws ParquetReadException as [#decodeFlat] does
@@ -362,12 +363,10 @@ public class PageDecoder {
                     : FlatPageValues.plain(column.type(), page.definitionLevels, maxDefLevel, page.numValues,
                             page.data, page.valuesOffset, page.limit);
             case RLE -> {
-                int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
                 int rleLength = readSectionLength(page.data, page.valuesOffset, page.limit, "RLE boolean values");
-                int[] ids = scratch.ids(idCount);
-                new RleBitPackingHybridDecoder(page.data, page.valuesOffset + 4, rleLength, 1)
-                        .readInts(ids, 0, idCount);
-                yield FlatPageValues.rleBooleans(page.numValues, page.definitionLevels, maxDefLevel, ids, idCount);
+                int rleOffset = page.valuesOffset + Integer.BYTES;
+                yield FlatPageValues.rleBooleans(page.numValues, page.definitionLevels, maxDefLevel, page.data,
+                        rleOffset, rleOffset + rleLength);
             }
             case DELTA_BINARY_PACKED -> FlatPageValues.delta(column.type(), page.definitionLevels, maxDefLevel,
                     page.numValues, page.data, page.valuesOffset, page.limit);
@@ -375,12 +374,8 @@ public class PageDecoder {
                     page.data, page.valuesOffset, page.limit);
             case BYTE_STREAM_SPLIT -> FlatPageValues.byteStreamSplit(column.type(), page.definitionLevels,
                     maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit);
-            default -> {
-                int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
-                int[] ids = decodeIds(page.data, page.valuesOffset, page.limit, idCount, scratch);
-                yield FlatPageValues.dictionary(column.type(), page.numValues, page.definitionLevels, maxDefLevel,
-                        ids, idCount, dictionary);
-            }
+            default -> FlatPageValues.dictionary(column.type(), page.numValues, page.definitionLevels, maxDefLevel,
+                    page.data, page.valuesOffset, page.limit, dictionary);
         };
     }
 
@@ -399,13 +394,11 @@ public class PageDecoder {
                     valueBytes -> workingSet.page(page.numValues, page.uncompressedSize, page.decodedBytes,
                             page.encoding, kept, valueBytes));
             default -> {
-                int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
-                int[] ids = decodeIds(page.data, page.valuesOffset, page.limit, idCount, scratch);
                 if (!(dictionary instanceof Dictionary.ByteArrayDictionary binaryDictionary)) {
                     throw new ParquetReadException("A " + column.type() + " page refers to a dictionary of another type");
                 }
-                yield BinaryPageValues.ids(page.definitionLevels, maxDefLevel, page.numValues, ids, idCount,
-                        binaryDictionary);
+                yield BinaryPageValues.ids(page.definitionLevels, maxDefLevel, page.numValues, page.data,
+                        page.valuesOffset, page.limit, binaryDictionary);
             }
         };
     }
@@ -719,27 +712,6 @@ public class PageDecoder {
         }
         return new InPlacePage(encoding, data, limit, valuesOffset, storedValues, numValues, definitionLevels,
                 repetitionLevels, k, compressedSize, uncompressedSize, decodedBytes, event);
-    }
-
-    /// Decodes the `idCount` dictionary ids of a dictionary-encoded page's value section
-    /// `[offset, limit)` of `data` into `scratch`.
-    private static int[] decodeIds(byte[] data, int offset, int limit, int idCount, LevelScratch scratch) {
-        if (offset >= limit) {
-            throw new ParquetReadException("Unexpected EOF reading the dictionary index bit width");
-        }
-        int bitWidth = data[offset++] & 0xFF;
-        if (bitWidth > 32) {
-            throw new ParquetReadException("Invalid dictionary index bit width: " + bitWidth
-                    + ". Must be between 0 and 32");
-        }
-        int[] ids = scratch.ids(idCount);
-        if (bitWidth == 0) {
-            Arrays.fill(ids, 0, idCount, 0);
-        }
-        else {
-            new RleBitPackingHybridDecoder(data, offset, limit - offset, bitWidth).readInts(ids, 0, idCount);
-        }
-        return ids;
     }
 
     /// Decodes repetition levels in the RLE/bit-packing hybrid, or in the deprecated `BIT_PACKED`

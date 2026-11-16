@@ -71,6 +71,14 @@ public final class DataPages {
         return encoder.toByteArray();
     }
 
+    /// A dictionary page's value section: the bit width, `bitWidth`, in a byte, then `ids` in the
+    /// RLE/bit-packed hybrid encoding at that width.
+    static byte[] dictionaryIds(int bitWidth, int... ids) {
+        RleBitPackingHybridEncoder encoder = new RleBitPackingHybridEncoder(bitWidth);
+        encoder.writeInts(ids, 0, ids.length);
+        return concat(new byte[]{ (byte) bitWidth }, encoder.toByteArray());
+    }
+
     /// A `V1` level section: the encoding of `levels` behind its 4-byte little-endian length.
     static byte[] levelSection(int maxLevel, int... levels) {
         byte[] encoded = levels(maxLevel, levels);
@@ -325,7 +333,26 @@ public final class DataPages {
     /// read starts there.
     static Object values(FlatPageValues values, PhysicalType type, int from) {
         int length = values.size() - from;
-        Object out = switch (type) {
+        Object out = numericArray(type, length);
+        values.cursor().copy(from, out, 0, length);
+        return out;
+    }
+
+    /// The values of a numeric page's entries, read through one cursor in runs of `keep` entries
+    /// with `drop` entries passed over after each, as the fill of a masked page reads them; an
+    /// entry passed over keeps its type's default.
+    static Object valuesInRuns(FlatPageValues values, PhysicalType type, int keep, int drop) {
+        int size = values.size();
+        Object out = numericArray(type, size);
+        FlatPageValues cursor = values.cursor();
+        for (int r = 0; r < size; r += keep + drop) {
+            cursor.copy(r, out, r, Math.min(keep, size - r));
+        }
+        return out;
+    }
+
+    private static Object numericArray(PhysicalType type, int length) {
+        return switch (type) {
             case BOOLEAN -> new boolean[length];
             case INT32 -> new int[length];
             case INT64 -> new long[length];
@@ -333,7 +360,45 @@ public final class DataPages {
             case DOUBLE -> new double[length];
             default -> throw new IllegalArgumentException("Not a numeric type: " + type);
         };
-        values.cursor().copy(from, out, 0, length);
+    }
+
+    /// The values of a binary page's entries, read through one cursor in runs of `keep` entries with
+    /// `drop` entries passed over after each, as [#valuesInRuns(FlatPageValues, PhysicalType, int, int)]
+    /// reads a numeric page; an entry passed over is `null`.
+    static byte[][] valuesInRuns(BinaryPageValues values, int maxDefinitionLevel, int keep, int drop) {
+        BinaryPageValues cursor = values.cursor();
+        int size = cursor.size();
+        int[] starts = new int[size];
+        int[] ends = new int[size];
+        int[] bufferIds = new int[size];
+        byte[][] out = new byte[size][];
+        if (cursor.dictionary() != null) {
+            int[] ids = new int[size];
+            for (int r = 0; r < size; r += keep + drop) {
+                cursor.copyIds(r, Math.min(keep, size - r), ids, starts, ends, bufferIds, r);
+            }
+            for (int i = 0; i < size; i++) {
+                out[i] = i % (keep + drop) >= keep || ids[i] < 0 ? null : cursor.dictionary().entry(ids[i]);
+            }
+            return out;
+        }
+        long bytes = 0;
+        for (int r = 0; r < size; r += keep + drop) {
+            bytes += cursor.bytes(r, Math.min(r + keep, size));
+        }
+        BinaryBatchValues chunks = new BinaryBatchValues(size);
+        PlainBytes dest = new PlainBytes(chunks, bytes);
+        for (int r = 0; r < size; r += keep + drop) {
+            cursor.copyPlain(r, Math.min(keep, size - r), starts, ends, bufferIds, r, dest);
+        }
+        byte[][] buffers = chunks.buffers();
+        int[] definitionLevels = cursor.definitionLevels();
+        for (int i = 0; i < size; i++) {
+            boolean present = definitionLevels == null || definitionLevels[i] == maxDefinitionLevel;
+            if (i % (keep + drop) < keep && present) {
+                out[i] = Arrays.copyOfRange(buffers[bufferIds[i]], starts[i], ends[i]);
+            }
+        }
         return out;
     }
 

@@ -24,7 +24,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// The working set has two parts. Each decoded column holds a dictionary's entries and a data
 /// page's batches, which live until the consumer has read them, and a nested column also the
 /// page's decompressed bytes and levels, which it keeps until its cells fill. The task decoding a
-/// page holds the page's decompressed bytes and its level and dictionary-id scratch while it runs.
+/// page holds the page's decompressed bytes and its level scratch while it runs.
 /// The file's declared sizes decide both, so a file can ask for any amount; a read whose working
 /// set would exceed the limit fails with a [ParquetReadException] before the allocation.
 ///
@@ -260,17 +260,16 @@ public final class WorkingSet {
             return decodedBytes + (long) numValues * Integer.BYTES * intArrays;
         }
 
-        /// The `int` arrays of one entry per value a page's values decode through: the ids of a
-        /// dictionary-encoded page or of `RLE` booleans; a binary page's offsets, with the lengths
-        /// of `DELTA_LENGTH_BYTE_ARRAY` and the prefix and suffix lengths of `DELTA_BYTE_ARRAY`;
-        /// none for numeric values read in place.
+        /// The `int` arrays of one entry per value a page's values decode through: a binary page's
+        /// offsets, with the lengths of `DELTA_LENGTH_BYTE_ARRAY` and the prefix and suffix lengths
+        /// of `DELTA_BYTE_ARRAY`; none for numeric values read in place, nor for ids (a
+        /// dictionary's, `RLE` booleans), which a fill decodes a chunk at a time.
         static int scratchInts(PhysicalType type, Encoding encoding) {
             return switch (encoding) {
-                case PLAIN_DICTIONARY, RLE_DICTIONARY, RLE -> 1;
                 case DELTA_LENGTH_BYTE_ARRAY -> 2;
                 case DELTA_BYTE_ARRAY -> 3;
                 case PLAIN, BYTE_STREAM_SPLIT -> isNumeric(type) ? 0 : 1;
-                case DELTA_BINARY_PACKED, ALP, BIT_PACKED, UNKNOWN -> 0;
+                case PLAIN_DICTIONARY, RLE_DICTIONARY, RLE, DELTA_BINARY_PACKED, ALP, BIT_PACKED, UNKNOWN -> 0;
             };
         }
 

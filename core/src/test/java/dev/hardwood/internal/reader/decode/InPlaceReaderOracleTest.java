@@ -124,6 +124,29 @@ class InPlaceReaderOracleTest {
                     : DataPages.values(nested.binary(), column.maxDefinitionLevel(), from);
             assertThat(read).as("cursor from entry %d", from).isEqualTo(tail(expected, from));
         }
+        // One cursor read in runs with gaps, as a masked page's fill reads it
+        for (int[] runs : RUNS) {
+            Object read = nested.flat() != null
+                    ? DataPages.valuesInRuns(nested.flat(), type, runs[0], runs[1])
+                    : DataPages.valuesInRuns(nested.binary(), column.maxDefinitionLevel(), runs[0], runs[1]);
+            assertThat(read).as("runs of %d, %d passed over", runs[0], runs[1])
+                    .isEqualTo(kept(expected, runs[0], runs[1]));
+        }
+    }
+
+    /// Runs of kept entries and of entries passed over after each, for one cursor to read.
+    private static final int[][] RUNS = { { 3, 2 }, { 1, 5 }, { 7, 1 }, { 2, 9 } };
+
+    /// `values` with the entries passed over in runs of `keep` and `drop` set to their default.
+    private static Object kept(Object values, int keep, int drop) {
+        int length = Array.getLength(values);
+        Object kept = Array.newInstance(values.getClass().getComponentType(), length);
+        for (int i = 0; i < length; i++) {
+            if (i % (keep + drop) < keep) {
+                Array.set(kept, i, Array.get(values, i));
+            }
+        }
+        return kept;
     }
 
     private static Object tail(Object values, int from) {

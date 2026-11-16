@@ -44,8 +44,8 @@ class RecordSpanningPagesTest {
 
         assertThatThrownBy(() -> readOneRecord(file))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'b', page 7] Batch of values from 8 pages needs 16777386 "
-                        + "bytes to decode, which takes the read's working set to 16777402 bytes, more than its limit "
+                .hasMessage("[<memory>: row group 0, column 'b', page 9] Batch of values from 10 pages needs 18350292 "
+                        + "bytes to decode, which takes the read's working set to 18350308 bytes, more than its limit "
                         + "of 16777216 (hardwood.internal.maxWorkingSetBytes)");
     }
 

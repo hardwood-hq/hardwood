@@ -28,12 +28,12 @@ import dev.hardwood.reader.ParquetReadException;
 /// | Kind | From | Values |
 /// |---|---|---|
 /// | plain | a `PLAIN`, `BYTE_STREAM_SPLIT` or delta-encoded page | the value bytes in the decompressed page, or for `DELTA_BYTE_ARRAY` reconstructed into the page's scratch |
-/// | ids | a dictionary-encoded page | one id per non-null value |
+/// | ids | a dictionary-encoded page | one id per non-null value, decoded by the fill straight into the batch's entry ids ([DictionaryIndices]) |
 ///
 /// The fill writes the page's rows in page order, so the values are read with one forward cursor,
 /// as [FlatPageValues] is; a fill that starts elsewhere reads through a [#cursor()] of its own. The
-/// definition levels, ids and byte prefix live in the scratch the page is decoded with, and the
-/// bytes in that scratch or the decompressor's buffer, for as long as the page's fills run.
+/// definition levels and byte prefix live in the scratch the page is decoded with, and the bytes
+/// in that scratch or the decompressor's buffer, for as long as the page's fills run.
 public final class BinaryPageValues {
 
     private static final VarHandle INT = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
@@ -64,8 +64,9 @@ public final class BinaryPageValues {
     /// `BYTE_STREAM_SPLIT` values: the non-null values, which is the distance between two of a
     /// value's bytes; `0` for any other encoding.
     private final int stride;
-    /// Ids: one per non-null value.
-    private final int[] ids;
+    /// Ids: one per non-null value, and this cursor's reader of them.
+    private final DictionaryIndices indices;
+    private final DictionaryIndices.Cursor ids;
     private final Dictionary.ByteArrayDictionary dictionary;
 
     /// The page row the cursor is at, the non-null values before it, and where the value of the
@@ -76,7 +77,8 @@ public final class BinaryPageValues {
 
     private BinaryPageValues(Kind kind, int numValues, int[] definitionLevels, int maxDefinitionLevel,
                              boolean allPresent, int[] bytePrefix, byte[] data, int plainOffset, int width,
-                             boolean prefixed, int stride, int[] ids, Dictionary.ByteArrayDictionary dictionary) {
+                             boolean prefixed, int stride, DictionaryIndices indices,
+                             Dictionary.ByteArrayDictionary dictionary) {
         this.kind = kind;
         this.numValues = numValues;
         this.definitionLevels = definitionLevels;
@@ -88,7 +90,8 @@ public final class BinaryPageValues {
         this.width = width;
         this.prefixed = prefixed;
         this.stride = stride;
-        this.ids = ids;
+        this.indices = indices;
+        this.ids = indices == null ? null : indices.cursor();
         this.dictionary = dictionary;
         this.dataPos = plainOffset;
     }
@@ -197,7 +200,7 @@ public final class BinaryPageValues {
                                            byte[] data, int offset, int limit, PageDecoder.LevelScratch scratch,
                                            LongConsumer chargeValues) {
         int nonNull = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, numValues);
-        int[] prefixLengths = scratch.ids(nonNull);
+        int[] prefixLengths = scratch.prefixLengths(nonNull);
         int[] suffixLengths = scratch.lengths(nonNull);
         // Both lengths' headers are there even when no value is
         DeltaBinaryPackedDecoder prefixDecoder = new DeltaBinaryPackedDecoder(data, offset, limit);
@@ -320,28 +323,24 @@ public final class BinaryPageValues {
         return pos;
     }
 
-    /// Dictionary ids already decoded into `ids`, one per non-null value.
+    /// Dictionary ids in the value section `[offset, limit)` of `data`, one per non-null value. The
+    /// ids are checked against the dictionary as a fill decodes them.
     ///
-    /// @throws ArrayIndexOutOfBoundsException if an id lies outside the dictionary
-    static BinaryPageValues ids(int[] definitionLevels, int maxDefinitionLevel, int numValues, int[] ids,
-                                int idCount, Dictionary.ByteArrayDictionary dictionary) {
-        int size = dictionary.size();
-        for (int i = 0; i < idCount; i++) {
-            int id = ids[i];
-            if (id < 0 || id >= size) {
-                throw new ArrayIndexOutOfBoundsException("Dictionary index " + id
-                        + " out of bounds for a dictionary of " + size + " entries");
-            }
-        }
+    /// @throws ParquetReadException if the section's bit width is missing or above `32`
+    static BinaryPageValues ids(int[] definitionLevels, int maxDefinitionLevel, int numValues, byte[] data,
+                                int offset, int limit, Dictionary.ByteArrayDictionary dictionary) {
+        int idCount = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, numValues);
+        DictionaryIndices indices = DictionaryIndices.ofDictionaryPage(data, offset, limit, idCount,
+                dictionary.size());
         return new BinaryPageValues(Kind.IDS, numValues, definitionLevels, maxDefinitionLevel, idCount == numValues,
-                null, null, 0, 0, false, 0, ids, dictionary);
+                null, null, 0, 0, false, 0, indices, dictionary);
     }
 
     /// A reader of the same values with a cursor of its own at the page's first row, so that two
     /// fills can read one page at once.
     public BinaryPageValues cursor() {
         return new BinaryPageValues(kind, numValues, definitionLevels, maxDefinitionLevel, allPresent, bytePrefix,
-                data, plainOffset, width, prefixed, stride, ids, dictionary);
+                data, plainOffset, width, prefixed, stride, indices, dictionary);
     }
 
     /// The page's values, nulls included.
@@ -475,25 +474,35 @@ public final class BinaryPageValues {
     public int copyIds(int pageRow, int length, int[] dictIndices, int[] starts, int[] ends, int[] bufferIds,
                 int destPos, int slotLevel) {
         skipTo(pageRow);
-        int slots = length;
         if (definitionLevels == null) {
-            System.arraycopy(ids, nonNull, dictIndices, destPos, length);
+            ids.read(dictIndices, destPos, length);
             nonNull += length;
+            row = pageRow + length;
+            return length;
         }
-        else {
-            int dest = destPos;
-            for (int i = 0; i < length; i++) {
-                int level = definitionLevels[pageRow + i];
-                if (level == maxDefinitionLevel) {
-                    dictIndices[dest++] = ids[nonNull++];
-                }
-                else if (level >= slotLevel) {
-                    dictIndices[dest] = -1;
-                    view(starts, ends, bufferIds, dest++, 0, 0, 0);
-                }
+        int present = 0;
+        int slots = 0;
+        for (int r = pageRow; r < pageRow + length; r++) {
+            int level = definitionLevels[r];
+            present += level == maxDefinitionLevel ? 1 : 0;
+            slots += level >= slotLevel ? 1 : 0;
+        }
+        // The present rows' ids are decoded in one go to the start of the range, then moved back to
+        // their slots, last first: a slot is never before its id, so no id is overwritten unread
+        ids.read(dictIndices, destPos, present);
+        int id = destPos + present;
+        int dest = destPos + slots;
+        for (int r = pageRow + length - 1; r >= pageRow; r--) {
+            int level = definitionLevels[r];
+            if (level == maxDefinitionLevel) {
+                dictIndices[--dest] = dictIndices[--id];
             }
-            slots = dest - destPos;
+            else if (level >= slotLevel) {
+                dictIndices[--dest] = -1;
+                view(starts, ends, bufferIds, dest, 0, 0, 0);
+            }
         }
+        nonNull += present;
         row = pageRow + length;
         return slots;
     }
@@ -508,6 +517,9 @@ public final class BinaryPageValues {
             dataPos += width == 0
                     ? (prefixed ? 4 * skipped : 0) + bytePrefix[pageRow] - bytePrefix[row]
                     : width * skipped;
+        }
+        else {
+            ids.skip(skipped);
         }
         nonNull += skipped;
         row = pageRow;

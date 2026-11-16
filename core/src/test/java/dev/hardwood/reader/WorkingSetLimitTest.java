@@ -66,7 +66,7 @@ class WorkingSetLimitTest {
         // one column: its dictionary and then its data page are the only charges, in that order
         assertThatThrownBy(() -> countRows(file, 0))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'c0', page 0] Data page needs 12292 bytes to decode, "
+                .hasMessage("[<memory>: row group 0, column 'c0', page 0] Data page needs 8196 bytes to decode, "
                         + "which takes the read's working set to 2105344 bytes, more than its limit of 2105343 "
                         + "(hardwood.internal.maxWorkingSetBytes)");
     }
@@ -107,7 +107,7 @@ class WorkingSetLimitTest {
         // The column's walk takes the third row group's dictionary before the first page is
         // decoded, so that charge crosses.
         String crossing = "[<memory>: row group 2, column 'c0'] Dictionary page needs 1048576 bytes";
-        long workingSet = 3L * DICTIONARY_BYTES + 8_192 + 4_100;
+        long workingSet = 3L * DICTIONARY_BYTES + 8_192 + 4;
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
         byte[] file = RleExpansionFile.buildWide(1, 3, DICTIONARY_BYTES, PAGE_VALUES);
 
@@ -121,8 +121,8 @@ class WorkingSetLimitTest {
             }
         })
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage(crossing + " to decode, which takes the read's working set to 3158020 bytes, more "
-                        + "than its limit of 3158019 (hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage(crossing + " to decode, which takes the read's working set to 3153924 bytes, more "
+                        + "than its limit of 3153923 (hardwood.internal.maxWorkingSetBytes)");
     }
 
     @Test

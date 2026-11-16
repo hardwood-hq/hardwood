@@ -103,6 +103,87 @@ public class RleBitPackingHybridDecoder {
         }
     }
 
+    /// The values left in the current run where it is an RLE run, the next run read where the
+    /// current one is done; `0` where the run is bit-packed or the stream has ended. The run's
+    /// value is [#repeatedValue()], and [#skip] passes over its values.
+    public int repeatsLeft() {
+        if (remainingInRun == 0) {
+            readNextRun();
+        }
+        return isRleRun ? remainingInRun : 0;
+    }
+
+    /// The value of the current run, where [#repeatsLeft()] found an RLE run.
+    public int repeatedValue() {
+        return currentValue;
+    }
+
+    /// Passes over the next `count` values. An RLE run is passed by its count, and a bit-packed
+    /// run by whole groups of eight, each `bitWidth` bytes; only the values of a group the skip
+    /// starts or ends inside are decoded. A value passed over is not otherwise read.
+    ///
+    /// @throws ParquetReadException if the stream ends before `count` values
+    public void skip(int count) {
+        if (bitWidth == 0) {
+            return;
+        }
+        int remaining = count;
+        while (remaining > 0) {
+            if (remainingInRun == 0) {
+                readNextRun();
+                if (remainingInRun == 0) {
+                    throw new ParquetReadException("Insufficient RLE/Bit-Packing data: skipped "
+                            + (count - remaining) + " of " + count + " requested values");
+                }
+            }
+            int n = Math.min(remaining, remainingInRun);
+            if (!isRleRun) {
+                n = skipBitPacked(n);
+            }
+            remainingInRun -= n;
+            remaining -= n;
+        }
+    }
+
+    /// Passes over `count` values of the current bit-packed run, at most what it has left: the
+    /// buffered values first, then whole groups by their bytes, then the values of the last group
+    /// one at a time.
+    ///
+    /// @return the values passed over, `count` unless the data ends first
+    private int skipBitPacked(int count) {
+        if (discard == null) {
+            discard = new int[8];
+        }
+        int skipped = 0;
+        while (skipped < count && bitsInBuffer > 0) {
+            int n = decodeBuffered(discard, 0, Math.min(count - skipped, discard.length), true);
+            if (n == 0) {
+                break;
+            }
+            skipped += n;
+        }
+        // With the buffer empty the next value starts on a byte boundary, so eight values are
+        // `bitWidth` whole bytes
+        if (bitsInBuffer == 0) {
+            int groups = Math.min((count - skipped) / 8, (dataEnd - pos) / bitWidth);
+            pos += groups * bitWidth;
+            skipped += groups * 8;
+        }
+        while (skipped < count) {
+            int n = decodeBuffered(discard, 0, Math.min(count - skipped, discard.length), false);
+            if (n == 0) {
+                throw new ParquetReadException("Insufficient RLE/Bit-Packing data: a bit-packed run declares "
+                        + runLength + " values, but the data ends after " + (runLength - remainingInRun + skipped)
+                        + " of them");
+            }
+            skipped += n;
+        }
+        return skipped;
+    }
+
+    /// Where [#skipBitPacked] decodes the values it passes over inside a group; made on first use.
+    private int[] discard;
+
     /// Extracts up to `groups` groups of eight 9-bit values, starting at byte `pos`, into `out`
     /// from `o`, reading two little-endian words per group. Stops early when fewer than 16 bytes
     /// remain before `dataEnd`, and returns the number of groups extracted. `unpack10` to
@@ -251,6 +332,11 @@ public class RleBitPackingHybridDecoder {
 
         long header = readUnsignedVarInt();
         remainingInRun = runValues(header);
+        // A run of no values would read as the end of the data on some paths and be passed over on
+        // others, so it is refused wherever it is reached
+        if (remainingInRun == 0) {
+            throw new ParquetReadException("Invalid RLE/Bit-Packing run: a run of 0 values");
+        }
         runLength = remainingInRun;
         isRleRun = (header & 1) == 0;
         if (isRleRun) {
