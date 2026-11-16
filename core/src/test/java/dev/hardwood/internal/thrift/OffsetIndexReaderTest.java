@@ -148,6 +148,33 @@ class OffsetIndexReaderTest {
                         + " ends past the largest file offset");
     }
 
+    /// Every row holds a value in each column, so a page spans no more rows than it holds values.
+    @Test
+    void rejectsALastPageSpanningMoreRowsThanAPageHolds() {
+        byte[] thrift = struct().field(1, FieldType.LIST).structList(pageLocation(100, 40, 0)).stop().build();
+
+        assertThatThrownBy(() -> OffsetIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)),
+                chunk(100, 100, 40), 1_000_000_000_000L))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed Parquet metadata: OffsetIndex page 0 spans rows 0 to 1000000000000, more than"
+                        + " 2147483638 (the longest array a page's values decode into, less one), and every row"
+                        + " holds a value in each column");
+    }
+
+    @Test
+    void rejectsAPageSpanningMoreRowsThanAPageHoldsBeforeTheNext() {
+        byte[] thrift = struct().field(1, FieldType.LIST)
+                .structList(pageLocation(100, 40, 0), pageLocation(140, 40, 3_000_000_000L))
+                .stop().build();
+
+        assertThatThrownBy(() -> OffsetIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)),
+                chunk(100, 100, 80), 3_000_000_010L))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed Parquet metadata: OffsetIndex page 0 spans rows 0 to 3000000000, more than"
+                        + " 2147483638 (the longest array a page's values decode into, less one), and every row"
+                        + " holds a value in each column");
+    }
+
     private static ColumnChunk chunkWithValues(long numValues) {
         return chunk(numValues, 0, 0);
     }

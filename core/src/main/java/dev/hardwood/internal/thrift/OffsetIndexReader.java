@@ -55,7 +55,8 @@ public class OffsetIndexReader {
     /// previous page ends and ends within the chunk, so the chunk's bytes bound the number of
     /// pages its index may list; and the first page starts at row 0 and each later page no
     /// earlier than the previous page's row and no later than the row group's `rowGroupRows`, so
-    /// no page spans a negative count of rows. A page that begins inside a record may start at
+    /// no page spans a negative count of rows. Every row holds a value in each column, so no page
+    /// spans more rows than a page may hold values ([PageLimit#MAX_PAGE_VALUES]). A page that begins inside a record may start at
     /// the row the previous page starts at, and the last page at the row group's end. Every read
     /// that plans pages or filters them from an OffsetIndex parses it through
     /// [#read(ThriftCompactReader, ColumnChunk, long)]; a tool showing an index as the file
@@ -125,6 +126,12 @@ public class OffsetIndexReader {
         if (firstRow > rowGroupRows) {
             throw malformed(i, "has a first_row_index of " + firstRow + ", past the row group's "
                     + rowGroupRows + " rows");
+        }
+        long endRow = i + 1 < pages.size() ? Math.max(firstRow, pages.get(i + 1).firstRowIndex()) : rowGroupRows;
+        if (endRow - firstRow > PageLimit.MAX_PAGE_VALUES) {
+            throw malformed(i, "spans rows " + firstRow + " to " + endRow + ", more than "
+                    + PageLimit.MAX_PAGE_VALUES + " (" + PageLimit.MAX_PAGE_VALUES_BOUND
+                    + "), and every row holds a value in each column");
         }
     }
 
