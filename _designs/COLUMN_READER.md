@@ -152,7 +152,7 @@ Tests: `ProjectionOrderTest`.
 
 ### Advancing the scan
 
-`ColumnScan.advance()` polls every payload cursor once, then every filter-only cursor unless the first cursor's batch is proven by statistics (see [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)). It checks that the polled cursors agree: every one produced a batch, all with the same record count. A cursor exhausted early or a differing record count throws `IllegalStateException`. When the first cursor reaches the end, `advance()` drains every other cursor, and one that still produces a batch throws `IllegalStateException`. With a filter, it then computes the selection and compacts each payload cursor's batch to the matching records.
+`ColumnScan.advance()` polls every payload cursor once, then every filter-only cursor unless the first cursor's batch is proven by statistics (see [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)). It checks that the polled cursors agree: every one produced a batch, all with the same record count. A cursor exhausted early or a differing record count throws `IllegalStateException`. When the first cursor reaches the end, `advance()` drains every other cursor, and one that still produces a batch throws `IllegalStateException`. With a filter, it then computes the selection and compacts each payload cursor's batch to the matching records. A batch the selection keeps no record of is passed over: `advance()` polls the cursors again, so a batch it hands the readers holds at least one record.
 
 A read with no row group left, because statistics, Bloom filters or dictionaries drop every one, such as a point lookup of an absent key, ends every column at once, and the scan's first `advance()` returns `false`.
 

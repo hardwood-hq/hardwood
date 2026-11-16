@@ -42,6 +42,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - `Compression` sets the writer's compression level for `ZSTD`, `GZIP`, `BROTLI` and `LZ4_RAW`, as in `Compression.zstd().level(9)` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - `WriterConfig.Builder.sortingColumns` declares the order rows are sorted in; each row group records it as `sorting_columns`, and a row out of that order fails the write ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - `StructBuilder.setValue` writes a field from a value in the form `getValue` returns, so rows can be copied without switching on field types ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
+- A filtered `ColumnReader` or `ColumnReaders` returns no batch without rows: `nextBatch()` passes over the batches the filter keeps no row of ([#1815](https://github.com/hardwood-hq/hardwood/issues/1815))
 
 **Bug fixes:**
 

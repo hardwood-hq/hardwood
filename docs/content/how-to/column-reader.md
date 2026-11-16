@@ -60,7 +60,7 @@ Pick a binary column's accessor by what you do with its values:
 
 Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter or customize the batch size, use the builder form: `reader.buildColumnReader("id").filter(predicate).batchSize(1024).build()`.
 
-A filtered column reader returns **only** the matching rows: each batch's `getRecordCount()` and typed arrays exclude non-matching rows. The predicate may reference the column being read, another column, or a column outside the projection; for `columnReaders(projection)` every column is filtered to the same row set and stays row-aligned. Predicate columns that are not part of the projection are decoded internally to evaluate the filter but are not exposed.
+A filtered column reader returns **only** the matching rows: each batch's `getRecordCount()` and typed arrays exclude non-matching rows, and `nextBatch()` passes over batches without a matching row, so every batch holds at least one. The predicate may reference the column being read, another column, or a column outside the projection; for `columnReaders(projection)` every column is filtered to the same row set and stays row-aligned. Predicate columns that are not part of the projection are decoded internally to evaluate the filter but are not exposed.
 
 ### Reading Multiple Columns
 
@@ -110,7 +110,7 @@ When the read includes a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column,
 
 The batch size caps the number of **records** per batch, never the number of leaf values. A batch boundary always falls between records: a record, including all the leaf values a repeated column holds for it, is never split across two batches. A consequence for repeated columns is that `getValueCount()` can exceed the configured batch size, since one record may carry many leaf values; size any per-value buffers off `getValueCount()`, not the batch size.
 
-`ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when the readers are exhausted. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-column record counts throw `IllegalStateException`.
+`ColumnReaders.nextBatch()` advances every underlying reader to the next batch and returns `false` when the readers are exhausted. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-column record counts throw `IllegalStateException`.
 
 The readers from `getColumnReader(...)` show the group's current batch. `ColumnReaders.nextBatch()` is the only way to advance them: `ColumnReader.nextBatch()` on one of them throws `IllegalStateException`. Close the group with `ColumnReaders.close()`; closing one of its readers has no effect.
 

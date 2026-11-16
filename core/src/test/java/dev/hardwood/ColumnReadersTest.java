@@ -9,6 +9,7 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -691,6 +692,109 @@ class ColumnReadersTest {
 
             assertThat(batches).isGreaterThan(1);
             assertThat(totalRows).isEqualTo(180); // id 121..300
+        }
+    }
+
+    @Test
+    void testSelectiveFilterReturnsNoEmptyBatch() throws Exception {
+        // ids 150..152 lie inside one row group of 100 rows, which statistics cannot prune, so
+        // at batch size 7 its decoded rows span 15 batches, of which the filter keeps rows in one
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
+                     .filter(FilterPredicate.and(FilterPredicate.gtEq("id", 150L), FilterPredicate.lt("id", 153L)))
+                     .batchSize(7).build()) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            List<Integer> counts = new ArrayList<>();
+            List<Long> ids = new ArrayList<>();
+            while (columns.nextBatch()) {
+                counts.add(columns.getRecordCount());
+                long[] batch = idReader.getLongs();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    ids.add(batch[i]);
+                }
+            }
+
+            assertThat(counts).allMatch(count -> count > 0);
+            assertThat(ids).containsExactly(150L, 151L, 152L);
+        }
+    }
+
+    @Test
+    void testSelectiveFilterReturnsNoEmptyBatchOnSingleColumn() throws Exception {
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReader value = parquet.buildColumnReader("value")
+                     .filter(FilterPredicate.and(FilterPredicate.gtEq("id", 150L), FilterPredicate.lt("id", 153L)))
+                     .batchSize(7).build()) {
+
+            List<Integer> counts = new ArrayList<>();
+            int rows = 0;
+            while (value.nextBatch()) {
+                counts.add(value.getRecordCount());
+                rows += value.getRecordCount();
+            }
+
+            assertThat(counts).allMatch(count -> count > 0);
+            assertThat(rows).isEqualTo(3);
+        }
+    }
+
+    @Test
+    void testSelectiveFilterReturnsNoEmptyBatchOfNestedColumn() throws Exception {
+        // the first row group's three rows are one batch each at batch size 1; the filter keeps
+        // only the second, so the list column's first and third batches compact to no record
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_list.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReader scores = parquet.buildColumnReader("scores.list.element")
+                     .filter(FilterPredicate.eq("id", 2))
+                     .batchSize(1).build()) {
+
+            List<Integer> counts = new ArrayList<>();
+            List<Integer> values = new ArrayList<>();
+            while (scores.nextBatch()) {
+                counts.add(scores.getRecordCount());
+                int[] batch = scores.getInts();
+                for (int i = 0; i < scores.getValueCount(); i++) {
+                    values.add(batch[i]);
+                }
+            }
+
+            assertThat(counts).containsExactly(1);
+            assertThat(values).containsExactly(5, 15);
+        }
+    }
+
+    @Test
+    void testSelectiveFilterPassesOverEmptyBatchesAcrossFiles() throws Exception {
+        // in each file the filter keeps ids 50 and 51 of the first row group, and statistics
+        // prune the others, so the batches from id 52 of the first file to id 49 of the second
+        // are all passed over in one advance that crosses into the second file
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath, filePath)));
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
+                     .filter(FilterPredicate.and(FilterPredicate.gtEq("id", 50L), FilterPredicate.lt("id", 52L)))
+                     .batchSize(7).build()) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            List<Integer> counts = new ArrayList<>();
+            List<Long> ids = new ArrayList<>();
+            while (columns.nextBatch()) {
+                counts.add(columns.getRecordCount());
+                long[] batch = idReader.getLongs();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    ids.add(batch[i]);
+                }
+            }
+
+            assertThat(counts).allMatch(count -> count > 0);
+            assertThat(ids).containsExactly(50L, 51L, 50L, 51L);
         }
     }
 

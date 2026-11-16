@@ -171,9 +171,11 @@ final class ColumnScan implements Closeable {
         return recordCount;
     }
 
-    /// Advances every cursor once, checks that they agree, and, for a filtered
-    /// read, compacts the payload cursors to the matching records. A filter-only
-    /// cursor is advanced only when statistics did not prove the step's batch.
+    /// Advances every cursor to its next batch, checks that they agree, and, for a filtered
+    /// read, compacts the payload cursors to the matching records. A filter-only cursor is
+    /// advanced only when statistics did not prove the step's batch. A batch the filter keeps
+    /// no record of is passed over and the cursors advance again, so a batch the scan holds is
+    /// never empty.
     ///
     /// @return `false` once the input is exhausted
     /// @throws IllegalStateException if the scan is closed, or the cursors did not advance
@@ -182,10 +184,20 @@ final class ColumnScan implements Closeable {
         requireOpen();
         hasBatch = false;
         recordCount = 0;
-        if (cursors.length == 0 || !cursors[0].advance()) {
-            drainAfterEnd();
-            return false;
+        while (recordCount == 0) {
+            if (cursors.length == 0 || !cursors[0].advance()) {
+                drainAfterEnd();
+                return false;
+            }
+            recordCount = step();
         }
+        hasBatch = true;
+        return true;
+    }
+
+    /// Takes the next decoded batch of every cursor, which the first cursor has advanced to, and
+    /// returns its record count after the filter.
+    private int step() throws IOException {
         int decodedCount = cursors[0].recordCount();
         for (int i = 1; i < payloadCount; i++) {
             checkLockstep(cursors[i], decodedCount);
@@ -199,9 +211,7 @@ final class ColumnScan implements Closeable {
                 checkLockstep(cursors[i], decodedCount);
             }
         }
-        recordCount = engine == null ? decodedCount : select(decodedCount);
-        hasBatch = true;
-        return true;
+        return engine == null ? decodedCount : select(decodedCount);
     }
 
     /// Drains the remaining cursors so the shared read finalizes cleanly, checking
