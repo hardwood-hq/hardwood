@@ -236,11 +236,24 @@ class MalformedMetadataValidationTest {
         assertThat(RowGroupReader.read(reader(rowGroupOfAnEmptyChunk(0))).numRows()).isZero();
     }
 
+    /// The read holds the column to the row group's rows through its pages, so a `num_values`
+    /// short of them is logged and the footer parses.
+    @Test
+    void columnChunkOfFewerValuesThanItsRowGroupsRowsParses() {
+        assertThat(RowGroupReader.read(reader(rowGroupOfAChunk(5, 1_000_000_000_000L))).numRows())
+                .isEqualTo(1_000_000_000_000L);
+    }
+
     /// A `RowGroup` of `numRows` rows whose one column chunk declares no values.
     private static byte[] rowGroupOfAnEmptyChunk(long numRows) {
+        return rowGroupOfAChunk(0, numRows);
+    }
+
+    /// A `RowGroup` of `numRows` rows whose one column chunk declares `numValues` values.
+    private static byte[] rowGroupOfAChunk(long numValues, long numRows) {
         ThriftCompactWriter writer = new ThriftCompactWriter();
         RowGroupWriter.write(writer, new RowGroup(List.of(new ColumnChunk(new ColumnMetaData(PhysicalType.INT32,
-                List.of(Encoding.PLAIN), FieldPath.of("a"), CompressionCodec.UNCOMPRESSED, 0, 0, 0, null, 4, null,
+                List.of(Encoding.PLAIN), FieldPath.of("a"), CompressionCodec.UNCOMPRESSED, numValues, 0, 0, null, 4, null,
                 null, null, null, null, List.of(), null), null, null, null, null, null)), 0, numRows));
         return writer.toByteArray();
     }
