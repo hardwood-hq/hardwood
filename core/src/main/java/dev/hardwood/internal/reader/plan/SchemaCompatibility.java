@@ -20,6 +20,7 @@ import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.VariantSpecVersions;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
@@ -80,13 +81,23 @@ public final class SchemaCompatibility {
     /// @throws SchemaIncompatibleException if a touched column cannot be decoded under
     ///         the schema the file declares for it
     /// @throws UnsupportedOperationException if a touched column lies below a list of
-    ///         variants in the bare repeated form ([BareRepeatedGroups#refuseTouchedVariants])
+    ///         variants in the bare repeated form ([BareRepeatedGroups#refuseTouchedVariants]) or
+    ///         below a `VARIANT` group of an unsupported specification version
+    ///         ([VariantSpecVersions#refuseTouchedUnsupported])
     void validateReferenceColumns(String fileName) {
         for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
                 originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
             FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
         }
-        BareRepeatedGroups.refuseTouchedVariants(fileName, referenceSchema, touchedColumns);
+        refuseUnreadableGroups(fileName, referenceSchema, touchedColumns);
+    }
+
+    /// Refuses a read touching a group whose columns the reader cannot serve under the schema the
+    /// file declares: a list of variants in the bare repeated form, or a `VARIANT` group of a
+    /// specification version the reader does not implement.
+    private static void refuseUnreadableGroups(String fileName, FileSchema schema, BitSet touched) {
+        BareRepeatedGroups.refuseTouchedVariants(fileName, schema, touched);
+        VariantSpecVersions.refuseTouchedUnsupported(fileName, schema, touched);
     }
 
     /// Validates a read of `file`, the first, without a filter as its planning does before any row
@@ -125,6 +136,8 @@ public final class SchemaCompatibility {
     /// @return this file's leaf ordinal per reference leaf ordinal, `-1` where unresolved
     /// @throws SchemaIncompatibleException if a touched column is missing or its leaf
     ///         differs in a way that changes how its pages decode
+    /// @throws UnsupportedOperationException if a touched column lies below a group the reader
+    ///         cannot serve ([#refuseUnreadableGroups])
     public int[] validateSchemaCompatibility(InputFile inputFile, FileSchema fileSchema) {
         int referenceColumnCount = referenceSchema.getColumnCount();
         int[] fileOrdinals = new int[referenceColumnCount];
@@ -136,7 +149,7 @@ public final class SchemaCompatibility {
             fileOrdinals[originalIndex] = validateColumn(inputFile, fileSchema, originalIndex);
             touchedInFile.set(fileOrdinals[originalIndex]);
         }
-        BareRepeatedGroups.refuseTouchedVariants(inputFile.name(), fileSchema, touchedInFile);
+        refuseUnreadableGroups(inputFile.name(), fileSchema, touchedInFile);
         return fileOrdinals;
     }
 

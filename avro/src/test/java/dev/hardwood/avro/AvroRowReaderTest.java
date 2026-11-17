@@ -30,6 +30,8 @@ import org.apache.avro.io.DatumWriter;
 import org.apache.avro.io.Encoder;
 import org.apache.avro.io.EncoderFactory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
@@ -780,6 +782,28 @@ class AvroRowReaderTest {
                 List<GenericRecord> records = readAll(reader);
                 assertThat(records).hasSize(1);
                 assertThat(records.getFirst().get("id")).isEqualTo(1);
+            }
+        }
+    }
+
+    /// A `VARIANT` group of a specification version the reader does not implement converts, and
+    /// the row reader refuses a projection of it; a projection that leaves it out reads.
+    /// `variant_spec_version_2_test.parquet` holds `id` 1 to 4 and `var` (VARIANT(2)) over
+    /// `{metadata, value}`; `variant_spec_version_2_shape_test.parquet` holds `id` 1 and 2 and
+    /// `var` (VARIANT(2)) over `{header {a}, payload}`, not the version-1 shape.
+    @ParameterizedTest
+    @CsvSource({ "variant_spec_version_2_test.parquet, 4", "variant_spec_version_2_shape_test.parquet, 2" })
+    void refuseVariantOfUnsupportedSpecVersionUnlessProjectedAway(String fixture, int rowCount) throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_RESOURCES.resolve(fixture)))) {
+
+            assertThatThrownBy(() -> AvroReaders.rowReader(fileReader))
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("[" + fixture + "] Group 'var' is annotated VARIANT(2);"
+                            + " version 2 of the Variant specification is not supported, the supported version is 1");
+
+            try (AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                    .projection(ColumnProjection.columns("id")).build()) {
+                assertThat(readAll(reader)).hasSize(rowCount);
             }
         }
     }

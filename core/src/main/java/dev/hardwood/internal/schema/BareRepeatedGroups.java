@@ -138,7 +138,8 @@ public final class BareRepeatedGroups {
         }
     }
 
-    private static boolean touchesLeaf(SchemaNode node, BitSet touchedColumns) {
+    /// Whether a leaf at or below `node` is among `touchedColumns`.
+    static boolean touchesLeaf(SchemaNode node, BitSet touchedColumns) {
         return switch (node) {
             case SchemaNode.PrimitiveNode leaf -> touchedColumns.get(leaf.columnIndex());
             case SchemaNode.GroupNode group -> {
