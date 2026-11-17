@@ -261,17 +261,16 @@ On conforming files from mainstream writers, with the typed literal of each colu
 | 3 | `DOUBLE d`, PyArrow: row group `1.0, 2.0, NaN, 3.0` with bounds `[1.0, 3.0]` | `gt(d, 5.0)`, `eq(d, NaN)` | includes `NaN` | includes `NaN` | row group dropped | DuckDB defect: pruning ignores `NaN` outside the bounds | Medium on float data with `NaN` (Arrow writers) |
 | 4 | `DECIMAL(9, 2)` over `INT32`: `1.25` | `eq(dec, 125)` | `1.25` | `1.25` | none (`125.00`) | Rule: `int` is the unscaled value | Medium; `BigDecimal` is the natural literal |
 | 5 | same | `eq(dec, 1.255)` | throws | no spelling | none | Rule 4: equality literal the column cannot hold | Low; fails loudly |
-| 6 | `TIMESTAMP(NANOS)`, PyArrow: `t`, `t+1ns` … `t+7ns` | `gt(ts, t+4ns)` | `t+5ns` … `t+7ns` | same | none (`eq` returns all) | DuckDB defect: reads nanoseconds as microseconds | Low; nanosecond-exact filters only |
-| 7 | `FLOAT f`, `DOUBLE d`: `-0.0, +0.0` | `eq(d, 0.0)`; `lt(d, 0.0)` | `+0.0`; `-0.0` | `+0.0`; `-0.0` | both; none | Rule: `Double.compare`, as parquet-java | Low |
-| 8 | `UINT_32 u`: `0, 4000000000` | `lt(u, -1)` | both (`-1` is `0xFFFFFFFF`) | both | none | Rule: bit-pattern literal, as parquet-java | Low; unsigned columns are rare on the JVM |
-| 9 | `INTERVAL iv`: 310 months, 0 days, 310 s | `eq(iv, new PqInterval(0, 9300, 310_000))` | none | no spelling | the row (normalised) | Rule: `INTERVAL` defines no conversion between components | Low |
-| 10 | `INT96 ts` | `gt(ts, …)` | by instant | by bytes as a signed big-endian integer | by instant | parquet-java's comparator; the shim refuses an ordered `Binary` | Low |
-| 11 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0.002` as `00 02`, Bloom filter | `Binary` / `byte[]` `02` | none | the row, except where the Bloom filter drops it | no spelling | parquet-java defect: Bloom and dictionary test bytes, rows test value | Low; needs a padded encoding |
-| 12 | `INT32` annotated `INT(8)` storing `1000` | `eq(i8, 1000)` | the row | the row | none (reads `-24`) | Non-conforming file; Hardwood follows `getInt` | Low |
-| 13 | any column, through `parquet-java-compat` | `FilterApi.eq(intColumn("x"), null)` | throws | the null rows | — | The shim supports no null literal; use Hardwood's `isNull` | Medium for shim users; fails loudly |
-| 14 | `DECIMAL(9, 2)` over `FIXED_LEN_BYTE_ARRAY(9)` storing `0.20` | `Binary` / `byte[]` `14` | throws | the row, except where the dictionary or Bloom filter drops it | no spelling | Rule 4, and the parquet-java defect of row 11 | Low; needs a literal of another width |
-| 15 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0` as no bytes, Bloom filter | `eq(dec, BigDecimal.ZERO)` | the row | none | the row | parquet-java defect: the Bloom filter tests the literal's bytes `00` | Low; needs an empty encoding |
-| 16 | `INTERVAL` written by parquet-java (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) | `eq(iv, PqInterval)` | the row | the row | none (read as `INTEGER`) | DuckDB defect: reads the column as `INTEGER` | Low; DuckDB only |
+| 6 | `FLOAT f`, `DOUBLE d`: `-0.0, +0.0` | `eq(d, 0.0)`; `lt(d, 0.0)` | `+0.0`; `-0.0` | `+0.0`; `-0.0` | both; none | Rule: `Double.compare`, as parquet-java | Low |
+| 7 | `UINT_32 u`: `0, 4000000000` | `lt(u, -1)` | both (`-1` is `0xFFFFFFFF`) | both | none | Rule: bit-pattern literal, as parquet-java | Low; unsigned columns are rare on the JVM |
+| 8 | `INTERVAL iv`: 310 months, 0 days, 310 s | `eq(iv, new PqInterval(0, 9300, 310_000))` | none | no spelling | the row (normalised) | Rule: `INTERVAL` defines no conversion between components | Low |
+| 9 | `INT96 ts` | `gt(ts, …)` | by instant | by bytes as a signed big-endian integer | by instant | parquet-java's comparator; the shim refuses an ordered `Binary` | Low |
+| 10 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0.002` as `00 02`, Bloom filter | `Binary` / `byte[]` `02` | none | the row, except where the Bloom filter drops it | no spelling | parquet-java defect: Bloom and dictionary test bytes, rows test value | Low; needs a padded encoding |
+| 11 | `INT32` annotated `INT(8)` storing `1000` | `eq(i8, 1000)` | the row | the row | none (reads `-24`) | Non-conforming file; Hardwood follows `getInt` | Low |
+| 12 | any column, through `parquet-java-compat` | `FilterApi.eq(intColumn("x"), null)` | throws | the null rows | — | The shim supports no null literal; use Hardwood's `isNull` | Medium for shim users; fails loudly |
+| 13 | `DECIMAL(9, 2)` over `FIXED_LEN_BYTE_ARRAY(9)` storing `0.20` | `Binary` / `byte[]` `14` | throws | the row, except where the dictionary or Bloom filter drops it | no spelling | Rule 4, and the parquet-java defect of row 10 | Low; needs a literal of another width |
+| 14 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0` as no bytes, Bloom filter | `eq(dec, BigDecimal.ZERO)` | the row | none | the row | parquet-java defect: the Bloom filter tests the literal's bytes `00` | Low; needs an empty encoding |
+| 15 | `INTERVAL` written by parquet-java (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) | `eq(iv, PqInterval)` | the row | the row | none (read as `INTEGER`) | DuckDB defect: reads the column as `INTEGER` | Low; DuckDB only |
 
 ## Validation
 
