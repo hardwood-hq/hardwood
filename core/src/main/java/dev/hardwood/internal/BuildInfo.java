@@ -14,11 +14,12 @@ import java.util.Properties;
 /// Identifies the Hardwood build the running code came from.
 ///
 /// The values are baked into `dev/hardwood/build-info.properties` at build time: the Maven
-/// project version, and the short commit hash plus working-tree cleanliness captured by the
-/// `capture-git-info` step in the parent POM. A build that runs outside a git checkout, or a
-/// classpath the resource did not survive, reports [#UNKNOWN] rather than failing — the
-/// identifier is descriptive, and every consumer of it renders the placeholder as-is so an
-/// unidentifiable build is visible rather than silently mistaken for a known one.
+/// project version, the short commit hash captured by the parent POM's `capture-git-info`
+/// execution, and the working-tree cleanliness captured by core's `capture-git-dirty` execution.
+/// A build that runs outside a git checkout, or a classpath the resource did not survive,
+/// reports [#UNKNOWN] rather than failing — the identifier is descriptive, and every consumer
+/// of it renders the placeholder as-is so an unidentifiable build is visible rather than
+/// silently mistaken for a known one.
 public final class BuildInfo {
 
     /// The value reported for a component the build could not determine.
