@@ -228,6 +228,17 @@ class PrintCommandTest implements PrintCommandContract {
                         + " before the failure; the output is incomplete.");
     }
 
+    /// A codec Hardwood does not implement is reported as a read error naming the column, like a
+    /// file it cannot read for any other reason.
+    @Test
+    void reportsACodecItDoesNotImplementAsAReadError() {
+        Cli.Result result = Cli.launch("print", "-f", Cli.file("/lzo_codec.parquet"));
+
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo("Error reading file: [lzo_codec.parquet: row group 0, column 'name', page 0] "
+                + "LZO compression is not supported");
+    }
+
     /// A value its annotation does not admit (an `INT(8)` of 300, a `UINT(8)` of 4294967295, a
     /// `TIME(MILLIS)` of a full day) prints as a marker naming the stored value and the reason; the
     /// rest of the row, and the next row, print as usual.

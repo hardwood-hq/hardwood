@@ -57,8 +57,10 @@ not decode, or whose shredded columns do not reassemble, when an accessor reads 
 column but no row group or page, and one while the footer is
 parsed names only the file. A message for a wrong call names at most the file. An `IOException`
 an `InputFile` raises while the first file is opened or its footer read carries only the
-`InputFile`'s own message. An unchecked exception a `MetadataSource` raises keeps its type and
-gains the file name; a checked one reaches the caller as the source raised it when the first
+`InputFile`'s own message. An unchecked exception a `MetadataSource` raises
+reaches the caller with the file name in its message: the exception the source raised, or
+one with that exception in its cause chain (for an `UncheckedIOException`, with its
+`IOException`). A checked one reaches the caller as the source raised it when the first
 file is opened, and as the cause of an `IOException` naming the file for a later file of a
 multi-file read. A schema rejection raised while an `AvroRowReader` is built names
 the schema path of the offending group or column, not the file.

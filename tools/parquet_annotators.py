@@ -488,6 +488,33 @@ def drop_dictionary_page_offset(path: str, column_name: str) -> None:
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def relabel_codec_as_lzo(path: str, column_name: str) -> None:
+    """Rewrite `path` so the uncompressed column chunk at dotted path `column_name` declares
+    the LZO codec.
+
+    No maintained writer emits LZO and PyArrow cannot, so the codec is relabelled in the footer.
+    The pages stay byte-for-byte as written; a reader that does not implement LZO refuses the
+    chunk before it looks at them.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    patched = 0
+    for row_group in file_metadata.row_groups:
+        for column in row_group.columns:
+            meta_data = column.meta_data
+            if meta_data is None or '.'.join(meta_data.path_in_schema) != column_name:
+                continue
+            if meta_data.codec != _parquet.CompressionCodec.UNCOMPRESSED:
+                raise ValueError(f"{path} column '{column_name}' is compressed")
+            meta_data.codec = _parquet.CompressionCodec.LZO
+            patched += 1
+
+    if patched == 0:
+        raise ValueError(f"{path} has no column chunk named '{column_name}'")
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def drop_page_index(path: str, column_name: str) -> None:
     """Rewrite `path` so the column chunk at dotted path `column_name` carries no Page Index:
     its `offset_index_offset`, `offset_index_length`, `column_index_offset` and

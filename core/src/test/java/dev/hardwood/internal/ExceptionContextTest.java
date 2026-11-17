@@ -10,12 +10,18 @@ package dev.hardwood.internal;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.DateTimeException;
+import java.util.NoSuchElementException;
+import java.util.concurrent.CompletionException;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.SchemaIncompatibleException;
+import dev.hardwood.row.VariantTypeException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -141,6 +147,71 @@ class ExceptionContextTest {
         assertThat(wrapped.getMessage()).isEqualTo("[file.parquet] nope");
     }
 
+    /// Every type the reader raises is wrapped in a new exception of the same type with the
+    /// located message.
+    @ParameterizedTest
+    @MethodSource("typesTheReaderRaises")
+    void wrapsATypeTheReaderRaisesInTheSameType(RuntimeException original) {
+        RuntimeException wrapped = ExceptionContext.wrapInSameType("[f.parquet] refused", original);
+
+        assertThat(wrapped).isExactlyInstanceOf(original.getClass())
+                .hasMessage("[f.parquet] refused")
+                .hasCause(original);
+    }
+
+    static Stream<RuntimeException> typesTheReaderRaises() {
+        return Stream.of(
+                new IllegalArgumentException("refused"),
+                new IllegalStateException("refused"),
+                new UnsupportedOperationException("refused"),
+                new NullPointerException("refused"),
+                new IndexOutOfBoundsException("refused"),
+                new ClassCastException("refused"),
+                new DateTimeException("refused"),
+                new NoSuchElementException("refused"),
+                new VariantTypeException("refused"),
+                new ParquetReadException("refused"),
+                new SchemaIncompatibleException("refused"),
+                new CompletionException("refused", null));
+    }
+
+    /// A subclass of a type the reader raises is not wrapped as that type, which would hand the
+    /// caller its supertype.
+    @Test
+    void wrapsASubclassOfATypeTheReaderRaisesAsARuntimeException() {
+        NumberFormatException original = new NumberFormatException("refused");
+
+        assertThat(ExceptionContext.wrapInSameType("[f.parquet] refused", original))
+                .isExactlyInstanceOf(RuntimeException.class)
+                .hasMessage("[f.parquet] refused")
+                .hasCause(original);
+    }
+
+    /// A rejected codec or encoding is the library's limit, and keeps saying so with the place
+    /// the read reached.
+    @Test
+    void placesAnUnsupportedOperationException() {
+        UnsupportedOperationException original = new UnsupportedOperationException("LZO compression is not supported");
+
+        RuntimeException placed = ExceptionContext.addReadContext("f.parquet", 0, "name", 0, original);
+
+        assertThat(placed).isExactlyInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("[f.parquet: row group 0, column 'name', page 0] LZO compression is not supported")
+                .hasCause(original);
+    }
+
+    @Test
+    void placesASchemaIncompatibleException() {
+        SchemaIncompatibleException original = new SchemaIncompatibleException(
+                "Column 'price' is FIXED_LEN_BYTE_ARRAY but declares no type_length");
+
+        RuntimeException placed = ExceptionContext.addFileContext("f.parquet", original);
+
+        assertThat(placed).isExactlyInstanceOf(SchemaIncompatibleException.class)
+                .hasMessage("[f.parquet] Column 'price' is FIXED_LEN_BYTE_ARRAY but declares no type_length")
+                .hasCause(original);
+    }
+
     @Test
     void idempotentWhenAlreadyWrapped() {
         IllegalStateException original = new IllegalStateException("[test.parquet] already wrapped");
@@ -204,15 +275,16 @@ class ExceptionContextTest {
         assertThat(ExceptionContext.asReadFailure(unsupported)).isSameAs(unsupported);
     }
 
+    /// A type the reader does not raise becomes a [RuntimeException], whatever constructors it
+    /// declares: no constructor is found reflectively, so the JVM and a native image agree.
     @Test
-    void fallsBackToRuntimeExceptionForExoticType() {
-        // A custom RuntimeException subclass without a (String, Throwable) constructor
-        RuntimeException original = new CustomException();
+    void wrapsATypeTheReaderDoesNotRaiseAsARuntimeException() {
+        RuntimeException original = new CustomException("custom error", null);
         RuntimeException wrapped = ExceptionContext.addFileContext("test.parquet", original);
 
-        assertThat(wrapped).isInstanceOf(RuntimeException.class);
-        assertThat(wrapped.getMessage()).isEqualTo("[test.parquet] custom error");
-        assertThat(wrapped.getCause()).isSameAs(original);
+        assertThat(wrapped).isExactlyInstanceOf(RuntimeException.class)
+                .hasMessage("[test.parquet] custom error")
+                .hasCause(original);
     }
 
     /// A truncation carries the file's name like any other failure, and leaves as a plain
@@ -301,31 +373,34 @@ class ExceptionContextTest {
         assertThat(ExceptionContext.addReadContext("f.parquet", 2, "c", 4, original)).isSameAs(original);
     }
 
-    /// What callers catch is the base type. A subclass that cannot be reconstructed still
-    /// has to leave as a [ParquetReadException], or restating it takes the failure out of
-    /// every `catch (ParquetReadException)` above and the file stops being reported as
-    /// what is wrong.
+    /// What callers catch is the base type. A subclass the reader does not raise still has to
+    /// leave as a [ParquetReadException], or wrapping it takes the failure out of every
+    /// `catch (ParquetReadException)` above and the file stops being reported as what is wrong.
     @Test
-    void keepsAnUnreconstructableReadFailureAReadFailure() {
-        RuntimeException original = new UnreconstructableReadException();
+    void keepsAReadFailureOfAnotherSubclassAReadFailure() {
+        RuntimeException original = new OtherReadException("not a type the reader raises", null);
         RuntimeException wrapped = ExceptionContext.addFileContext("f.parquet", original);
 
-        assertThat(wrapped).isInstanceOf(ParquetReadException.class);
-        assertThat(wrapped.getMessage()).isEqualTo("[f.parquet] cannot be rebuilt");
-        assertThat(wrapped.getCause()).isSameAs(original);
+        assertThat(wrapped).isExactlyInstanceOf(ParquetReadException.class)
+                .hasMessage("[f.parquet] not a type the reader raises")
+                .hasCause(original);
     }
 
-    private static class CustomException extends RuntimeException {
-        CustomException() {
-            super("custom error");
+    /// Declares the (String, Throwable) constructor a reflective wrap would have used.
+    public static class CustomException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        public CustomException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
-    private static class UnreconstructableReadException extends ParquetReadException {
+    /// Declares the (String, Throwable) constructor a reflective wrap would have used.
+    public static class OtherReadException extends ParquetReadException {
         private static final long serialVersionUID = 1L;
 
-        UnreconstructableReadException() {
-            super("cannot be rebuilt");
+        public OtherReadException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 }

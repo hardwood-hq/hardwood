@@ -114,6 +114,19 @@ class NativeBinarySmokeIT {
                 +----+----------------------------+------------------------------------+---------------------------+""");
     }
 
+    /// `print` reports a codec Hardwood does not implement as a read error because the
+    /// `UnsupportedOperationException` keeps its type through the context core adds to it. A type
+    /// rebuilt by reflection survives on the JVM but not in a native image, where the failure would
+    /// escape the command as a `RuntimeException` and its stack trace.
+    @Test
+    void reportsACodecItDoesNotImplementAsAReadError() throws IOException, InterruptedException {
+        NativeResult result = exec(nativeBinary, "print", "-f", Cli.file("/lzo_codec.parquet"));
+
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).isEqualTo("Error reading file: [lzo_codec.parquet: row group 0, column 'name',"
+                + " page 0] LZO compression is not supported");
+    }
+
     @Test
     void diveSmokeRenderExitsZero() throws IOException, InterruptedException {
         NativeResult result = exec(nativeBinary, "dive", "-f", plainFile, "--smoke-render");
