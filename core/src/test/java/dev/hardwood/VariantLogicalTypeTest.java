@@ -43,6 +43,8 @@ class VariantLogicalTypeTest {
             Paths.get("src/test/resources/variant_metadata_offset_size2.parquet");
     private static final Path FILE_BAD_METADATA =
             Paths.get("src/test/resources/variant_negative_dict_size.parquet");
+    private static final Path FILE_BAD_METADATA_NESTED =
+            Paths.get("src/test/resources/variant_negative_dict_size_nested.parquet");
     private static final Path FILE_SHREDDED_IN_STRUCT =
             Paths.get("src/test/resources/variant_shredded_in_struct_test.parquet");
 
@@ -115,16 +117,38 @@ class VariantLogicalTypeTest {
         }
     }
 
-    /// A malformed-variant decode error raised while reading is enriched with the
-    /// originating file name, so it is attributable like other read-path errors.
+    /// A malformed Variant is the file's fault, so the decode error raised while reading
+    /// names the file and the Variant column, like other read-path errors.
     @Test
-    void malformedVariantMetadataErrorCarriesFileName() throws IOException {
+    void malformedVariantMetadataErrorCarriesFileAndColumn() throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE_BAD_METADATA));
                 RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
             assertThatThrownBy(() -> rowReader.getVariant("var"))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[variant_negative_dict_size.parquet] "
+                    .hasMessage("[variant_negative_dict_size.parquet: column 'var'] "
+                            + "Variant metadata dictionary_size is not a valid unsigned int: -1");
+        }
+    }
+
+    /// The same holds for a Variant nested in a struct, a list or a map, which the error
+    /// names by its path.
+    @Test
+    void malformedNestedVariantMetadataErrorCarriesFileAndPath() throws IOException {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE_BAD_METADATA_NESTED));
+                RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            assertThatThrownBy(() -> rowReader.getStruct("s").getVariant("v"))
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("[variant_negative_dict_size_nested.parquet: column 's.v'] "
+                            + "Variant metadata dictionary_size is not a valid unsigned int: -1");
+            assertThatThrownBy(() -> rowReader.getList("l").variants().get(0))
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("[variant_negative_dict_size_nested.parquet: column 'l.list.element'] "
+                            + "Variant metadata dictionary_size is not a valid unsigned int: -1");
+            assertThatThrownBy(() -> rowReader.getMap("m").getEntries().get(0).getVariantValue())
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("[variant_negative_dict_size_nested.parquet: column 'm.key_value.value'] "
                             + "Variant metadata dictionary_size is not a valid unsigned int: -1");
         }
     }

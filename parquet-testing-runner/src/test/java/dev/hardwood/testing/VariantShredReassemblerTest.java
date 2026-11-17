@@ -99,8 +99,8 @@ class VariantShredReassemblerTest {
     /// row is read.
     @Test
     void valueAndTypedValueBothSetAtANonObjectLevelAreRejected() throws IOException {
-        assertRowRejected("case-042.parquet", "[case-042.parquet] Malformed shredded Variant: both value and typed_value are set for a non-object value");
-        assertRowRejected("case-040.parquet", "[case-040.parquet] Malformed shredded Variant: both value and typed_value are set for a non-object value");
+        assertRowRejected("case-042.parquet", "[case-042.parquet: column 'var'] Malformed shredded Variant: both value and typed_value are set for a non-object value");
+        assertRowRejected("case-040.parquet", "[case-040.parquet: column 'var'] Malformed shredded Variant: both value and typed_value are set for a non-object value");
     }
 
     /// The error cases whose rows set an object level's `typed_value` struct alongside a
@@ -108,9 +108,9 @@ class VariantShredReassemblerTest {
     /// rejected when that row is read.
     @Test
     void nonObjectValueAlongsideShreddedObjectFieldsIsRejected() throws IOException {
-        assertRowRejected("case-087.parquet", "[case-087.parquet] Malformed shredded Variant: "
+        assertRowRejected("case-087.parquet", "[case-087.parquet: column 'var'] Malformed shredded Variant: "
                 + "typed_value holds shredded object fields but value is not an object");
-        assertRowRejected("case-128.parquet", "[case-128.parquet] Malformed shredded Variant: "
+        assertRowRejected("case-128.parquet", "[case-128.parquet: column 'var'] Malformed shredded Variant: "
                 + "typed_value holds shredded object fields but value is not an object");
     }
 

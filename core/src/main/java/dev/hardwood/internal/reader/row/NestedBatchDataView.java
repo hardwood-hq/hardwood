@@ -693,10 +693,9 @@ public final class NestedBatchDataView {
     private final VariantShredReassembler variantReassembler = new VariantShredReassembler();
 
     private PqVariant createVariant(TopLevelFieldMap.FieldDesc.Variant desc) {
-        // Variant bytes are decoded lazily here, so a malformed `metadata`/`value`
-        // surfaces as a decode error from deep inside the variant codec. Enrich it
-        // (and the local projection checks) with the originating file name, matching
-        // the other accessors in this view.
+        // A projection the caller got wrong names the file only; a malformed
+        // `metadata` / `value` is the file's fault and also names the column
+        // (createVariantInternal), matching what the read pipeline reports.
         try {
             return createVariantInternal(desc);
         }
@@ -717,21 +716,25 @@ public final class NestedBatchDataView {
         byte[] metadataBytes = batchIndex.getBinary(desc.metadataCol(), metaIdx);
 
         // Shredded when the top-level ShredLevel has a typed_value component.
-        if (desc.root().typed() != null) {
-            VariantMetadata meta = new VariantMetadata(metadataBytes);
-            variantReassembler.setCurrentMetadata(meta);
-            byte[] value = variantReassembler.reassemble(desc.root(), batchIndex, rowIndex);
-            return new PqVariantImpl(meta, value, 0);
-        }
-
-        // Unshredded: the raw value bytes ARE the canonical value bytes.
+        boolean shredded = desc.root().typed() != null;
         int valueCol = desc.valueCol();
-        if (valueCol < 0) {
+        if (!shredded && valueCol < 0) {
             throw new IllegalStateException(
                     "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
         }
-        int valIdx = cachedValueIndex[valueCol];
-        byte[] value = batchIndex.getBinary(valueCol, valIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        try {
+            if (shredded) {
+                VariantMetadata meta = new VariantMetadata(metadataBytes);
+                variantReassembler.setCurrentMetadata(meta);
+                byte[] value = variantReassembler.reassemble(desc.root(), batchIndex, rowIndex);
+                return new PqVariantImpl(meta, value, 0);
+            }
+            // Unshredded: the raw value bytes ARE the canonical value bytes.
+            byte[] value = batchIndex.getBinary(valueCol, cachedValueIndex[valueCol]);
+            return new PqVariantImpl(metadataBytes, value);
+        }
+        catch (RuntimeException e) {
+            throw desc.decodeFailure(currentFileName, e);
+        }
     }
 }

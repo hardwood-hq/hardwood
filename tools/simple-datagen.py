@@ -3406,6 +3406,45 @@ annotate_group_as_variant('core/src/test/resources/variant_negative_dict_size.pa
 print("\nGenerated variant_negative_dict_size.parquet:")
 print("  - `var` metadata is corrupt (4-byte dictionary_size reads as negative)")
 
+# The same corrupt metadata in Variants nested in a struct (`s.v`), a list (`l`) and
+# a map (`m`), read through `PqStruct.getVariant`, `PqList.variants()` and
+# `PqMap.Entry.getVariantValue`: each decode failure names the file and the
+# Variant's path.
+_bad_variant_type = pa.struct([
+    pa.field('metadata', pa.binary(), False),
+    pa.field('value', pa.binary(), False),
+])
+_bad_variant = {'metadata': bytes([0xC1, 0xFF, 0xFF, 0xFF, 0xFF]), 'value': bytes([0x00])}
+
+variant_bad_meta_nested_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('s', pa.struct([pa.field('v', _bad_variant_type, True)]), True),
+    ('l', pa.list_(_bad_variant_type), True),
+    ('m', pa.map_(pa.string(), _bad_variant_type), True),
+])
+
+variant_bad_meta_nested_table = pa.table({
+    'id': [1],
+    's': [{'v': _bad_variant}],
+    'l': [[_bad_variant]],
+    'm': [[('k', _bad_variant)]],
+}, schema=variant_bad_meta_nested_schema)
+
+variant_bad_meta_nested_path = 'core/src/test/resources/variant_negative_dict_size_nested.parquet'
+pq.write_table(
+    variant_bad_meta_nested_table,
+    variant_bad_meta_nested_path,
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_at_path_as_variant(variant_bad_meta_nested_path, ['s', 'v'])
+annotate_group_at_path_as_variant(variant_bad_meta_nested_path, ['l', 'list', 'element'])
+annotate_group_at_path_as_variant(variant_bad_meta_nested_path, ['m', 'key_value', 'value'])
+
+print("\nGenerated variant_negative_dict_size_nested.parquet:")
+print("  - `s.v`, `l` elements and `m` values carry corrupt metadata (dictionary_size reads as negative)")
+
 # ============================================================================
 # Variant logical type — shredded (typed_value: int64)
 # ============================================================================
