@@ -483,7 +483,16 @@
                 <arg>--initialize-at-run-time=org.jline.nativ</arg>
                 <arg>--initialize-at-run-time=org.jline.terminal.impl.jni</arg>
                 <arg>-H:-UseServiceLoaderFeature</arg>
+                <!-- zstd-jni's classes without META-INF/versions/, see unpack-zstd-jni-classes -->
+                <arg>-cp</arg>
+                <arg>${project.build.directory}/zstd-jni-classes</arg>
               </buildArgs>
+              <exclusions>
+                <exclusion>
+                  <groupId>com.github.luben</groupId>
+                  <artifactId>zstd-jni</artifactId>
+                </exclusion>
+              </exclusions>
             </configuration>
           </plugin>
 
@@ -542,6 +551,30 @@
                       <type>jar</type>
                       <overWrite>true</overWrite>
                       <outputDirectory>${project.build.directory}/zstd-native</outputDirectory>
+                    </artifactItem>
+                  </artifactItems>
+                </configuration>
+              </execution>
+              <!-- zstd-jni is a multi-release JAR whose Java 22+ classes call libzstd through
+                   FFM, which native-image only supports with a registration for every downcall
+                   signature. The image takes zstd-jni's base classes from this directory
+                   instead of the JAR, so it uses the JNI binding, as the JVM does when started
+                   with -Djdk.util.jar.enableMultiRelease=false. -->
+              <execution>
+                <id>unpack-zstd-jni-classes</id>
+                <phase>generate-resources</phase>
+                <goals>
+                  <goal>unpack</goal>
+                </goals>
+                <configuration>
+                  <artifactItems>
+                    <artifactItem>
+                      <groupId>com.github.luben</groupId>
+                      <artifactId>zstd-jni</artifactId>
+                      <type>jar</type>
+                      <overWrite>true</overWrite>
+                      <includes>com/**</includes>
+                      <outputDirectory>${project.build.directory}/zstd-jni-classes</outputDirectory>
                     </artifactItem>
                   </artifactItems>
                 </configuration>
