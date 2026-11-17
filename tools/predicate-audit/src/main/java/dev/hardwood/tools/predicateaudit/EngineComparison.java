@@ -298,10 +298,10 @@ final class EngineComparison {
                         filter(() -> FilterApi.lt(FilterApi.doubleColumn("z"), 0.0)), "z < 0.0"),
                 new Entry("pyarrow.eq-nanosecond", "pyarrow", new Leaf("tsn", Op.EQ, Instant.EPOCH.plusNanos(base + 4)),
                         filter(() -> FilterApi.eq(FilterApi.longColumn("tsn"), base + 4)),
-                        "tsn = '2023-11-14 22:13:20.000000004+00'::TIMESTAMPTZ"),
+                        "tsn = '2023-11-14 22:13:20.000000004+00'::TIMESTAMPTZ_NS"),
                 new Entry("pyarrow.gt-nanosecond", "pyarrow", new Leaf("tsn", Op.GT, Instant.EPOCH.plusNanos(base + 4)),
                         filter(() -> FilterApi.gt(FilterApi.longColumn("tsn"), base + 4)),
-                        "tsn > '2023-11-14 22:13:20.000000004+00'::TIMESTAMPTZ"));
+                        "tsn > '2023-11-14 22:13:20.000000004+00'::TIMESTAMPTZ_NS"));
         List<String> differing = new ArrayList<>();
         for (Entry entry : probes) {
             String hardwood = answer(probed -> hardwood(probed, entry), file);

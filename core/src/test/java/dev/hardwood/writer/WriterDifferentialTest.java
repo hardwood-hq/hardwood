@@ -584,49 +584,66 @@ class WriterDifferentialTest {
     }
 
     @Test
-    void duckDbReadsByteStreamSplitDoubles(@TempDir Path dir) throws Exception {
-        // Floating point is what byte-stream-split is for, and it is also all DuckDB 1.5.6
-        // accepts: it rejects the encoding outright for INT32, INT64 and FIXED_LEN_BYTE_ARRAY,
-        // which the format has allowed since parquet-format 2.10 ("BYTE_STREAM_SPLIT encoding is
-        // only supported for FLOAT or DOUBLE data"). Those three are not left unchecked — the
-        // interop gate reads all of them back through parquet-java — so what is missing here is
-        // DuckDB's second opinion on them, not coverage.
+    void duckDbReadsByteStreamSplitColumns(@TempDir Path dir) throws Exception {
+        // DuckDB reads byte-stream-split for FLOAT, DOUBLE, INT32 and INT64, and rejects it for
+        // FIXED_LEN_BYTE_ARRAY, which the format has allowed since parquet-format 2.10
+        // ("BYTE_STREAM_SPLIT encoding is only supported for FLOAT, DOUBLE, INT32 or INT64 data").
+        // The interop gate reads FIXED_LEN_BYTE_ARRAY back through parquet-java, so what is
+        // missing there is DuckDB's second opinion, not coverage.
         int n = 20_000;
         int[] r = new int[n];
+        int[] i32 = new int[n];
+        long[] i64 = new long[n];
         double[] v = new double[n];
         for (int i = 0; i < n; i++) {
             r[i] = i;
+            i32[i] = 1_000_000 + i * 3;
+            i64[i] = 1_700_000_000_000L + i * 7L;
             v[i] = 1000.0 + i * 0.015625;
         }
 
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
+                .encoding("i32", ColumnEncoding.BYTE_STREAM_SPLIT)
+                .encoding("i64", ColumnEncoding.BYTE_STREAM_SPLIT)
                 .encoding("v", ColumnEncoding.BYTE_STREAM_SPLIT)
                 .pageTargetBytes(4096)
                 .build();
         Path file = dir.resolve("split.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
-            writer.columnWriter().writeBatch(batch -> batch.ints(0, r).doubles(1, v));
+            writer.columnWriter().writeBatch(batch -> batch.ints(0, r).ints(1, i32).longs(2, i64).doubles(3, v));
         }
 
-        List<Double> actual = new ArrayList<>();
+        List<Integer> actualI32 = new ArrayList<>();
+        List<Long> actualI64 = new ArrayList<>();
+        List<Double> actualV = new ArrayList<>();
         try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
                 Statement stmt = conn.createStatement();
                 ResultSet rs = stmt.executeQuery(
-                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+                        "SELECT i32, i64, v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
             while (rs.next()) {
-                actual.add(rs.getDouble("v"));
+                actualI32.add(rs.getInt("i32"));
+                actualI64.add(rs.getLong("i64"));
+                actualV.add(rs.getDouble("v"));
             }
         }
 
-        List<Double> expected = new ArrayList<>(n);
-        for (double value : v) {
-            expected.add(value);
+        List<Integer> expectedI32 = new ArrayList<>(n);
+        List<Long> expectedI64 = new ArrayList<>(n);
+        List<Double> expectedV = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            expectedI32.add(i32[i]);
+            expectedI64.add(i64[i]);
+            expectedV.add(v[i]);
         }
-        assertThat(actual).as("BYTE_STREAM_SPLIT values").containsExactlyElementsOf(expected);
+        assertThat(actualI32).as("BYTE_STREAM_SPLIT INT32 values").containsExactlyElementsOf(expectedI32);
+        assertThat(actualI64).as("BYTE_STREAM_SPLIT INT64 values").containsExactlyElementsOf(expectedI64);
+        assertThat(actualV).as("BYTE_STREAM_SPLIT DOUBLE values").containsExactlyElementsOf(expectedV);
     }
 
     @ParameterizedTest(name = "{0}")
