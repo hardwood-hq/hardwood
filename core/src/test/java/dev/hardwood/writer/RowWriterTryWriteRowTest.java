@@ -25,6 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -512,7 +513,7 @@ class RowWriterTryWriteRowTest {
         RowWriter rows = writer.rowWriter();
 
         assertThatThrownBy(() -> {
-            for (int i = 0; i < 4096; i++) {
+            for (int i = 0; i < RowGroupBuffer.recordsPerSlice(1); i++) {
                 int value = i;
                 rows.tryWriteRow(row -> row.setInt(0, value));
             }

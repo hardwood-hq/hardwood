@@ -160,8 +160,9 @@ abstract class ValueEncoder {
     /// The capacity of the fixed window a column reads its source through.
     ///
     /// The window is scratch, not storage: it is filled from the batch in bulk and read value by
-    /// value, so what it wants is to span the records appended between two fills — a slice — and
-    /// nothing more. Sized to the slice, a column fills it exactly once per slice.
+    /// value, so it needs to be long enough that a fill is a bulk copy and no longer. It spans
+    /// the smallest slice ([RowGroupBuffer#recordsPerSlice(int)]), so a wide schema's column fills
+    /// it once per slice and a narrow schema's, whose slices are longer, a few times.
     ///
     /// It is held to the column's starting capacity as well, so that a schema wide enough for the
     /// per-column buffers to dominate does not pay a slice-sized window on every column. A window
@@ -170,7 +171,7 @@ abstract class ValueEncoder {
         return Math.min(WINDOW_VALUES, startingCapacity);
     }
 
-    private static final int WINDOW_VALUES = 4096;
+    private static final int WINDOW_VALUES = RowGroupBuffer.MIN_SLICE_RECORDS;
 
     /// Low enough that a schema of hundreds of columns still starts near its target rather than
     /// at a per-column constant multiplied by the column count, and high enough that a column

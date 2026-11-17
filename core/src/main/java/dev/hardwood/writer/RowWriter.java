@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 
 import dev.hardwood.Experimental;
 import dev.hardwood.internal.writer.RejectedRecordException;
+import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.internal.writer.RowPlan;
 import dev.hardwood.schema.FileSchema;
 
@@ -52,16 +53,18 @@ import dev.hardwood.schema.FileSchema;
 @Experimental
 public final class RowWriter {
 
-    /// Records staged before a batch is submitted. Not a [WriterConfig] option: a batch is an
-    /// arrival unit with no effect on the file produced, whose layout the page and row-group
-    /// targets already govern.
-    private static final int STAGED_RECORDS_PER_BATCH = 1024;
-
     private final ParquetFileWriter writer;
     private final RowPlan plan;
 
+    /// Records staged before a batch is submitted: as many as the writer appends in one slice
+    /// ([RowGroupBuffer#recordsPerSlice(int)]), so a batch carries enough values per column to
+    /// make the parallel append's fixed cost per batch small. Not a [WriterConfig] option: a
+    /// batch is an arrival unit with no effect on the file produced, whose layout the page and
+    /// row-group targets already govern.
+    private final int stagedRecordsPerBatch;
+
     /// Staged variable-width payload at which a batch is submitted early, so a record of
-    /// large `BYTE_ARRAY` values cannot let [#STAGED_RECORDS_PER_BATCH] records hold
+    /// large `BYTE_ARRAY` values cannot let [#stagedRecordsPerBatch] records hold
     /// arbitrarily much.
     private final long payloadLimitBytes;
 
@@ -70,6 +73,7 @@ public final class RowWriter {
     RowWriter(ParquetFileWriter writer, FileSchema schema, WriterConfig config) {
         this.writer = writer;
         this.plan = RowPlan.build(schema, config.precisionLossPolicy());
+        this.stagedRecordsPerBatch = RowGroupBuffer.recordsPerSlice(schema.getColumnCount());
         this.payloadLimitBytes = config.rowGroupBufferTargetBytes();
     }
 
@@ -152,7 +156,8 @@ public final class RowWriter {
 
     private void commitStagedRecord() throws IOException {
         stagedRecords++;
-        if (stagedRecords >= STAGED_RECORDS_PER_BATCH || plan.variableWidthBytes() >= payloadLimitBytes) {
+        if (stagedRecords >= stagedRecordsPerBatch || plan.variableWidthBytes() >= payloadLimitBytes
+                || plan.perElementStagesFull()) {
             flush();
         }
     }

@@ -15,6 +15,7 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
+import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -125,8 +126,9 @@ class RowWriterEquivalenceTest {
                 .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
                 .build();
 
-        int records = 2_500;
-        int batchSize = 1_024;
+        // Two full staged batches and part of a third; the columnar side cuts at the same size.
+        int batchSize = RowGroupBuffer.recordsPerSlice(2);
+        int records = 2 * batchSize + batchSize / 2;
 
         InMemoryOutputFile columnarOut = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(columnarOut, schema)) {

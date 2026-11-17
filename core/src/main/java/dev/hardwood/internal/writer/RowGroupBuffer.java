@@ -29,14 +29,29 @@ import dev.hardwood.writer.DataPageVersion;
 /// schema order, each recording the file offset at which its first page lands.
 public final class RowGroupBuffer {
 
-    /// Records appended between two readings of what the row group holds.
-    ///
-    /// It bounds how far a row group can overshoot its byte target: at most one slice, and a
-    /// slice is drawn from the batch the caller has already materialized, a [ColumnSource]
-    /// holding the caller's arrays by reference rather than copying them. Small enough that the
-    /// overshoot is a fraction of the target for any record a caller can hold; large enough that
-    /// a column's slice is one bulk copy rather than a call per value.
-    private static final int SLICE_RECORDS = 4096;
+    /// Leaf values a slice aims to hold across the schema's columns. A slice's columns are
+    /// appended in parallel and waited for together ([ParallelAppend]), and the caller sizes the
+    /// slice and reads what the row group holds between slices, so a slice carries enough values
+    /// per column to make that fixed cost small: a narrow schema takes more records per slice
+    /// than a wide one. A row writer stages a slice's worth of records per batch for the same
+    /// reason ([#recordsPerSlice(int)]).
+    private static final int VALUES_PER_SLICE = 1 << 18;
+
+    /// The fewest records a slice is sized to, which a wide schema reaches.
+    static final int MIN_SLICE_RECORDS = 4096;
+
+    /// The most records a slice is sized to, which a narrow schema reaches. It bounds a row
+    /// writer's staged arrays, which hold a batch's entries: at 32,768 entries an array of
+    /// 8-byte values is 256 KiB, below half of G1's smallest region (1 MiB), so a staged array
+    /// is not allocated as a humongous object. A staged array beneath a `LIST` or `MAP` holds an
+    /// entry per element, and the row writer submits its batch early to hold it to the same
+    /// bound ([RowPlan#perElementStagesFull()]).
+    static final int MAX_SLICE_RECORDS = 32_768;
+
+    /// Records appended between two readings of what the row group holds. It does not bound
+    /// how far a row group overshoots its byte target: [#sliceThatFits] halves a slice down to
+    /// one record as the room runs out, whatever the slice started at.
+    private final int sliceRecords;
 
     private final FileSchema schema;
     private final ColumnChunkBuffer[] columns;
@@ -92,6 +107,7 @@ public final class RowGroupBuffer {
         this.schema = schema;
         this.sortOrder = sortOrder;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
+        this.sliceRecords = recordsPerSlice(columns.length);
         this.targetBytes = rowGroupBufferTargetBytes;
         this.targetRows = (int) Math.min(rowGroupTargetRows, maxRows(storeCapacity));
         // An equal share each, so the whole schema's buffers start at one row group's worth
@@ -102,6 +118,21 @@ public final class RowGroupBuffer {
                     PageLimit.MAX_PAGE_VALUES, budgetBytesPerColumn, targetRows, encodings[c], statisticsTruncationLength,
                     compressor, codec, pageVersion, storeCapacity, bloomFilterFpps[c]);
         }
+    }
+
+    /// Records per slice for a schema of `columnCount` leaf columns: [#VALUES_PER_SLICE] values
+    /// over the columns, rounded down to a power of two and held within [#MIN_SLICE_RECORDS] and
+    /// [#MAX_SLICE_RECORDS]. A power of two is the capacity a row writer's staged arrays grow to
+    /// by doubling, so a full staged batch is handed over without trimming.
+    ///
+    /// @param columnCount the schema's leaf columns, at least one
+    /// @return the records a slice, and a row writer's staged batch, is sized to
+    public static int recordsPerSlice(int columnCount) {
+        if (columnCount < 1) {
+            throw new IllegalArgumentException("A schema has at least one column: " + columnCount);
+        }
+        int records = Integer.highestOneBit(VALUES_PER_SLICE / columnCount);
+        return Math.clamp(records, MIN_SLICE_RECORDS, MAX_SLICE_RECORDS);
     }
 
     /// Appends every record `shredder` is bound to, cutting the row group through `flush` as
@@ -138,7 +169,7 @@ public final class RowGroupBuffer {
         long retained = retainedBytes();
         while (pos < rows) {
             int slice = sliceThatFits(shredder, sources, pos,
-                    Math.min(Math.min(rows - pos, SLICE_RECORDS), targetRows - rowCount),
+                    Math.min(Math.min(rows - pos, sliceRecords), targetRows - rowCount),
                     targetBytes - retained);
             if (slice == 0) {
                 // The next record would take a column chunk's store past what it can hold, a

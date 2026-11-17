@@ -52,8 +52,15 @@ public final class RowPlan {
 
     private final RowLeafNode[] leaves;
 
+    /// The stages of the leaves beneath a repeated field, which hold an entry per element.
+    private final LeafStage[] perElementStages;
+    /// The repeated fields nested in another, whose offsets and null mask hold an entry per
+    /// element of the enclosing one.
+    private final RowRepeatedNode[] nestedRepeated;
+
     private RowPlan(RowStructNode root, Nodes nodes) {
         this.root = root;
+        this.repeated = nodes.repeated().toArray(new RowRepeatedNode[0]);
         this.leaves = nodes.leaves().toArray(new RowLeafNode[0]);
         this.stages = new LeafStage[leaves.length];
         for (int i = 0; i < leaves.length; i++) {
@@ -75,9 +82,34 @@ public final class RowPlan {
         }
         this.structMarks = new int[structs.length];
 
-        this.repeated = nodes.repeated().toArray(new RowRepeatedNode[0]);
         this.repeatedMarks = new int[repeated.length];
         this.repeatedNullMarks = new int[repeated.length];
+
+        List<LeafStage> perElement = new ArrayList<>();
+        for (int i = 0; i < leaves.length; i++) {
+            if (beneathRepeated(leaves[i], null)) {
+                perElement.add(stages[i]);
+            }
+        }
+        this.perElementStages = perElement.toArray(new LeafStage[0]);
+        List<RowRepeatedNode> nested = new ArrayList<>();
+        for (RowRepeatedNode node : repeated) {
+            if (beneathRepeated(node, node)) {
+                nested.add(node);
+            }
+        }
+        this.nestedRepeated = nested.toArray(new RowRepeatedNode[0]);
+    }
+
+    /// Whether `node` lies beneath one of the plan's repeated fields other than `self`, judged
+    /// by schema path.
+    private boolean beneathRepeated(RowNode node, RowRepeatedNode self) {
+        for (RowRepeatedNode candidate : repeated) {
+            if (candidate != self && node.path.startsWith(candidate.path + ".")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Builds the plan for a schema, rejecting the shapes the write path cannot produce.
@@ -146,6 +178,28 @@ public final class RowPlan {
                 node.nulls().reset();
             }
         }
+    }
+
+    /// Whether a staged array that holds an entry per element of a `LIST` or `MAP`, rather than
+    /// one per record, has reached half of [RowGroupBuffer#MAX_SLICE_RECORDS] entries: a leaf
+    /// beneath a repeated field, or the offsets and null mask of a repeated field nested in
+    /// another. Those arrays can outgrow the record count, and a record can carry a count past
+    /// the threshold; the half left over keeps them within the most a slice holds unless a
+    /// single record has more elements than that. Always `false` for a schema without repeated
+    /// fields.
+    public boolean perElementStagesFull() {
+        int threshold = RowGroupBuffer.MAX_SLICE_RECORDS / 2;
+        for (LeafStage stage : perElementStages) {
+            if (stage.count >= threshold) {
+                return true;
+            }
+        }
+        for (RowRepeatedNode node : nestedRepeated) {
+            if (node.instanceCount() >= threshold) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// The staged payload of the variable-width columns, which bounds how much a batch holds

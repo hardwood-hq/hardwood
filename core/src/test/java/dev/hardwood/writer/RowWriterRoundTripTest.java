@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
@@ -269,6 +270,39 @@ class RowWriterRoundTripTest {
         }
     }
 
+    /// A list's elements are staged one entry each, so a batch of a list column fills its staged
+    /// arrays faster than its record count; the layer submits early, and records whose elements
+    /// straddle that point read back whole.
+    @Test
+    void listElementsPastTheStagingBoundReadBackWhole() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .list("values", RepetitionType.REQUIRED,
+                        element -> element.primitive(PhysicalType.INT64, RepetitionType.REQUIRED))
+                .build();
+        // Three elements per record, so the staged element count crosses the bound mid-record,
+        // and enough records for several batches.
+        int records = RowGroupBuffer.recordsPerSlice(1);
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            RowWriter rows = writer.rowWriter();
+            for (int i = 0; i < records; i++) {
+                long base = 3L * i;
+                rows.writeRow(row -> row.setList("values", values -> values.addLong(base).addLong(base + 1).addLong(base + 2)));
+            }
+        }
+
+        try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
+            for (int i = 0; i < records; i++) {
+                assertThat(rows.hasNext()).as("record %d", i).isTrue();
+                rows.next();
+                assertThat(rows.getList("values").longs().toArray()).as("record %d", i)
+                        .containsExactly(3L * i, 3L * i + 1, 3L * i + 2);
+            }
+            assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
     /// A nullable struct directly enclosing a list is a fifth state beyond a flat list's four:
     /// the struct itself can be absent, on top of the list being null, empty, or holding a
     /// null entry.
@@ -454,8 +488,8 @@ class RowWriterRoundTripTest {
         }
     }
 
-    /// The layer stages records into batches of a fixed size and submits them as they fill,
-    /// so a record count that straddles the boundary must still read back as one file.
+    /// The layer stages records into batches and submits them as they fill, so a record count
+    /// that straddles a batch boundary must still read back as one file.
     @Test
     void recordCountStraddlingTheBatchBoundarySurvives() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
@@ -463,7 +497,8 @@ class RowWriterRoundTripTest {
                 .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
                 .build();
 
-        int records = 2_500;
+        // Two full staged batches and part of a third.
+        int records = 2 * RowGroupBuffer.recordsPerSlice(2) + RowGroupBuffer.recordsPerSlice(2) / 2;
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
