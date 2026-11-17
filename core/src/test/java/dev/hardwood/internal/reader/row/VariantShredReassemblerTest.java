@@ -283,6 +283,30 @@ class VariantShredReassemblerTest {
                 .isEqualTo(encode(buf -> VariantValueEncoder.writeArray(buf, 0, new byte[][] { variantNull })));
     }
 
+    /// An element of an array of shredded objects whose `typed_value` struct is present with
+    /// none of its fields set, and whose `value` is null, is an empty object.
+    @Test
+    void shreddedObjectElementWithEmptyStructIsAnEmptyObject() {
+        ShredLevel fieldA = new ShredLevel(-1, 0, new Typed.Primitive(2, 6, PhysicalType.INT64, null));
+        ShredLevel element = new ShredLevel(1, 3,
+                new Typed.Object(4, new String[] { "a" }, new ShredLevel[] { fieldA }));
+        ShredLevel root = new ShredLevel(0, 1, new Typed.Array(1, 2, 1, element));
+
+        // col 1 = the element's `value`, null; col 2 = field "a"'s typed_value, defined up to
+        // the element's struct
+        NestedBatchIndex batch = NestedBatchIndex.buildFromBatches(new NestedBatch[] {
+                binaryColumn(new byte[0], 0),
+                binaryColumn(new byte[0], 2),
+                longColumn(0L, 4, null) }, null, null, null, null);
+
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        byte[] emptyObject = encode(buf -> VariantValueEncoder.writeObject(buf, 0, new int[0], new byte[0][], -1));
+        assertThat(reassembler.reassemble(root, batch, 0))
+                .isEqualTo(encode(buf -> VariantValueEncoder.writeArray(buf, 0, new byte[][] { emptyObject })));
+    }
+
     /// An element of an array of shredded objects whose `typed_value` struct is set beside a
     /// `value` that is no object is rejected.
     @Test

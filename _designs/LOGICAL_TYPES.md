@@ -156,7 +156,7 @@ A Variant column is a group annotated `VARIANT(specVersion)` whose children hold
 - A missing field is omitted from its object. A present Variant group with neither side populated reads as a Variant `NULL`, top-level and as a struct field alike (the reassembler produces it); a null Variant group reads as Java `null`.
 - Every call returns the reassembled value in a fresh array, which `PqVariantImpl` wraps.
 
-Shredded reassembly is checked byte for byte against the `shredded_variant/*.variant.bin` expectations of apache/parquet-testing.
+Shredded reassembly is checked byte for byte against the `shredded_variant/*.variant.bin` expectations of apache/parquet-testing, and each fixture its `cases.json` classifies as an error case is rejected.
 
 **Not read as values.** The leaves under a Variant group hold an encoded payload; a comparison or set predicate on one is refused at resolution, and `isNull` / `isNotNull` apply ([PREDICATE_MODEL.md](PREDICATE_MODEL.md)). The Avro binding materializes a Variant as a record of its two byte fields ([AVRO_BINDING.md](AVRO_BINDING.md)). The writer does not build Variant groups: `LogicalTypeValidator` rejects `VARIANT` on a declared leaf ([WRITER_INPUT.md](WRITER_INPUT.md#boundaries)).
 
@@ -231,7 +231,6 @@ Tests: `FileSchemaLogicalTypeTest`, `LogicalTypeWriterTest`, `LogicalTypeReferen
 - **Shredded Variant bytes are materialized eagerly** (#308): every `getVariant` on a shredded column re-encodes and copies the whole value, even for a caller that reads one field.
 - **Bare repeated Variant groups** (#1378). A repeated `VARIANT` group outside a `LIST` or `MAP` group is refused rather than read as a list of variants.
 - **Variant spec version** (#777). Any `specVersion >= 1` is accepted and parsed as version 1.
-- **Shredding invariants** (#315, #812). The reader does not reject every shredded layout parquet-testing classifies as invalid, such as a non-object level with both `value` and `typed_value` populated, where the typed side wins.
 - **No Variant-aware filtering or path projection** (#309, #700), and no typed primitive-array access on `PqVariant` (#314).
 - **`intersects` is row-group coarse** (#414). No row-level geometry test; a surviving row group returns every row.
 - **`ColumnReader` exposes physical values only** (#514).

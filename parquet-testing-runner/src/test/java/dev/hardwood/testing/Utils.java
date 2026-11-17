@@ -8,6 +8,7 @@
 package dev.hardwood.testing;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -16,10 +17,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 
 import org.apache.avro.Schema;
@@ -38,6 +41,9 @@ import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.MessageTypeParser;
 import org.assertj.core.api.ThrowableAssert;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import dev.hardwood.Validity;
 import dev.hardwood.metadata.LogicalType;
@@ -122,7 +128,7 @@ public class Utils {
 
             // shredded_variant fixtures are skipped outside this list: spec-invalid
             // ones by isInvalidFixture() (the `-INVALID` suffix), error cases by
-            // SHREDDED_VARIANT_ERROR_CASES. Both are folded in by isSkipped().
+            // isShreddedVariantErrorCase() (cases.json). Both are folded in by isSkipped().
 
             // Intentionally corrupted CRC checksums (rejected by Hardwood CRC validation)
             "datapage_v1-corrupt-checksum.parquet",
@@ -139,28 +145,58 @@ public class Utils {
             "ARROW-GH-47662.parquet"
     );
 
-    /// `shredded_variant` fixtures cases.json classifies as error cases: each
-    /// carries an `error_message` and no variant payload, so a conforming reader
-    /// is expected to reject it. parquet-java cannot decode them as a reference
-    /// and there is no `.variant.bin` oracle, so both comparison paths skip them.
-    /// Single source shared with [VariantShredReassemblerTest]. See #812.
-    static final Set<String> SHREDDED_VARIANT_ERROR_CASES = Set.of(
-            "case-040.parquet", // Invalid variant, conflicting value and typed_value
-            "case-042.parquet", // Invalid variant, conflicting value and typed_value
-            "case-087.parquet", // Invalid variant, non-object value with shredded fields
-            "case-127.parquet", // Unsupported shredded value type: INTEGER(32,false)
-            "case-128.parquet", // Invalid variant, non-object value with shredded fields
-            "case-137.parquet"  // Unsupported shredded value type: fixed_len_byte_array(4)
-    );
-
     /// Combined skip predicate for the row/column comparison tests: a fixture is
-    /// skipped when explicitly listed in [#SKIPPED_FILES] or
-    /// [#SHREDDED_VARIANT_ERROR_CASES], or flagged invalid-per-spec by
+    /// skipped when explicitly listed in [#SKIPPED_FILES], classified as an error
+    /// case by [#isShreddedVariantErrorCase], or flagged invalid-per-spec by
     /// [#isInvalidFixture].
     static boolean isSkipped(String fileName) {
         return SKIPPED_FILES.contains(fileName)
-                || SHREDDED_VARIANT_ERROR_CASES.contains(fileName)
+                || isShreddedVariantErrorCase(fileName)
                 || isInvalidFixture(fileName);
+    }
+
+    /// Returns true for `shredded_variant` fixtures that `cases.json` classifies as
+    /// error cases. Neither comparison path has a reference for them: parquet-java
+    /// cannot decode them and there is no `.variant.bin` oracle. Hardwood rejects
+    /// them, which [VariantShredReassemblerTest] asserts.
+    static boolean isShreddedVariantErrorCase(String fileName) {
+        return ShreddedVariantErrorCases.ERROR_MESSAGES.containsKey(fileName);
+    }
+
+    /// The `shredded_variant` error cases from `cases.json`, keyed by fixture file name,
+    /// with the `error_message` that describes why a reader must reject each.
+    static Map<String, String> shreddedVariantErrorCases() {
+        return ShreddedVariantErrorCases.ERROR_MESSAGES;
+    }
+
+    /// Loads `cases.json` on first use, after the corpus has been cloned.
+    private static final class ShreddedVariantErrorCases {
+
+        static final Map<String, String> ERROR_MESSAGES = load();
+
+        private static Map<String, String> load() {
+            try {
+                Path casesJson = ParquetTestingRepoCloner.ensureCloned().resolve("shredded_variant/cases.json");
+                Map<String, String> errorMessages = new TreeMap<>();
+                for (JsonNode testCase : new ObjectMapper().readTree(casesJson.toFile())) {
+                    JsonNode errorMessage = testCase.get("error_message");
+                    if (errorMessage == null) {
+                        continue;
+                    }
+                    JsonNode parquetFile = testCase.path("parquet_file");
+                    if (!parquetFile.isTextual()) {
+                        throw new IllegalStateException("cases.json error case "
+                                + testCase.path("case_number").asText("<no case_number>")
+                                + " names no parquet_file");
+                    }
+                    errorMessages.put(parquetFile.asText(), errorMessage.asText());
+                }
+                return Collections.unmodifiableMap(errorMessages);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
     }
 
     /// Returns true for `shredded_variant` fixtures the parquet-testing corpus

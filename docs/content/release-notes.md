@@ -52,6 +52,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A shredded Variant row that sets both `value` and `typed_value` for a value that is not an object fails the read with `ParquetReadException`, instead of reading `typed_value` and dropping `value` ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
 - An array element of a shredded Variant whose shredded object is null reads its `value`, such as a Variant `NULL`, instead of failing the read ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
+- An array element of a shredded Variant whose shredded object is present with no fields set reads as an empty object instead of Variant `NULL` ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
 - An S3 response body that sends no bytes for `requestTimeout` fails its request, which is retried, instead of blocking the read without bound ([#1393](https://github.com/hardwood-hq/hardwood/issues/1393))
 - An S3 read fails with `ParquetReadException` when the object was replaced since the file was opened, and opening an S3 file fails when the endpoint ignores the `Range` header of an object larger than the open-time tail ([#1686](https://github.com/hardwood-hq/hardwood/issues/1686))
 - An S3 range read whose connection fails midway re-requests only the bytes not yet received, within the retry budget ([#1666](https://github.com/hardwood-hq/hardwood/issues/1666))
