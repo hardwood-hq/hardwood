@@ -28,24 +28,29 @@ import dev.hardwood.schema.ColumnProjection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A read under a read-ahead buffer of no bytes still reads every row: the work its consumer's
-/// next batch needs starts uncharged, one job at a time.
-class NoReadAheadBufferTest {
+/// A read under a heap quota with room for one page of each column, and so hardly any for
+/// decoding ahead, still reads every row: the pages its consumer's next batch needs take the
+/// room the read reserves for them, and wait for running tasks' buffers rather than fail.
+class TightHeapQuotaTest {
+
+    private static final int COLUMNS = 4;
+    private static final int PAGE_VALUES = 5 * 1024 * 1024;
+    /// one page of `long` values per column
+    private static final long QUOTA = (long) COLUMNS * PAGE_VALUES * Long.BYTES;
 
     @AfterEach
     void clearBuffer() {
         System.clearProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY);
     }
 
-    /// Dictionaries and pages above the retention size in every column, read with no read-ahead
-    /// buffer, from the pages' headers and from an offset index: the read returns every row, on a
-    /// pool and without one.
+    /// Dictionaries and pages above the retention size in every column, read under a quota of one
+    /// page of `long` values per column, from the pages' headers and from an offset index: the
+    /// read returns every row, on a pool and without one.
     @ParameterizedTest
     @CsvSource({ "0, false", "1, false", "4, false", "0, true", "4, true" })
-    void readWithNoReadAheadBufferReadsEveryRow(int threads, boolean indexed) throws IOException {
-        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
-        int pageValues = 5 * 1024 * 1024;
-        byte[] file = RleExpansionFile.buildWide(4, 3, 2 * DecodeBuffers.RETAINED_BYTES, pageValues, indexed);
+    void readUnderAQuotaOfOnePagePerColumnReadsEveryRow(int threads, boolean indexed) throws IOException {
+        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Long.toString(QUOTA));
+        byte[] file = RleExpansionFile.buildWide(COLUMNS, 3, 2 * DecodeBuffers.RETAINED_BYTES, PAGE_VALUES, indexed);
 
         try (HardwoodContext context = HardwoodContext.create(threads);
                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
@@ -55,18 +60,17 @@ class NoReadAheadBufferTest {
                 rows.next();
                 count++;
             }
-            assertThat(count).isEqualTo(3L * pageValues);
+            assertThat(count).isEqualTo(3L * PAGE_VALUES);
         }
     }
 
-    /// The file of [#readWithNoReadAheadBufferReadsEveryRow] read through column readers: the read
-    /// returns every row.
+    /// The file of [#readUnderAQuotaOfOnePagePerColumnReadsEveryRow] read through column readers:
+    /// the read returns every row.
     @ParameterizedTest
     @CsvSource({ "0, false", "4, false", "0, true", "4, true" })
-    void columnReadWithNoReadAheadBufferReadsEveryRow(int threads, boolean indexed) throws IOException {
-        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
-        int pageValues = 5 * 1024 * 1024;
-        byte[] file = RleExpansionFile.buildWide(4, 3, 2 * DecodeBuffers.RETAINED_BYTES, pageValues, indexed);
+    void columnReadUnderAQuotaOfOnePagePerColumnReadsEveryRow(int threads, boolean indexed) throws IOException {
+        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Long.toString(QUOTA));
+        byte[] file = RleExpansionFile.buildWide(COLUMNS, 3, 2 * DecodeBuffers.RETAINED_BYTES, PAGE_VALUES, indexed);
 
         try (HardwoodContext context = HardwoodContext.create(threads);
                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
@@ -75,7 +79,7 @@ class NoReadAheadBufferTest {
             while (columns.nextBatch()) {
                 count += columns.getRecordCount();
             }
-            assertThat(count).isEqualTo(3L * pageValues);
+            assertThat(count).isEqualTo(3L * PAGE_VALUES);
         }
     }
 

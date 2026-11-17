@@ -8,11 +8,13 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.IntToLongFunction;
 import java.util.stream.Stream;
 
 import dev.hardwood.internal.DecodeBuffers;
@@ -60,6 +62,9 @@ final class JobScheduler {
 
     /// A job: `cost` bytes, taken by `charge` as it starts, then `work` outside the lock; as it
     /// ends, under the lock, `onValue` takes the value its work produced, or `onFailure` its failure.
+    /// A decode may also keep `keptCost` bytes past its end, the batches it filled ahead of the
+    /// consumer: taken by `kept` as it starts, and returned by whoever holds them then
+    /// ([#release(Charge)]), or as it fails.
     static final class Job<T> {
         /// lowered while the job waits, where the read learns it serves an earlier row ([#lower])
         private long key;
@@ -67,6 +72,11 @@ final class JobScheduler {
         private final Kind kind;
         /// what holds the bytes once started; `null` for a job that holds none
         private final Charge charge;
+        private final long keptCost;
+        /// what holds the bytes kept past its end; `null` for a job that keeps none
+        private final Charge kept;
+        /// the column whose page it decodes, for the read's reserve; `-1` for none
+        private final int column;
         private final Work<T> work;
         private final Consumer<T> onValue;
         private final Consumer<Throwable> onFailure;
@@ -76,10 +86,18 @@ final class JobScheduler {
 
         Job(long key, long cost, Kind kind, Charge charge, Work<T> work, Consumer<T> onValue,
             Consumer<Throwable> onFailure) {
+            this(key, cost, kind, charge, 0, null, -1, work, onValue, onFailure);
+        }
+
+        Job(long key, long cost, Kind kind, Charge charge, long keptCost, Charge kept, int column, Work<T> work,
+            Consumer<T> onValue, Consumer<Throwable> onFailure) {
             this.key = key;
             this.cost = cost;
             this.kind = kind;
             this.charge = charge;
+            this.keptCost = keptCost;
+            this.kept = kept;
+            this.column = column;
             this.work = work;
             this.onValue = onValue;
             this.onFailure = onFailure;
@@ -102,6 +120,11 @@ final class JobScheduler {
         /// What holds its bytes once started, `null` for a job that holds none.
         Charge charge() {
             return charge;
+        }
+
+        /// What holds the bytes it keeps past its end, `null` for a job that keeps none.
+        Charge kept() {
+            return kept;
         }
 
         Work<T> work() {
@@ -158,6 +181,24 @@ final class JobScheduler {
         }
     }
 
+    /// A data page need could force later whose decode is not added yet: at its key, what its
+    /// decode would allocate at most ([#reserve]), or, for a page whose bound is not known yet (a
+    /// binary page whose header has not arrived), a mark that no decode past it starts ahead.
+    static final class Pending {
+        private final long key;
+        private final long seq;
+        private long bytes;
+        private boolean unbounded;
+
+        private Pending(long key, long seq) {
+            this.key = key;
+            this.seq = seq;
+        }
+    }
+
+    private static final Comparator<Pending> PENDING_ORDER = (a, b) -> a.key != b.key ? Long.compare(a.key, b.key)
+            : Long.compare(a.seq, b.seq);
+
     private static final Comparator<Job<?>> ORDER = (a, b) -> a.key() != b.key() ? Long.compare(a.key(), b.key())
             : Long.compare(a.seq(), b.seq());
     private static final Kind[] KINDS = Kind.values();
@@ -176,6 +217,13 @@ final class JobScheduler {
 
     /// ready jobs by kind, each lowest key first
     private final List<TreeSet<Job<?>>> ready = Stream.of(KINDS).map(k -> new TreeSet<>(ORDER)).toList();
+    /// per column, its ready decodes that keep bytes past their end, lowest key first ([#reserve])
+    private final List<TreeSet<Job<?>>> waitingKept = new ArrayList<>();
+    /// per column, its data pages whose decode is not added yet, lowest key first ([#reserve])
+    private final List<TreeSet<Pending>> pending = new ArrayList<>();
+    /// per flat column, the key past its last page found, `-1` for a column not registered ([#known])
+    private long[] knownEnd = new long[0];
+    private long pendingSeq;
     private long seq;
     private int cpuInFlight;
     /// the jobs started and not ended, lowest key first
@@ -186,6 +234,13 @@ final class JobScheduler {
     /// the highest key of a fetch started that holds bytes: how far the read's data has reached
     private long fetchedTo;
     private long held;
+    /// of `held`, the buffers of this read's running tasks, which their ends release
+    private long heldTransient;
+    private long releasedTransient;
+    /// per column, the bytes charged for its free holders
+    private IntToLongFunction freeHeldBytes = column -> 0;
+    /// set once [#releaseAll] has returned every charge
+    private boolean releasedAll;
     /// bytes returned under the lock, for the driver to release to R once it has let go of it
     private long released;
 
@@ -204,6 +259,81 @@ final class JobScheduler {
     void add(Job<?> job) {
         job.added(seq++);
         ready.get(job.kind().ordinal()).add(job);
+        if (keeps(job)) {
+            waitingKept(job.column).add(job);
+        }
+    }
+
+    /// Registers a data page of `column` at `key` whose decode is not added yet; its bound is set
+    /// with [#bound].
+    Pending pend(int column, long key) {
+        Pending p = new Pending(key, pendingSeq++);
+        while (pending.size() <= column) {
+            pending.add(new TreeSet<>(PENDING_ORDER));
+        }
+        pending.get(column).add(p);
+        return p;
+    }
+
+    /// Sets what the decode of the page `p` stands for would allocate at most, `bytes`, or that
+    /// it is not known yet (`unbounded`).
+    static void bound(Pending p, long bytes, boolean unbounded) {
+        p.bytes = bytes;
+        p.unbounded = unbounded;
+    }
+
+    /// The page `p` stands for has its decode added, or will not decode.
+    void unpend(int column, Pending p) {
+        if (column < pending.size()) {
+            pending.get(column).remove(p);
+        }
+    }
+
+    /// Records that `column`'s pages are known up to `end`, the key past the last one found; a
+    /// column registered with `0` knows none yet.
+    void known(int column, long end) {
+        if (column >= knownEnd.length) {
+            int from = knownEnd.length;
+            knownEnd = Arrays.copyOf(knownEnd, column + 1);
+            Arrays.fill(knownEnd, from, knownEnd.length, -1);
+        }
+        knownEnd[column] = Math.max(knownEnd[column], end);
+    }
+
+    /// Whether some page need could force before `job`'s is not bounded yet, which leaves no room
+    /// to reserve for it: a registered column whose pages are not known as far as `job`'s key,
+    /// or a page below it whose bound is not known (a binary page whose header has not arrived).
+    private boolean pastUnknown(Job<?> job) {
+        for (int column = 0; column < knownEnd.length; column++) {
+            long end = knownEnd[column];
+            if (end >= 0 && end <= job.key()) {
+                return true;
+            }
+        }
+        for (TreeSet<Pending> pages : pending) {
+            for (Pending p : pages) {
+                if (p.key >= job.key()) {
+                    break;
+                }
+                if (p.unbounded) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// Whether `job` is a decode that keeps bytes past its end, which the read's reserve counts.
+    private static boolean keeps(Job<?> job) {
+        return job.kind() == Kind.DECODE && job.kept() != null && job.column >= 0;
+    }
+
+    /// The waiting decodes of `column` that keep bytes, lowest key first.
+    private TreeSet<Job<?>> waitingKept(int column) {
+        while (waitingKept.size() <= column) {
+            waitingKept.add(new TreeSet<>(ORDER));
+        }
+        return waitingKept.get(column);
     }
 
     /// Keys `job` at `key` where that is lower and the job has not started: work the read keyed by
@@ -211,14 +341,24 @@ final class JobScheduler {
     void lower(Job<?> job, long key) {
         TreeSet<Job<?>> set = ready.get(job.kind().ordinal());
         if (key < job.key() && set.remove(job)) {
+            if (keeps(job)) {
+                waitingKept(job.column).remove(job);
+            }
             job.keyAt(key);
             set.add(job);
+            if (keeps(job)) {
+                waitingKept(job.column).add(job);
+            }
         }
     }
 
     /// Takes `job` out before it starts; returns whether it was waiting.
     boolean remove(Job<?> job) {
-        return ready.get(job.kind().ordinal()).remove(job);
+        boolean removed = ready.get(job.kind().ordinal()).remove(job);
+        if (removed && keeps(job)) {
+            waitingKept(job.column).remove(job);
+        }
+        return removed;
     }
 
     /// Starts what the position and the bounds let start, lowest key first.
@@ -258,12 +398,51 @@ final class JobScheduler {
         if (ahead && fetchedAhead >= fetchAheadLimit) {
             return FETCHES;
         }
+        // a page decoded ahead of need takes room only where room is reserved for every page need
+        // could force before it, which takes every column's pages below it being known
+        if (!needed && keeps(job) && pastUnknown(job)) {
+            return DECODES;
+        }
         // the job need forces holds what it reads uncharged: R holds what the read chose to start
         long charged = forced ? 0 : job.cost();
-        if (!charge(charged)) {
+        long kept = job.kept() == null ? 0 : job.keptCost;
+        // the batches of a page the consumer's next batch needs are taken from the reserve, which
+        // kept room for them, whether its decode is forced or starts beside the forced one
+        boolean keptNeeded = needed && kept > 0;
+        if (keptNeeded) {
+            // the cells it fills with its column's free holders, charged already, allocate nothing;
+            // its true-up settles what it did allocate
+            kept = Math.max(0, kept - freeHeldBytes.applyAsLong(job.column));
+        }
+        if (!forced && !charge(charged + (keptNeeded ? 0 : kept), !keptNeeded && kept > 0 ? reserve(job) : 0)) {
             // a plan starts first whatever its key, so a refused one holds back only the plans after
             // it: work keyed below it, need's among it, is still tried
             return job.kind() == Kind.PLAN ? PLANS : FETCHES | DECODES;
+        }
+        if (keptNeeded && kept > 0 && budget.held() + kept > budget.limit()) {
+            if (budget.heldBeyondTasks() + kept <= budget.limit()) {
+                // running tasks' buffers take the room, and their ends release it whatever the
+                // consumer does: the job waits for them
+                if (!forced && charged > 0) {
+                    budget.release(charged);
+                    held -= charged;
+                }
+                waitForRoom();
+                return DECODES;
+            }
+        }
+        if (keptNeeded) {
+            // what does not fit the ledger beside what only consumers' progress releases fails the
+            // job, which allocates nothing
+            long total = budget.held() + kept;
+            if (kept > 0 && total > budget.limit()) {
+                job.kept().refused(kept, total, budget.limit());
+                kept = 0;
+            }
+            else {
+                budget.charge(kept);
+                held += kept;
+            }
         }
         if (needed) {
             job.startedNeeded();
@@ -271,6 +450,14 @@ final class JobScheduler {
         }
         if (job.charge() != null) {
             job.charge().take(charged, ahead);
+            if (job.cpu() && charged > 0) {
+                job.charge().transientBuffers();
+                budget.markTransient(charged);
+                heldTransient += charged;
+            }
+        }
+        if (job.kept() != null) {
+            job.kept().take(kept, false);
         }
         if (ahead) {
             fetchedAhead += job.cost();
@@ -317,6 +504,9 @@ final class JobScheduler {
             if (job.charge() != null) {
                 release(job.charge());
             }
+            if (job.kept() != null) {
+                release(job.kept());
+            }
             job.onFailure().accept(t);
         };
     }
@@ -330,11 +520,54 @@ final class JobScheduler {
         }
     }
 
-    /// Takes `bytes` from R where they fit; else waits for its next release.
-    private boolean charge(long bytes) {
+    /// Sets the bytes charged for each column's free holders, which a decode takes before it
+    /// allocates ([#reserve]).
+    void freeHeldBytes(IntToLongFunction freeHeldBytes) {
+        this.freeHeldBytes = freeHeldBytes;
+    }
+
+    /// What need could force next beside `job`: per column, what its first page not decoded,
+    /// `job`'s aside, would allocate beyond the column's free holders: a decode added and not
+    /// started, or a page whose decode is not added yet ([#pend]), whichever comes first. Decodes
+    /// start in key order, so where they stop, the next decode need forces in a column is that
+    /// one; a column's free holders only grow until that decode takes them.
+    private long reserve(Job<?> job) {
+        long reserve = 0;
+        for (int column = 0; column < Math.max(waitingKept.size(), pending.size()); column++) {
+            Job<?> first = null;
+            if (column < waitingKept.size()) {
+                TreeSet<Job<?>> waiting = waitingKept.get(column);
+                first = waiting.isEmpty() ? null : waiting.first();
+                if (first == job) {
+                    first = waiting.higher(job);
+                }
+            }
+            Pending page = column < pending.size() && !pending.get(column).isEmpty() ? pending.get(column).first() : null;
+            long bytes;
+            if (page != null && (first == null || page.key < first.key())) {
+                bytes = page.bytes;
+            }
+            else {
+                bytes = first == null ? 0 : first.keptCost;
+            }
+            reserve += Math.max(0, bytes - freeHeldBytes.applyAsLong(column));
+        }
+        return reserve;
+    }
+
+    /// Waits for R's next release, which runs `wake` once.
+    private void waitForRoom() {
+        long seen = budget.releases();
+        if (waitingForRoom.compareAndSet(false, true)) {
+            budget.whenReleased(seen, roomReleased);
+        }
+    }
+
+    /// Takes `bytes` from R where they fit beside `reserve`; else waits for its next release.
+    private boolean charge(long bytes, long reserve) {
         if (bytes > 0) {
             long seen = budget.releases();
-            if (!budget.tryCharge(bytes)) {
+            if (!budget.tryCharge(bytes, reserve)) {
                 if (waitingForRoom.compareAndSet(false, true)) {
                     budget.whenReleased(seen, roomReleased);
                 }
@@ -351,6 +584,10 @@ final class JobScheduler {
         if (bytes > 0) {
             held -= bytes;
             released += bytes;
+            if (charge.isTransient()) {
+                heldTransient -= bytes;
+                releasedTransient += bytes;
+            }
             if (charge.ahead()) {
                 fetchedAhead -= bytes;
             }
@@ -398,11 +635,39 @@ final class JobScheduler {
         return r;
     }
 
+    /// Of the bytes [#takeReleased] returned last, those counted as running tasks' buffers.
+    long takeReleasedTransient() {
+        long r = releasedTransient;
+        releasedTransient = 0;
+        return r;
+    }
+
+    /// Charges `bytes` a decode allocated beyond what it was admitted with, whether or not they fit:
+    /// they are allocated already.
+    void chargeHeld(long bytes) {
+        if (!releasedAll) {
+            budget.charge(bytes);
+            held += bytes;
+        }
+    }
+
+    /// Returns `bytes` a batch the consumer took was charged; nothing once [#releaseAll] has
+    /// returned every charge.
+    void releaseTaken(long bytes) {
+        if (!releasedAll) {
+            held -= bytes;
+            released += bytes;
+        }
+    }
+
     /// Returns every charge still held, once nothing is in flight, and stops waiting for R.
     void releaseAll() {
+        releasedAll = true;
         budget.cancel(roomReleased);
         released += held;
         held = 0;
+        releasedTransient += heldTransient;
+        heldTransient = 0;
         fetchedAhead = 0;
     }
 }

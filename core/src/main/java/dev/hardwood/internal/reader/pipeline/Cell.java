@@ -152,6 +152,12 @@ public final class Cell implements BatchCell<FlatBatch> {
         return columnBatch;
     }
 
+
+    /// The records the arrays of the column's batch take.
+    public int capacity() {
+        return capacity;
+    }
+
     @Override
     public long batchIndex() {
         return batchIndex;

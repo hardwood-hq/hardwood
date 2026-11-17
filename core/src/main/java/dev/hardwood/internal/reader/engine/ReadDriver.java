@@ -183,6 +183,7 @@ final class ReadDriver {
             List<JobScheduler.Job<?>> dispatch = List.of();
             Throwable undispatched = null;
             long released;
+            long releasedTransient;
             int ended;
             try {
                 try {
@@ -197,6 +198,7 @@ final class ReadDriver {
             }
             finally {
                 released = scheduler.takeReleased();
+                releasedTransient = scheduler.takeReleasedTransient();
                 ended = finished;
                 finished = 0;
                 try {
@@ -210,7 +212,7 @@ final class ReadDriver {
             }
             try {
                 if (released > 0) {
-                    readAhead.release(released);
+                    readAhead.release(released, releasedTransient);
                 }
             }
             finally {

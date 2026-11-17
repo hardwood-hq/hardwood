@@ -47,4 +47,10 @@ public final class Segment {
     public Cell cell() {
         return cell;
     }
+
+    /// Where its first record lands in its cell: `0` for the segment of the page that opens the
+    /// cell, whose decode allocates the cell's arrays.
+    public int cellOffset() {
+        return cellOffset;
+    }
 }

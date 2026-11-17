@@ -27,7 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// consumer waiting, however many of the read's threads meet it and wherever: in a decode, or in
 /// reporting the decode's failure, which allocates too.
 ///
-/// The reads run in a child JVM of 64 MiB with the working-set limit lifted, over 40 `INT64`
+/// The reads run in a child JVM of 64 MiB with the working-set limit and the heap quota lifted,
+/// which would otherwise fail them cleanly first, over 40 `INT64`
 /// columns whose one data page each holds 400,000 values (3.2 MB of batches per column, 128 MB
 /// in all). Each JVM reads the file three times on one context, so that a read that leaves the
 /// context's pool threads broken fails the reads after it. The child reports through its exit
@@ -44,6 +45,7 @@ class HeapExhaustionTest {
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-Xmx64m",
                 "-Dhardwood.internal.maxWorkingSetBytes=" + Long.MAX_VALUE,
+                "-Dhardwood.internal.readAheadBytes=" + Long.MAX_VALUE,
                 "-cp", System.getProperty("java.class.path"),
                 Reads.class.getName(), Integer.toString(threads)))
                 .redirectOutput(stdout.toFile())

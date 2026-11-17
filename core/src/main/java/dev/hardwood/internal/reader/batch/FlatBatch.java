@@ -33,6 +33,27 @@ public final class FlatBatch {
     /// at a file or by a row cap, can hold far fewer rows than its arrays have room for, and
     /// a detaching exchange limits its ready queue by this so that the limit bounds memory.
     public int capacity;
+    /// The bytes the read charged for the batch while it held it, returned to its ledger once the
+    /// consumer takes the batch ([BatchExchange#setTakenListener]); `0` for none.
+    public long heldBytes;
+
+    /// The bytes of the arrays it holds: its values, definition levels and matches. Its validity,
+    /// which it takes from its cell only as the cell completes, is not counted.
+    public long arrayBytes() {
+        long bytes = switch (values) {
+            case null -> 0;
+            case int[] a -> (long) a.length * Integer.BYTES;
+            case long[] a -> (long) a.length * Long.BYTES;
+            case double[] a -> (long) a.length * Double.BYTES;
+            case float[] a -> (long) a.length * Float.BYTES;
+            case boolean[] a -> a.length;
+            case BinaryBatchValues binary -> binary.arrayBytes();
+            default -> throw new IllegalStateException("Unexpected batch values: " + values.getClass());
+        };
+        bytes += definitionLevels == null ? 0 : (long) definitionLevels.length * Integer.BYTES;
+        bytes += matches == null ? 0 : (long) matches.length * Long.BYTES;
+        return bytes;
+    }
     public String fileName;
     /// Per-batch matches mask, populated by
     /// [dev.hardwood.internal.predicate.ColumnBatchMatcher] on the task that completes the

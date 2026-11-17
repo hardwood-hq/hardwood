@@ -105,12 +105,14 @@ public final class ReadEngine implements Closeable {
         driver = new ReadDriver(context, readQueue, fetchAheadBytes(),
                 this::reconcile, t -> readFailure.failAt(0, t), this::abandon);
         JobScheduler scheduler = driver.scheduler();
+        scheduler.freeHeldBytes(column -> this.exchanges.get(column).freeHeldBytes());
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
         ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), read.files().footersSupplied());
         cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
                 batchSize, context.decompressorFactory(), filters);
-        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context);
+        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context,
+                batchSize);
         HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, cells, columns, readFailure,
                 read.pruning().prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
         planner = new RowGroupPlanner(scheduler, fetcher, publisher, readFailure, tracker, scanner, columns,
@@ -125,6 +127,7 @@ public final class ReadEngine implements Closeable {
                 started.get(c).setQueue(readQueue);
             }
             started.get(c).setRoomListener(() -> driver.update(() -> publisher.publishable(column)));
+            started.get(c).setTakenListener(bytes -> driver.update(() -> scheduler.releaseTaken(bytes)));
         }
         try {
             driver.locked(() -> footers.start(read.file(), schema, read.firstKept(), read.firstOrdinals()));

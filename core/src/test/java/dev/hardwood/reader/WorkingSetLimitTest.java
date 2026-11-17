@@ -27,18 +27,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// working-set limit before anything is allocated for it.
 ///
 /// The files are `INT64` columns whose dictionary page holds 1 MiB of zeros and whose data page
-/// holds 1,024 values in 4 bytes. Each column holds its dictionary's entries (1,048,576 bytes) and
-/// its page's batches (8,192 bytes); the read holds the largest task buffers once, the
-/// dictionary page's decompressed bytes (1,048,576 bytes).
+/// holds 1,024 values in 4 bytes. Each column holds its dictionary's entries (1,048,576 bytes); the
+/// read holds the largest task buffers once, the dictionary page's decompressed bytes (1,048,576
+/// bytes). A flat column's batches are charged on the context's heap quota instead.
 class WorkingSetLimitTest {
 
     private static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
+    private static final String HEAP_QUOTA_PROPERTY = "hardwood.internal.readAheadBytes";
 
     private static final String LIMIT_OF_ONE = "more than its limit of 1 (hardwood.internal.maxWorkingSetBytes)";
+    private static final String QUOTA_OF_ONE = "more than its limit of 1 (hardwood.internal.readAheadBytes)";
 
     private static final int DICTIONARY_BYTES = 1024 * 1024;
     private static final int PAGE_VALUES = 1024;
-    private static final long COLUMN_BYTES = DICTIONARY_BYTES + 8_192;
+    private static final long COLUMN_BYTES = DICTIONARY_BYTES;
 
     /// The working set of a read of `columns` columns.
     private static long workingSet(int columns) {
@@ -48,6 +50,7 @@ class WorkingSetLimitTest {
     @AfterEach
     void clearLimit() {
         System.clearProperty(MAX_WORKING_SET_BYTES_PROPERTY);
+        System.clearProperty(HEAP_QUOTA_PROPERTY);
     }
 
     @Test
@@ -63,12 +66,12 @@ class WorkingSetLimitTest {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet(1) - 1));
         byte[] file = RleExpansionFile.buildWide(1, 1, DICTIONARY_BYTES, PAGE_VALUES);
 
-        // one column: its dictionary and then its data page are the only charges, in that order
+        // one column: its dictionary is the only charge past the task buffers its data page shares
         assertThatThrownBy(() -> countRows(file, 0))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'c0', page 0] Data page needs 8196 bytes to decode, "
-                        + "which takes the read's working set to 2105344 bytes, more than its limit of 2105343 "
-                        + "(hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage("[<memory>: row group 0, column 'c0', dictionary page] Dictionary page needs 2097152 "
+                        + "bytes to decode, which takes the read's working set to 2097152 bytes, more than its "
+                        + "limit of 2097151 (hardwood.internal.maxWorkingSetBytes)");
     }
 
     @Test
@@ -82,7 +85,7 @@ class WorkingSetLimitTest {
     @Test
     void batchSpanningRowGroupsCountsTheDictionaryOfEach() throws IOException {
         // One batch holds the rows of all three row groups, so their three dictionaries at once
-        long workingSet = 3L * DICTIONARY_BYTES + 8_192 + DICTIONARY_BYTES;
+        long workingSet = 3L * DICTIONARY_BYTES + DICTIONARY_BYTES;
         byte[] file = RleExpansionFile.buildWide(1, 3, DICTIONARY_BYTES, PAGE_VALUES);
 
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet));
@@ -95,8 +98,8 @@ class WorkingSetLimitTest {
         String crossing = "[<memory>: row group 2, column 'c0', dictionary page] Dictionary page needs 2097152 bytes";
         assertThatThrownBy(() -> countValues(file, 3 * PAGE_VALUES))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage(crossing + " to decode, which takes the read's working set to 4202496 bytes, more than "
-                        + "its limit of 4202495 (hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage(crossing + " to decode, which takes the read's working set to 4194304 bytes, more than "
+                        + "its limit of 4194303 (hardwood.internal.maxWorkingSetBytes)");
     }
 
     @Test
@@ -107,7 +110,7 @@ class WorkingSetLimitTest {
         // The column's walk takes the third row group's dictionary before the first page is
         // decoded, so that charge crosses.
         String crossing = "[<memory>: row group 2, column 'c0'] Dictionary page needs 1048576 bytes";
-        long workingSet = 3L * DICTIONARY_BYTES + 8_192 + 4;
+        long workingSet = 3L * DICTIONARY_BYTES + 4;
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(workingSet - 1));
         byte[] file = RleExpansionFile.buildWide(1, 3, DICTIONARY_BYTES, PAGE_VALUES);
 
@@ -121,8 +124,8 @@ class WorkingSetLimitTest {
             }
         })
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage(crossing + " to decode, which takes the read's working set to 3153924 bytes, more "
-                        + "than its limit of 3153923 (hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage(crossing + " to decode, which takes the read's working set to 3145732 bytes, more "
+                        + "than its limit of 3145731 (hardwood.internal.maxWorkingSetBytes)");
     }
 
     @Test
@@ -147,29 +150,32 @@ class WorkingSetLimitTest {
                 .hasMessage("hardwood.internal.maxWorkingSetBytes must be a positive byte count, but was: 0");
     }
 
-    /// Every way a read reaches a page charges it before decompressing it, so a limit of one byte
-    /// fails each read: nested and binary columns, `DATA_PAGE_V2`, optional columns, the page
-    /// index's plan and the column reader. Without a pool the read's order is the same each run,
+    /// Every way a read reaches a page charges it before decompressing it, so a working-set limit
+    /// and a heap quota of one byte fail each read: nested and binary columns on the working set, a
+    /// flat column's batches on the quota, `DATA_PAGE_V2`, optional columns, the page index's plan
+    /// and the column reader. Without a pool the read's order is the same each run,
     /// so the same charges are made and the same page fails.
     @ParameterizedTest
     @CsvSource(delimiter = '|', textBlock = """
             compat_maxrep_list.parquet         | [compat_maxrep_list.parquet: row group 0, column 'g.list.element', page 0] Data page needs 96 bytes to decode, which takes the read's working set to 96 bytes, %1$s
             misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 2128 bytes, %1$s
             dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1600 bytes, %1$s
-            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes to decode, which takes the read's working set to 9376 bytes, %1$s
-            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 800 bytes to decode, which takes the read's working set to 800 bytes, %1$s
+            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 80000 bytes for its batches, which takes the context's heap quota to 80000 bytes, %2$s
+            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 8000 bytes for its batches, which takes the context's heap quota to 8000 bytes, %2$s
             """)
     void everyPathChargesBeforeDecompressing(String file, String message) {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, "1");
+        System.setProperty(HEAP_QUOTA_PROPERTY, "1");
 
         assertThatThrownBy(() -> readAll(Path.of("src/test/resources", file)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage(message.formatted(LIMIT_OF_ONE));
+                .hasMessage(message.formatted(LIMIT_OF_ONE, QUOTA_OF_ONE));
     }
 
     @Test
     void columnReaderChargesBeforeDecompressing() {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, "1");
+        System.setProperty(HEAP_QUOTA_PROPERTY, "1");
 
         assertThatThrownBy(() -> {
             try (HardwoodContext context = HardwoodContext.create(0);
@@ -182,8 +188,8 @@ class WorkingSetLimitTest {
             }
         })
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 8192 bytes "
-                        + "to decode, which takes the read's working set to 8192 bytes, " + LIMIT_OF_ONE);
+                .hasMessage("[page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 80000 bytes "
+                        + "for its batches, which takes the context's heap quota to 80000 bytes, " + QUOTA_OF_ONE);
     }
 
     private static void readAll(Path file) throws IOException {

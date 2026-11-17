@@ -67,7 +67,7 @@ final class ColumnContext {
 
     /// The working set's handle for `column`.
     WorkingSet.Column workingSet(int column) {
-        return workingSet.column(column, schemas[column]);
+        return workingSet.column(column, schemas[column], !nested(column));
     }
 
     /// Runs `charge`, which charges a dictionary of `column`'s chunk of `u`, against the batches

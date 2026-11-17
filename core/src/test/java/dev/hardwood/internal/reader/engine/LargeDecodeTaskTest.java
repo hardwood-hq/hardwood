@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// A read's decodes, and the dictionary parses its dictionary pruning runs, whose buffers
 /// exceed the retention size run beside the one its consumer's next batch needs only within the
-/// read-ahead buffer.
+/// context's heap quota.
 class LargeDecodeTaskTest {
 
     private static final int COLUMNS = 8;
@@ -36,6 +36,9 @@ class LargeDecodeTaskTest {
     private static final int ROW_GROUPS = 16;
     /// what each row group's dictionary decompresses to; its parse holds as much again in entries
     private static final int DICTIONARY_BYTES = 128 * 1024 * 1024;
+    /// the heap quota: room for the pages' batches, and for none of the buffers above, so that
+    /// only the decode or parse need forces holds them
+    private static final int QUOTA = 1024 * 1024;
 
     @AfterEach
     void clearBuffer() {
@@ -43,13 +46,13 @@ class LargeDecodeTaskTest {
     }
 
     /// Eight columns whose one data page each decompresses to 160 MiB, a few KiB on disk, read
-    /// with no read-ahead buffer on a pool of eight threads and on none: the read returns every row
+    /// under [#QUOTA] on a pool of eight threads and on none: the read returns every row
     /// in a heap that cannot hold the eight pages' buffers at once.
     @ParameterizedTest
     @ValueSource(ints = { 8, 0 })
     void largePagesOfEveryColumnReadInAHeapSmallerThanTheirSum(int threads) throws IOException {
         assertThat(Runtime.getRuntime().maxMemory()).isLessThan((long) COLUMNS * PAGE_BYTES);
-        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
+        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Integer.toString(QUOTA));
         byte[] file = RleExpansionFile.buildWide(COLUMNS, 1, Long.BYTES, PAGE_VALUES, false, PAGE_BYTES);
 
         try (HardwoodContext context = HardwoodContext.create(threads);
@@ -66,15 +69,15 @@ class LargeDecodeTaskTest {
     }
 
     /// Sixteen row groups whose one column's dictionary decompresses to 128 MiB of zeros, a few
-    /// KiB on disk, read under a filter for a value none holds, with no read-ahead buffer on a
-    /// pool of eight threads and on none: each row group's dictionary pruning parses its
+    /// KiB on disk, read under a filter for a value none holds, under [#QUOTA] on a pool of eight
+    /// threads and on none: each row group's dictionary pruning parses its
     /// dictionary and drops it, and the read returns no row in a heap that cannot hold eight
     /// parses at once.
     @ParameterizedTest
     @ValueSource(ints = { 8, 0 })
     void largeDictionariesPruneEveryRowGroupInAHeapSmallerThanTheirSum(int threads) throws IOException {
         assertThat(Runtime.getRuntime().maxMemory()).isLessThan(8L * 2 * DICTIONARY_BYTES);
-        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
+        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Integer.toString(QUOTA));
         byte[] file = RleExpansionFile.buildWide(1, ROW_GROUPS, DICTIONARY_BYTES, PAGE_VALUES);
 
         try (HardwoodContext context = HardwoodContext.create(threads);

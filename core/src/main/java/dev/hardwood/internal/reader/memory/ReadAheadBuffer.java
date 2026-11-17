@@ -30,10 +30,12 @@ public final class ReadAheadBuffer {
     public static final String READ_AHEAD_BYTES_PROPERTY = "hardwood.internal.readAheadBytes";
 
     /// The share of the maximum heap a context's read-ahead may take without the override.
-    private static final int DEFAULT_HEAP_PERCENT = 25;
+    private static final int DEFAULT_HEAP_PERCENT = 75;
 
     private final long limit;
     private final AtomicLong held = new AtomicLong();
+    /// of what is held, the buffers of running tasks ([#markTransient])
+    private final AtomicLong transientHeld = new AtomicLong();
     /// Run once on the next release each; registered by what a charge that did not fit deferred.
     private final ConcurrentLinkedQueue<Runnable> waiters = new ConcurrentLinkedQueue<>();
     /// Counts the releases, so that a waiter registered after a release it raced with runs at once.
@@ -79,10 +81,50 @@ public final class ReadAheadBuffer {
         return true;
     }
 
+    /// Charges `bytes` if they fit beside what is held and `reserve`, which stays free.
+    ///
+    /// @return whether they were charged
+    public boolean tryCharge(long bytes, long reserve) {
+        long current;
+        do {
+            current = held.get();
+            if (current + bytes + reserve > limit) {
+                return false;
+            }
+        }
+        while (!held.compareAndSet(current, current + bytes));
+        return true;
+    }
+
+    /// Charges `bytes` whether or not they fit: what need forces, which the reserve kept room for.
+    public void charge(long bytes) {
+        held.addAndGet(bytes);
+    }
+
     /// Releases `bytes` charged before, and runs what waited for a release.
     public void release(long bytes) {
+        release(bytes, 0);
+    }
+
+    /// Releases `bytes` charged before, `transientBytes` of them task buffers counted with
+    /// [#markTransient], and runs what waited for a release. The transient count drops after
+    /// what is held, so a reader of the two never takes more of the held bytes for transient than
+    /// they are.
+    public void release(long bytes, long transientBytes) {
         held.addAndGet(-bytes);
+        transientHeld.addAndGet(-transientBytes);
         wake();
+    }
+
+    /// Counts `bytes` charged before as a running task's buffers, which its end releases whatever
+    /// the consumer does.
+    public void markTransient(long bytes) {
+        transientHeld.addAndGet(bytes);
+    }
+
+    /// What it holds beyond running tasks' buffers: what only a consumer's progress releases.
+    public long heldBeyondTasks() {
+        return held.get() - transientHeld.get();
     }
 
     /// Runs what waited for a release: room was released, which lets a deferred job of any read
@@ -138,6 +180,11 @@ public final class ReadAheadBuffer {
     }
 
     /// The bytes held, for tests.
+    /// The most it holds.
+    public long limit() {
+        return limit;
+    }
+
     public long held() {
         return held.get();
     }

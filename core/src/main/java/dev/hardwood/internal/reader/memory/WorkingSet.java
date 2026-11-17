@@ -89,7 +89,15 @@ public final class WorkingSet {
     /// The handle through which the decoded column at `index` charges its dictionaries and
     /// pages.
     public Column column(int index, ColumnSchema schema) {
-        return new Column(this, index, schema);
+        return column(index, schema, false);
+    }
+
+    /// The handle through which the decoded column at `index` charges its dictionaries and
+    /// pages; with `batchesOnLedger`, its pages' batches are charged on the context's ledger from
+    /// their decode until the consumer takes them, and the working set charges only the buffers
+    /// its pages' tasks take.
+    public Column column(int index, ColumnSchema schema, boolean batchesOnLedger) {
+        return new Column(this, index, schema, batchesOnLedger);
     }
 
     /// Tells the column at `index` that its pages now come from a row group the read's batch plan
@@ -108,6 +116,7 @@ public final class WorkingSet {
     /// whenever it is set. A value that is not a positive byte count is rejected rather than
     /// replaced by the default: an override that does not take effect leaves the reader refusing
     /// the very file it was set for.
+
     static long maxWorkingSetBytes() {
         return InternalProperty.longValue(MAX_WORKING_SET_BYTES_PROPERTY,
                 Runtime.getRuntime().maxMemory() / 100 * DEFAULT_HEAP_PERCENT, 1, "a positive byte count");
@@ -152,11 +161,14 @@ public final class WorkingSet {
         private final WorkingSet set;
         private final int index;
         private final ColumnSchema schema;
+        /// whether its pages' batches are charged on the context's ledger rather than here
+        private final boolean batchesOnLedger;
 
-        private Column(WorkingSet set, int index, ColumnSchema schema) {
+        private Column(WorkingSet set, int index, ColumnSchema schema, boolean batchesOnLedger) {
             this.set = set;
             this.index = index;
             this.schema = schema;
+            this.batchesOnLedger = batchesOnLedger;
         }
 
         /// Charges a dictionary page before it is decompressed and parsed: the entries the column
@@ -209,7 +221,7 @@ public final class WorkingSet {
         /// @throws ParquetReadException if the read's working set would exceed its limit
         public void page(int numValues, int uncompressedSize, long decodedBytes, Encoding encoding, boolean kept,
                          long valueBytes) {
-            long batches = batches(numValues, uncompressedSize, kept) + valueBytes;
+            long batches = (batchesOnLedger ? 0 : batches(numValues, uncompressedSize, kept)) + valueBytes;
             long buffers = pageBuffers(schema, numValues, decodedBytes, encoding) + valueBytes;
             if (kept) {
                 set.charge(set.pages, index, batches + buffers, 0, batches + buffers, "Data page");
@@ -241,12 +253,19 @@ public final class WorkingSet {
         /// The bytes a page's batches hold: a value width per value and, for a binary column, its
         /// bytes; with the levels and offsets each batch keeps where the column keeps the page.
         private long batches(int numValues, int uncompressedSize, boolean kept) {
+            long batches = batchBytes(schema, numValues, uncompressedSize);
+            if (kept) {
+                batches += (long) numValues * Integer.BYTES * NESTED_BATCH_INTS;
+            }
+            return batches;
+        }
+
+        /// The bytes the batches of a flat page of `schema`'s column hold once it is decoded: a value
+        /// width per value and, for a binary column, the page's bytes.
+        public static long batchBytes(ColumnSchema schema, int numValues, int uncompressedSize) {
             long batches = (long) numValues * valueWidth(schema.type());
             if (!isNumeric(schema.type())) {
                 batches += uncompressedSize;
-            }
-            if (kept) {
-                batches += (long) numValues * Integer.BYTES * NESTED_BATCH_INTS;
             }
             return batches;
         }
@@ -271,6 +290,11 @@ public final class WorkingSet {
                 case PLAIN, BYTE_STREAM_SPLIT -> isNumeric(type) ? 0 : 1;
                 case PLAIN_DICTIONARY, RLE_DICTIONARY, RLE, DELTA_BINARY_PACKED, ALP, BIT_PACKED, UNKNOWN -> 0;
             };
+        }
+
+        /// Whether `schema`'s column holds numeric values, which a batch holds by value width alone.
+        public static boolean numeric(ColumnSchema schema) {
+            return isNumeric(schema.type());
         }
 
         private static boolean isNumeric(PhysicalType type) {

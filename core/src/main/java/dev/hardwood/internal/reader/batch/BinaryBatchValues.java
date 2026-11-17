@@ -81,6 +81,27 @@ public final class BinaryBatchValues {
     /// Whether the batch is a recycled holder's, which keeps its full chunks for its next fill
     /// ([#prepareForFill]), and whose fills take full chunks so that they can be reused.
     private boolean keepsChunks;
+    /// The bytes of the arrays it holds: its views, buffer ids, entry ids, its own chunks and the
+    /// spare ones. A dictionary's chunks, which every batch drawing on it shares, are not its own.
+    /// Read while other segments of its cell may still be filling it, the count of its chunks can
+    /// be stale; a later measure counts them.
+    public long arrayBytes() {
+        long bytes = intArrayBytes(starts) + intArrayBytes(ends) + intArrayBytes(bufferIds) + intArrayBytes(dictIndices);
+        byte[][] own = buffers;
+        for (int i = 0, n = Math.min(bufferCount, own == null ? 0 : own.length); i < n; i++) {
+            bytes += own[i] == null ? 0 : own[i].length;
+        }
+        byte[][] spares = spare;
+        for (int i = 0, n = Math.min(spareCount, spares.length); i < n; i++) {
+            bytes += spares[i] == null ? 0 : spares[i].length;
+        }
+        return bytes;
+    }
+
+    private static long intArrayBytes(int[] array) {
+        return array == null ? 0 : (long) array.length * Integer.BYTES;
+    }
+
     /// Full chunks of the last fill, for the next one; `[0, spareCount)` in use.
     private byte[][] spare = new byte[0][];
     private int spareCount;

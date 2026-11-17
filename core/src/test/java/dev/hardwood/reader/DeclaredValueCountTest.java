@@ -25,6 +25,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class DeclaredValueCountTest {
 
     private static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
+    private static final String HEAP_QUOTA_PROPERTY = "hardwood.internal.readAheadBytes";
+    private static final int ROWS_READ = 100_000;
 
     @Test
     void pageOfMaxIntValuesFailsInsteadOfAllocating() {
@@ -62,36 +64,33 @@ class DeclaredValueCountTest {
     }
 
     @Test
-    void pageAtTheLongestArrayPassesItsHeader() {
-        // Its header is accepted; the working set then holds the page
+    void pageAtTheLongestArrayPassesItsHeader() throws IOException {
+        // Its header is accepted, and its decode allocates batches for the rows read alone, which
+        // a heap quota and a working set of 1 MiB hold
+        System.setProperty(HEAP_QUOTA_PROPERTY, Integer.toString(1024 * 1024));
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Integer.toString(1024 * 1024));
         int values = Integer.MAX_VALUE - 9;
         try {
-            assertThatThrownBy(() -> countRows(RleExpansionFile.build(values, 1, values)))
-                    .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 17179869111 bytes "
-                            + "to decode, which takes the read's working set to 17179869120 bytes, more than its "
-                            + "limit of 1048576 (hardwood.internal.maxWorkingSetBytes)");
+            assertThat(countRows(RleExpansionFile.build(values, 1, values))).isEqualTo(ROWS_READ);
         }
         finally {
+            System.clearProperty(HEAP_QUOTA_PROPERTY);
             System.clearProperty(MAX_WORKING_SET_BYTES_PROPERTY);
         }
     }
 
     @Test
-    void pageOfManyValuesIsHeldToTheWorkingSet() {
-        // A count within the longest array passes the header; the read fails on what decoding
-        // the page would hold, before allocating it
+    void pageOfManyValuesAllocatesForTheRowsReadAlone() throws IOException {
+        // A count within the longest array passes the header; the page's decode fills the batches
+        // of the rows read, which a heap quota and a working set of 1 MiB hold
+        System.setProperty(HEAP_QUOTA_PROPERTY, Integer.toString(1024 * 1024));
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Integer.toString(1024 * 1024));
         int values = 64 * 1024 * 1024 + 1;
         try {
-            assertThatThrownBy(() -> countRows(RleExpansionFile.build(values, 1, values)))
-                    .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>: row group 0, column 'b', page 0] Data page needs 536870926 bytes to "
-                            + "decode, which takes the read's working set to 536870936 bytes, more than its limit "
-                            + "of 1048576 (hardwood.internal.maxWorkingSetBytes)");
+            assertThat(countRows(RleExpansionFile.build(values, 1, values))).isEqualTo(ROWS_READ);
         }
         finally {
+            System.clearProperty(HEAP_QUOTA_PROPERTY);
             System.clearProperty(MAX_WORKING_SET_BYTES_PROPERTY);
         }
     }
@@ -135,7 +134,7 @@ class DeclaredValueCountTest {
     /// value.
     private static long countRows(byte[] file) throws IOException {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
-                RowReader rows = reader.buildRowReader().head(100_000).build()) {
+                RowReader rows = reader.buildRowReader().head(ROWS_READ).build()) {
             long count = 0;
             while (rows.hasNext()) {
                 rows.next();

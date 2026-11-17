@@ -14,6 +14,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongConsumer;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
@@ -73,6 +74,8 @@ public class BatchExchange<B> {
     private final ToIntFunction<B> batchRows;
     private final long readyRowLimit;
     private final AtomicLong readyRows = new AtomicLong();
+    /// the bytes charged for the holders in the free queue
+    private final AtomicLong freeHeldBytes = new AtomicLong();
 
     private final AtomicReference<Throwable> error = new AtomicReference<>();
     /// The failure the read was abandoned with ([#abandon]), raised ahead of every batch not yet
@@ -82,6 +85,8 @@ public class BatchExchange<B> {
     /// Run on the consumer's thread after it takes a batch, for a column whose [#tryPublish]
     /// found no room; `null` for none.
     private volatile Runnable roomListener;
+    /// Run on the consumer's thread with the bytes a batch it takes was charged; `null` for none.
+    private volatile LongConsumer takenListener;
     /// The read's queue on a context without a pool, which [#poll()] runs; `null` where the
     /// context's pool runs the read.
     private ReadQueue queue;
@@ -234,7 +239,41 @@ public class BatchExchange<B> {
     /// returned holder's, or none.
     public B newBatch() {
         B free = freeQueue != null ? freeQueue.poll() : null;
-        return free != null ? free : batchFactory.get();
+        if (free != null) {
+            freeHeldBytes.addAndGet(-heldBytesOf(free));
+            return free;
+        }
+        return batchFactory.get();
+    }
+
+    /// The bytes the read charged for the holders in the free queue, which a cell takes before it
+    /// allocates new ones.
+    public long freeHeldBytes() {
+        return freeHeldBytes.get();
+    }
+
+    private static long heldBytesOf(Object batch) {
+        if (batch instanceof FlatBatch flat) {
+            return flat.heldBytes;
+        }
+        if (batch instanceof NestedBatch nested) {
+            return nested.heldBytes;
+        }
+        return 0;
+    }
+
+    /// Returns `batch` to the free queue, counting the bytes it was charged.
+    private void offerFree(B batch) {
+        freeHeldBytes.addAndGet(heldBytesOf(batch));
+        if (!freeQueue.offer(batch)) {
+            freeHeldBytes.addAndGet(-heldBytesOf(batch));
+        }
+    }
+
+    /// Sets what runs on the consumer's thread with the bytes a batch it takes was charged
+    /// ([FlatBatch#heldBytes], [NestedBatch#heldBytes]), where they are not `0`.
+    public void setTakenListener(LongConsumer listener) {
+        this.takenListener = listener;
     }
 
     /// Sets what runs on the consumer's thread each time it takes a batch: for a column whose
@@ -273,11 +312,33 @@ public class BatchExchange<B> {
             B taken = (B) batch;
             readyRows.addAndGet(-rowsOf(taken));
         }
+        LongConsumer released = takenListener;
+        // a recycled holder stays the read's, charged, until the read ends
+        if (released != null && freeQueue == null) {
+            long bytes = takeHeldBytes(batch);
+            if (bytes > 0) {
+                released.accept(bytes);
+            }
+        }
         Runnable listener = roomListener;
         if (listener != null) {
             listener.run();
         }
         return batch;
+    }
+
+    /// The bytes `batch` was charged, which it holds no longer.
+    private static long takeHeldBytes(Object batch) {
+        long bytes = 0;
+        if (batch instanceof FlatBatch flat) {
+            bytes = flat.heldBytes;
+            flat.heldBytes = 0;
+        }
+        else if (batch instanceof NestedBatch nested) {
+            bytes = nested.heldBytes;
+            nested.heldBytes = 0;
+        }
+        return bytes;
     }
 
     /// A batch of no rows counts as one, so that the row limit also bounds the batches queued.
@@ -485,7 +546,7 @@ public class BatchExchange<B> {
             throw new IllegalStateException(
                     "recycle() is not valid in detaching mode for column '" + columnName + "'");
         }
-        freeQueue.offer(batch);
+        offerFree(batch);
     }
 
     /// Drains any batches left in the ready queue back to the free pool.
@@ -505,7 +566,7 @@ public class BatchExchange<B> {
             if (leftover != END_OF_STREAM) {
                 @SuppressWarnings("unchecked")
                 B batch = (B) leftover;
-                freeQueue.offer(batch);
+                offerFree(batch);
             }
         }
         if (finished) {

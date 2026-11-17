@@ -99,6 +99,9 @@ leaves less of Q to its reads.
 
 ## Open
 
+- **Small heaps.** At 64 MiB, reads under the default quota still ran out of memory (stage 1, `HeapExhaustionTest` with the quota in force): memory charged nowhere yet dominates there.
+- **The cost near the limit.** On the 2016 taxi file the reserve holds back decodes ahead at 512m, ~5 % slower than `main`; at 680m and above the difference is within noise (~1.5 %, not yet attributed: profile at stage 4).
+
 - **Pages decoded through levels.** A nested page's batches depend on its records, which its
   header does not give; the reserve and charge take an upper bound from its value count.
 
@@ -107,8 +110,8 @@ leaves less of Q to its reads.
 | # | Stage | Gate before the next stage |
 | --- | --- | --- |
 | 0 | An `OutOfMemoryError` on a Hardwood thread reaches the reader's thread instead of hanging the read | done (5f67dfbbd) |
-| 1 | Current charges and the reserve, on the flat path: a page's batches charged from its decode until published, batch by batch; the working set's high-water marks replaced; the reserve per read; decodes ahead admitted by the rule | charges ≥ live bytes (heap dumps of reads paused mid-read; the smallest heap a read runs in also holds the collector's headroom) on the taxi and wide-schema files, pool and zero threads; taxi read time at 680m and 1g as `main` |
-| 2 | The nested path, dictionaries, fetches ahead and retained decode buffers on the ledger; one ledger per context for all reads | the shapes of the threat model under a child JVM: each either reads or fails with `ParquetReadException`, never `OutOfMemoryError`, at heaps from 128m to 1g, including several concurrent reads on one context |
+| 1 | Current charges and the reserve, on the flat path: a page's batches charged from its decode until the consumer takes them (a recycled holder until the reader closes), trued up to the arrays held; the working set's flat batches moved to the ledger; the reserve per read over found and queued pages; decodes ahead admitted by the rule, not past a column whose next page is not found; pages below need charged from the reserve, waiting for running tasks' buffers | done: charges equal live batch arrays in heap dumps of the taxi read; N300 taxi read +4.9 % at 512m, +1.3 % at 680m, +1.7 % at 1g against `main` |
+| 2 | The nested path, dictionaries, tasks within the retention size and the buffer sets each thread keeps, the holders an exchange preallocates, and a binary page whose header has not arrived on a remote read (decodes ahead wait for it) on the ledger; the R property becomes Q | the shapes of the threat model under a child JVM: each either reads or fails with `ParquetReadException`, never `OutOfMemoryError`, at heaps from 128m to 1g, including several concurrent reads on one context |
 | 3 | The public option on the context builder, user docs, internal properties removed | docs reviewed |
 | 4 | Performance | flat, nested and 1BRC benchmarks neutral on the container and the N300 |
 
