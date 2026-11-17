@@ -56,7 +56,7 @@ the branch of the engine's start decision that started a read.
 | Layer | Event | One event per | Emitted at |
 | --- | --- | --- | --- |
 | Intent | `dev.hardwood.FetchRequest` | request the read planned | `RangeFetch.of` (three sites), `FooterReader.startFooter`, `openFirstFile`, a `FileMetadataCache.getFile` that loads |
-| Reality | `dev.hardwood.FetchAttempt` | execution of a request against its `InputFile` | the work of a `RangeFetcher.fetch` job, `FileMetadataCache.readFooter` |
+| Reality | `dev.hardwood.FetchAttempt` | execution of a request against its `InputFile` | the work of a `RangeFetcher.fetch` job, `FileMetadataCache.readFooter`, `ParquetFileReader.openFirstFile` |
 | Below the `InputFile` | `dev.hardwood.S3Request` | HTTP request the S3 backend sends | `S3Api.sendWithRetry` |
 | Link | `dev.hardwood.FetchLink` | request served by a load it did not start | `FileMetadataCache.claim` |
 | Release | `dev.hardwood.FetchRelease` | request whose bytes the read gives back | `JobScheduler.release`, `FooterReader.returnCharge` |
@@ -73,9 +73,8 @@ files"](../_designs/READ_PIPELINE.md#units-and-files), "Opening files ahead").
 serves emits one `FetchLink`. A link arises only where readers share a file set: two reads of one
 reader that need a later file's footer at overlapping times, or a lookup outside a read
 (`getFileMetaData(i)`) whose footer a read then claims before it is dropped. A read never requests
-the first file's footer, which the open loaded, a footer of a file in memory runs no attempt to
-link to, and a footer requested after the read dropped it is read again, so a trace of one read
-has no link. Retries and resumes of a GET happen inside one `readRange`, and
+the first file's footer, which the open loaded, and a footer requested after the read dropped it
+is read again, so a trace of one read has no link. Retries and resumes of a GET happen inside one `readRange`, and
 `S3Request` joins its attempt on `attemptId` and `part`, never on thread nesting.
 
 ```
@@ -140,17 +139,19 @@ request names no useful bytes when it is created: the next piece of a chunk with
 whose pages its scan finds only as the bytes arrive, and a pruning step's missing input, which the
 next step parses.
 
-**Waiting to start.** `waited` is how long the attempt's job sat in the read's queue, and
-`heldBy` is the bound that held it back last: `none`, `read-ahead-budget` (R was full) or
-`fetch-ahead-limit` (F was reached). A job queued behind one a bound refused counts as held by that
-bound. The forced fetch records `none`, and a retry, which runs at once, records 0 and `none`. The
+**Waiting to start.** `waited` runs from the job's queuing to its attempt's start, the hand-off
+to a thread included, and `heldBy` is the bound that held it back last: `none`,
+`read-ahead-budget` (R was full) or `fetch-ahead-limit` (F was reached). A job queued behind one a
+bound refused counts as held by that bound. The forced fetch records `none`, and a retry, which
+runs at once, records 0 and `none`. A long wait with `none` is time no bound accounts for, such
+as the read applying other results under its lock before it next asks the scheduler. The
 request's own event marks when it was created, which can be well before it was queued.
 
 **Release.** `FetchRelease` is emitted when the read gives a request's bytes back: when the last
 page, batch, scan or planner step reading a range is done (`releasedBy`), or when the consumer
 passes a footer's file (`file`). It records what the request held of R and of F; a forced fetch
-holds neither. Each request that ran ends in one release, unless the read closes first, which gives
-everything back at once and records nothing. Decodes also hold room in R but make no request, so an
+holds neither. Each request that ran ends in one release, unless the read closes or fails first,
+which gives everything back at once and records nothing. Decodes also hold room in R but make no request, so an
 attempt can show `read-ahead-budget` with no release explaining it.
 
 `S3Request` is one event type for both directions, keyed by `operation` (`GetObject` today), so
@@ -289,7 +290,7 @@ attempt of the load it hands over, a failed load included. `FetchRelease` is emi
 read's lock at the release. #1734, if it lands first, gives buffers back to the `InputFile` at the
 same release, and the event's description says so. Done when each request has one `FetchRequest`,
 a link if an attempt it did not start serves it, and one release for each request that ran an
-attempt in a read that was not closed first.
+attempt in a read that was not closed or failed first.
 
 **PR 5.** The fold checks, in tests and without JFR, the invariant `FETCH_PLANNING.md` "Requests"
 states: a read issues no request it did not plan. It joins by id the requests PR 4's test
@@ -393,7 +394,8 @@ engine. The data request waits 0.3 ms in the read's queue. The last 254.5 KiB of
 from the 256 KiB tail fetched when the file was opened, so it has no attempt.
 
 ```
-$ hardwood iotrace -f s3://<bucket>/profiling_uncompressed_dict.parquet --repeat 4 --warmup 1 s3://<bucket>/profiling_uncompressed_dict.parquet
+$ hardwood iotrace -f s3://<bucket>/profiling_uncompressed_dict.parquet --repeat 4 --warmup 1
+s3://<bucket>/profiling_uncompressed_dict.parquet
 5 reads: 1 warmup, 4 measured
 showing run 3, the measured run of median wall time
 7.5 MiB · 1 row group · 3 requests · 2 GETs · 889.3 ms
@@ -442,12 +444,13 @@ from local disk: about four bodies are in flight on average, 289 MiB/s together 
 stream. 36 of the data requests wait behind the
 fetch-ahead limit (`F`), for up to 6 s, as the read holds 256 MiB ahead of a consumer slower
 than the network, and the
-first wave waits about 0.5 s with no bound refusing it, from its row groups being batched to
-their fetches starting. The gaps between row groups are parquet-rs's bloom filters, which the
+first wave waits about 0.5 s with no bound refusing it: the read places the pages of all five row
+groups under its lock before it next asks its scheduler to start a fetch. The gaps between row groups are parquet-rs's bloom filters, which the
 read does not fetch. The trace below is an excerpt of the 62 attempts.
 
 ```
-$ hardwood iotrace -f s3://<bucket>/<file>.parquet --show-gaps s3://<bucket>/<file>.parquet
+$ hardwood iotrace -f s3://<bucket>/<file>.parquet --show-gaps
+s3://<bucket>/<file>.parquet
 656.3 MiB · 5 row groups · 63 requests · 62 GETs · 7239.8 ms
 
 PLAN (requests in file order):
