@@ -31,7 +31,7 @@ Tier 0 sits outside the hierarchy: it marks content as wrong, where every other 
 
 For new content, walk these steps in order; the first match gives the tier. Persistent chrome is tested before body content, so tier 5 comes before tier 4 in the walk. The tree is exhaustive.
 
-1. A validation error, that is a declared-vs-actual mismatch between metadata fields that the reader should treat as a defect in the file rather than as data → tier 0, `Theme.error()`. It is checked first so a mismatch stays legible when it is the row under the cursor.
+1. A validation error, that is a declared-vs-actual mismatch between metadata fields, or a value marker for a stored value its annotation does not admit, that the reader should treat as a defect in the file rather than as data → tier 0, `Theme.error()`. It is checked first so a mismatch stays legible when it is the row under the cursor; the data preview colours its cursor row cell by cell for this reason, rather than through the table's highlight style.
 2. The active row in a navigable pane: table-row highlight, selected menu row, schema cursor row, footer cursor line, modal cursor → tier 1, `Theme.selection()`.
 3. A structural caption: a section heading inside a pane, a table column header, the app brand → tier 2, `Theme.accent().bold()`.
 4. A label: a key/value label, the breadcrumb leaf, an enabled menu label that is not selected, the `/` search prompt → tier 3, `Theme.primary()`.
@@ -65,7 +65,7 @@ A `Color.*` constant, or a literal `Style.EMPTY.bold()`, `Style.EMPTY.fg(...)` o
 | Content | Style |
 |---|---|
 | Key/value pane | label `Theme.primary()`, value `Style.EMPTY` |
-| `Table` widget | header row `Theme.accent().bold()`, `highlightStyle(Theme.selection())` |
+| `Table` widget | header row `Theme.accent().bold()`, `highlightStyle(Theme.selection())`; a table with error-styled cells (the data preview) styles its cursor row's cells `Theme.selection()` itself, draws `▶` as the lead of its first cell in `Theme.selection()`, and sets no highlight symbol or style |
 | Section delimiter inside a pane | `" Storage "` as `Theme.accent().bold()` |
 | Menu row | label `Theme.primary()`, or `Theme.selection()` on the cursor row; a hint carrying a fact at `Style.EMPTY`, a trailing annotation (` · browse by column`) at `Theme.dim()` |
 | Disabled menu row | same styles as enabled; the hint text (`n/a`, `—`) and the absent `▶` say it is disabled |

@@ -200,6 +200,30 @@ class VariantShredReassemblerTest {
         assertThat(reassembler.reassemble(root, batch, 0)).isEqualTo(expected);
     }
 
+    static Stream<Arguments> typedValuesPastTheirAnnotation() {
+        return Stream.of(
+                Arguments.of(LogicalType.intType(8, true), 300,
+                        "The INT_8 value 300 lies outside its range, which holds -128 to 127"),
+                Arguments.of(LogicalType.intType(16, true), -40000,
+                        "The INT_16 value -40000 lies outside its range, which holds -32768 to 32767"));
+    }
+
+    /// An `INT(8)` or `INT(16)` typed_value outside its annotation is refused, not truncated into
+    /// the Variant `int8` or `int16` it is encoded as.
+    @ParameterizedTest
+    @MethodSource("typedValuesPastTheirAnnotation")
+    void typedValuePastItsAnnotationIsRefused(LogicalType logicalType, int stored, String message) {
+        ShredLevel root = new ShredLevel(-1, 0, new Typed.Primitive(0, 1, PhysicalType.INT32, logicalType));
+        NestedBatchIndex batch = singleValueBatch(new int[] { stored });
+
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        assertThatThrownBy(() -> reassembler.reassemble(root, batch, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage(message);
+    }
+
     /// A shredded level whose `value` and `typed_value` are both null is Variant NULL, the
     /// one-byte value `0x00`.
     @Test

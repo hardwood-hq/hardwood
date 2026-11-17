@@ -284,7 +284,11 @@ public sealed interface ScreenState {
     /// whose pretty-printed value is rendered inline (multi-line, no
     /// element caps). `expandedRows` is parallel to `rows` and holds the
     /// multi-line pretty-printed form of each cell, populated by
-    /// `ValueFormatter.formatField` with `Style.EXPANDED`.
+    /// `ValueFormatter.formatField` with `Style.EXPANDED`. `undecodableCells` is
+    /// parallel to `rows` and holds, per row, the columns whose cell carries a
+    /// marker for a value core refused, which render as errors; an empty list
+    /// marks none. `expandedUndecodableCells` does the same for `expandedRows`,
+    /// which show the elements a preview cell cuts.
     record DataPreview(
             long firstRow,
             int pageSize,
@@ -297,7 +301,9 @@ public sealed interface ScreenState {
             boolean logicalTypes,
             Set<Integer> expandedColumns,
             int modalCursorLine,
-            int modalScroll)
+            int modalScroll,
+            List<Set<Integer>> undecodableCells,
+            List<Set<Integer>> expandedUndecodableCells)
             implements ScreenState {
 
         public DataPreview {
@@ -305,6 +311,32 @@ public sealed interface ScreenState {
             rows = List.copyOf(rows);
             expandedRows = List.copyOf(expandedRows);
             expandedColumns = Set.copyOf(expandedColumns);
+            undecodableCells = List.copyOf(undecodableCells);
+            expandedUndecodableCells = List.copyOf(expandedUndecodableCells);
+        }
+
+        public DataPreview(long firstRow, int pageSize, List<String> columnNames,
+                           List<List<String>> rows,
+                           List<List<String>> expandedRows,
+                           int columnScroll, int selectedRow, int modalRow, boolean logicalTypes,
+                           Set<Integer> expandedColumns, int modalCursorLine, int modalScroll) {
+            this(firstRow, pageSize, columnNames, rows, expandedRows, columnScroll, selectedRow,
+                    modalRow, logicalTypes, expandedColumns, modalCursorLine, modalScroll, List.of(), List.of());
+        }
+
+        /// Whether the cell at `row`, `column` carries a marker for a value core refused.
+        public boolean undecodable(int row, int column) {
+            return holds(undecodableCells, row, column);
+        }
+
+        /// Whether the expanded form of the cell at `row`, `column` carries such a marker; it can
+        /// where the preview cuts the element that holds it.
+        public boolean expandedUndecodable(int row, int column) {
+            return holds(expandedUndecodableCells, row, column);
+        }
+
+        private static boolean holds(List<Set<Integer>> cells, int row, int column) {
+            return row < cells.size() && cells.get(row).contains(column);
         }
 
         public DataPreview(long firstRow, int pageSize, List<String> columnNames,

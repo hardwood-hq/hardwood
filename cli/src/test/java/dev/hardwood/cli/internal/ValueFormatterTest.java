@@ -1286,6 +1286,22 @@ class ValueFormatterTest {
         assertThat(ValueFormatter.formatDictionary(86_399_999, millis, true, NO_LIMIT)).isEqualTo("23:59:59.999");
     }
 
+    /// An `INT(8)` or `INT(16)` outside its bit width is no value of its annotation: statistics
+    /// and dictionary entries show the stored integer, not its low bits.
+    @Test
+    void intOutsideItsBitWidthRendersAsItsStoredInteger() {
+        ColumnSchema int8 = column(PhysicalType.INT32, LogicalType.intType(8, true));
+        ColumnSchema uint16 = column(PhysicalType.INT32, LogicalType.intType(16, false));
+
+        assertThat(ValueFormatter.formatBytes(littleEndian(300), int8, true)).isEqualTo("300");
+        assertThat(ValueFormatter.formatDictionary(300, int8, true, NO_LIMIT)).isEqualTo("300");
+        assertThat(ValueFormatter.formatDictionary(-128, int8, true, NO_LIMIT)).isEqualTo("-128");
+        assertThat(ValueFormatter.formatDictionary(70_000, uint16, true, NO_LIMIT)).isEqualTo("70000");
+        ColumnSchema uint8 = column(PhysicalType.INT32, LogicalType.intType(8, false));
+        assertThat(ValueFormatter.formatDictionary(-1, uint8, true, NO_LIMIT)).isEqualTo("4294967295");
+        assertThat(ValueFormatter.formatBytes(littleEndian(-1), uint8, true)).isEqualTo("4294967295");
+    }
+
     /// A `NULL` column holds no value, so a statistic or dictionary entry on one
     /// is no value of its type: it shows the stored integer.
     @Test

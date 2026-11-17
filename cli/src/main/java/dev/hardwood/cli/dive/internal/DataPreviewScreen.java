@@ -33,6 +33,7 @@ import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.table.Cell;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -46,6 +47,8 @@ import dev.tamboui.widgets.table.TableState;
 public final class DataPreviewScreen {
 
     private static final int COLUMN_SPACING = 1;
+    /// What leads the cursor row's `#` cell; every other row leads it with as many blanks.
+    private static final String CURSOR_MARKER = "▶ ";
     private static final int MIN_PARTIAL_COLUMN_WIDTH = 8;
     private static final int VALUE_TRUNCATE = 32;
 
@@ -242,18 +245,26 @@ public final class DataPreviewScreen {
         // The `#` column leads every row, outside the column window: it names
         // the row by its position in the file, as the `:` prompt does, and
         // stays put while `←/→` scroll the value columns.
+        // The cursor row, `▶` included, is coloured cell by cell rather than through the table's
+        // highlight style, which would paint over a cell styled as an error. The `▶` column is the
+        // lead of the `#` cell, so it takes the cursor's colour with it.
+        int selected = state.rows().isEmpty() ? -1 : Math.min(state.selectedRow(), state.rows().size() - 1);
+        String gutter = selected >= 0 ? " ".repeat(CURSOR_MARKER.length()) : "";
         List<Row> rows = new ArrayList<>();
         for (int r = 0; r < state.rows().size(); r++) {
             List<String> row = state.rows().get(r);
-            String[] cells = new String[window.widths().size() + 1];
-            cells[0] = String.valueOf(state.firstRow() + r);
+            Style rowStyle = r == selected ? Theme.selection() : Style.EMPTY;
+            Cell[] cells = new Cell[window.widths().size() + 1];
+            cells[0] = Cell.from(new Span((r == selected ? CURSOR_MARKER : gutter) + (state.firstRow() + r), rowStyle));
             for (int i = 0; i < window.widths().size(); i++) {
-                cells[i + 1] = truncate(row.get(state.columnScroll() + i), window.widths().get(i));
+                int column = state.columnScroll() + i;
+                Style cellStyle = state.undecodable(r, column) ? Theme.error() : rowStyle;
+                cells[i + 1] = Cell.from(new Span(truncate(row.get(column), window.widths().get(i)), cellStyle));
             }
             rows.add(Row.from(cells));
         }
         List<String> headerCells = new ArrayList<>();
-        headerCells.add("#");
+        headerCells.add(gutter + "#");
         headerCells.addAll(window.headers());
         Row header = Row.from(headerCells.toArray(new String[0])).style(Theme.accent().bold());
 
@@ -276,7 +287,7 @@ public final class DataPreviewScreen {
                 .borderType(BorderType.ROUNDED)
                 .build();
         List<Constraint> widths = new ArrayList<>();
-        widths.add(new Constraint.Length(indexColumnWidth(state)));
+        widths.add(new Constraint.Length(gutter.length() + indexColumnWidth(state)));
         for (int width : window.widths()) {
             widths.add(new Constraint.Length(width));
         }
@@ -286,18 +297,30 @@ public final class DataPreviewScreen {
                 .widths(widths)
                 .columnSpacing(COLUMN_SPACING)
                 .block(block)
-                .highlightSymbol("▶ ")
-                .highlightStyle(Theme.selection())
+                .highlightSymbol("")
+                .highlightSpacing(Table.HighlightSpacing.NEVER)
+                .highlightStyle(Style.EMPTY)
                 .build();
         TableState tableState = new TableState();
-        if (!state.rows().isEmpty()) {
-            tableState.select(Math.min(state.selectedRow(), state.rows().size() - 1));
+        if (selected >= 0) {
+            tableState.select(selected);
         }
         table.render(area, buffer, tableState);
         if (state.modalRow() >= 0 && state.modalRow() < state.rows().size()) {
             buffer.setStyle(area, Theme.dim());
             renderRecordModal(buffer, area, model, state);
         }
+    }
+
+    /// The style of field `field`'s value in the record modal: `Theme.error()` where it holds a
+    /// marker for a value core refused, a defect in the file and tier 0 of the visual hierarchy,
+    /// `otherwise` elsewhere. An expanded field shows elements the preview cuts, so it carries its
+    /// own flag.
+    private static Style modalValueStyle(ScreenState.DataPreview state, int field, Style otherwise) {
+        boolean undecodable = state.expandedColumns().contains(field)
+                ? state.expandedUndecodable(state.modalRow(), field)
+                : state.undecodable(state.modalRow(), field);
+        return undecodable ? Theme.error() : otherwise;
     }
 
     private static void renderRecordModal(Buffer buffer, Rect screenArea, ParquetModel model,
@@ -336,19 +359,20 @@ public final class DataPreviewScreen {
             boolean isExpanded = state.expandedColumns().contains(i);
             String value = i < values.size() ? values.get(i) : "";
             ownership[i] = all.size();
+            Style valueStyle = modalValueStyle(state, i, Style.EMPTY);
             if (isExpanded) {
                 List<String> wrapped = expandedValueLines(state, i, geometry);
                 all.add(Line.from(
                         new Span(marker + name + pad + " : ", Theme.primary()),
-                        Span.raw(wrapped.get(0))));
+                        new Span(wrapped.get(0), valueStyle)));
                 for (int k = 1; k < wrapped.size(); k++) {
-                    all.add(Line.from(Span.raw(continuationIndent + wrapped.get(k))));
+                    all.add(Line.from(new Span(continuationIndent + wrapped.get(k), valueStyle)));
                 }
             }
             else {
                 all.add(Line.from(
                         new Span(marker + name + pad + " : ", Theme.primary()),
-                        Span.raw(truncate(value, valueBudget))));
+                        new Span(truncate(value, valueBudget), valueStyle)));
             }
         }
 
@@ -364,6 +388,8 @@ public final class DataPreviewScreen {
             boolean isExpanded = state.expandedColumns().contains(fieldIdx);
             String value = fieldIdx < values.size() ? values.get(fieldIdx) : "";
             Style selectionStyle = Theme.selection();
+            // A refused value keeps the error colour under the cursor; the key takes the cursor's colour
+            Style cursorValueStyle = modalValueStyle(state, fieldIdx, selectionStyle);
             if (cursorLine == fieldFirstLine) {
                 String shown;
                 if (isExpanded) {
@@ -376,13 +402,13 @@ public final class DataPreviewScreen {
                 all.set(cursorLine, Line.from(
                         new Span(CursorPane.marker(focusExpandable, true, mixed)
                                 + name + pad + " : ", selectionStyle),
-                        new Span(shown, selectionStyle)));
+                        new Span(shown, cursorValueStyle)));
             }
             else if (isExpanded) {
                 List<String> wrapped = expandedValueLines(state, fieldIdx, geometry);
                 int contIdx = cursorLine - fieldFirstLine;
                 String text = contIdx < wrapped.size() ? wrapped.get(contIdx) : "";
-                all.set(cursorLine, Line.from(new Span(continuationIndent + text, selectionStyle)));
+                all.set(cursorLine, Line.from(new Span(continuationIndent + text, cursorValueStyle)));
             }
         }
 
@@ -590,7 +616,8 @@ public final class DataPreviewScreen {
                     reloaded.firstRow(), reloaded.pageSize(), reloaded.columnNames(),
                     reloaded.rows(), reloaded.expandedRows(), reloaded.columnScroll(),
                     state.selectedRow(), state.modalRow(), nextLogical,
-                    state.expandedColumns(), state.modalCursorLine(), state.modalScroll()));
+                    state.expandedColumns(), state.modalCursorLine(), state.modalScroll(),
+                    reloaded.undecodableCells(), reloaded.expandedUndecodableCells()));
             return true;
         }
         int selected = CursorPane.select(event, state.modalCursorLine(), totalLines);
@@ -732,7 +759,8 @@ public final class DataPreviewScreen {
     private static ScreenState.DataPreview withSelectedRow(ScreenState.DataPreview s, int sel) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), sel, s.modalRow(), s.logicalTypes(),
-                s.expandedColumns(), s.modalCursorLine(), s.modalScroll());
+                s.expandedColumns(), s.modalCursorLine(), s.modalScroll(),
+                s.undecodableCells(), s.expandedUndecodableCells());
     }
 
     /// Opens (`modalRow >= 0`) or closes (`-1`) the record modal. Opening puts
@@ -743,7 +771,7 @@ public final class DataPreviewScreen {
         if (modalRow < 0) {
             return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(),
                     s.rows(), s.expandedRows(), s.columnScroll(), s.selectedRow(), modalRow,
-                    s.logicalTypes(), Set.of(), 0, 0);
+                    s.logicalTypes(), Set.of(), 0, 0, s.undecodableCells(), s.expandedUndecodableCells());
         }
         ModalGeometry geometry = observedModalGeometry(s);
         int field = firstExpandableField(s, modalRow, geometry);
@@ -752,7 +780,8 @@ public final class DataPreviewScreen {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), s.selectedRow(), modalRow, s.logicalTypes(),
                 s.expandedColumns(), cursorLine,
-                scrollToReveal(0, cursorLine, totalLines, geometry));
+                scrollToReveal(0, cursorLine, totalLines, geometry),
+                s.undecodableCells(), s.expandedUndecodableCells());
     }
 
     /// Returns the first expandable field, or field 0 when the record has none.
@@ -769,7 +798,8 @@ public final class DataPreviewScreen {
     private static ScreenState.DataPreview withColumnScroll(ScreenState.DataPreview s, int scroll) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), scroll, s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                s.expandedColumns(), s.modalCursorLine(), s.modalScroll());
+                s.expandedColumns(), s.modalCursorLine(), s.modalScroll(),
+                s.undecodableCells(), s.expandedUndecodableCells());
     }
 
     /// Moves the modal cursor to `line`, scrolling only as far as needed to
@@ -779,13 +809,14 @@ public final class DataPreviewScreen {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
                 s.expandedColumns(), line,
-                scrollToReveal(s.modalScroll(), line, totalLines, geometry));
+                scrollToReveal(s.modalScroll(), line, totalLines, geometry),
+                s.undecodableCells(), s.expandedUndecodableCells());
     }
 
     private static ScreenState.DataPreview withModalScroll(ScreenState.DataPreview s, int scroll) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                s.expandedColumns(), s.modalCursorLine(), scroll);
+                s.expandedColumns(), s.modalCursorLine(), scroll, s.undecodableCells(), s.expandedUndecodableCells());
     }
 
     /// Applies a new expanded set, keeping the cursor on `field` so the user
@@ -799,7 +830,7 @@ public final class DataPreviewScreen {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
                 expanded, cursorLine,
-                scrollToTop(cursorLine, totalLines, geometry));
+                scrollToTop(cursorLine, totalLines, geometry), s.undecodableCells(), s.expandedUndecodableCells());
     }
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize,
@@ -807,7 +838,7 @@ public final class DataPreviewScreen {
         PreviewWindow.Slice slice = WINDOW.slice(model, firstRow, pageSize, logicalTypes);
         return new ScreenState.DataPreview(firstRow, pageSize, slice.columnNames(),
                 slice.rows(), slice.expandedRows(), columnScroll, 0, -1,
-                logicalTypes, Set.of(), 0);
+                logicalTypes, Set.of(), 0, 0, slice.undecodableCells(), slice.expandedUndecodableCells());
     }
 
     /// How to position the cursor within the viewport after a navigation move.

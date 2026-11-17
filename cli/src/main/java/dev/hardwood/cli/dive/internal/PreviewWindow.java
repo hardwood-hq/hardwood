@@ -10,11 +10,14 @@ package dev.hardwood.cli.dive.internal;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.ValueFormatter;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.SchemaNode;
 
 /// A buffered window of pre-formatted Data preview rows around the
@@ -62,6 +65,12 @@ final class PreviewWindow {
     private List<List<String>> rowsPhysical;
     private List<List<String>> expandedLogical;
     private List<List<String>> expandedPhysical;
+    /// Per row, the columns whose cell carries a marker for a value core refused, in each mode,
+    /// for the preview cells and for their expanded form, which shows elements the preview cuts.
+    private List<Set<Integer>> undecodableLogical;
+    private List<Set<Integer>> undecodablePhysical;
+    private List<Set<Integer>> expandedUndecodableLogical;
+    private List<Set<Integer>> expandedUndecodablePhysical;
     private List<String> columnNames;
     private List<SchemaNode> topLevelFields;
 
@@ -90,7 +99,7 @@ final class PreviewWindow {
         long sliceStart = Math.max(requestStart, start);
         long sliceEnd = Math.min(requestEnd, end);
         if (sliceStart >= sliceEnd) {
-            return new Slice(List.of(), List.of(), columnNames);
+            return new Slice(List.of(), List.of(), List.of(), List.of(), columnNames);
         }
         int from = Math.toIntExact(sliceStart - start);
         int to = Math.toIntExact(sliceEnd - start);
@@ -99,6 +108,9 @@ final class PreviewWindow {
         return new Slice(
                 List.copyOf(rows.subList(from, to)),
                 List.copyOf(expanded.subList(from, to)),
+                List.copyOf((logicalTypes ? undecodableLogical : undecodablePhysical).subList(from, to)),
+                List.copyOf((logicalTypes ? expandedUndecodableLogical : expandedUndecodablePhysical)
+                        .subList(from, to)),
                 columnNames);
     }
 
@@ -113,6 +125,10 @@ final class PreviewWindow {
         this.rowsPhysical = new ArrayList<>();
         this.expandedLogical = new ArrayList<>();
         this.expandedPhysical = new ArrayList<>();
+        this.undecodableLogical = new ArrayList<>();
+        this.undecodablePhysical = new ArrayList<>();
+        this.expandedUndecodableLogical = new ArrayList<>();
+        this.expandedUndecodablePhysical = new ArrayList<>();
         this.start = 0;
         this.end = 0;
     }
@@ -129,6 +145,10 @@ final class PreviewWindow {
         rowsPhysical.clear();
         expandedLogical.clear();
         expandedPhysical.clear();
+        undecodableLogical.clear();
+        undecodablePhysical.clear();
+        expandedUndecodableLogical.clear();
+        expandedUndecodablePhysical.clear();
         start = newStart;
         end = newStart;
         long count = newEnd - newStart;
@@ -147,21 +167,26 @@ final class PreviewWindow {
                 List<String> rowPhysical = new ArrayList<>(fieldCount);
                 List<String> expLogical = new ArrayList<>(fieldCount);
                 List<String> expPhysical = new ArrayList<>(fieldCount);
+                Set<Integer> undecodable = new HashSet<>();
+                Set<Integer> undecodableRaw = new HashSet<>();
+                Set<Integer> expUndecodable = new HashSet<>();
+                Set<Integer> expUndecodableRaw = new HashSet<>();
                 for (int c = 0; c < fieldCount; c++) {
                     SchemaNode field = topLevelFields.get(c);
-                    rowLogical.add(ValueFormatter.formatField(reader, c, field, true,
-                            ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET));
-                    rowPhysical.add(ValueFormatter.formatField(reader, c, field, false,
-                            ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET));
-                    expLogical.add(ValueFormatter.formatField(reader, c, field, true,
-                            ValueFormatter.Style.EXPANDED, BinaryValues.NO_LIMIT));
-                    expPhysical.add(ValueFormatter.formatField(reader, c, field, false,
-                            ValueFormatter.Style.EXPANDED, BinaryValues.NO_LIMIT));
+                    rowLogical.add(cell(reader, c, field, true, ValueFormatter.Style.PREVIEW, undecodable));
+                    rowPhysical.add(cell(reader, c, field, false, ValueFormatter.Style.PREVIEW, undecodableRaw));
+                    expLogical.add(cell(reader, c, field, true, ValueFormatter.Style.EXPANDED, expUndecodable));
+                    expPhysical.add(cell(reader, c, field, false, ValueFormatter.Style.EXPANDED,
+                            expUndecodableRaw));
                 }
                 rowsLogical.add(rowLogical);
                 rowsPhysical.add(rowPhysical);
                 expandedLogical.add(expLogical);
                 expandedPhysical.add(expPhysical);
+                undecodableLogical.add(undecodable);
+                undecodablePhysical.add(undecodableRaw);
+                expandedUndecodableLogical.add(expUndecodable);
+                expandedUndecodablePhysical.add(expUndecodableRaw);
             });
         }
         catch (IOException e) {
@@ -169,8 +194,22 @@ final class PreviewWindow {
         }
     }
 
+    /// The text of field `c` in `style`, adding `c` to `undecodable` where it holds a marker for
+    /// a value core refused.
+    private static String cell(RowReader reader, int c, SchemaNode field, boolean useLogicalType,
+                               ValueFormatter.Style style, Set<Integer> undecodable) {
+        int budget = style == ValueFormatter.Style.PREVIEW ? ValueFormatter.PREVIEW_CELL_BUDGET : BinaryValues.NO_LIMIT;
+        ValueFormatter.RenderedField cell = ValueFormatter.renderField(reader, c, field, useLogicalType, style,
+                budget);
+        if (cell.undecodable()) {
+            undecodable.add(c);
+        }
+        return cell.text();
+    }
+
     /// A `pageSize`-row slice carved from the window — exactly what the
     /// `DataPreview` screen state holds.
-    record Slice(List<List<String>> rows, List<List<String>> expandedRows, List<String> columnNames) {
+    record Slice(List<List<String>> rows, List<List<String>> expandedRows, List<Set<Integer>> undecodableCells,
+                 List<Set<Integer>> expandedUndecodableCells, List<String> columnNames) {
     }
 }

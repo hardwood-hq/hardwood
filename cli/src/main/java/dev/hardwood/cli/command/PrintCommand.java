@@ -10,6 +10,7 @@ package dev.hardwood.cli.command;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.UncheckedIOException;
+import java.time.DateTimeException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Spliterator;
@@ -123,7 +124,7 @@ public class PrintCommand implements Command<CommandInvocation> {
             reportPartialOutput();
             return CommandResult.FAILURE;
         }
-        catch (IOException | ParquetReadException | UnsupportedOperationException e) {
+        catch (IOException | ParquetReadException | DateTimeException | UnsupportedOperationException e) {
             System.err.println("Error reading file: " + e.getMessage());
             reportPartialOutput();
             return CommandResult.FAILURE;

@@ -94,6 +94,26 @@ class NativeBinarySmokeIT {
                         .contains(fingerprint));
     }
 
+    /// A value marker depends on the refusal keeping its exception type through the context core
+    /// adds to it, which for a `TIME` outside a day is a `DateTimeException`. A type rebuilt by
+    /// reflection survives on the JVM but not in a native image, where the marker would turn back
+    /// into a failed read.
+    @Test
+    void printsAMarkerForAValueItsAnnotationDoesNotAdmit() throws IOException, InterruptedException {
+        NativeResult result = exec(nativeBinary, "print", "-f", Cli.file("/undecodable_values.parquet"));
+
+        assertThat(result.exitCode())
+                .withFailMessage("print failed: stdout=%s stderr=%s", result.stdout(), result.stderr())
+                .isZero();
+        assertThat(result.stdout()).isEqualTo("""
+                +----+----------------------------+------------------------------------+---------------------------+
+                | id | i8                         | u8                                 | t                         |
+                +----+----------------------------+------------------------------------+---------------------------+
+                | 1  | <300: outside INT_8 range> | <4294967295: outside UINT_8 range> | <86400000: outside a day> |
+                | 2  | 5                          | 7                                  | 00:00:01                  |
+                +----+----------------------------+------------------------------------+---------------------------+""");
+    }
+
     @Test
     void diveSmokeRenderExitsZero() throws IOException, InterruptedException {
         NativeResult result = exec(nativeBinary, "dive", "-f", plainFile, "--smoke-render");

@@ -897,13 +897,25 @@ public final class FlatRowReader implements FileAwareRowReader {
             case STRING -> binaryValues[fieldIndex].stringAt(rowIndex);
             case INT96_TIMESTAMP -> binaryValues[fieldIndex].int96InstantAt(rowIndex);
             case RAW -> rawValueUnchecked(fieldIndex);
-            case CONVERT -> binaryValues[fieldIndex] != null
+            case CONVERT -> convertedValue(fieldIndex);
+            case GROUP -> structAt(fieldIndex);
+        };
+    }
+
+    /// The decoded value of an annotated leaf. A stored value its annotation does not admit
+    /// fails naming the file and the column it was read from.
+    private Object convertedValue(int fieldIndex) {
+        try {
+            return binaryValues[fieldIndex] != null
                     ? LeafDecoder.convertAt(binaryValues[fieldIndex], rowIndex, physicalTypes[fieldIndex],
                             columnSchemas[fieldIndex].logicalType())
                     : LeafDecoder.decode(rawValueUnchecked(fieldIndex), LeafKind.CONVERT,
                             physicalTypes[fieldIndex], columnSchemas[fieldIndex].logicalType());
-            case GROUP -> structAt(fieldIndex);
-        };
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addReadContext(currentFileName, ExceptionContext.UNKNOWN_ROW_GROUP,
+                    columnSchemas[fieldIndex].fieldPath().toString(), e);
+        }
     }
 
     @Override

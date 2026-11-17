@@ -62,6 +62,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - A read of a malformed file fails with `ParquetReadException` naming what is wrong, instead of an `ArrayIndexOutOfBoundsException`, `NullPointerException` or `IllegalStateException`, a stalled read or a wrong answer ([#1715](https://github.com/hardwood-hq/hardwood/issues/1715), [#1685](https://github.com/hardwood-hq/hardwood/issues/1685), [#1630](https://github.com/hardwood-hq/hardwood/issues/1630))
 - A repetition or definition level above its column's maximum fails the read with `ParquetReadException`, instead of reading as a null or a value in no list ([#1685](https://github.com/hardwood-hq/hardwood/issues/1685))
 - A read of a Variant column whose annotation declares a specification version other than 1 fails with `UnsupportedOperationException`, instead of decoding the column as version 1 ([#777](https://github.com/hardwood-hq/hardwood/issues/777))
+- `getValue` on an `INT(8)` or `INT(16)` column fails with `ParquetReadException` on a stored value outside the annotation's range instead of returning its low bits ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
+- `hardwood print` and `dive` show a value outside its `INT(8)` or `INT(16)` range, or a `TIME` outside a day, as a marker, and `hardwood convert` fails on it ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
 
 ## 1.1.0.Beta3 (2026-10-21)
 

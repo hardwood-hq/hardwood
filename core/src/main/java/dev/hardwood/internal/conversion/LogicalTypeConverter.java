@@ -417,20 +417,43 @@ public final class LogicalTypeConverter {
         };
     }
 
-    /// Narrows an `INT(8)` or `INT(16)` value to the box its bit width states. Java has no
-    /// native unsigned types, so an unsigned annotation passes its value through unchanged
-    /// and the caller reads the magnitude with `Integer.toUnsignedLong` or
-    /// `Long.toUnsignedString`.
+    /// Narrows a signed `INT(8)` or `INT(16)` value to the box its bit width states, once
+    /// [#intWithinBitWidth] has found it inside that width. Java has no native unsigned types,
+    /// so an unsigned annotation passes its checked value through as the stored `Integer`.
+    /// `INT(32)` and `INT(64)` hold every value of their physical type and pass through as well.
     private static Object convertToInt(Object value, PhysicalType physicalType,
                                        LogicalType.IntType intType) {
-        if (!AnnotationKind.ordersUnsigned(intType) && physicalType == PhysicalType.INT32) {
-            if (intType.bitWidth() == 8) {
-                return ((Integer) value).byteValue();
-            }
-            if (intType.bitWidth() == 16) {
-                return ((Integer) value).shortValue();
-            }
+        if (physicalType != PhysicalType.INT32 || intType.bitWidth() >= Integer.SIZE) {
+            return value;
         }
-        return value;
+        int stored = intWithinBitWidth((Integer) value, intType);
+        if (AnnotationKind.ordersUnsigned(intType)) {
+            return value;
+        }
+        if (intType.bitWidth() == Byte.SIZE) {
+            return (byte) stored;
+        }
+        return (short) stored;
+    }
+
+    /// The `INT32` value of an `INT(8)` or `INT(16)` column, checked to lie inside the range its
+    /// bit width and signedness state, so that a caller may narrow it to that width without
+    /// losing bits. An unsigned column's value is read as the unsigned 32-bit value it stores.
+    /// An `INT(32)` column's value is returned as it is, every bit pattern being a value of it.
+    ///
+    /// @throws IntOutOfRangeException if `stored` lies outside the annotation's range
+    public static int intWithinBitWidth(int stored, LogicalType.IntType intType) {
+        int bitWidth = intType.bitWidth();
+        if (bitWidth >= Integer.SIZE) {
+            return stored;
+        }
+        boolean unsigned = AnnotationKind.ordersUnsigned(intType);
+        long value = unsigned ? Integer.toUnsignedLong(stored) : stored;
+        long min = unsigned ? 0L : -(1L << (bitWidth - 1));
+        long max = unsigned ? (1L << bitWidth) - 1 : (1L << (bitWidth - 1)) - 1;
+        if (value < min || value > max) {
+            throw new IntOutOfRangeException(intType, value, min, max);
+        }
+        return stored;
     }
 }

@@ -580,4 +580,42 @@ class ConvertCommandTest implements ConvertCommandContract {
         assertThat(result.errorOutput()).isEqualTo(
                 "Error writing %s: %s (No such file or directory)".formatted(csv, csv));
     }
+
+    /// `convert` writes data other tools ingest, so a value its annotation does not admit fails the
+    /// command, naming the file and the column, in either format.
+    @Test
+    void valueItsAnnotationDoesNotAdmitFailsTheConversion() {
+        String file = Cli.file("/undecodable_values.parquet");
+        Cli.Result csv = Cli.launch("convert", "-f", file, "--format", "csv");
+        Cli.Result json = Cli.launch("convert", "-f", file, "--format", "json", "-c", "u8");
+        Cli.Result time = Cli.launch("convert", "-f", file, "--format", "json", "-c", "t");
+
+        String incomplete = "\nWrote 0 rows before the failure; the output is incomplete.";
+        assertThat(csv.exitCode()).isEqualTo(1);
+        assertThat(csv.errorOutput()).isEqualTo("Error reading file: [undecodable_values.parquet: column 'i8'] "
+                + "The INT_8 value 300 lies outside its range, which holds -128 to 127" + incomplete);
+        assertThat(json.exitCode()).isEqualTo(1);
+        assertThat(json.errorOutput()).isEqualTo("Error reading file: [undecodable_values.parquet: column 'u8'] "
+                + "The UINT_8 value 4294967295 lies outside its range, which holds 0 to 255" + incomplete);
+        assertThat(time.exitCode()).isEqualTo(1);
+        assertThat(time.errorOutput()).isEqualTo("Error reading file: [undecodable_values.parquet: column 't'] "
+                + "The TIME(MILLIS) value 86400000 lies outside a day, which holds 0 to 86399999" + incomplete);
+    }
+
+    /// A nested value its annotation does not admit fails the conversion too, as does a shredded
+    /// Variant whose `typed_value` lies outside its `INT(8)` annotation.
+    @Test
+    void nestedValueItsAnnotationDoesNotAdmitFailsTheConversion() {
+        String file = Cli.file("/undecodable_nested_values.parquet");
+        Cli.Result json = Cli.launch("convert", "-f", file, "--format", "json");
+        Cli.Result variant = Cli.launch("convert", "-f", file, "--format", "json", "-c", "var");
+
+        String incomplete = "\nWrote 0 rows before the failure; the output is incomplete.";
+        assertThat(json.exitCode()).isEqualTo(1);
+        assertThat(json.errorOutput()).isEqualTo("Error reading file: [undecodable_nested_values.parquet: "
+                + "column 's.i8'] The INT_8 value 300 lies outside its range, which holds -128 to 127" + incomplete);
+        assertThat(variant.exitCode()).isEqualTo(1);
+        assertThat(variant.errorOutput()).isEqualTo("Error reading file: [undecodable_nested_values.parquet: "
+                + "column 'var'] The INT_8 value 300 lies outside its range, which holds -128 to 127" + incomplete);
+    }
 }
