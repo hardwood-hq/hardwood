@@ -94,6 +94,40 @@ class VariantShredReassemblerTest {
         }
     }
 
+    /// The error cases whose rows set both `value` and `typed_value` at a non-object level,
+    /// at the top level (case-042) or at an array element (case-040), are rejected when that
+    /// row is read.
+    @Test
+    void valueAndTypedValueBothSetAtANonObjectLevelAreRejected() throws IOException {
+        assertRowRejected("case-042.parquet", "[case-042.parquet] Malformed shredded Variant: both value and typed_value are set for a non-object value");
+        assertRowRejected("case-040.parquet", "[case-040.parquet] Malformed shredded Variant: both value and typed_value are set for a non-object value");
+    }
+
+    /// The error cases whose rows set an object level's `typed_value` struct alongside a
+    /// `value` that is no object (an INT32 in case-087, Variant NULL in case-128) are
+    /// rejected when that row is read.
+    @Test
+    void nonObjectValueAlongsideShreddedObjectFieldsIsRejected() throws IOException {
+        assertRowRejected("case-087.parquet", "[case-087.parquet] Malformed shredded Variant: "
+                + "typed_value holds shredded object fields but value is not an object");
+        assertRowRejected("case-128.parquet", "[case-128.parquet] Malformed shredded Variant: "
+                + "typed_value holds shredded object fields but value is not an object");
+    }
+
+    private void assertRowRejected(String fileName, String message) throws IOException {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixturesDir.resolve(fileName)));
+                RowReader rowReader = fileReader.rowReader()) {
+            assertThatThrownBy(() -> {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                    rowReader.getVariant("var").value();
+                }
+            })
+                    .isExactlyInstanceOf(ParquetReadException.class)
+                    .hasMessage(message);
+        }
+    }
+
     private void assertRowReaderRejected(String fileName, String carrier) throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixturesDir.resolve(fileName)))) {
             assertThatThrownBy(fileReader::rowReader)

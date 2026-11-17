@@ -226,6 +226,94 @@ class VariantShredReassemblerTest {
         assertThat(reassembler.reassemble(root, batch, 0)).containsExactly(0x00);
     }
 
+    /// A shredded ARRAY level whose `typed_value` list and `value` blob are both set has no
+    /// defined meaning and is rejected rather than read from either side.
+    @Test
+    void arrayLevelWithValueAndTypedValueBothSetIsRejected() {
+        // col 0 = top-level `value` (set); col 1 = the list element's INT64 typed_value
+        ShredLevel element = new ShredLevel(-1, 0, new Typed.Primitive(1, 3, PhysicalType.INT64, null));
+        ShredLevel root = new ShredLevel(0, 1, new Typed.Array(1, 2, 1, element));
+
+        NestedBatchIndex batch = NestedBatchIndex.buildFromBatches(new NestedBatch[] {
+                binaryColumn(encode(buf -> VariantValueEncoder.writeInt8(buf, 0, 5)), 1),
+                longColumn(7L, 3, null) }, null, null, null, null);
+
+        assertConflictRejected(root, batch);
+    }
+
+    /// The same holds for an array nested as the element of a shredded array.
+    @Test
+    void nestedArrayElementWithValueAndTypedValueBothSetIsRejected() {
+        // col 0 = top-level `value` (null); col 1 = the outer element's `value` (set);
+        // col 2 = the inner list element's INT64 typed_value
+        ShredLevel innerElement = new ShredLevel(-1, 0, new Typed.Primitive(2, 5, PhysicalType.INT64, null));
+        ShredLevel outerElement = new ShredLevel(1, 3, new Typed.Array(3, 4, 2, innerElement));
+        ShredLevel root = new ShredLevel(0, 1, new Typed.Array(1, 2, 1, outerElement));
+
+        NestedBatchIndex batch = NestedBatchIndex.buildFromBatches(new NestedBatch[] {
+                binaryColumn(new byte[0], 0),
+                binaryColumn(encode(buf -> VariantValueEncoder.writeInt8(buf, 0, 5)), 3),
+                longColumn(7L, 5, new int[][] { { 0, 1 }, { 0, 1 } }) }, null, null, null, null);
+
+        assertConflictRejected(root, batch);
+    }
+
+    /// An element of an array of shredded objects whose `typed_value` struct is null passes its
+    /// `value` through, even when that is no object: a null element is written as `value`
+    /// Variant `NULL` beside a null struct.
+    @Test
+    void shreddedObjectElementWithNullStructPassesValueThrough() {
+        // col 0 = top-level `value` (null); col 1 = the element's `value` (Variant NULL);
+        // col 2 = field "a"'s INT64 typed_value, defined only up to the list element
+        ShredLevel fieldA = new ShredLevel(-1, 0, new Typed.Primitive(2, 6, PhysicalType.INT64, null));
+        ShredLevel element = new ShredLevel(1, 3,
+                new Typed.Object(4, new String[] { "a" }, new ShredLevel[] { fieldA }));
+        ShredLevel root = new ShredLevel(0, 1, new Typed.Array(1, 2, 1, element));
+
+        byte[] variantNull = encode(buf -> VariantValueEncoder.writeNull(buf, 0));
+        NestedBatchIndex batch = NestedBatchIndex.buildFromBatches(new NestedBatch[] {
+                binaryColumn(new byte[0], 0),
+                binaryColumn(variantNull, 3),
+                longColumn(0L, 3, null) }, null, null, null, null);
+
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        assertThat(reassembler.reassemble(root, batch, 0))
+                .isEqualTo(encode(buf -> VariantValueEncoder.writeArray(buf, 0, new byte[][] { variantNull })));
+    }
+
+    /// An element of an array of shredded objects whose `typed_value` struct is set beside a
+    /// `value` that is no object is rejected.
+    @Test
+    void shreddedObjectElementWithNonObjectValueIsRejected() {
+        ShredLevel fieldA = new ShredLevel(-1, 0, new Typed.Primitive(2, 6, PhysicalType.INT64, null));
+        ShredLevel element = new ShredLevel(1, 3,
+                new Typed.Object(4, new String[] { "a" }, new ShredLevel[] { fieldA }));
+        ShredLevel root = new ShredLevel(0, 1, new Typed.Array(1, 2, 1, element));
+
+        NestedBatchIndex batch = NestedBatchIndex.buildFromBatches(new NestedBatch[] {
+                binaryColumn(new byte[0], 0),
+                binaryColumn(encode(buf -> VariantValueEncoder.writeNull(buf, 0)), 3),
+                longColumn(7L, 6, null) }, null, null, null, null);
+
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        assertThatThrownBy(() -> reassembler.reassemble(root, batch, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed shredded Variant: typed_value holds shredded object fields but value is not an object");
+    }
+
+    private static void assertConflictRejected(ShredLevel root, NestedBatchIndex batch) {
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        assertThatThrownBy(() -> reassembler.reassemble(root, batch, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed shredded Variant: both value and typed_value are set for a non-object value");
+    }
+
     // ==================== Helpers ====================
 
     private static BinaryBatchValues binary(byte[] value) {
@@ -240,6 +328,28 @@ class VariantShredReassemblerTest {
         col.recordCount = 1;
         col.definitionLevels = new int[] { 1 };
         return NestedBatchIndex.buildFromBatches(new NestedBatch[] { col }, null, null, null, null);
+    }
+
+    /// A one-value BYTE_ARRAY column holding `value` at definition level `defLevel`.
+    private static NestedBatch binaryColumn(byte[] value, int defLevel) {
+        NestedBatch col = new NestedBatch();
+        col.values = binary(value);
+        col.valueCount = 1;
+        col.recordCount = 1;
+        col.definitionLevels = new int[] { defLevel };
+        return col;
+    }
+
+    /// A one-value INT64 column holding `value` at definition level `defLevel`, with the
+    /// layer-indexed `multiLevelOffsets` of the lists it is nested in (`null` for none).
+    private static NestedBatch longColumn(long value, int defLevel, int[][] multiLevelOffsets) {
+        NestedBatch col = new NestedBatch();
+        col.values = new long[] { value };
+        col.valueCount = 1;
+        col.recordCount = 1;
+        col.definitionLevels = new int[] { defLevel };
+        col.multiLevelOffsets = multiLevelOffsets;
+        return col;
     }
 
     @FunctionalInterface
