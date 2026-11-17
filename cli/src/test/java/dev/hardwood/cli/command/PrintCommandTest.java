@@ -227,4 +227,37 @@ class PrintCommandTest implements PrintCommandContract {
                 : CorruptFiles.CRC_FAILURE + "\nPrinted " + Plurals.format(rows, "row", "rows")
                         + " before the failure; the output is incomplete.");
     }
+
+    /// A value its annotation does not admit (an `INT(8)` of 300, a `UINT(8)` of 4294967295, a
+    /// `TIME(MILLIS)` of a full day) prints as a marker naming the stored value and the reason; the
+    /// rest of the row, and the next row, print as usual.
+    @Test
+    void printsAMarkerForAValueItsAnnotationDoesNotAdmit() {
+        Cli.Result result = Cli.launch("print", "-f", Cli.file("/undecodable_values.parquet"));
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+----------------------------+------------------------------------+---------------------------+
+                | id | i8                         | u8                                 | t                         |
+                +----+----------------------------+------------------------------------+---------------------------+
+                | 1  | <300: outside INT_8 range> | <4294967295: outside UINT_8 range> | <86400000: outside a day> |
+                | 2  | 5                          | 7                                  | 00:00:01                  |
+                +----+----------------------------+------------------------------------+---------------------------+""");
+    }
+
+    /// The same markers inside a struct field, a list element, a map key and value, and a shredded
+    /// Variant whose `INT(8)` `typed_value` holds 300; the rest of each value prints as usual.
+    @Test
+    void printsAMarkerInsideANestedValue() {
+        Cli.Result result = Cli.launch("print", "-f", Cli.file("/undecodable_nested_values.parquet"));
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+-------------------------------------+---------------------------------------+----------------------------------------------------+------------------------------------+
+                | id | s                                   | l                                     | m                                                  | var                                |
+                +----+-------------------------------------+---------------------------------------+----------------------------------------------------+------------------------------------+
+                | 1  | { i8 : <300: outside INT_8 range> } | [1, 2, 3, <300: outside INT_8 range>] | { <300: outside INT_8 range> : <86400000: outside… | <variant: 300 outside INT_8 range> |
+                | 2  | { i8 : 5 }                          | [5]                                   | { 5 : 00:00:01 }                                   | 5                                  |
+                +----+-------------------------------------+---------------------------------------+----------------------------------------------------+------------------------------------+""");
+    }
 }

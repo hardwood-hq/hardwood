@@ -48,6 +48,7 @@ Two questions decide how a value renders: who reads the output, and whether its 
 | Entry point | Source | Callers |
 |---|---|---|
 | `formatField` | a field of a row or struct (`StructAccessor`) | `print` cells, `convert` CSV cells and JSON fields that are not JSON scalars, dive preview cells and record modal |
+| `renderField` | the same, also reporting whether the text holds a marker for a refused value | dive preview cells and their expanded form in the record modal, each flagged on its own, since the expanded form shows elements a preview cell cuts |
 | `formatDictionary` | a raw primitive from a parsed `Dictionary` | dive dictionary screen, `inspect dictionary` numeric entries |
 | `formatBytes` | raw min/max statistics bytes | `inspect pages`, `inspect dictionary` byte-array entries, the dive pages, column index, column chunk detail and column-across-row-groups screens |
 
@@ -95,12 +96,13 @@ The display styles use the display grammar: `{ a : 1 }` for structs, maps and Va
 
 ### Values that do not decode
 
-A UUID that is not 16 bytes, an INTERVAL or INT96 that is not 12, a FLOAT16 that is not 2, a `FIXED_LEN_BYTE_ARRAY(12)` timestamp outside the Java range, a numeric statistic whose width does not match its physical type, or a TIME outside a day is not the value its type claims:
+A UUID that is not 16 bytes, an INTERVAL or INT96 that is not 12, a FLOAT16 that is not 2, a `FIXED_LEN_BYTE_ARRAY(12)` timestamp outside the Java range, a numeric statistic whose width does not match its physical type, a TIME outside a day, or an `INT(8)` / `INT(16)` outside its bit width is not the value its type claims:
 
 | Path | Behaviour |
 |---|---|
-| `formatField` | renders the value core's decoder returns for it |
-| `formatDictionary`, `formatBytes` | renders the stored form (bytes as `0x` hex, a TIME as its integer), so a damaged bound or entry shows in its cell and the rest of the screen stays readable |
+| `formatField`, viewing styles | renders the value core's decoder returns for it. Where the decoder refuses a TIME outside a day or an `INT(8)` / `INT(16)` outside its bit width, the cell renders as a marker naming the stored value and the reason (`<300: outside INT_8 range>`, `<86400000: outside a day>`; the stored value unsigned under an unsigned `INT`), and the rest of the row renders as usual. A shredded Variant whose `INT(8)` / `INT(16)` `typed_value` is outside its bit width renders as one marker in place of the Variant (`<variant: 300 outside INT_8 range>`), in either type mode. Core signals these refusals with the internal `IntOutOfRangeException` (found in the cause chain) and `DateTimeException` on a TIME leaf; any other malformed Variant fails as before. `renderField` reports that the cell holds one, and dive styles it `Theme.error()`. Any other failure propagates, and `print` fails |
+| `formatField`, `EXPORT` | propagates every failure, so `convert` fails naming the file and the column rather than writing a value the file does not hold. A JSON scalar `INT(8)` / `INT(16)`, which `convert` writes from `getInt`, is checked through `getValue` first |
+| `formatDictionary`, `formatBytes` | renders the stored form (bytes as `0x` hex, a TIME or an `INT(8)` / `INT(16)` as its integer), so a damaged bound or entry shows in its cell and the rest of the screen stays readable |
 
 ### Budgets and truncation
 

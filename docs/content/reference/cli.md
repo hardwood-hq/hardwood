@@ -183,8 +183,17 @@ entirely of control characters as `0x`-prefixed hex of its UTF-8 bytes.
 
 A min/max statistic or dictionary entry that does not decode as its type
 renders in its stored form: bytes whose length does not match the type as
-`0x`-prefixed hex, a `TIME` outside a day as its stored integer. A malformed
-`UUID`, `INTERVAL` or `INT96` value in a row makes `print` and `convert` fail.
+`0x`-prefixed hex, a `TIME` outside a day or an `INT(8)` / `INT(16)` outside its
+bit width as its stored integer. A malformed `UUID`, `INTERVAL` or `INT96` value
+in a row makes `print` and `convert` fail.
+
+A row value its annotation does not admit, a `TIME` outside a day or an `INT(8)` /
+`INT(16)` outside its bit width, renders in `print` and `dive` as a marker naming the
+stored value and the reason, such as `<300: outside INT_8 range>` or
+`<86400000: outside a day>`; an unsigned `INT` shows its unsigned value. A shredded
+`VARIANT` whose `INT(8)` / `INT(16)` value lies outside its bit width renders as
+`<variant: 300 outside INT_8 range>`. The rest of the row renders as usual. `convert` fails on such a value, naming the file and the
+column.
 
 ## Schema output formats
 

@@ -9,6 +9,7 @@ package dev.hardwood.internal;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.DateTimeException;
 import java.util.concurrent.CompletionException;
 
 import dev.hardwood.reader.ParquetReadException;
@@ -262,6 +263,13 @@ public final class ExceptionContext {
             ClassCastException wrapped = new ClassCastException(newMessage);
             wrapped.initCause(e);
             return wrapped;
+        }
+
+        // What a `TIME` outside a day raises on its way to a `LocalTime`, which callers (the
+        // CLI's value markers among them) catch by type. It is rebuilt directly rather than
+        // reflectively, since a native image keeps no reflective constructors it was not told of.
+        if (e.getClass() == DateTimeException.class) {
+            return new DateTimeException(newMessage, e);
         }
 
         // For CompletionException and other wrapper types: try to preserve the type

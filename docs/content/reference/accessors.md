@@ -61,10 +61,10 @@ holds, whatever it is annotated with. `getInt` reads a `DATE`, a `TIME(MILLIS)` 
 payload. Use them to skip the logical-type
 decode — see [Reading the physical value](../how-to/row-reader.md#reading-the-physical-value).
 
-`getValue` on a signed `INT(8)` or `INT(16)` column returns a `Byte` or a `Short`. A file can
-store a value outside the range its annotation states: `getValue` keeps the low 8 or 16 bits of
-such a value, so a stored `1000` reads as the `Byte` `-24`, while `getInt` returns it as stored.
-On an unsigned `INT(8)` or `INT(16)` column `getValue` returns the stored `Integer`. Filter
+`getValue` on a signed `INT(8)` or `INT(16)` column returns a `Byte` or a `Short`, and on an
+unsigned one the stored `Integer`. A file can store a value outside the range its annotation
+states (a stored `1000` on an `INT(8)` column): `getValue` fails on such a value with a
+`ParquetReadException` naming the value and the range, while `getInt` returns it as stored. Filter
 predicates compare the value `getInt` returns.
 
 ## Generic accessors

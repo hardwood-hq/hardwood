@@ -9,6 +9,7 @@ package dev.hardwood.internal;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.DateTimeException;
 
 import org.junit.jupiter.api.Test;
 
@@ -115,6 +116,19 @@ class ExceptionContextTest {
 
         assertThat(wrapped).isExactlyInstanceOf(ClassCastException.class);
         assertThat(wrapped.getMessage()).isEqualTo("[file.parquet] class [I cannot be cast to class [J");
+        assertThat(wrapped.getCause()).isSameAs(original);
+    }
+
+    @Test
+    void preservesDateTimeException() {
+        DateTimeException original = new DateTimeException(
+                "The TIME(MILLIS) value 86400000 lies outside a day, which holds 0 to 86399999");
+        RuntimeException wrapped = ExceptionContext.addReadContext("file.parquet",
+                ExceptionContext.UNKNOWN_ROW_GROUP, "t", original);
+
+        assertThat(wrapped).isExactlyInstanceOf(DateTimeException.class);
+        assertThat(wrapped).hasMessage("[file.parquet: column 't'] The TIME(MILLIS) value 86400000 lies outside"
+                + " a day, which holds 0 to 86399999");
         assertThat(wrapped.getCause()).isSameAs(original);
     }
 

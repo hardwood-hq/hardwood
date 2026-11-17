@@ -15,8 +15,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.StringJoiner;
+import java.util.function.Supplier;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.conversion.IntOutOfRangeException;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.internal.reader.row.FieldSchemaAccessor;
@@ -59,6 +61,12 @@ import dev.hardwood.schema.SchemaNode;
 /// sanitised, and whether nested values are written as JSON. Statistics and
 /// dictionary entries come from the file unchecked: a value its annotation
 /// cannot decode renders there in its stored form.
+///
+/// A viewing style renders a value core refuses as no value of its annotation (an
+/// `INT(8)` or `INT(16)` outside its bit width, a `TIME` outside a day, a shredded
+/// Variant whose `typed_value` is such an integer) as a marker naming the stored value and
+/// the reason, such as `<300: outside INT_8 range>`, and renders the rest of the row.
+/// `EXPORT` lets the refusal propagate, so `convert` writes no value the file does not hold.
 ///
 /// Budgets are measured in terminal display cells; [BinaryValues#NO_LIMIT]
 /// renders the whole value. Text budgets never cut — a caller that truncates
@@ -114,27 +122,124 @@ public final class ValueFormatter {
     /// how their leaves are read.
     public static String formatField(StructAccessor accessor, int fieldIndex, SchemaNode field,
                                      boolean useLogicalType, Style style, int budget) {
+        return renderField(accessor, fieldIndex, field, useLogicalType, style, budget).text();
+    }
+
+    /// A field's text, and whether it holds a marker for a value core refused, which a
+    /// renderer styles as an error.
+    ///
+    /// @param text the field's text, as [#formatField] returns it
+    /// @param undecodable whether the text holds a marker for a value core refused
+    public record RenderedField(String text, boolean undecodable) {
+    }
+
+    /// Renders the field as [#formatField] does, reporting whether it holds a marker for a
+    /// value core refused.
+    public static RenderedField renderField(StructAccessor accessor, int fieldIndex, SchemaNode field,
+                                            boolean useLogicalType, Style style, int budget) {
         Objects.requireNonNull(accessor, "accessor");
         Objects.requireNonNull(field, "field");
         Objects.requireNonNull(style, "style");
         requireBudget(budget);
-        return render(read(accessor, fieldIndex, field, useLogicalType), field, useLogicalType, style, 0, budget);
+        Marks marks = new Marks();
+        String text = render(read(accessor, fieldIndex, field, useLogicalType, style), field, useLogicalType,
+                style, 0, budget, marks);
+        return new RenderedField(text, marks.undecodable);
     }
 
-    /// The value of the field at `fieldIndex` as the formatter renders it: decoded, apart from a
-    /// `FILE` group, which renders as its stored fields so that a file holding an invalid
-    /// reference still prints.
+    /// The value of the field at `fieldIndex` as the formatter renders it for export: decoded,
+    /// apart from a `FILE` group, which renders as its stored fields so that a file holding an
+    /// invalid reference still prints.
     public static Object valueOf(StructAccessor accessor, int fieldIndex, SchemaNode field) {
-        return read(accessor, fieldIndex, field, true);
+        return read(accessor, fieldIndex, field, true, Style.EXPORT);
     }
 
     /// The field at `fieldIndex`: `null` when absent, read through the raw accessor
     /// when [#readsRaw], decoded otherwise.
-    private static Object read(StructAccessor accessor, int fieldIndex, SchemaNode field, boolean useLogicalType) {
+    private static Object read(StructAccessor accessor, int fieldIndex, SchemaNode field, boolean useLogicalType,
+                               Style style) {
         if (accessor.isNull(fieldIndex)) {
             return null;
         }
-        return readsRaw(field, useLogicalType) ? accessor.getRawValue(fieldIndex) : accessor.getValue(fieldIndex);
+        try {
+            return readsRaw(field, useLogicalType) ? accessor.getRawValue(fieldIndex) : accessor.getValue(fieldIndex);
+        }
+        catch (ParquetReadException | DateTimeException e) {
+            return undecodable(e, field, style, () -> accessor.getRawValue(fieldIndex));
+        }
+    }
+
+    /// Element `i` of a list, read as [#read] reads a field.
+    private static Object element(PqList list, int i, SchemaNode schema, boolean useLogicalType, Style style) {
+        if (list.isNull(i)) {
+            return null;
+        }
+        try {
+            return readsRaw(schema, useLogicalType) ? list.getRaw(i) : list.get(i);
+        }
+        catch (ParquetReadException | DateTimeException e) {
+            return undecodable(e, schema, style, () -> list.getRaw(i));
+        }
+    }
+
+    /// The key of a map entry, read as [#read] reads a field.
+    private static Object mapKey(PqMap.Entry entry, SchemaNode schema, boolean useLogicalType, Style style) {
+        try {
+            return readsRaw(schema, useLogicalType) ? entry.getRawKey() : entry.getKey();
+        }
+        catch (ParquetReadException | DateTimeException e) {
+            return undecodable(e, schema, style, entry::getRawKey);
+        }
+    }
+
+    /// The value of a map entry, read as [#read] reads a field.
+    private static Object mapValue(PqMap.Entry entry, SchemaNode schema, boolean useLogicalType, Style style) {
+        if (entry.isValueNull()) {
+            return null;
+        }
+        try {
+            return readsRaw(schema, useLogicalType) ? entry.getRawValue() : entry.getValue();
+        }
+        catch (ParquetReadException | DateTimeException e) {
+            return undecodable(e, schema, style, entry::getRawValue);
+        }
+    }
+
+    /// A value core refused as no value of its annotation, which a viewing style renders as a
+    /// marker naming the stored value and the reason.
+    private record Undecodable(String text) {
+    }
+
+    /// Whether a render produced an [Undecodable] marker.
+    private static final class Marks {
+        private boolean undecodable;
+    }
+
+    /// The marker for a value core refused as no value of its annotation, in a viewing style:
+    /// `<300: outside INT_8 range>` for an `INT(8)` / `INT(16)` outside its bit width (the value
+    /// unsigned under an unsigned annotation), `<variant: 300 outside INT_8 range>` for a shredded
+    /// Variant whose `typed_value` is one, and `<86400000: outside a day>` for a `TIME` outside a
+    /// day. `stored` reads the value as the file stores it. The failure is rethrown in `EXPORT`,
+    /// and wherever it is not one of these refusals: any other failure is a fault the read reports.
+    private static Undecodable undecodable(RuntimeException e, SchemaNode schema, Style style,
+                                           Supplier<Object> stored) {
+        if (style == Style.EXPORT) {
+            throw e;
+        }
+        IntOutOfRangeException range = IntOutOfRangeException.in(e);
+        boolean variant = schema instanceof SchemaNode.GroupNode group && group.isVariant();
+        LogicalType lt = schema instanceof SchemaNode.PrimitiveNode pn ? pn.logicalType() : null;
+        if (range != null && (variant || lt instanceof LogicalType.IntType)) {
+            String outside = "outside " + range.annotation() + " range";
+            return new Undecodable(variant
+                    ? "<variant: " + range.value() + " " + outside + ">"
+                    : "<" + range.value() + ": " + outside + ">");
+        }
+        if (e instanceof DateTimeException && lt instanceof LogicalType.TimeType) {
+            return new Undecodable("<" + leaf(stored.get(), lt, Style.COMPACT, BinaryValues.NO_LIMIT)
+                    + ": outside a day>");
+        }
+        throw e;
     }
 
     /// Whether a value is read through the raw accessors: every value when `useLogicalType` is
@@ -156,18 +261,23 @@ public final class ValueFormatter {
     /// raw accessors. In `EXPORT` a nested value is JSON, and a leaf inside one
     /// a JSON value.
     private static String render(Object value, SchemaNode schema, boolean useLogicalType, Style style,
-                                 int depth, int budget) {
+                                 int depth, int budget, Marks marks) {
         if (value == null) {
             return "null";
+        }
+        if (value instanceof Undecodable undecodable) {
+            marks.undecodable = true;
+            return undecodable.text();
         }
         if (style == Style.PREVIEW && depth >= MAX_NESTED_DEPTH) {
             return String.valueOf(Strings.ELLIPSIS);
         }
         return switch (value) {
-            case PqVariant variant -> renderVariant(variant, style, depth, budget);
-            case PqStruct struct -> renderStruct(struct, useLogicalType, style, depth, budget);
-            case PqList list -> renderList(list, listElementSchema(schema), useLogicalType, style, depth, budget);
-            case PqMap map -> renderMap(map, asGroup(schema), useLogicalType, style, depth, budget);
+            case PqVariant variant -> renderVariant(variant, style, depth, budget, marks);
+            case PqStruct struct -> renderStruct(struct, useLogicalType, style, depth, budget, marks);
+            case PqList list -> renderList(list, listElementSchema(schema), useLogicalType, style, depth, budget,
+                    marks);
+            case PqMap map -> renderMap(map, asGroup(schema), useLogicalType, style, depth, budget, marks);
             default -> style == Style.EXPORT && depth > 0
                     ? jsonLeaf(value, schema, useLogicalType, budget)
                     : renderLeaf(value, schema, useLogicalType, style, budget);
@@ -178,35 +288,34 @@ public final class ValueFormatter {
     /// struct's positions follow the projection rather than the file's group, so only the struct
     /// knows which schema node each position holds.
     private static String renderStruct(PqStruct struct, boolean useLogicalType,
-                                       Style style, int depth, int budget) {
+                                       Style style, int depth, int budget, Marks marks) {
         int count = struct.getFieldCount();
         int shown = shownEntries(count, style);
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
             SchemaNode childSchema = fieldSchema(struct, i);
             entries.add(entry(key(struct.getFieldName(i), style),
-                    render(read(struct, i, childSchema, useLogicalType), childSchema, useLogicalType, style,
-                            depth + 1, budget),
+                    render(read(struct, i, childSchema, useLogicalType, style), childSchema, useLogicalType, style,
+                            depth + 1, budget, marks),
                     style));
         }
         return enclose(true, entries, count, style, depth);
     }
 
     private static String renderList(PqList list, SchemaNode elementSchema, boolean useLogicalType,
-                                     Style style, int depth, int budget) {
+                                     Style style, int depth, int budget, Marks marks) {
         int size = list.size();
         int shown = shownEntries(size, style);
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
-            Object element = list.isNull(i) ? null
-                    : readsRaw(elementSchema, useLogicalType) ? list.getRaw(i) : list.get(i);
-            entries.add(render(element, elementSchema, useLogicalType, style, depth + 1, budget));
+            Object element = element(list, i, elementSchema, useLogicalType, style);
+            entries.add(render(element, elementSchema, useLogicalType, style, depth + 1, budget, marks));
         }
         return enclose(false, entries, size, style, depth);
     }
 
     private static String renderMap(PqMap map, SchemaNode.GroupNode schema, boolean useLogicalType,
-                                    Style style, int depth, int budget) {
+                                    Style style, int depth, int budget, Marks marks) {
         SchemaNode keySchema = null;
         SchemaNode valueSchema = null;
         if (schema != null && !schema.children().isEmpty()
@@ -220,29 +329,30 @@ public final class ValueFormatter {
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
             PqMap.Entry entry = all.get(i);
-            Object key = useLogicalType ? entry.getKey() : entry.getRawKey();
-            Object value = entry.isValueNull() ? null
-                    : readsRaw(valueSchema, useLogicalType) ? entry.getRawValue() : entry.getValue();
+            Object key = mapKey(entry, keySchema, useLogicalType, style);
+            Object value = mapValue(entry, valueSchema, useLogicalType, style);
             // A JSON object key is a string: the map key's text, whatever its type.
             String keyText = style == Style.EXPORT
-                    ? jsonString(render(key, keySchema, useLogicalType, style, 0, budget))
-                    : render(key, keySchema, useLogicalType, style, depth + 1, budget);
-            entries.add(entry(keyText, render(value, valueSchema, useLogicalType, style, depth + 1, budget), style));
+                    ? jsonString(render(key, keySchema, useLogicalType, style, 0, budget, marks))
+                    : render(key, keySchema, useLogicalType, style, depth + 1, budget, marks);
+            entries.add(entry(keyText, render(value, valueSchema, useLogicalType, style, depth + 1, budget, marks),
+                    style));
         }
         return enclose(true, entries, all.size(), style, depth);
     }
 
-    private static String renderVariant(PqVariant variant, Style style, int depth, int budget) {
+    private static String renderVariant(PqVariant variant, Style style, int depth, int budget, Marks marks) {
         return switch (variant.type()) {
-            case OBJECT -> renderVariantObject(variant.asObject(), style, depth, budget);
-            case ARRAY -> renderVariantArray(variant.asArray(), style, depth, budget);
+            case OBJECT -> renderVariantObject(variant.asObject(), style, depth, budget, marks);
+            case ARRAY -> renderVariantArray(variant.asArray(), style, depth, budget, marks);
             default -> style == Style.EXPORT
                     ? variantJsonScalar(variant, budget)
                     : variantScalarText(variant, style, budget);
         };
     }
 
-    private static String renderVariantObject(PqVariantObject object, Style style, int depth, int budget) {
+    private static String renderVariantObject(PqVariantObject object, Style style, int depth, int budget,
+                                              Marks marks) {
         int count = object.getFieldCount();
         int shown = shownEntries(count, style);
         List<String> entries = new ArrayList<>(shown);
@@ -250,17 +360,18 @@ public final class ValueFormatter {
             // The raw name looks the value up; only the rendered name is sanitised.
             String name = object.getFieldName(i);
             entries.add(entry(key(name, style),
-                    render(object.getVariant(name), null, true, style, depth + 1, budget), style));
+                    render(object.getVariant(name), null, true, style, depth + 1, budget, marks), style));
         }
         return enclose(true, entries, count, style, depth);
     }
 
-    private static String renderVariantArray(PqVariantArray array, Style style, int depth, int budget) {
+    private static String renderVariantArray(PqVariantArray array, Style style, int depth, int budget,
+                                             Marks marks) {
         int size = array.size();
         int shown = shownEntries(size, style);
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
-            entries.add(render(array.get(i), null, true, style, depth + 1, budget));
+            entries.add(render(array.get(i), null, true, style, depth + 1, budget, marks));
         }
         return enclose(false, entries, size, style, depth);
     }
@@ -516,7 +627,8 @@ public final class ValueFormatter {
     /// rendered as a leaf. These values come from the file unchecked, so one the
     /// annotation cannot decode — a payload of the wrong width, a `TIME` outside
     /// a day, a `TIMESTAMP` past the range of the Java type, any value of a
-    /// `NULL` column — renders in its stored form: the number, or the bytes as
+    /// `NULL` column, an `INT(8)` or `INT(16)` outside its bit width — renders in its stored
+    /// form: the number (unsigned under an unsigned `INT`), or the bytes as
     /// `0x` hex. An INT96 timestamp decodes to its instant, and renders as hex in
     /// physical mode.
     private static String formatStored(Object stored, ColumnSchema col, boolean useLogicalType, int budget) {
@@ -537,7 +649,10 @@ public final class ValueFormatter {
             return leaf(value, lt, Style.COMPACT, budget);
         }
         catch (DateTimeException | ParquetReadException e) {
-            return stored instanceof byte[] bytes ? BinaryValues.toHex(bytes, budget) : String.valueOf(stored);
+            // A stored number renders through leaf, which reads it unsigned under an unsigned INT
+            return stored instanceof byte[] bytes
+                    ? BinaryValues.toHex(bytes, budget)
+                    : leaf(stored, lt, Style.COMPACT, budget);
         }
     }
 

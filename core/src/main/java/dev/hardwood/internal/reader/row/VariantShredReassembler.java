@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.internal.variant.ShredLevel.Typed;
@@ -117,8 +118,8 @@ public final class VariantShredReassembler {
         Object arr = batch.valueArrays[typed.col()];
         switch (typed.carrier()) {
             case BOOLEAN -> pos = VariantValueEncoder.writeBoolean(scratch, pos, ((boolean[]) arr)[idx]);
-            case INT8 -> pos = VariantValueEncoder.writeInt8(scratch, pos, ((int[]) arr)[idx]);
-            case INT16 -> pos = VariantValueEncoder.writeInt16(scratch, pos, ((int[]) arr)[idx]);
+            case INT8 -> pos = VariantValueEncoder.writeInt8(scratch, pos, narrowInt(typed, ((int[]) arr)[idx]));
+            case INT16 -> pos = VariantValueEncoder.writeInt16(scratch, pos, narrowInt(typed, ((int[]) arr)[idx]));
             case INT32 -> pos = VariantValueEncoder.writeInt32(scratch, pos, ((int[]) arr)[idx]);
             case INT64 -> pos = VariantValueEncoder.writeInt64(scratch, pos, ((long[]) arr)[idx]);
             case FLOAT -> pos = VariantValueEncoder.writeFloat(scratch, pos, ((float[]) arr)[idx]);
@@ -138,6 +139,12 @@ public final class VariantShredReassembler {
             case STRING -> encodeString(((BinaryBatchValues) arr).byteArrayAt(idx));
             case UUID -> encodeUuid(((BinaryBatchValues) arr).byteArrayAt(idx));
         }
+    }
+
+    /// An `INT(8)` or `INT(16)` typed_value, checked to fit the Variant `int8` or `int16` it is
+    /// encoded as.
+    private static int narrowInt(Typed.Primitive typed, int stored) {
+        return LogicalTypeConverter.intWithinBitWidth(stored, (LogicalType.IntType) typed.logicalType());
     }
 
     private static int scale(Typed.Primitive typed) {

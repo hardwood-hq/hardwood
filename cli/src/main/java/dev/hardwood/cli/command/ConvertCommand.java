@@ -11,6 +11,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.UncheckedIOException;
+import java.time.DateTimeException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -142,7 +143,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
             reportPartialOutput();
             return CommandResult.FAILURE;
         }
-        catch (IOException | ParquetReadException | UnsupportedOperationException e) {
+        catch (IOException | ParquetReadException | DateTimeException | UnsupportedOperationException e) {
             System.err.println("Error reading file: " + e.getMessage());
             reportPartialOutput();
             return CommandResult.FAILURE;
@@ -344,7 +345,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
                     out.print(rowReader.getBoolean(fieldIndex));
                     yield true;
                 }
-                case INT32 -> writeJsonInt32(out, logicalType, rowReader.getInt(fieldIndex));
+                case INT32 -> writeJsonInt32(out, logicalType, checkedInt(rowReader, fieldIndex, logicalType));
                 case INT64 -> writeJsonInt64(out, logicalType, rowReader.getLong(fieldIndex));
                 case FLOAT -> writeJsonFloat(out, rowReader.getFloat(fieldIndex));
                 case DOUBLE -> writeJsonDouble(out, rowReader.getDouble(fieldIndex));
@@ -353,6 +354,16 @@ public class ConvertCommand implements Command<CommandInvocation> {
         }
 
         return false;
+    }
+
+    /// The stored `int` of a field, which an `INT(8)` or `INT(16)` field first reads through
+    /// `getValue`: that refuses a value outside the bit width, naming the file and the column, where
+    /// `getInt` returns it as stored.
+    private static int checkedInt(RowReader rowReader, int fieldIndex, LogicalType logicalType) {
+        if (logicalType instanceof LogicalType.IntType integer && integer.bitWidth() < Integer.SIZE) {
+            rowReader.getValue(fieldIndex);
+        }
+        return rowReader.getInt(fieldIndex);
     }
 
     private static boolean writeJsonInt32(PrintWriter out, LogicalType logicalType, int n) {

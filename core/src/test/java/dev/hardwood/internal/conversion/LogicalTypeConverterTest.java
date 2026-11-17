@@ -66,6 +66,54 @@ class LogicalTypeConverterTest {
                 .hasMessage("The TIME(NANOS) value -1 lies outside a day, which holds 0 to 86399999999999");
     }
 
+    static Stream<Arguments> intsInsideTheirAnnotation() {
+        return Stream.of(
+                Arguments.of(LogicalType.intType(8, true), -128, (byte) -128),
+                Arguments.of(LogicalType.intType(8, true), 127, (byte) 127),
+                Arguments.of(LogicalType.intType(16, true), -32768, (short) -32768),
+                Arguments.of(LogicalType.intType(16, true), 32767, (short) 32767),
+                Arguments.of(LogicalType.intType(8, false), 0, 0),
+                Arguments.of(LogicalType.intType(8, false), 255, 255),
+                Arguments.of(LogicalType.intType(16, false), 0, 0),
+                Arguments.of(LogicalType.intType(16, false), 65535, 65535),
+                // INT(32) and UINT(32) hold every INT32 bit pattern
+                Arguments.of(LogicalType.intType(32, true), Integer.MIN_VALUE, Integer.MIN_VALUE),
+                Arguments.of(LogicalType.intType(32, false), -1, -1));
+    }
+
+    @ParameterizedTest
+    @MethodSource("intsInsideTheirAnnotation")
+    void intInsideItsAnnotationIsRead(LogicalType.IntType type, int stored, Object expected) {
+        assertThat(LogicalTypeConverter.convert(stored, PhysicalType.INT32, type)).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> intsPastTheirAnnotation() {
+        return Stream.of(
+                Arguments.of(LogicalType.intType(8, true), -129,
+                        "The INT_8 value -129 lies outside its range, which holds -128 to 127"),
+                Arguments.of(LogicalType.intType(8, true), 300,
+                        "The INT_8 value 300 lies outside its range, which holds -128 to 127"),
+                Arguments.of(LogicalType.intType(16, true), -32769,
+                        "The INT_16 value -32769 lies outside its range, which holds -32768 to 32767"),
+                Arguments.of(LogicalType.intType(16, true), 32768,
+                        "The INT_16 value 32768 lies outside its range, which holds -32768 to 32767"),
+                Arguments.of(LogicalType.intType(8, false), 256,
+                        "The UINT_8 value 256 lies outside its range, which holds 0 to 255"),
+                // An unsigned column's INT32 is read unsigned, so -1 stands for 2^32 - 1
+                Arguments.of(LogicalType.intType(8, false), -1,
+                        "The UINT_8 value 4294967295 lies outside its range, which holds 0 to 255"),
+                Arguments.of(LogicalType.intType(16, false), 65536,
+                        "The UINT_16 value 65536 lies outside its range, which holds 0 to 65535"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("intsPastTheirAnnotation")
+    void intPastItsAnnotationIsRefused(LogicalType.IntType type, int stored, String message) {
+        assertThatThrownBy(() -> LogicalTypeConverter.convert(stored, PhysicalType.INT32, type))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage(message);
+    }
+
     static Stream<Arguments> int96Cases() {
         return Stream.of(
                 // Unix epoch: nanos-of-day=0, julian-day=2440588 (JD of 1970-01-01)

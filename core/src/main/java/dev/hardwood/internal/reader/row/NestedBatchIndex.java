@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.row;
 
 import java.util.Arrays;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BinaryValueTest;
 import dev.hardwood.internal.reader.batch.NestedBatch;
@@ -190,12 +191,24 @@ final class NestedBatchIndex {
         return switch (LeafKind.of(schema)) {
             case STRING -> getString(projectedCol, valueIndex);
             case INT96_TIMESTAMP -> LeafDecoder.int96TimestampAt(valueArrays[projectedCol], valueIndex);
-            case CONVERT -> valueArrays[projectedCol] instanceof BinaryBatchValues binary
+            case CONVERT -> convertLeaf(projectedCol, valueIndex, schema);
+            case GROUP, RAW -> LeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
+        };
+    }
+
+    /// The decoded value of an annotated leaf. A stored value its annotation does not admit
+    /// fails naming the file and the column it was read from.
+    private Object convertLeaf(int projectedCol, int valueIndex, SchemaNode schema) {
+        try {
+            return valueArrays[projectedCol] instanceof BinaryBatchValues binary
                     && schema instanceof SchemaNode.PrimitiveNode leaf
                     ? LeafDecoder.convertAt(binary, valueIndex, leaf.type(), leaf.logicalType())
                     : LeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
-            case GROUP, RAW -> LeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
-        };
+        }
+        catch (RuntimeException e) {
+            String column = columnSchemas != null ? columnSchemas[projectedCol].fieldPath().toString() : null;
+            throw ExceptionContext.addReadContext(fileName, ExceptionContext.UNKNOWN_ROW_GROUP, column, e);
+        }
     }
 
     // ==================== Index Navigation ====================

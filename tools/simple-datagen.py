@@ -7473,8 +7473,8 @@ for name, per in (('utc_ns', 1), ('local_us', 1_000), ('utc_ms', 1_000_000)):
 print(f"\nGenerated {ts12_path}: FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP columns of every unit, a dictionary and a list")
 
 # INT(8) and INT(16) columns storing values outside the range their annotation states, which the
-# format does not forbid: getValue narrows the signed ones to Byte / Short and passes the unsigned
-# one through as Integer; getInt and predicates see them as stored.
+# format does not forbid: getValue refuses such a value and reads one inside the range as Byte /
+# Short (signed) or Integer (unsigned); getInt and predicates see them as stored.
 int_past_path = 'core/src/test/resources/int_past_annotation.parquet'
 pq.write_table(
     pa.table({
@@ -7489,6 +7489,54 @@ annotate_element_at_path_as_int(int_past_path, ['i8'], bit_width=8, is_signed=Tr
 annotate_element_at_path_as_int(int_past_path, ['i16'], bit_width=16, is_signed=True)
 annotate_element_at_path_as_int(int_past_path, ['u8'], bit_width=8, is_signed=False)
 print(f"\nGenerated {int_past_path}: INT(8) / INT(16) columns storing values past their annotation")
+
+# Row 0 stores a value its annotation does not admit in each annotated column: an INT(8) of 300,
+# a UINT(8) whose INT32 is -1 (4294967295 unsigned) and a TIME(MILLIS) of a full day. Row 1 keeps
+# to every annotation. The CLI's viewing commands render the first as markers, convert refuses it.
+undecodable_path = 'core/src/test/resources/undecodable_values.parquet'
+pq.write_table(
+    pa.table({
+        'id': pa.array([1, 2], type=pa.int32()),
+        'i8': pa.array([300, 5], type=pa.int32()),
+        'u8': pa.array([-1, 7], type=pa.int32()),
+        't': pa.array([86_400_000, 1_000], type=pa.time32('ms')),
+    }),
+    undecodable_path,
+    compression=None,
+)
+annotate_element_at_path_as_int(undecodable_path, ['i8'], bit_width=8, is_signed=True)
+annotate_element_at_path_as_int(undecodable_path, ['u8'], bit_width=8, is_signed=False)
+print(f"\nGenerated {undecodable_path}: a row of values past their annotation, and one within it")
+
+# The same refusals inside nested values: a struct field, a list element, a map key and value, and
+# a shredded Variant whose INT(8) typed_value holds 300. Row 0 stores the values the annotations
+# do not admit, row 1 values within them.
+undecodable_nested_path = 'core/src/test/resources/undecodable_nested_values.parquet'
+pq.write_table(
+    pa.table({
+        'id': pa.array([1, 2], type=pa.int32()),
+        's': pa.array([{'i8': 300}, {'i8': 5}], type=pa.struct([pa.field('i8', pa.int32())])),
+        # The refused element is the fourth, past the three a dive preview cell shows
+        'l': pa.array([[1, 2, 3, 300], [5]], type=pa.list_(pa.int32())),
+        'm': pa.array([[(300, 86_400_000)], [(5, 1_000)]], type=pa.map_(pa.int32(), pa.time32('ms'))),
+        'var': pa.array([
+            {'metadata': _empty_metadata, 'value': None, 'typed_value': 300},
+            {'metadata': _empty_metadata, 'value': None, 'typed_value': 5},
+        ], type=pa.struct([
+            pa.field('metadata', pa.binary(), False),
+            pa.field('value', pa.binary(), True),
+            pa.field('typed_value', pa.int32(), True),
+        ])),
+    }),
+    undecodable_nested_path,
+    compression=None,
+)
+annotate_element_at_path_as_int(undecodable_nested_path, ['s', 'i8'], bit_width=8, is_signed=True)
+annotate_element_at_path_as_int(undecodable_nested_path, ['l', 'list', 'element'], bit_width=8, is_signed=True)
+annotate_element_at_path_as_int(undecodable_nested_path, ['m', 'key_value', 'key'], bit_width=8, is_signed=True)
+annotate_element_at_path_as_int(undecodable_nested_path, ['var', 'typed_value'], bit_width=8, is_signed=True)
+annotate_group_as_variant(undecodable_nested_path, 'var')
+print(f"\nGenerated {undecodable_nested_path}: values past their annotation inside a struct, list, map and Variant")
 
 # A dictionary-encoded column whose values matching `== 'zzzz'` sit in the last pages of a chunk
 # with more than 1 MiB of data pages between them and the dictionary page. A page-pruned read of
