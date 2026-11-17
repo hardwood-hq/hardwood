@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicTest;
@@ -42,6 +43,40 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class VariantShredReassemblerTest {
 
+    private static final String VALUE_ALONGSIDE_TYPED_VALUE =
+            "Malformed shredded Variant: both value and typed_value are set for a non-object value";
+
+    private static final String NON_OBJECT_VALUE_WITH_SHREDDED_FIELDS =
+            "Malformed shredded Variant: typed_value holds shredded object fields but value is not an object";
+
+    /// How Hardwood rejects each error case in `cases.json`, keyed by fixture.
+    private static final Map<String, Rejection> ERROR_CASE_REJECTIONS = Map.of(
+            "case-040.parquet", Rejection.onRead(VALUE_ALONGSIDE_TYPED_VALUE),
+            "case-042.parquet", Rejection.onRead(VALUE_ALONGSIDE_TYPED_VALUE),
+            "case-087.parquet", Rejection.onRead(NON_OBJECT_VALUE_WITH_SHREDDED_FIELDS),
+            "case-127.parquet", Rejection.onBuild(unsupportedCarrier("INT32 UINT_32")),
+            "case-128.parquet", Rejection.onRead(NON_OBJECT_VALUE_WITH_SHREDDED_FIELDS),
+            "case-137.parquet", Rejection.onBuild(unsupportedCarrier("FIXED_LEN_BYTE_ARRAY")));
+
+    /// Where an error case is rejected: when the row reader is built, before any row is
+    /// read, or when the offending row's Variant is read.
+    private enum Stage {
+        BUILD,
+        READ
+    }
+
+    /// An expected rejection; `message` excludes the file and column prefix.
+    private record Rejection(Stage stage, String message) {
+
+        static Rejection onBuild(String message) {
+            return new Rejection(Stage.BUILD, message);
+        }
+
+        static Rejection onRead(String message) {
+            return new Rejection(Stage.READ, message);
+        }
+    }
+
     private Path fixturesDir;
 
     @BeforeAll
@@ -61,9 +96,8 @@ class VariantShredReassemblerTest {
                 String name = file.getFileName().toString();
                 // Two classes of fixture carry no byte-level oracle: spec-invalid
                 // ones (`-INVALID`), whose reader behaviour is implementation
-                // defined, and error cases, which cases.json pairs with an
-                // `error_message` and no variant payload (see #812).
-                if (Utils.isInvalidFixture(name) || Utils.SHREDDED_VARIANT_ERROR_CASES.contains(name)) {
+                // defined, and error cases, which eachErrorCaseIsRejected covers.
+                if (Utils.isInvalidFixture(name) || Utils.isShreddedVariantErrorCase(name)) {
                     continue;
                 }
                 tests.add(DynamicTest.dynamicTest(name, () -> verifyFile(file)));
@@ -72,13 +106,23 @@ class VariantShredReassemblerTest {
         return tests;
     }
 
-    /// The error cases whose `typed_value` has a type the Variant shredding spec does not
-    /// allow are rejected when the row reader is built, whether or not a row populates
-    /// `typed_value`.
-    @Test
-    void unsupportedTypedValueCarriersAreRejected() throws IOException {
-        assertRowReaderRejected("case-127.parquet", "INT32 UINT_32");
-        assertRowReaderRejected("case-137.parquet", "FIXED_LEN_BYTE_ARRAY");
+    /// Every fixture `cases.json` classifies as an error case is rejected with a
+    /// [ParquetReadException]. A carrier the shredding specification does not allow is
+    /// rejected when the row reader is built, whether or not a row populates `typed_value`;
+    /// a row whose `value` and `typed_value` conflict is rejected when its Variant is read.
+    /// An error case added upstream fails here until its rejection is added to
+    /// [#ERROR_CASE_REJECTIONS].
+    @TestFactory
+    List<DynamicTest> eachErrorCaseIsRejected() {
+        List<DynamicTest> tests = new ArrayList<>();
+        Utils.shreddedVariantErrorCases().forEach((name, errorMessage) ->
+                tests.add(DynamicTest.dynamicTest(name + ": " + errorMessage, () -> {
+                    assertThat(ERROR_CASE_REJECTIONS)
+                            .as("expected rejection of cases.json error case %s (%s)", name, errorMessage)
+                            .containsKey(name);
+                    assertRejected(fixturesDir.resolve(name), ERROR_CASE_REJECTIONS.get(name));
+                })));
+        return tests;
     }
 
     /// A column read filtered on the Variant group assembles it to evaluate the predicate,
@@ -94,47 +138,33 @@ class VariantShredReassemblerTest {
         }
     }
 
-    /// The error cases whose rows set both `value` and `typed_value` at a non-object level,
-    /// at the top level (case-042) or at an array element (case-040), are rejected when that
-    /// row is read.
-    @Test
-    void valueAndTypedValueBothSetAtANonObjectLevelAreRejected() throws IOException {
-        assertRowRejected("case-042.parquet", "[case-042.parquet: column 'var'] Malformed shredded Variant: both value and typed_value are set for a non-object value");
-        assertRowRejected("case-040.parquet", "[case-040.parquet: column 'var'] Malformed shredded Variant: both value and typed_value are set for a non-object value");
-    }
-
-    /// The error cases whose rows set an object level's `typed_value` struct alongside a
-    /// `value` that is no object (an INT32 in case-087, Variant NULL in case-128) are
-    /// rejected when that row is read.
-    @Test
-    void nonObjectValueAlongsideShreddedObjectFieldsIsRejected() throws IOException {
-        assertRowRejected("case-087.parquet", "[case-087.parquet: column 'var'] Malformed shredded Variant: "
-                + "typed_value holds shredded object fields but value is not an object");
-        assertRowRejected("case-128.parquet", "[case-128.parquet: column 'var'] Malformed shredded Variant: "
-                + "typed_value holds shredded object fields but value is not an object");
-    }
-
-    private void assertRowRejected(String fileName, String message) throws IOException {
-        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixturesDir.resolve(fileName)));
-                RowReader rowReader = fileReader.rowReader()) {
-            assertThatThrownBy(() -> {
-                while (rowReader.hasNext()) {
-                    rowReader.next();
-                    rowReader.getVariant("var").value();
-                }
-            })
-                    .isExactlyInstanceOf(ParquetReadException.class)
-                    .hasMessage(message);
+    private static void assertRejected(Path file, Rejection rejection) throws IOException {
+        String fileName = file.getFileName().toString();
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file))) {
+            if (rejection.stage() == Stage.BUILD) {
+                assertThatThrownBy(fileReader::rowReader)
+                        .isExactlyInstanceOf(ParquetReadException.class)
+                        .hasMessage("[" + fileName + "] " + rejection.message());
+                return;
+            }
+            try (RowReader rowReader = fileReader.rowReader()) {
+                assertThatThrownBy(() -> readAllVariants(rowReader))
+                        .isExactlyInstanceOf(ParquetReadException.class)
+                        .hasMessage("[" + fileName + ": column 'var'] " + rejection.message());
+            }
         }
     }
 
-    private void assertRowReaderRejected(String fileName, String carrier) throws IOException {
-        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixturesDir.resolve(fileName)))) {
-            assertThatThrownBy(fileReader::rowReader)
-                    .isExactlyInstanceOf(ParquetReadException.class)
-                    .hasMessage("[" + fileName + "] Shredded Variant typed_value has type " + carrier
-                            + ", which the Variant shredding specification does not allow");
+    private static void readAllVariants(RowReader rowReader) throws IOException {
+        while (rowReader.hasNext()) {
+            rowReader.next();
+            rowReader.getVariant("var").value();
         }
+    }
+
+    private static String unsupportedCarrier(String carrier) {
+        return "Shredded Variant typed_value has type " + carrier
+                + ", which the Variant shredding specification does not allow";
     }
 
     private void verifyFile(Path parquetFile) throws IOException {
