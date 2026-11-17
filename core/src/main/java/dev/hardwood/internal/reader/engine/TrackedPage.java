@@ -39,6 +39,8 @@ final class TrackedPage {
     private JobScheduler.FrontierPage frontier;
     /// whether it has told its chunk's dictionary that its decode ended
     private boolean decodeEnded;
+    /// the bytes of values its decode reconstructs beyond its bytes, learned by a decode that gave up
+    private long reconstructed;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -136,6 +138,16 @@ final class TrackedPage {
     /// Its header was parsed into `header`, under the read's lock.
     void headerRead(PageFormatProbe.HeaderAt header) {
         this.header = header;
+    }
+
+    /// The bytes of values its decode reconstructs beyond its bytes, as a decode that gave up for
+    /// lack of room learned them; `0` until one did.
+    long reconstructed() {
+        return reconstructed;
+    }
+
+    void reconstructed(long bytes) {
+        this.reconstructed = bytes;
     }
 
     /// Tells its chunk's dictionary, once, that its decode ended or it will not decode.

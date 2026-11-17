@@ -18,6 +18,7 @@ import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.memory.DecodeCharges;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Parsed;
@@ -258,17 +259,17 @@ public final class DictionaryParser {
     /// @return the parsed dictionary
     public static Dictionary parsePage(PageHeader header, ByteBuffer compressedData, ColumnSchema columnSchema,
                                        ColumnMetaData metaData, HardwoodContextImpl context,
-                                       WorkingSet.Column workingSet) {
+                                       DecodeCharges workingSet) {
         return context.decode(buffers -> parsePage(header, compressedData, columnSchema, metaData, context,
                 workingSet, buffers));
     }
 
-    /// As [#parsePage(PageHeader, ByteBuffer, ColumnSchema, ColumnMetaData, HardwoodContextImpl, WorkingSet.Column)],
+    /// As [#parsePage(PageHeader, ByteBuffer, ColumnSchema, ColumnMetaData, HardwoodContextImpl, DecodeCharges)],
     /// on the calling task with its `buffers`: for a task of the context's pool, which holds a set
     /// of buffers already.
     public static Dictionary parsePage(PageHeader header, ByteBuffer compressedData, ColumnSchema columnSchema,
                                        ColumnMetaData metaData, HardwoodContextImpl context,
-                                       WorkingSet.Column workingSet, DecodeBuffers buffers) {
+                                       DecodeCharges workingSet, DecodeBuffers buffers) {
         // A read has checked this already; the metadata tools parse dictionaries without a read
         FixedWidthValidator.validate(null, columnSchema);
         if (header.type() != PageType.DICTIONARY_PAGE) {

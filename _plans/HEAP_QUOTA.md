@@ -128,8 +128,10 @@ end, and the buffers its task holds while it runs.
 
 ## Open
 
-- **Small heaps.** At 64 MiB, reads under the default quota still ran out of memory (stage 1, `HeapExhaustionTest` with the quota in force): memory charged nowhere yet dominates there.
-- **The cost near the limit.** On the 2016 taxi file the reserve holds back decodes ahead at 512m, ~5 % slower than `main`; at 680m and above the difference is within noise (~1.5 %, not yet attributed: profile at stage 4).
+- **Small heaps.** At 64 MiB, reads under the default quota still ran out of memory (stage 1, `HeapExhaustionTest` with the quota in force): memory charged nowhere yet dominates there. Re-measure after stage 2.
+- **The cost near the limit.** Stage 1 as first built was ~5 % slower than `main` on the 2016 taxi file at 512m and within noise from 680m; not yet measured on the current design.
+- **Free-holder races.** A decode that takes a free holder another decode's claim counted on makes that one draw past its claim until the first settles: the ledger overstates by at most a holder for that window.
+- **Nested columns' unfound pages.** Only flat columns have a frontier entry for the pages the read has not found yet, so a decode ahead can take room a nested column's next page needs.
 
 - **Pages decoded through levels.** A nested page's batches depend on its records, which its
   header does not give; the reserve and charge take an upper bound from its value count.
@@ -139,8 +141,8 @@ end, and the buffers its task holds while it runs.
 | # | Stage | Gate before the next stage |
 | --- | --- | --- |
 | 0 | An `OutOfMemoryError` on a Hardwood thread reaches the reader's thread instead of hanging the read | done (5f67dfbbd) |
-| 1 | Current charges and the reserve, on the flat path: a page's batches charged from its decode until the consumer takes them (a recycled holder until the reader closes), trued up to the arrays held; the working set's flat batches moved to the ledger; the reserve per read over found and queued pages; decodes ahead admitted by the rule, not past a column whose next page is not found; pages below need charged from the reserve, waiting for running tasks' buffers | done: charges equal live batch arrays in heap dumps of the taxi read; N300 taxi read +4.9 % at 512m, +1.3 % at 680m, +1.7 % at 1g against `main` |
-| 2 | The nested path, dictionaries, tasks within the retention size and the buffer sets each thread keeps, the holders an exchange preallocates, and a binary page whose header has not arrived on a remote read (decodes ahead wait for it) on the ledger; the R property becomes Q | the shapes of the threat model under a child JVM: each either reads or fails with `ParquetReadException`, never `OutOfMemoryError`, at heaps from 128m to 1g, including several concurrent reads on one context |
+| 1 | Current charges and the reserve on the flat path: a decode claims its page's bound and settles it to what the batch holders' arrays gain and lose (`AllocationTally`); one frontier of unstarted pages per column, with the pages not bounded in full (not found, header not arrived) blocking decodes past them; free holders earmarked by the claims that count on reusing them; recycling exchanges no longer preallocate | done: `verify` green; the stage-1 N300 numbers (+2.5 % cold single read) were measured before this design and are redone at stage 4 |
+| 2 | The working set folded into the ledger: dictionary and nested pages in the frontier with kept and task bounds; the reserve adds the largest task bound; the forced decode takes its buffers and claim from the reserve or fails; dictionaries and nested pages ride on the batch whose rows reach their end, a numeric dictionary returned once its chunk has decoded; `DELTA_BYTE_ARRAY` values drawn past the claim, a decode ahead giving up and its page staying unknown until a decode learns it; `WorkingSet` left to decoding outside a read | done in code and tests; the gate (the threat model's shapes under a child JVM at heaps from 128m to 1g, concurrent reads included) is open, as are tasks within the retention size and the buffer sets each thread keeps |
 | 3 | The public option on the context builder, user docs, internal properties removed | docs reviewed |
 | 4 | Performance | flat, nested and 1BRC benchmarks neutral on the container and the N300 |
 

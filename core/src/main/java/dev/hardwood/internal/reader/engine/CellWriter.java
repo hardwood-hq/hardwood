@@ -30,7 +30,6 @@ import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.FlatPageValues;
 import dev.hardwood.internal.reader.decode.PageDecoder;
 import dev.hardwood.internal.reader.decode.PageInfo;
-import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.pipeline.BatchCell;
 import dev.hardwood.internal.reader.pipeline.BinaryFill;
 import dev.hardwood.internal.reader.pipeline.Cell;
@@ -43,7 +42,6 @@ import dev.hardwood.internal.reader.pipeline.Segment;
 import dev.hardwood.internal.reader.pipeline.SegmentFillException;
 import dev.hardwood.internal.reader.select.PageRowMask;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.Encoding;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Writes each column's pages into the cells of a read's batch plan: places them, decodes and fills
@@ -182,7 +180,7 @@ final class CellWriter {
         ColumnMetaData meta = placement.unit().listing().chunks()[column].metaData();
         if (placement.decoder() == null) {
             placement.decoder(new PageDecoder(meta, columns.schema(column), decompressors,
-                    !columns.nested(column) || fixedListFastPathEnabled, columns.workingSet(column)));
+                    !columns.nested(column) || fixedListFastPathEnabled, columns.charges()));
         }
         tracked.decoder(placement.decoder());
         if (!columns.nested(column)) {
@@ -372,6 +370,9 @@ final class CellWriter {
             }
             return completed;
         }
+        catch (NoRoomException e) {
+            throw e;
+        }
         catch (RuntimeException e) {
             throw columns.withContext(column, e, task);
         }
@@ -513,19 +514,7 @@ final class CellWriter {
         @Override
         public void add(NestedCell cell, PageTask page, int recordStart, int recordEnd, int valueStart,
                         int valueEnd) {
-            WorkingSet.Column workingSet = columns.workingSet(column);
-            cell.add((NestedPageTask) page, recordStart, recordEnd, valueStart, valueEnd, keptPage(workingSet, page.info()));
-            // before the cell's fill allocates its batch: the column keeps every page it has values of
-            workingSet.openBatch(cell.keptBytes(), cell.pages());
-        }
-
-        /// What the column keeps of the page `info` describes until the cells it is placed into fill.
-        private static long keptPage(WorkingSet.Column workingSet, PageInfo info) {
-            if (info.isNullPlaceholder()) {
-                return workingSet.keptPage(info.placeholderNumValues(), 0, Encoding.PLAIN);
-            }
-            DataPage page = info.dataPage();
-            return workingSet.keptPage(page.numValues(), page.header().uncompressedPageSize(), page.encoding());
+            cell.add((NestedPageTask) page, recordStart, recordEnd, valueStart, valueEnd);
         }
 
         @Override

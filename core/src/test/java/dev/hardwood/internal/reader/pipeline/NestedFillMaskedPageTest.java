@@ -177,8 +177,7 @@ class NestedFillMaskedPageTest {
 
     /// Adds the page's kept records `[recordStart, recordEnd)` to `cell`.
     private static void add(NestedCell cell, NestedPageTask page, int recordStart, int recordEnd) {
-        cell.add(page, recordStart, recordEnd, page.measure.recordStart(recordStart), page.measure.recordStart(recordEnd),
-                0);
+        cell.add(page, recordStart, recordEnd, page.measure.recordStart(recordStart), page.measure.recordStart(recordEnd));
     }
 
     /// The batch's values at its present elements.

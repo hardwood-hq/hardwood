@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.reader.batch.AllocationTally;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Decides which ready job of a read starts, and knows nothing of Parquet. Runs under the
 /// read's lock ([ReadDriver]), except [#run].
@@ -79,6 +80,8 @@ final class JobScheduler {
         /// what holds its claim while it runs; `null` for a job that fills no holder
         private final Charge claim;
         private final AllocationTally tally;
+        /// what its work draws past its claim; `null` for a job that fills no holder
+        private final Draw draw;
         /// of its column's free holders, the bytes its claim counts on reusing ([#earmark])
         private long earmarked;
         private final Work<T> work;
@@ -90,11 +93,11 @@ final class JobScheduler {
 
         Job(long key, long cost, Kind kind, Charge charge, Work<T> work, Consumer<T> onValue,
             Consumer<Throwable> onFailure) {
-            this(key, cost, kind, charge, null, null, null, work, onValue, onFailure);
+            this(key, cost, kind, charge, null, null, null, null, work, onValue, onFailure);
         }
 
         Job(long key, long cost, Kind kind, Charge charge, FrontierPage page, Charge claim, AllocationTally tally,
-            Work<T> work, Consumer<T> onValue, Consumer<Throwable> onFailure) {
+            Draw draw, Work<T> work, Consumer<T> onValue, Consumer<Throwable> onFailure) {
             this.key = key;
             this.cost = cost;
             this.kind = kind;
@@ -102,6 +105,7 @@ final class JobScheduler {
             this.page = page;
             this.claim = claim;
             this.tally = tally;
+            this.draw = draw;
             this.work = work;
             this.onValue = onValue;
             this.onFailure = onFailure;
@@ -170,6 +174,52 @@ final class JobScheduler {
         }
     }
 
+    /// What a decode draws past its claim for the values it reconstructs beyond its page's bytes,
+    /// which no header bounds: drawn on its thread as the decode learns them, before it allocates
+    /// them. A decode need forced draws what fits the ledger, and fails the read where they do not;
+    /// a decode ahead of need draws what fits beside the reserves it started beside, and otherwise
+    /// gives up ([NoRoomException]), so that its page starts again with what it learned covered.
+    static final class Draw {
+        /// the reconstructed bytes its claim covers, learned by an earlier start of its page
+        private final long covered;
+        private ReadAheadBuffer budget;
+        private boolean forced;
+        private long reserve;
+        private long drawn;
+
+        Draw(long covered) {
+            this.covered = covered;
+        }
+
+        /// Its decode starts: need forced it, or it started beside `reserve`.
+        private void start(ReadAheadBuffer budget, boolean forced, long reserve) {
+            this.budget = budget;
+            this.forced = forced;
+            this.reserve = reserve;
+        }
+
+        /// Draws `bytes` of reconstructed values, less what its claim covers.
+        ///
+        /// @throws dev.hardwood.reader.ParquetReadException for a decode need forced, if they do not fit
+        /// @throws NoRoomException for a decode ahead of need, if they do not fit
+        void draw(long bytes) {
+            long beyond = bytes - covered;
+            if (beyond <= 0) {
+                return;
+            }
+            if (!budget.tryCharge(beyond, forced ? 0 : reserve)) {
+                if (forced) {
+                    throw new ParquetReadException("Data page needs " + beyond + " more bytes for the values it "
+                            + "reconstructs, which takes the context's heap quota to " + (budget.held() + beyond)
+                            + " bytes, more than its limit of " + budget.limit() + " ("
+                            + ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY + ")");
+                }
+                throw new NoRoomException(bytes);
+            }
+            drawn += beyond;
+        }
+    }
+
     /// Where the consumer stands: below `need`, the lowest job starts whatever R and F while no
     /// other job below it is in flight; decodes start only below `reach`, which is never below
     /// `need`; nothing keyed past `end` starts, so the jobs at a failure's row still run and the
@@ -180,11 +230,13 @@ final class JobScheduler {
         }
     }
 
-    /// A flat column's data page from when the read finds it until its decode starts or it will
-    /// not decode: at its key, what its decode adds to the column's batch holders at most, or,
-    /// while that is not known, nothing, and no decode keyed at or past it starts ahead of need.
-    /// Each flat column also has one past its last page found, never bounded: the pages the read
-    /// has not found yet ([#found]).
+    /// A page of a column from when the read finds it until its decode starts or it will not
+    /// decode: at its key, what its decode keeps past its end at most and its task's buffers. While
+    /// what it keeps is not known in full, no other decode keyed at or past it starts beside the one
+    /// need forces: a page whose header has not arrived, which reserves nothing, and a page whose
+    /// decode reconstructs values beyond its bytes, which reserves what its header bounds until a
+    /// decode of it learns the rest. Each flat column also has one past its last page found, never
+    /// bounded: the pages the read has not found yet ([#found]).
     static final class FrontierPage {
         private final int column;
         private long key;
@@ -194,7 +246,10 @@ final class JobScheduler {
         private long fresh;
         /// the buffers its decode's task holds while it runs
         private long task;
+        /// whether `bytes` and `task` are set
         private boolean bounded;
+        /// whether they hold all it keeps
+        private boolean exact;
 
         private FrontierPage(int column, long key, long seq) {
             this.column = column;
@@ -277,23 +332,35 @@ final class JobScheduler {
         return page;
     }
 
-    /// Bounds what the decode of `page` keeps past its end at most, `bytes`, of which `fresh` no
-    /// free holder of the column brings, and the buffers its task holds while it runs, `task`;
-    /// `bytes` is also the claim its decode starts with.
-    void bound(FrontierPage page, long bytes, long fresh, long task) {
+    /// Bounds what the decode of `page` keeps past its end, `bytes`, of which `fresh` no free
+    /// holder of the column brings, and the buffers its task holds while it runs, `task`; `bytes`
+    /// is also the claim its decode starts with. Unless `exact`, its decode reconstructs values
+    /// beyond them, which only a decode of it learns.
+    void bound(FrontierPage page, long bytes, long fresh, long task, boolean exact) {
         page.bytes = bytes;
         page.fresh = fresh;
         page.task = task;
-        if (!page.bounded) {
-            page.bounded = true;
+        page.bounded = true;
+        if (exact && !page.exact) {
+            page.exact = true;
             unbounded.remove(page);
         }
     }
 
-    /// `page` leaves its column's frontier: its decode starts, or it will not decode.
+    /// `page` leaves its column's frontier: it will not decode.
     void leave(FrontierPage page) {
         frontier.get(page.column).remove(page);
         unbounded.remove(page);
+    }
+
+    /// The decode of `page` starts: it leaves its column's frontier, as what it keeps is charged
+    /// from here on; a page not bounded in full stays unknown until the decode ends, as only then is
+    /// all it keeps charged.
+    private void started(FrontierPage page) {
+        frontier.get(page.column).remove(page);
+        if (page.exact) {
+            unbounded.remove(page);
+        }
     }
 
     /// Records that the flat `column`'s pages are found up to `end`, the key past the last one;
@@ -335,11 +402,12 @@ final class JobScheduler {
         return pages;
     }
 
-    /// Whether a page need could force no later than `job`'s has no bound yet, which leaves no
-    /// room to reserve for it: a page found whose bound is not known (a binary page whose header
-    /// has not arrived), or one not found yet.
+    /// Whether a page before `job`'s in frontier order, by key and then in the order the read found
+    /// them, is not bounded in full, which leaves no room to reserve for what it keeps: a page found
+    /// whose header has not arrived or whose reconstructed values no decode has learned, or one not
+    /// found yet. The first such page is never held back by another, so one always starts.
     private boolean pastUnknown(Job<?> job) {
-        return !unbounded.isEmpty() && unbounded.first().key <= job.key();
+        return !unbounded.isEmpty() && FRONTIER_ORDER.compare(unbounded.first(), job.page) < 0;
     }
 
     /// Keys `job` at `key` where that is lower and the job has not started: work the read keyed by
@@ -394,10 +462,10 @@ final class JobScheduler {
         if (ahead && fetchedAhead >= fetchAheadLimit) {
             return FETCHES;
         }
-        // a page decoded ahead of need takes room only where room is reserved for every page need
-        // could force before it, which takes every column's pages below it being known
+        // a page decoded beside the one need forces takes room only where room is reserved for every
+        // page need could force before it, which takes every column's pages below it being known
         FrontierPage page = job.page;
-        if (!needed && page != null && pastUnknown(job)) {
+        if (!forced && page != null && pastUnknown(job)) {
             return DECODES;
         }
         long cost = job.cost();
@@ -421,7 +489,8 @@ final class JobScheduler {
                 held += cost + claim;
             }
         }
-        else if (!charge(cost + claim, reserve(job))) {
+        long reserve = forced ? 0 : reserve(job);
+        if (!forced && !charge(cost + claim, reserve)) {
             // a plan starts first whatever its key, so a refused one holds back only the plans after
             // it: work keyed below it, need's among it, is still tried
             return job.kind() == Kind.PLAN ? PLANS : FETCHES | DECODES;
@@ -434,12 +503,15 @@ final class JobScheduler {
             job.charge().take(cost, ahead);
         }
         if (page != null) {
-            leave(page);
+            started(page);
             if (!job.claim.isRefused()) {
                 job.earmarked = page.bytes - claim;
                 earmarked[page.column] += job.earmarked;
             }
             job.claim.take(claim, false);
+            if (job.draw != null) {
+                job.draw.start(budget, forced, reserve);
+            }
         }
         if (ahead) {
             fetchedAhead += job.cost();
@@ -463,11 +535,19 @@ final class JobScheduler {
     /// fault is retried.
     <T> Runnable run(Job<T> job, DecodeBuffers buffers) {
         T value;
+        if (job.draw != null && buffers != null) {
+            buffers.set(ReadCharges.DRAW, job.draw);
+        }
         try {
             value = job.cpu() ? job.work().run(buffers) : retried(job.work());
         }
         catch (Throwable t) {
             return refused(job, t);
+        }
+        finally {
+            if (job.draw != null && buffers != null) {
+                buffers.set(ReadCharges.DRAW, null);
+            }
         }
         return () -> {
             ended(job);
@@ -617,24 +697,28 @@ final class JobScheduler {
         return r;
     }
 
-    /// Settles the claim of `job`, as it ends, to what its work counted: returns what it did not
-    /// draw, and charges what it drew beyond its claim, whether or not that fits, as it is
-    /// allocated already.
+    /// Settles the claim of `job`, as it ends, with what it drew past it: a claim with a tally to
+    /// what its work counted, returning what the holders did not take and charging what they took
+    /// beyond it, whether or not that fits, as it is allocated already; a claim without one, a
+    /// dictionary's or a page's the column keeps, is held on, for its decode's `onValue` to hand on,
+    /// or returned where the job failed.
     private void settle(Job<?> job, boolean failed) {
-        if (job.claim != null && job.tally == null) {
-            earmarked[job.page.column] -= job.earmarked;
+        if (job.claim == null) {
+            return;
+        }
+        unbounded.remove(job.page);
+        earmarked[job.page.column] -= job.earmarked;
+        // what it drew R charged as it drew it
+        long drawn = job.draw == null ? 0 : job.draw.drawn;
+        held += drawn;
+        if (job.tally == null) {
+            job.claim.grow(drawn);
             if (failed) {
                 release(job.claim);
             }
             return;
         }
-        if (job.claim != null) {
-            earmarked[job.page.column] -= job.earmarked;
-            long claimed = job.claim.takeBack();
-            if (claimed > 0 || job.tally.bytes() != 0) {
-                settleHeld(job.tally.bytes() - claimed);
-            }
-        }
+        settleHeld(job.tally.bytes() - job.claim.takeBack() - drawn);
     }
 
     /// Charges `bytes` the read's batch holders gained, or returns them, negative, where they lost

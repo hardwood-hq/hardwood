@@ -472,24 +472,13 @@ final class RowGroupPlanner {
     private record FileReport(Event event, long base) {
     }
 
-    /// Charges the dictionary `u`'s dictionary pruning decoded for `column` as the column takes it,
-    /// against the batches `u` places; a charge over the read's limit fails the read at the unit.
-    /// The context's ledger holds its entries, allocated already, while a batch holds rows of its
+    /// Charges the dictionary `u`'s dictionary pruning decoded for `column` as the column takes it:
+    /// the context's ledger holds its entries, allocated already, while a batch holds rows of its
     /// chunk.
     private void chargePreloaded(Unit.Batched u, int column) {
         long entries = WorkingSet.Column.entries(columns.schema(column), u.plan().preloaded()[column]);
         scheduler.settleHeld(entries);
         publisher.ride(column, PageTracker.chunkEnd(u), entries);
-        try {
-            columns.chargeDictionary(column, u, () -> {
-                columns.workingSet(column).dictionary(u.plan().preloaded()[column]);
-                return null;
-            });
-        }
-        catch (RuntimeException e) {
-            readFailure.failAt(u.listing().base(), column, columns.withContext(column, e, u.listing().file().name(),
-                    u.listing().rowGroup(), ExceptionContext.UNKNOWN_PAGE));
-        }
     }
 
     /// A unit is planned, its planning done with `index`: batches the units planned in unit

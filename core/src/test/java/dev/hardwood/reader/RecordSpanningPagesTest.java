@@ -18,12 +18,12 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 import dev.hardwood.row.PqList;
 
-import static dev.hardwood.internal.reader.memory.WorkingSet.MAX_WORKING_SET_BYTES_PROPERTY;
+import static dev.hardwood.internal.reader.memory.ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A record whose values span many pages counts every page its batch holds against the read's
-/// working set, not its largest page alone.
+/// A record whose values span many pages counts every page its batch holds against the context's
+/// heap quota, not its largest page alone.
 class RecordSpanningPagesTest {
 
     private static final int PAGE_VALUES = 64 * 1024;
@@ -31,22 +31,22 @@ class RecordSpanningPagesTest {
 
     @AfterEach
     void clearLimit() {
-        System.clearProperty(MAX_WORKING_SET_BYTES_PROPERTY);
+        System.clearProperty(READ_AHEAD_BYTES_PROPERTY);
     }
 
-    /// One record of 2 Mi values over 32 pages, each page well within the limit and the pages
-    /// together not: the read fails as its batch takes the page that crosses the limit, on a context
-    /// of zero threads, whose read places the pages in the same order each run.
+    /// One record of 2 Mi values over 32 pages, each page well within the quota and the pages
+    /// together not: the read fails at the page whose decode would take the quota past its limit,
+    /// on a context of zero threads, whose read decodes the pages in the same order each run.
     @Test
     void recordWhosePagesTogetherExceedTheLimitFails() {
-        System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(16L * 1024 * 1024));
+        System.setProperty(READ_AHEAD_BYTES_PROPERTY, Long.toString(16L * 1024 * 1024));
         byte[] file = RleExpansionFile.buildOneRecord(PAGE_VALUES, PAGES);
 
         assertThatThrownBy(() -> readOneRecord(file))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>: row group 0, column 'b', page 9] Batch of values from 10 pages needs 18350292 "
-                        + "bytes to decode, which takes the read's working set to 18350308 bytes, more than its limit "
-                        + "of 16777216 (hardwood.internal.maxWorkingSetBytes)");
+                .hasMessage("[<memory>: row group 0, column 'b', page 9] Data page needs 1835029 bytes to decode, "
+                        + "which takes the context's heap quota to 18350300 bytes, more than its limit of 16777216 "
+                        + "(hardwood.internal.readAheadBytes)");
     }
 
     /// The same record within the limit reads every value.

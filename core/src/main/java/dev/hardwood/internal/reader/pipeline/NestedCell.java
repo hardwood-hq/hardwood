@@ -50,9 +50,6 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     private final List<NestedSegment> segments = new ArrayList<>(2);
     private int records;
     private int values;
-    /// What the column keeps of the pages the cell has values of, and how many they are.
-    private long keptBytes;
-    private int pages;
     /// The page of the last segment placed, which a failure while filling the cell is placed with.
     private PageTask lastPage;
 
@@ -70,10 +67,8 @@ public final class NestedCell implements BatchCell<NestedBatch> {
     /// valueEnd)`, after every segment placed so far; the page counts the segment until it is
     /// filled.
     ///
-    /// @param keptBytes what the column keeps of the page until the cell fills, counted once per page
     /// @throws ParquetReadException if the cell's values would exceed an array's reach
-    public void add(NestedPageTask page, int recordStart, int recordEnd, int valueStart, int valueEnd,
-                    long keptBytes) {
+    public void add(NestedPageTask page, int recordStart, int recordEnd, int valueStart, int valueEnd) {
         int cellValues;
         try {
             cellValues = Math.addExact(values, valueEnd - valueStart);
@@ -82,25 +77,11 @@ public final class NestedCell implements BatchCell<NestedBatch> {
             throw new ParquetReadException("A batch holds more than " + Integer.MAX_VALUE
                     + " values of the column, more than an array can hold", e);
         }
-        if (page != lastPage) {
-            this.keptBytes += keptBytes;
-            pages++;
-        }
         page.unfilledSegments.incrementAndGet();
         segments.add(new NestedSegment(page, recordStart, recordEnd, valueStart, valueEnd, records, values));
         records += recordEnd - recordStart;
         values = cellValues;
         lastPage = page;
-    }
-
-    /// What the column keeps of the pages the cell has values of, the sum of their `keptBytes`.
-    public long keptBytes() {
-        return keptBytes;
-    }
-
-    /// The pages the cell has values of.
-    public int pages() {
-        return pages;
     }
 
     List<NestedSegment> segments() {

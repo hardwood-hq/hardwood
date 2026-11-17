@@ -7,10 +7,10 @@
  */
 package dev.hardwood.internal.reader.memory;
 
-import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.metadata.Encoding;
@@ -18,35 +18,15 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
-/// The memory a read must hold to produce its next batch, held to a limit before any of it is
-/// allocated.
+/// What decoding outside a read holds, held to a limit before any of it is allocated: the
+/// metadata tools' dictionaries and pages, and the dictionaries a filter parses to prune row
+/// groups ([#standalone]). A read charges its decodes to its context's [ReadAheadBuffer] instead.
 ///
-/// The working set has two parts. Each decoded column holds a dictionary's entries and a data
-/// page's batches, which live until the consumer has read them, and a nested column also the
-/// page's decompressed bytes and levels, which it keeps until its cells fill. The task decoding a
-/// page holds the page's decompressed bytes and its level scratch while it runs.
-/// The file's declared sizes decide both, so a file can ask for any amount; a read whose working
-/// set would exceed the limit fails with a [ParquetReadException] before the allocation.
-///
-/// Each column counts the dictionaries one batch holds and the largest page it has met in the read,
-/// or, where it keeps its pages, the most its open batch has held across the pages it has values of
-/// ([Column#openBatch]), and the read the largest task buffers any page has needed; the working set
-/// is their sum. A
-/// batch holds the dictionary of every chunk it has rows of, as its pages decode with it: one for
-/// a batch within a row group, more for one that spans row groups. A column counts the most any of
-/// its batches holds, from where the read's batch plan places the chunks' rows. The task
-/// buffers count once: a read needs one task at a time, and decoding pages on several threads at
-/// once is the reader's choice, as reading ahead is, not the file's. The sum does not depend on
-/// how far apart the columns' walk advances run, nor on how far a column decodes ahead of its
-/// consumer, so whether a read of every page fails depends on
-/// the file and the limit alone, not on timing, the context's threads or other reads. A read that
-/// stops early, at a row limit or a closed reader, has also charged whatever pages its columns
-/// decoded ahead of where it stopped, which depends on timing. Nothing is released: a read that
-/// has passed a large page stays charged for it.
-///
-/// The limit is per read and nothing waits for it. Working-set memory is released only as the
-/// consumer reads, so a read that waited for another's could wait for a consumer blocked on
-/// itself.
+/// Each column counts the largest dictionary and the largest page it has met, a page's batches
+/// with, for a column that keeps its pages, their levels and offsets; the decoding counts the
+/// largest task buffers once. The file's declared sizes decide them, so a file can ask for any
+/// amount; a decode whose charge would take the total past the limit fails with a
+/// [ParquetReadException] before the allocation. Nothing is released.
 public final class WorkingSet {
 
     public static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
@@ -57,8 +37,6 @@ public final class WorkingSet {
 
     private final long limit;
     private final AtomicLongArray dictionaries;
-    /// Per column, the dictionaries its current batch may hold.
-    private final HeldDictionaries[] heldDictionaries;
     private final AtomicLongArray pages;
     /// The largest buffers a task has needed, in a one-element array to share [#raise].
     private final AtomicLongArray task = new AtomicLongArray(1);
@@ -72,10 +50,6 @@ public final class WorkingSet {
     public WorkingSet(int columns, long limit) {
         this.limit = limit;
         this.dictionaries = new AtomicLongArray(columns);
-        this.heldDictionaries = new HeldDictionaries[columns];
-        for (int i = 0; i < columns; i++) {
-            heldDictionaries[i] = new HeldDictionaries();
-        }
         this.pages = new AtomicLongArray(columns);
     }
 
@@ -89,24 +63,7 @@ public final class WorkingSet {
     /// The handle through which the decoded column at `index` charges its dictionaries and
     /// pages.
     public Column column(int index, ColumnSchema schema) {
-        return column(index, schema, false);
-    }
-
-    /// The handle through which the decoded column at `index` charges its dictionaries and
-    /// pages; with `batchesOnLedger`, its pages' batches are charged on the context's ledger from
-    /// their decode until the consumer takes them, and the working set charges only the buffers
-    /// its pages' tasks take.
-    public Column column(int index, ColumnSchema schema, boolean batchesOnLedger) {
-        return new Column(this, index, schema, batchesOnLedger);
-    }
-
-    /// Tells the column at `index` that its pages now come from a row group the read's batch plan
-    /// places, which holds the rows of the chunk whose dictionary it charges next: the batch
-    /// holding the row group's first planned row starts at the read's row `batchStartRow`, and the
-    /// row group's planned rows end before the read's row `endRow`. Called before each dictionary
-    /// of the column's chunk in that row group is charged.
-    public void enter(int index, long batchStartRow, long endRow) {
-        heldDictionaries[index].enter(batchStartRow, endRow);
+        return new Column(this, index, schema);
     }
 
     /// The working-set limit of a read: [#DEFAULT_HEAP_PERCENT] of the maximum heap unless
@@ -152,7 +109,7 @@ public final class WorkingSet {
     }
 
     /// One decoded column of a [WorkingSet].
-    public static final class Column {
+    public static final class Column implements DecodeCharges {
 
         /// The `int`s a nested batch keeps per value besides the value: its definition and
         /// repetition level and its offsets.
@@ -161,14 +118,10 @@ public final class WorkingSet {
         private final WorkingSet set;
         private final int index;
         private final ColumnSchema schema;
-        /// whether its pages' batches are charged on the context's ledger rather than here
-        private final boolean batchesOnLedger;
-
-        private Column(WorkingSet set, int index, ColumnSchema schema, boolean batchesOnLedger) {
+        private Column(WorkingSet set, int index, ColumnSchema schema) {
             this.set = set;
             this.index = index;
             this.schema = schema;
-            this.batchesOnLedger = batchesOnLedger;
         }
 
         /// Charges a dictionary page before it is decompressed and parsed: the entries the column
@@ -177,19 +130,11 @@ public final class WorkingSet {
         /// parsing task holds.
         ///
         /// @throws ParquetReadException if the read's working set would exceed its limit
+        @Override
         public void dictionary(int numValues, int uncompressedSize) {
             long entries = dictionaryEntries(schema, numValues, uncompressedSize);
-            set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), uncompressedSize,
+            set.charge(set.dictionaries, index, entries, uncompressedSize,
                     entries + uncompressedSize, "Dictionary page");
-        }
-
-        /// Charges the entries of a dictionary parsed before the column reached its chunk, as
-        /// pruning parses one, beside those of the other chunks its batch holds.
-        ///
-        /// @throws ParquetReadException if the read's working set would exceed its limit
-        public void dictionary(Dictionary dictionary) {
-            long entries = entries(schema, dictionary);
-            set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), 0, entries, "Dictionary page");
         }
 
         /// Charges a data page before it is decompressed and decoded: the batches its task fills,
@@ -204,8 +149,15 @@ public final class WorkingSet {
         /// @param encoding the encoding of the page's values
         /// @param kept whether the column keeps the page's bytes and levels past its task
         /// @throws ParquetReadException if the read's working set would exceed its limit
+        @Override
         public void page(int numValues, int uncompressedSize, long decodedBytes, Encoding encoding, boolean kept) {
             page(numValues, uncompressedSize, decodedBytes, encoding, kept, 0);
+        }
+
+        @Override
+        public void reconstructed(int numValues, int uncompressedSize, long decodedBytes, Encoding encoding,
+                                  boolean kept, long valueBytes, DecodeBuffers buffers) {
+            page(numValues, uncompressedSize, decodedBytes, encoding, kept, valueBytes);
         }
 
         /// Charges a data page as [#page(int, int, long, Encoding, boolean)] does, with
@@ -216,7 +168,7 @@ public final class WorkingSet {
         /// @throws ParquetReadException if the read's working set would exceed its limit
         public void page(int numValues, int uncompressedSize, long decodedBytes, Encoding encoding, boolean kept,
                          long valueBytes) {
-            long batches = (batchesOnLedger ? 0 : batches(numValues, uncompressedSize, kept)) + valueBytes;
+            long batches = batches(numValues, uncompressedSize, kept) + valueBytes;
             long buffers = pageBuffers(schema, numValues, decodedBytes, encoding) + valueBytes;
             if (kept) {
                 set.charge(set.pages, index, batches + buffers, 0, batches + buffers, "Data page");
@@ -233,15 +185,9 @@ public final class WorkingSet {
                     : (long) dictionary.size() * valueWidth(schema.type());
         }
 
-        /// What a page of a column that keeps its pages' bytes and levels takes while the column
-        /// keeps it, as [#page(int, int, long, Encoding, boolean)] charges it with every byte of the
-        /// page decompressed: its batches with their levels and offsets, and its buffers.
-        public long keptPage(int numValues, int uncompressedSize, Encoding encoding) {
-            return keptPage(schema, numValues, uncompressedSize, encoding);
-        }
-
         /// What a page of `schema`'s column, which keeps its pages' bytes and levels, takes while the
-        /// column keeps it, as [#keptPage(int, int, Encoding)] gives it.
+        /// column keeps it, with every byte of the page decompressed: its batches with their levels
+        /// and offsets, and its buffers.
         public static long keptPage(ColumnSchema schema, int numValues, int uncompressedSize, Encoding encoding) {
             return batchBytes(schema, numValues, uncompressedSize) + (long) numValues * Integer.BYTES * NESTED_BATCH_INTS
                     + pageBuffers(schema, numValues, uncompressedSize, encoding);
@@ -251,18 +197,6 @@ public final class WorkingSet {
         /// as many as the page and, for a binary column, an offset per entry.
         public static long dictionaryEntries(ColumnSchema schema, int numValues, int uncompressedSize) {
             return uncompressedSize + (isNumeric(schema.type()) ? 0 : Integer.BYTES * (numValues + 1L));
-        }
-
-        /// Charges the open batch of a column that keeps its pages' bytes and levels, which holds
-        /// `keptBytes`, the [#keptPage] of every page it has values of: the column keeps each until
-        /// the batch fills, and the batch takes the values of all of them. Counts as one of the
-        /// column's pages, so that a record spread over many pages counts all of them, not its
-        /// largest alone.
-        ///
-        /// @param pages the pages the batch has values of
-        /// @throws ParquetReadException if the read's working set would exceed its limit
-        public void openBatch(long keptBytes, int pages) {
-            set.charge(set.pages, index, keptBytes, 0, keptBytes, "Batch of values from " + pages + " pages");
         }
 
         /// The bytes a page's batches hold: a value width per value and, for a binary column, its
@@ -325,46 +259,6 @@ public final class WorkingSet {
                 case INT64, DOUBLE -> Long.BYTES;
                 case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> 4 * Integer.BYTES;
             };
-        }
-    }
-
-    /// The dictionaries a column's current batch may hold: those of the chunks whose rows end after
-    /// the batch holding the current chunk's first row starts. Row groups are entered and charged
-    /// in the read's row order, on the column's walk advances.
-    private static final class HeldDictionaries {
-
-        /// A dictionary charged, held while a batch holds rows before `endRow`.
-        private record Held(long endRow, long bytes) {
-        }
-
-        private final ArrayDeque<Held> held = new ArrayDeque<>();
-        private long heldBytes;
-        /// Whether the column's pages come from a row group of a read's batch plan; outside one,
-        /// each dictionary counts alone.
-        private boolean planned;
-        /// The read's row the batch holding the current row group's first planned row starts at.
-        private long batchStartRow;
-        /// The read's row the current row group's planned rows end before.
-        private long endRow;
-
-        synchronized void enter(long batchStartRow, long endRow) {
-            this.planned = true;
-            this.batchStartRow = batchStartRow;
-            this.endRow = endRow;
-        }
-
-        /// Adds the current chunk's dictionary of `bytes`, and returns the bytes of the
-        /// dictionaries the batch holding the chunk's first row holds with it.
-        synchronized long add(long bytes) {
-            if (!planned) {
-                return bytes;
-            }
-            while (!held.isEmpty() && held.peekFirst().endRow() <= batchStartRow) {
-                heldBytes -= held.pollFirst().bytes();
-            }
-            held.addLast(new Held(endRow, bytes));
-            heldBytes += bytes;
-            return heldBytes;
         }
     }
 }

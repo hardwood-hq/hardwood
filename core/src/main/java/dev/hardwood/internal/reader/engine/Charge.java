@@ -71,6 +71,11 @@ final class Charge {
         return bytes;
     }
 
+    /// Holds `bytes` more, drawn while its job ran.
+    void grow(long bytes) {
+        this.bytes += bytes;
+    }
+
     /// Hands the bytes back: returns them, and holds none from then on.
     long takeBack() {
         long returned = bytes;

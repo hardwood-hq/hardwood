@@ -9,14 +9,12 @@ package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.function.Supplier;
 
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
-import dev.hardwood.internal.reader.memory.WorkingSet;
+import dev.hardwood.internal.reader.memory.DecodeCharges;
 import dev.hardwood.internal.reader.pipeline.PageTask;
-import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Gives the read's parts each decoded column, by index: its schema, its layers where it is decoded
@@ -28,22 +26,12 @@ final class ColumnContext {
     private final ColumnSchema[] schemas;
     /// per column, its layers where it is decoded through levels, `null` for a flat one
     private final List<NestedLevelComputer.Layers> layers;
-    /// the read's working set, which every decode and dictionary charges before it allocates
-    private final WorkingSet workingSet;
     private final boolean footersSupplied;
-    /// per column, what its dictionaries' charges are made under, one at a time
-    private final Object[] dictionaryCharges;
 
-    ColumnContext(ColumnSchema[] schemas, List<NestedLevelComputer.Layers> layers, WorkingSet workingSet,
-                  boolean footersSupplied) {
+    ColumnContext(ColumnSchema[] schemas, List<NestedLevelComputer.Layers> layers, boolean footersSupplied) {
         this.schemas = schemas;
         this.layers = layers;
-        this.workingSet = workingSet;
         this.footersSupplied = footersSupplied;
-        this.dictionaryCharges = new Object[schemas.length];
-        for (int c = 0; c < schemas.length; c++) {
-            dictionaryCharges[c] = new Object();
-        }
     }
 
     /// The number of decoded columns.
@@ -65,21 +53,9 @@ final class ColumnContext {
         return layers.get(column);
     }
 
-    /// The working set's handle for `column`.
-    WorkingSet.Column workingSet(int column) {
-        return workingSet.column(column, schemas[column], !nested(column));
-    }
-
-    /// Runs `charge`, which charges a dictionary of `column`'s chunk of `u`, against the batches
-    /// `u` places: one column's dictionaries one at a time, so that each counts beside
-    /// those of its own batch alone, in whichever order they decode; on any thread.
-    <T> T chargeDictionary(int column, Unit.Batched u, Supplier<T> charge) {
-        BatchPlan.RowGroupBatches batches = u.batches();
-        synchronized (dictionaryCharges[column]) {
-            workingSet.enter(column, batches.readRowsBefore() - batches.continuedRows(),
-                    batches.readRowsBefore() + batches.plannedRows());
-            return charge.get();
-        }
+    /// What the read's decodes charge as they decode ([ReadCharges]).
+    DecodeCharges charges() {
+        return ReadCharges.INSTANCE;
     }
 
     /// `e`, with the column and the file, row group and page of `page` as its context.

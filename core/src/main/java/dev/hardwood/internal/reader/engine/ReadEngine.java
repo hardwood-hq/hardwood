@@ -21,7 +21,6 @@ import dev.hardwood.internal.reader.batch.NestedIndexMode;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.memory.InternalProperty;
-import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.internal.reader.step.ReadQueue;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -109,7 +108,7 @@ public final class ReadEngine implements Closeable {
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
         publisher.releaseWith(scheduler::releaseTaken);
-        ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), read.files().footersSupplied());
+        ColumnContext columns = new ColumnContext(schemas, layers, read.files().footersSupplied());
         cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
                 batchSize, context.decompressorFactory(), filters);
         PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context,

@@ -217,13 +217,21 @@ final class PageTracker {
         // what no free holder brings: each cell's validity, installed anew, and the chunks of plain
         // bytes, of which a free holder brings at most full ones, which a fill of few bytes does not
         // take
-        long fresh = validity;
+        long fresh = validity + tracked.reconstructed();
         if (!numeric && header != null && !isDictionary(DataPage.encoding(header))) {
             fresh += 2L * header.uncompressedPageSize();
         }
         // a reused holder keeps its last validity until the cell's replaces it as the cell completes
         long bytes = reached * holderBytes(tracked.column(), schema) + validity + fresh;
-        scheduler.bound(tracked.frontier(), bytes, fresh, chargedTaskBytes(tracked, header));
+        scheduler.bound(tracked.frontier(), bytes, fresh, chargedTaskBytes(tracked, header), exact(tracked, header));
+    }
+
+    /// Whether the bound of `tracked`, from its `header`, holds all its decode keeps: not for a
+    /// `DELTA_BYTE_ARRAY` page, whose values a decode reconstructs beyond its bytes, until a
+    /// decode of it learned them.
+    private static boolean exact(TrackedPage tracked, PageHeader header) {
+        return header == null || header.type() == PageType.DICTIONARY_PAGE || tracked.reconstructed() > 0
+                || DataPage.encoding(header) != Encoding.DELTA_BYTE_ARRAY;
     }
 
     /// Bounds what the decode of `tracked`, a dictionary page or a page decoded through levels,
@@ -249,9 +257,9 @@ final class PageTracker {
         }
         else {
             kept = WorkingSet.Column.keptPage(schema, DataPage.numValues(header), header.uncompressedPageSize(),
-                    DataPage.encoding(header));
+                    DataPage.encoding(header)) + tracked.reconstructed();
         }
-        scheduler.bound(tracked.frontier(), kept, kept, task);
+        scheduler.bound(tracked.frontier(), kept, kept, task, exact(tracked, header));
     }
 
     /// The bytes the arrays of one cell's batch holder of `column` take at most beside its
@@ -397,6 +405,9 @@ final class PageTracker {
             try {
                 task.decodeAndMeasure(buffers);
             }
+            catch (NoRoomException e) {
+                throw e;
+            }
             catch (RuntimeException e) {
                 throw columns.withContext(tracked.column(), e, task);
             }
@@ -423,7 +434,8 @@ final class PageTracker {
         // a page decoded through levels keeps its buffers past its task, which its claim holds
         long cost = tracked.data() && columns.nested(tracked.column()) ? 0 : chargedTaskBytes(tracked, header(tracked));
         return new JobScheduler.Job<>(tracked.key(), cost, JobScheduler.Kind.DECODE, cost > 0 ? new Charge() : null,
-                tracked.frontier(), claim, tally, work, onValue, onFailure);
+                tracked.frontier(), claim, tally, tracked.data() ? new JobScheduler.Draw(tracked.reconstructed()) : null,
+                work, onValue, onFailure);
     }
 
     /// The buffers the task decoding `tracked` holds where they exceed
@@ -472,8 +484,16 @@ final class PageTracker {
         }
     }
 
-    /// `tracked`'s decode failed with `t`: the read fails at the page, which is done.
+    /// `tracked`'s decode failed with `t`: the read fails at the page, which is done; or, where the
+    /// decode gave up for lack of room for the values it reconstructs, the page returns to its
+    /// column's frontier with them counted, and decodes again.
     private void failed(TrackedPage tracked, Throwable t) {
+        if (t instanceof NoRoomException noRoom) {
+            tracked.reconstructed(noRoom.bytes());
+            tracked.frontier(scheduler.enter(tracked.column(), tracked.key()));
+            addDecode(tracked);
+            return;
+        }
         readFailure.failAt(tracked.key(), tracked.column(), t);
         done(tracked);
     }
@@ -516,9 +536,8 @@ final class PageTracker {
             throw new ParquetReadException("Malformed Parquet metadata: the dictionary page header declares "
                     + pageLength + " bytes but only " + region.remaining() + " bytes lie before the first data page");
         }
-        return columns.chargeDictionary(tracked.column(), tracked.unit(), () -> DictionaryParser.parsePage(page.header(), page.body(),
-                columns.schema(tracked.column()), tracked.unit().listing().chunks()[tracked.column()].metaData(), context,
-                columns.workingSet(tracked.column()), buffers));
+        return DictionaryParser.parsePage(page.header(), page.body(), columns.schema(tracked.column()),
+                tracked.unit().listing().chunks()[tracked.column()].metaData(), context, columns.charges(), buffers);
     }
 
     /// The failure of a decode need forced whose `claim` did not fit the context's heap quota:
