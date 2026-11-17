@@ -70,9 +70,9 @@ final class NestedIndex {
         batch.realValues = null;
 
         if (mode == NestedIndexMode.REAL_VIEW_KEEP_LEVELS) {
-            // Exact-filtered ColumnReader: record selection compacts the batch from the raw levels
-            // before the consumer reads it, and the consumer builds the view lazily; the
-            // SelectionEngine derives the element validity of the predicate columns itself.
+            // A ColumnReader whose scan compacts its batches: the scan compacts the batch from the
+            // raw levels before the consumer reads it, and the consumer builds the view lazily; a
+            // filter's SelectionEngine derives the element validity of the predicate columns itself.
             batch.elementValidity = null;
             batch.multiLevelOffsets = null;
             return;
