@@ -103,7 +103,7 @@ class ResolvedPredicateRemapColumnsTest {
         assertThatThrownBy(() -> new ResolvedPredicate.BinaryInPredicate(0, values,
                 ResolvedPredicate.BinaryPredicate.Comparison.BYTE_STRING, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("A BYTE_STRING membership needs dictionary index");
+                .hasMessage("A BYTE_STRING membership needs a dictionary index");
     }
 
     @Test

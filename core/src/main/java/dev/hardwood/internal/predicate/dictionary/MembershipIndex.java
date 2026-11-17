@@ -164,10 +164,18 @@ public final class MembershipIndex {
         }
 
         public static Float16s of(float[] values) {
+            boolean nan = NaNLiterals.containsNaN(values);
             long[] keys = halfBits(values);
-            // Half bits span at most 2^16 values, well within RangeBitmask.SPAN_LIMIT, so `of` never
-            // declines them.
-            return new Float16s(NaNLiterals.containsNaN(values), keys.length == 0 ? null : RangeBitmask.of(keys));
+            if (keys.length == 0) {
+                return new Float16s(nan, null);
+            }
+            // Half bits span at most 2^16 values, within RangeBitmask.SPAN_LIMIT. A null bitmask
+            // means no literal can match, so a declined one must not pass for it.
+            RangeBitmask bitmask = RangeBitmask.of(keys);
+            if (bitmask == null) {
+                throw new IllegalStateException("A bitmask declined the half bits of " + keys.length + " FLOAT16 literals");
+            }
+            return new Float16s(nan, bitmask);
         }
     }
 

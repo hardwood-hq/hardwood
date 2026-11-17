@@ -270,7 +270,7 @@ public sealed interface ResolvedPredicate {
         public BinaryInPredicate {
             if (comparison.byteExact() != (membership != null)) {
                 throw new IllegalArgumentException("A " + comparison + " membership "
-                        + (membership == null ? "needs" : "takes no") + " dictionary index");
+                        + (membership == null ? "needs a" : "takes no") + " dictionary index");
             }
         }
 

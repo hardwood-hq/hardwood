@@ -42,7 +42,7 @@ import dev.hardwood.metadata.PhysicalType;
 /// none of them in the dictionary, so every kernel scans the whole dictionary. The contenders
 /// are private prototypes in this class, except `PRODUCTION`, which builds a [MembershipIndex]
 /// and scans it with [DictionaryFilterSupport] as they ship. `SORTED_SEARCH` is the
-/// code that method ran before #1594, so its score is the baseline and the other kernels are
+/// code the dictionary check ran before #1594, so its score is the baseline and the other kernels are
 /// checked against it in setup.
 ///
 /// - `SORTED_SEARCH`: sort the literals once, then `Arrays.binarySearch` for every entry. The
