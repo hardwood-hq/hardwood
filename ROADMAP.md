@@ -44,12 +44,12 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] `DictionaryPageHeaderReader`
   - [x] `SchemaElementReader`
   - [x] `LogicalTypeReader` (union deserialization with nested structs)
-- [ ] Implement `ThriftCompactWriter`
+- [x] Implement `ThriftCompactWriter`
   - [x] Varint encoding
   - [x] Zigzag encoding
   - [x] Field header writing
   - [x] Struct writing
-  - [ ] List/Map container writing (list done; map writing pending)
+  - [x] List container writing (`parquet.thrift` has no map fields)
   - [x] String/Binary writing
 
 ---
@@ -354,7 +354,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] SizeStatistics and level histograms surfaced in the CLI (`dive` column chunk detail, `inspect columns --column`)
 - [x] Type-specific comparators (`StatisticsDecoder` for int, long, float, double, boolean, binary)
 - [x] Statistics collection during writing (`StatisticsCollector`, INT32 min/max/null_count)
-- [ ] Binary min/max truncation for efficiency
+- [x] Binary min/max truncation, the bound flagged inexact (`WriterConfig.statisticsTruncationLength`)
 - [x] Statistics serialization (`StatisticsWriter`, preferred `min_value`/`max_value` fields)
 - [x] `nan_count` serialization (`StatisticsWriter` field 9; written for every `FLOAT`, `DOUBLE` and `FLOAT16` chunk, zero included)
 - [x] SizeStatistics serialization (`SizeStatisticsWriter`, `ColumnMetaData` field 16), with the per-page level histograms and unencoded `BYTE_ARRAY` sizes in the page index (#1499)
@@ -503,12 +503,12 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Flat schemas only (no nesting)
 - [x] **Validate**: Read simple files from parquet-testing
 
-### Milestone 2: Minimal Viable Writer
-- [ ] Thrift compact protocol writer
-- [ ] PLAIN encoding encoder
-- [ ] Footer serialization
-- [ ] Flat schema writing
-- [ ] **Validate**: Round-trip flat records
+### Milestone 2: Minimal Viable Writer ✓
+- [x] Thrift compact protocol writer
+- [x] PLAIN encoding encoder
+- [x] Footer serialization
+- [x] Flat schema writing
+- [x] **Validate**: Round-trip flat records
 
 ### Milestone 3: Core Encodings & Logical Types ✓
 - [x] RLE/bit-packing hybrid
