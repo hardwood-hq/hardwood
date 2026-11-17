@@ -9,6 +9,7 @@
 FROM quay.io/fedora/fedora-minimal:44
 
 RUN microdnf install -y --nodocs \
+      bc \
       curl \
       git \
       gh \
