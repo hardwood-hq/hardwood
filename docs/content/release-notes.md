@@ -30,6 +30,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - The native CLI is built with GraalVM CE 25 Innovation releases and embeds JDK 25.0.4.1 ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
 - CLI releases publish `checksums_sha256.txt` and build provenance attestations for the archives and the Docker image, verifiable with `gh attestation verify` ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
 - The CLI Docker image is based on Fedora 44 ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
+- A crafted file cannot make a read allocate without bound: a size, count or length its bytes cannot back fails the read with `ParquetReadException` before anything is allocated from it ([#610](https://github.com/hardwood-hq/hardwood/issues/610), [#1644](https://github.com/hardwood-hq/hardwood/issues/1644), [#1685](https://github.com/hardwood-hq/hardwood/issues/1685))
 
 **Improvements:**
 
@@ -53,6 +54,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - Creating a writer on an `OutputFile` another writer has used fails, instead of a local `OutputFile` publishing over the first writer's file ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 - On heaps below 4 GB, a read allocates no humongous G1 object for a batch of an `INT64`, `DOUBLE` or list column, for the dictionary of a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column, or for a page decompressed with Brotli or with LZ4 in the Hadoop format ([#1497](https://github.com/hardwood-hq/hardwood/issues/1497))
 - A `DATA_PAGE` whose repetition or definition levels are in the deprecated `BIT_PACKED` encoding is read correctly, instead of failing or returning wrong nulls and nesting ([#569](https://github.com/hardwood-hq/hardwood/issues/569))
+- A read of a malformed file fails with `ParquetReadException` naming what is wrong, instead of an `ArrayIndexOutOfBoundsException`, `NullPointerException` or `IllegalStateException`, a stalled read or a wrong answer ([#1715](https://github.com/hardwood-hq/hardwood/issues/1715), [#1685](https://github.com/hardwood-hq/hardwood/issues/1685), [#1630](https://github.com/hardwood-hq/hardwood/issues/1630))
+- A repetition or definition level above its column's maximum fails the read with `ParquetReadException`, instead of reading as a null or a value in no list ([#1685](https://github.com/hardwood-hq/hardwood/issues/1685))
 
 ## 1.1.0.Beta3 (2026-10-21)
 
