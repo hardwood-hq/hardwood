@@ -77,8 +77,8 @@ sealed interface Unit {
         /// The key of the unit's row `row`: its base and the rows its filter keeps before it.
         long key(long row) {
             RowRanges matching = plan.matching();
-            return listing.base() + (matching.isAll() || row == 0 ? row
-                    : matching.intersect(RowRanges.range(0, row)).rowCount(row));
+            return listing.base() + (matching.isAll() ? row
+                    : matching.rowCountBefore(row, listing.metaData().numRows()));
         }
     }
 }

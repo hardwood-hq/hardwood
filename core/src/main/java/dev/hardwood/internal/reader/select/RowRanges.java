@@ -207,12 +207,19 @@ public class RowRanges {
 
     /// Returns the number of rows this set keeps of a row group of `rowGroupRowCount` rows.
     public long rowCount(long rowGroupRowCount) {
+        return rowCountBefore(rowGroupRowCount, rowGroupRowCount);
+    }
+
+    /// Returns the number of rows this set keeps before row `row` of a row group of
+    /// `rowGroupRowCount` rows: the rows of the row group's kept rows that precede it.
+    public long rowCountBefore(long row, long rowGroupRowCount) {
+        long limit = Math.min(row, rowGroupRowCount);
         if (all) {
-            return rowGroupRowCount;
+            return Math.max(limit, 0);
         }
         long count = 0;
         for (int i = 0; i < ranges.length; i += 2) {
-            long end = Math.min(ranges[i + 1], rowGroupRowCount);
+            long end = Math.min(ranges[i + 1], limit);
             if (end > ranges[i]) {
                 count += end - ranges[i];
             }

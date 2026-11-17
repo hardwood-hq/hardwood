@@ -31,12 +31,16 @@ import dev.hardwood.schema.FileSchema;
 /// @param bloomFilterColumns the file ordinals of the columns whose Bloom filter a leaf would
 ///        consult
 /// @param chunks per decoded column, its chunk in the file; not written once listed
-/// @param limit the rows of the row group the read's row limit reaches, its leading skipped rows
-///        included; all of them without a limit
+/// @param skipped its leading rows before the read's physical skip ends, which the read does not
+///        return; `0` but in the row group the skip lands in
+/// @param end its rows before the read's physical window ends; all of them but in the row group
+///        the window ends in, and without a window
+/// @param limit the rows of the row group the read reaches: up to its window's end and the read's
+///        row limit, its leading skipped rows included; all of them without either
 public record UnitListing(InputFile file, int fileIndex, FileSchema fileSchema, FileColumnOrdinals columnOrdinals,
                    RowGroup metaData, int rowGroup, int index, long base, boolean alwaysMatches,
                    RowGroupFilterEvaluator.LeafDecisions leafDecisions, BitSet bloomFilterColumns,
-                   ColumnChunk[] chunks, long limit) {
+                   ColumnChunk[] chunks, long skipped, long end, long limit) {
 
     /// Fails unless every chunk of the row group stores its data in the file being read. It
     /// precedes every read the row group drives, whose offsets would address the other file for

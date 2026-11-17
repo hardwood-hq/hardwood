@@ -766,7 +766,7 @@ public class ParquetFileReader implements Closeable {
     private PreparedRead prepare(List<RowGroup> rowGroups, ReadProjection projection, ResolvedPredicate filter,
                                  boolean metadataFiltering, long limit, long skip) throws IOException {
         return PreparedRead.prepare(fileMetadataCache, context, tracking, schema, rowGroups, projection, filter,
-                metadataFiltering, limit, skip);
+                metadataFiltering, limit, skip, Long.MAX_VALUE);
     }
 
     /// Records `child` as what [#close()] closes in place of the engine of `read`, whose reader it
