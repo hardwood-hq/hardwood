@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.row;
 
 import java.util.List;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.util.InternedNameMap;
 import dev.hardwood.internal.util.StringToIntMap;
@@ -50,9 +51,10 @@ final class TopLevelFieldMap {
         /// @param metadataCol projected column index of the `metadata` binary child
         /// @param nullDefLevel def level below which the Variant group itself is null
         /// @param root top-level shredded tree for this Variant column
+        /// @param path dotted path of the Variant group, which a failure to decode its value names
         record Variant(SchemaNode.GroupNode schema,
                        int metadataCol, int nullDefLevel,
-                       ShredLevel root) implements FieldDesc {
+                       ShredLevel root, String path) implements FieldDesc {
 
             @Override
             public SchemaNode field() {
@@ -62,6 +64,13 @@ final class TopLevelFieldMap {
             /// Shorthand for the top-level `value` column index.
             int valueCol() {
                 return root.valueCol();
+            }
+
+            /// A failure to decode this Variant's `metadata` or to reassemble its value
+            /// is the file's fault: it is classified as a read failure and names the
+            /// file and the Variant's path.
+            RuntimeException decodeFailure(String fileName, RuntimeException e) {
+                return ExceptionContext.readFailureAt(fileName, ExceptionContext.UNKNOWN_ROW_GROUP, path, e);
             }
         }
 
@@ -204,7 +213,10 @@ final class TopLevelFieldMap {
         SchemaNode.PrimitiveNode metadataNode = (SchemaNode.PrimitiveNode) group.children().get(0);
         int metadataCol = projectedSchema.toProjectedIndex(metadataNode.columnIndex());
         ShredLevel root = ShredLevel.build(group, projectedSchema);
-        return new FieldDesc.Variant(group, metadataCol, group.maxDefinitionLevel(), root);
+        List<String> metadataPath = projectedSchema.getOriginalSchema()
+                .getColumn(metadataNode.columnIndex()).fieldPath().elements();
+        String path = String.join(".", metadataPath.subList(0, metadataPath.size() - 1));
+        return new FieldDesc.Variant(group, metadataCol, group.maxDefinitionLevel(), root, path);
     }
 
     static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,

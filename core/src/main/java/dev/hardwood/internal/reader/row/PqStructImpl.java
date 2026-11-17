@@ -515,7 +515,8 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         }
         byte[] metadataBytes = batch.getBinary(variantDesc.metadataCol(), metaIdx);
 
-        if (variantDesc.root().typed() != null) {
+        boolean shredded = variantDesc.root().typed() != null;
+        if (shredded) {
             // Position-mode (struct inside a list/map) would need list-aware
             // indices inside the reassembler; record-mode uses the row index
             // directly. No fixture exercises the former today, and silently
@@ -526,21 +527,26 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
                         "Shredded Variant inside a repeated context (list/map element) "
                                 + "is not yet supported; field '" + fieldName + "'");
             }
-            VariantMetadata meta = new VariantMetadata(metadataBytes);
-            VariantShredReassembler reassembler = new VariantShredReassembler();
-            reassembler.setCurrentMetadata(meta);
-            byte[] value = reassembler.reassemble(variantDesc.root(), batch, rowIndex);
-            return new PqVariantImpl(meta, value, 0);
         }
-
         int valueCol = variantDesc.valueCol();
-        if (valueCol < 0) {
+        if (!shredded && valueCol < 0) {
             throw new IllegalStateException(
                     "Variant column '" + fieldName + "' requires its 'value' child in the projection");
         }
-        int valIdx = resolveValueIndex(valueCol);
-        byte[] value = batch.getBinary(valueCol, valIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        try {
+            if (shredded) {
+                VariantMetadata meta = new VariantMetadata(metadataBytes);
+                VariantShredReassembler reassembler = new VariantShredReassembler();
+                reassembler.setCurrentMetadata(meta);
+                byte[] value = reassembler.reassemble(variantDesc.root(), batch, rowIndex);
+                return new PqVariantImpl(meta, value, 0);
+            }
+            byte[] value = batch.getBinary(valueCol, resolveValueIndex(valueCol));
+            return new PqVariantImpl(metadataBytes, value);
+        }
+        catch (RuntimeException e) {
+            throw variantDesc.decodeFailure(batch.fileName, e);
+        }
     }
 
     // ==================== Child Resolution ====================

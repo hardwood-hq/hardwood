@@ -52,7 +52,9 @@ unwrapping it where the stream is consumed.
 
 Every message about a file names it. A message for an invalid file also names
 the row group, column and page, leaving out any part the reader could not determine: a
-failure before a column chunk's pages are walked names no page, and one while the footer is
+failure before a column chunk's pages are walked names no page, a Variant whose `metadata` does
+not decode, or whose shredded columns do not reassemble, when an accessor reads it names its
+column but no row group or page, and one while the footer is
 parsed names only the file. A message for a wrong call names at most the file. An `IOException`
 an `InputFile` raises while the first file is opened or its footer read carries only the
 `InputFile`'s own message. An unchecked exception a `MetadataSource` raises keeps its type and
