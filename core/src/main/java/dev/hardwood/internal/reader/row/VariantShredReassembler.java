@@ -17,6 +17,7 @@ import java.util.UUID;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.internal.variant.ShredLevel.Typed;
+import dev.hardwood.internal.variant.VariantBinary;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.internal.variant.VariantValueDecoder;
 import dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout;
@@ -33,7 +34,8 @@ import dev.hardwood.reader.ParquetReadException;
 /// value null + typed_value null → missing (Variant NULL at the root and as an
 /// array element, an omitted field inside an object), pass-through when value
 /// is the only side populated, typed extraction when typed_value is the only
-/// side, object merge when both are set (object-only per spec).
+/// side, object merge when both are set at an object level; both set at a
+/// primitive or array level is a malformed file and fails the read.
 ///
 /// Not thread-safe: the internal scratch buffer is reused across calls.
 /// [NestedBatchDataView] holds one instance for the top-level Variants of a
@@ -99,6 +101,7 @@ public final class VariantShredReassembler {
                 && !batch.isElementNull(typed.col(), typedIdx);
 
         if (typedPresent) {
+            rejectValueAlongsideTypedValue(valuePresent);
             encodePrimitive(typed, batch, typedIdx);
             return pos - before;
         }
@@ -195,7 +198,7 @@ public final class VariantShredReassembler {
                                  NestedBatchIndex batch, int rowIndex,
                                  int valueCol, int valueIdx, boolean valuePresent) {
         int before = pos;
-        boolean structPresent = isTypedValuePresent(typed.fields(), batch, rowIndex, typed.structDefLevel());
+        boolean structPresent = isTypedValuePresent(typed.fields(), batch, rowIndex, true, typed.structDefLevel());
 
         if (!structPresent) {
             // Spec: if typed_value is null, fall through to `value` — which may
@@ -208,9 +211,9 @@ public final class VariantShredReassembler {
         // introduce in emitObject; allocation is per-call so recursion into
         // nested objects doesn't clobber our slots.
         int fieldCount = typed.fieldNames().length;
-        int extraFromMerge = valuePresent
-                ? VariantValueDecoder.parseObject(rawBytes(batch, valueCol, valueIdx), 0).numElements()
-                : 0;
+        byte[] raw = valuePresent ? rawBytes(batch, valueCol, valueIdx) : null;
+        ObjectLayout unshredded = valuePresent ? parseUnshreddedObject(raw) : null;
+        int extraFromMerge = valuePresent ? unshredded.numElements() : 0;
         String[] names = new String[fieldCount + extraFromMerge];
         byte[][] values = new byte[fieldCount + extraFromMerge][];
         int count = 0;
@@ -230,12 +233,23 @@ public final class VariantShredReassembler {
         }
 
         if (valuePresent) {
-            byte[] raw = rawBytes(batch, valueCol, valueIdx);
-            count = mergeUnshreddedObject(raw, names, values, count);
+            count = mergeUnshreddedObject(raw, unshredded, names, values, count);
         }
 
         emitObject(names, values, count);
         return pos - before;
+    }
+
+    /// Parse the `value` bytes of an object level whose `typed_value` struct is
+    /// present. The spec allows both sides at an object level only for a
+    /// partially shredded object, so a non-object `value` there is a malformed
+    /// file: fail early rather than surface it as a Variant type mismatch.
+    private static ObjectLayout parseUnshreddedObject(byte[] raw) {
+        if (raw.length == 0 || VariantBinary.basicType(raw[0]) != VariantBinary.BASIC_TYPE_OBJECT) {
+            throw new ParquetReadException(
+                    "Malformed shredded Variant: typed_value holds shredded object fields but value is not an object");
+        }
+        return VariantValueDecoder.parseObject(raw, 0);
     }
 
     /// Decode the partial-unshredded object bytes in `raw`, appending each
@@ -246,9 +260,8 @@ public final class VariantShredReassembler {
     /// [#rejectFieldCollision] rather than append blindly. Field ids index into
     /// the top-level metadata dictionary (same for all nesting depths within a
     /// variant), resolved via `currentMetadata`. Returns the new count.
-    private int mergeUnshreddedObject(byte[] raw, String[] names, byte[][] values, int count) {
+    private int mergeUnshreddedObject(byte[] raw, ObjectLayout layout, String[] names, byte[][] values, int count) {
         int shreddedCount = count;
-        ObjectLayout layout = VariantValueDecoder.parseObject(raw, 0);
         int n = layout.numElements();
         for (int i = 0; i < n; i++) {
             int fieldId = VariantValueDecoder.objectFieldId(raw, layout, i);
@@ -369,6 +382,7 @@ public final class VariantShredReassembler {
             }
             return -1;
         }
+        rejectValueAlongsideTypedValue(valuePresent);
 
         int listStart = batch.getListStart(leafCol, rowIndex);
         int listEnd = batch.getListEnd(leafCol, rowIndex);
@@ -405,20 +419,21 @@ public final class VariantShredReassembler {
         return pos - before;
     }
 
-    /// Determine whether a typed_value container (object struct or array's
-    /// wrapper LIST) is non-null at the current row by probing a leaf column
-    /// inside the subtree and comparing its recorded def level to the
-    /// container's max def level. Required because the outer variant `value`
+    /// Determine whether a typed_value object struct is non-null by probing a
+    /// leaf column inside the subtree and comparing its recorded def level to
+    /// the struct's max def level. Required because the level's `value`
     /// column's def level reflects `value`'s nullness, not `typed_value`'s.
+    /// `index` is a row index when `rowIndexed`, else an array element's value
+    /// index, which addresses every leaf below the element directly.
     private static boolean isTypedValuePresent(ShredLevel[] children,
-                                               NestedBatchIndex batch, int rowIndex,
+                                               NestedBatchIndex batch, int index, boolean rowIndexed,
                                                int containerDefLevel) {
         for (ShredLevel child : children) {
             int leaf = firstLeafCol(child);
             if (leaf < 0) {
                 continue;
             }
-            int idx = batch.getValueIndex(leaf, rowIndex);
+            int idx = rowIndexed ? batch.getValueIndex(leaf, index) : index;
             if (batch.getDefLevel(leaf, idx) >= containerDefLevel) {
                 return true;
             }
@@ -480,6 +495,7 @@ public final class VariantShredReassembler {
         if (typedCol >= 0
                 && batch.getDefLevel(typedCol, elementIdx) >= typed.defLevel()
                 && !batch.isElementNull(typedCol, elementIdx)) {
+            rejectValueAlongsideTypedValue(valuePresent);
             encodePrimitive(typed, batch, elementIdx);
             return pos - before;
         }
@@ -496,10 +512,13 @@ public final class VariantShredReassembler {
         // Mirrors writeObjectLevel but with elementIdx instead of rowIndex for
         // the children's value index.
         int before = pos;
+        if (!isTypedValuePresent(typed.fields(), batch, elementIdx, false, typed.structDefLevel())) {
+            return valuePresent ? writeRawValue(batch, valueCol, elementIdx) : -1;
+        }
         int fieldCount = typed.fieldNames().length;
-        int extraFromMerge = valuePresent
-                ? VariantValueDecoder.parseObject(rawBytes(batch, valueCol, elementIdx), 0).numElements()
-                : 0;
+        byte[] raw = valuePresent ? rawBytes(batch, valueCol, elementIdx) : null;
+        ObjectLayout unshredded = valuePresent ? parseUnshreddedObject(raw) : null;
+        int extraFromMerge = valuePresent ? unshredded.numElements() : 0;
         String[] names = new String[fieldCount + extraFromMerge];
         byte[][] values = new byte[fieldCount + extraFromMerge][];
         int count = 0;
@@ -517,12 +536,8 @@ public final class VariantShredReassembler {
             values[count] = fieldBytes;
             count++;
         }
-        if (count == 0 && !valuePresent) {
-            return -1;
-        }
         if (valuePresent) {
-            byte[] raw = rawBytes(batch, valueCol, elementIdx);
-            count = mergeUnshreddedObject(raw, names, values, count);
+            count = mergeUnshreddedObject(raw, unshredded, names, values, count);
         }
         emitObject(names, values, count);
         return pos - before;
@@ -551,6 +566,7 @@ public final class VariantShredReassembler {
         if (!listPresent) {
             return valuePresent ? writeRawValue(batch, valueCol, elementIdx) : -1;
         }
+        rejectValueAlongsideTypedValue(valuePresent);
         List<byte[]> inner = new ArrayList<>(innerEnd - innerStart);
         for (int i = innerStart; i < innerEnd; i++) {
             if (batch.getDefLevel(innerLeaf, i) < typed.elementDefLevel()) {
@@ -576,6 +592,17 @@ public final class VariantShredReassembler {
         ensureCapacity(16 + totalBytes);
         pos = VariantValueEncoder.writeArray(scratch, pos, inner.toArray(new byte[0][]));
         return pos - before;
+    }
+
+    /// Enforce the shredding invariant that a non-object level (primitive or
+    /// array) populates at most one of `value` and `typed_value`. The spec gives
+    /// no meaning to both being set, so a reader preferring either side would
+    /// misrepresent the file; called once `typed_value` is known to be present.
+    private static void rejectValueAlongsideTypedValue(boolean valuePresent) {
+        if (valuePresent) {
+            throw new ParquetReadException(
+                    "Malformed shredded Variant: both value and typed_value are set for a non-object value");
+        }
     }
 
     // ==================== Raw value helpers ====================
