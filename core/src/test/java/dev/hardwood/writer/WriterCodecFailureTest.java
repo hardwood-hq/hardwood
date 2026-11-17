@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.writer.RowGroupBuffer;
 
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -66,16 +67,16 @@ class WriterCodecFailureTest {
                 OutputFile.inMemory(), oneColumn(), flushPerRecord(), FAILING);
         RowWriter rows = writer.rowWriter();
 
+        // The row writer stages records and submits them a batch at a time, so the flush that
+        // fails is triggered by the record that fills the first batch.
         assertThatThrownBy(() -> {
-            // The row writer stages records and submits them in batches, so the flush that
-            // fails may be triggered by any one of them.
-            for (int i = 0; i < 4096; i++) {
+            for (int i = 0; i < RowGroupBuffer.recordsPerSlice(1); i++) {
                 int value = i;
                 rows.writeRow(row -> row.setInt(0, value));
             }
-            writer.close();
         }).isInstanceOf(ParquetWriteException.class)
           .hasMessage("codec unavailable");
+        writer.close();
     }
 
     @Test

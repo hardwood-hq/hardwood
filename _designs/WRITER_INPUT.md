@@ -337,8 +337,9 @@ The builders append in document order, which is the order the shredder consumes,
 
 A batch is submitted when either trigger fires:
 
-- **1024 staged records.** A fixed internal constant, not a `WriterConfig` option: the batch is an arrival unit with no effect on the produced file.
-- **Staged variable-width payload ≥ `WriterConfig.rowGroupBufferTargetBytes()`.** A record of large `BYTE_ARRAY` values would otherwise let 1024 records hold arbitrarily much; this bounds staging at one row group's worth.
+- **A slice's worth of staged records** (`RowGroupBuffer.recordsPerSlice`, more for a narrow schema than for a wide one, [WRITER.md](WRITER.md#the-cut-size-a-slice-by-what-it-could-cost-cut-on-what-it-did)). A batch is appended in slices, each waited for as a whole, so a batch smaller than a slice pays that wait for fewer values. Not a `WriterConfig` option: the batch is an arrival unit with no effect on the produced file.
+- **An array staging an entry per list or map element holding half the slice ceiling's entries** (`RowPlan.perElementStagesFull`): a leaf beneath a repeated field, or the offsets and null mask of a repeated field nested in another, whose empty or null instances stage offsets but no leaf entry. These arrays can outgrow the record count; the trigger keeps them within what a slice holds. Arrays with one entry per record, flat leaves beside a list included, do not count.
+- **Staged variable-width payload ≥ `WriterConfig.rowGroupBufferTargetBytes()`.** A record of large `BYTE_ARRAY` values would otherwise let a full batch's records hold arbitrarily much; this bounds staging at one row group's worth.
 
 `ParquetFileWriter.close()` submits the pending partial batch before the final row group is flushed and the footer written. The staging arrays are refilled as soon as the submission returns, which relies on the batch being consumed synchronously ([Column batches](#column-batches)); a write path that consumed batches asynchronously would have to give the row writer a second staging generation. A staged array is handed over directly when its fill count equals its capacity and trimmed with `Arrays.copyOf` otherwise, because `ColumnBatch` derives a column's value count from the array length; the columnar API is the zero-copy path.
 

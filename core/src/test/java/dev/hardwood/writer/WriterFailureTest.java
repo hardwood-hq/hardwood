@@ -19,6 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.reader.ParquetFileReader;
 
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
@@ -130,7 +131,7 @@ class WriterFailureTest {
         // Records are submitted a batch at a time, so the failing flush is triggered by one of
         // them rather than by the first.
         assertThatThrownBy(() -> {
-            for (int i = 0; i < 4096; i++) {
+            for (int i = 0; i < RowGroupBuffer.recordsPerSlice(1); i++) {
                 int value = i;
                 rows.writeRow(row -> row.setInt(0, value));
             }
