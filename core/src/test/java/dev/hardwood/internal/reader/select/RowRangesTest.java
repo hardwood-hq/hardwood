@@ -46,6 +46,26 @@ class RowRangesTest {
         assertEquals(30, RowRanges.range(120, 150).rowCount(150));
     }
 
+    /// The rows a set keeps before a row: the rows of its intervals below it, every row below it
+    /// for the all-rows sentinel, and none past the row group's end.
+    @Test
+    void rowCountBeforeCountsTheKeptRowsBelowARow() {
+        List<PageLocation> pages = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 50),
+                new PageLocation(200, 100, 100));
+        RowRanges firstAndLast = RowRanges.fromPages(pages, new boolean[]{ true, false, true }, 150);
+
+        assertEquals(40, RowRanges.ALL.rowCountBefore(40, 150));
+        assertEquals(150, RowRanges.ALL.rowCountBefore(200, 150));
+        assertEquals(0, RowRanges.ALL.rowCountBefore(0, 150));
+        assertEquals(50, firstAndLast.rowCountBefore(75, 150));
+        assertEquals(60, firstAndLast.rowCountBefore(110, 150));
+        assertEquals(100, firstAndLast.rowCountBefore(150, 150));
+        assertEquals(0, RowRanges.range(120, 150).rowCountBefore(120, 150));
+        assertEquals(5, RowRanges.range(120, 150).rowCountBefore(125, 150));
+    }
+
     @Test
     void testFromPagesKeepAll() {
         List<PageLocation> pages = List.of(

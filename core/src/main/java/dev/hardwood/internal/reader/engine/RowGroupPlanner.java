@@ -36,12 +36,12 @@ import dev.hardwood.schema.FileSchema;
 import jdk.jfr.Event;
 
 /// Plans a read's row groups, moving each through its states ([Unit]). Lists each file's row
-/// groups that statistics and the read's skip and limit keep, as [Unit]s; prunes each unit by its
-/// Bloom filters and dictionaries; reads its window's page index (sliced from the file's tail where
-/// it holds it), from which [PagePlanner] plans its pages and ranges into a [UnitPlan]; and batches
-/// the units in unit order, so batches stay in row order whichever plan finishes first. A unit
-/// whose planning fails fails the read at its first row, between two units. Used under the read's
-/// lock, except the jobs' work.
+/// groups that statistics, the read's physical window and its row limit keep, as [Unit]s; prunes
+/// each unit by its Bloom filters and dictionaries; reads its window's page index (sliced from the
+/// file's tail where it holds it), from which [PagePlanner] plans its pages and ranges into a
+/// [UnitPlan]; and batches the units in unit order, so batches stay in row order whichever plan
+/// finishes first. A unit whose planning fails fails the read at its first row, between two units.
+/// Used under the read's lock, except the jobs' work.
 final class RowGroupPlanner {
 
     /// The fetch of an [IndexWindow] in the read: its first unit, at whose key its requests are
@@ -112,22 +112,34 @@ final class RowGroupPlanner {
     private final RowGroupPruning pruning;
     /// plans a unit's pages and ranges once its page index has arrived
     private final PagePlanner pages;
-    /// the rows the read's row limit leaves to list, and the leading rows its physical skip still
-    /// drops. Under a filter the budget counts
+    /// the rows the read's row limit leaves to list. Under a filter the budget counts
     /// the rows of row groups statistics prove to match, every row of which is returned, and the
     /// first one they leave undecided lifts it, as the batch plan's cap
     private long budget;
     private final boolean filteredRead;
-    private long skip;
+    /// the read's physical window `[windowStart, windowEnd)`, in rows of the files' row groups
+    /// before statistics prune them: its physical skip and, `Long.MAX_VALUE` for none, its end
+    private final long windowStart;
+    private final long windowEnd;
+    /// the rows of the files listed so far, pruned row groups included
+    private long listedFileRows;
+    /// whether the files listed reach the window's end, so no further file is listed
+    private boolean windowListed;
+    /// the leading rows of the row group the skip lands in that the read publishes and its consumer
+    /// drops: those its plan placed, where it could not mask them out. Set as that row group is
+    /// batched, before any of its batches is published, and read by the consumer once it has taken
+    /// a batch of the read
+    private volatile long leadingRows;
 
     RowGroupPlanner(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, ReadFailure readFailure,
                     PageTracker tracker, HeaderScanner scanner, ColumnContext columns, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
-                    long budget, boolean filteredRead, long skip, long maskedRows) {
+                    long budget, boolean filteredRead, long windowStart, long windowEnd, boolean masksSkip) {
         this.budget = budget;
         this.keptEstimate = new KeptRowsEstimate(batchPlan.capacity());
         this.filteredRead = filteredRead;
-        this.skip = skip;
-        this.pages = new PagePlanner(schemas, filterOnly, pruning, maskedRows);
+        this.windowStart = windowStart;
+        this.windowEnd = windowEnd;
+        this.pages = new PagePlanner(schemas, filterOnly, pruning, masksSkip);
         this.pruning = pruning;
         this.scheduler = scheduler;
         this.publisher = publisher;
@@ -155,30 +167,35 @@ final class RowGroupPlanner {
         List<UnitListing> listings = new ArrayList<>();
         List<IndexWindow.Member> members = new ArrayList<>();
         long budget = this.budget;
-        long skip = this.skip;
         long key = endKey;
+        long fileStart = listedFileRows;
         for (RowGroupPruning.FilteredRowGroup kept : filtered.rowGroups()) {
             RowGroup rg = kept.rowGroup();
             if (budget <= 0) {
                 break;
             }
+            // the row group's rows in the read's physical row space, which pruning does not shift
+            long start = fileStart + kept.firstRow();
+            if (start + rg.numRows() <= windowStart) {
+                continue;
+            }
+            if (Math.max(start, windowStart) >= windowEnd) {
+                break;
+            }
             if (filteredRead && !kept.alwaysMatches()) {
                 budget = Long.MAX_VALUE;
             }
-            if (skip >= rg.numRows()) {
-                skip -= rg.numRows();
-                continue;
-            }
-            long leading = skip;
-            skip = 0;
+            long leading = Math.max(windowStart - start, 0);
+            long end = Math.min(windowEnd - start, rg.numRows());
             ColumnChunk[] chunks = new ColumnChunk[schemas.length];
             for (int c = 0; c < schemas.length; c++) {
                 chunks[c] = rg.columns().get(ordinals.fileOrdinal(schemas[c].columnIndex()));
             }
-            // the leading rows of a physical skip are read and the reader drops them
+            // the leading rows of a physical skip are masked out, or read and the consumer drops
+            // them
             UnitListing u = new UnitListing(file, fileIndex, fileSchema, ordinals, rg, kept.fileRowGroupIndex(),
                     from + listings.size(), key, kept.alwaysMatches(), kept.leafDecisions(), kept.bloomFilterColumns(),
-                    chunks, leading + Math.min(rg.numRows() - leading, budget));
+                    chunks, leading, end, leading + Math.min(end - leading, budget));
             budget -= u.limit() - leading;
             key += rg.numRows();
             listings.add(u);
@@ -196,7 +213,9 @@ final class RowGroupPlanner {
             fileReports.add(new FileReport(filtered.event(), endKey));
         }
         this.budget = budget;
-        this.skip = skip;
+        listedFileRows = fileStart + filtered.rowCount();
+        // the window ends in this file, whether or not statistics kept the row group it ends in
+        windowListed |= listedFileRows >= windowEnd;
         endKey = key;
         startWindows(file, from, listings, members, windows, dictionaries);
     }
@@ -411,9 +430,17 @@ final class RowGroupPlanner {
         readFailure.failAt(u.base(), t);
     }
 
-    /// Whether the read's row limit leaves rows to list.
+    /// Whether the read's row limit and its physical window leave rows to list.
     boolean budgetLeft() {
-        return budget > 0;
+        return budget > 0 && !windowListed;
+    }
+
+    /// The leading rows of the row group the read's skip lands in that the read publishes and its
+    /// consumer drops, where the plan could not mask them out: `0` where it masked them, where
+    /// pruning dropped the row group, and for a read without a skip. Known once the consumer has
+    /// taken a batch of the read, since the row group is batched before any batch is published.
+    long leadingRows() {
+        return leadingRows;
     }
 
     /// Every file is listed, or the listing failed: no unit follows those listed.
@@ -558,10 +585,16 @@ final class RowGroupPlanner {
     /// open where the plan says so; then hands its pages and ranges to [PageTracker].
     private void takeBatches(Unit.Planned planned) {
         UnitListing u = planned.listing();
+        RowRanges matching = planned.plan().matching();
+        long numRows = u.metaData().numRows();
         BatchPlan.RowGroupBatches batches;
         try {
+            // where the window ends in the row group, the read ends after the rows its plan keeps
+            // before that end: all of them where the plan masked the rest out, the rows up to the
+            // end where it could not
             batches = batchPlan.plan(u.index(), u.fileIndex(), u.file().name(), u.alwaysMatches(),
-                    planned.plan().matching().rowCount(u.metaData().numRows()));
+                    matching.rowCount(numRows),
+                    u.end() < numRows ? matching.rowCountBefore(u.end(), numRows) : Long.MAX_VALUE);
         }
         catch (ParquetReadException e) {
             // a row count the plan cannot take: the read fails at the unit's first row, and no unit
@@ -571,10 +604,14 @@ final class RowGroupPlanner {
         }
         // a unit of which the batches read no row (dropped, or past the read's row limit) reads no page
         Unit.Batched p = new Unit.Batched(u, batches.segmentCount() == 0
-                ? UnitPlan.empty(schemas.length, planned.plan().matching()) : planned.plan(), batches, planned.events());
+                ? UnitPlan.empty(schemas.length, matching) : planned.plan(), batches, planned.events());
         set(p);
+        if (u.skipped() > 0) {
+            // the leading rows its plan placed, which its plan could not mask out
+            leadingRows = Math.min(batches.plannedRows(), matching.rowCountBefore(u.skipped(), numRows));
+        }
         if (batches.endsRead()) {
-            // the row cap ends the read in it: no further file is listed
+            // the row cap or the window's end ends the read in it: no further file is listed
             budget = 0;
         }
         BitSet skipped = new BitSet(schemas.length);

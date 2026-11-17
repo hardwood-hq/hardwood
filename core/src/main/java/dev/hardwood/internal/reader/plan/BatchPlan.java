@@ -32,6 +32,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// - at the row cap, which ends the read. Under a filter the cap counts matching rows, so it is
 ///   held only while every row group planned so far was proven to match in full, and dropped for
 ///   the rest of the read at the first row group that keeps rows and was not;
+/// - at the end of a read's physical window, which ends the read: in the row group it lies in,
+///   after the kept rows before it;
 /// - at the end of the read.
 ///
 /// A row group that keeps no row takes no part: it closes no batch and drops no cap. Every input
@@ -42,7 +44,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// threads.
 public final class BatchPlan {
 
-    /// The plan of a row group after the row cap ended the read; no column reaches it.
+    /// The plan of a row group after the row cap or the window's end ended the read; no column
+    /// reaches it.
     private static final RowGroupBatches AFTER_END =
             new RowGroupBatches(-1, null, false, false, 0, 0, 0, 0, 0, false, -1, 0);
 
@@ -60,7 +63,7 @@ public final class BatchPlan {
     /// Whether the row cap still applies, and how many rows it leaves.
     private boolean capHeld;
     private long capLeft;
-    /// Whether the row cap has ended the read.
+    /// Whether the row cap or the end of the read's physical window has ended the read.
     private boolean ended;
     /// The rows the plan takes from every row group planned so far.
     private long plannedRows;
@@ -82,6 +85,12 @@ public final class BatchPlan {
         this.filtered = filtered;
         this.capHeld = maxRows > 0;
         this.capLeft = maxRows;
+    }
+
+    /// The row cap `cap` raised by `rows`: `0`, no cap, stays so, and a sum past `Long.MAX_VALUE`
+    /// is `Long.MAX_VALUE`, which caps nothing either.
+    public static long raiseCap(long cap, long rows) {
+        return cap == 0 ? 0 : cap > Long.MAX_VALUE - rows ? Long.MAX_VALUE : cap + rows;
     }
 
     /// Whether a read decoding `columns` ends its batches at row-group boundaries: exactly when
@@ -112,8 +121,25 @@ public final class BatchPlan {
     /// @param fileName the name of the row group's file
     /// @param alwaysMatches whether statistics proved every row of the row group matches the filter
     /// @param keptRows the rows of the row group its page masks keep, all of them when none apply
+    public RowGroupBatches plan(int workItemIndex, int fileIndex, String fileName, boolean alwaysMatches,
+                                long keptRows) {
+        return plan(workItemIndex, fileIndex, fileName, alwaysMatches, keptRows, Long.MAX_VALUE);
+    }
+
+    /// Plans the batches of the next row group of the read, which ends the read after its first
+    /// `endRows` kept rows unless that is more than it keeps.
+    ///
+    /// @param workItemIndex the row group's position in the work list, which must be the one after
+    ///        the last planned
+    /// @param fileIndex the index of the row group's file in the read
+    /// @param fileName the name of the row group's file
+    /// @param alwaysMatches whether statistics proved every row of the row group matches the filter
+    /// @param keptRows the rows of the row group its page masks keep, all of them when none apply
+    /// @param endRows the kept rows of the row group before the read's physical window ends, after
+    ///        which the read ends; `Long.MAX_VALUE` where the window does not end in it, and
+    ///        positive where the row group keeps rows
     public synchronized RowGroupBatches plan(int workItemIndex, int fileIndex, String fileName,
-                                      boolean alwaysMatches, long keptRows) {
+                                             boolean alwaysMatches, long keptRows, long endRows) {
         if (workItemIndex != nextWorkItem) {
             throw new IllegalStateException("Batch plan expects work item " + nextWorkItem
                     + " next, got " + workItemIndex);
@@ -130,6 +156,10 @@ public final class BatchPlan {
             return new RowGroupBatches(workItemIndex, fileName, flag, false, 0, 0, capacity, 0, 0, false,
                     plannedRows, 0);
         }
+        if (endRows <= 0) {
+            throw new IllegalArgumentException("A row group that keeps rows ends the read after at least one, got "
+                    + endRows);
+        }
         if (filtered && !alwaysMatches) {
             capHeld = false;
         }
@@ -142,6 +172,11 @@ public final class BatchPlan {
         boolean endsRead = capHeld && capLeft <= keptRows;
         if (endsRead) {
             rows = capLeft;
+            ended = true;
+        }
+        if (endRows <= rows) {
+            rows = endRows;
+            endsRead = true;
             ended = true;
         }
         if (capHeld) {
@@ -188,7 +223,8 @@ public final class BatchPlan {
     /// @param segmentCount number of segments, `0` when the row group contributes no row
     /// @param signedLastRows rows of the last segment, negated when the segment leaves its batch
     ///        open
-    /// @param endsRead whether the row cap ends the read at the end of the last segment
+    /// @param endsRead whether the row cap or the end of the read's physical window ends the read
+    ///        at the end of the last segment
     /// @param readRowsBefore the rows the plan takes from every row group before this one, which
     ///        is the read's row this row group's first planned row is at
     /// @param continuedRows rows the batch the first segment continues holds from earlier row
@@ -230,7 +266,7 @@ public final class BatchPlan {
         }
 
         /// The rows the plan takes from the row group: its kept rows, or fewer where the row cap
-        /// ends the read inside it.
+        /// or the end of the read's physical window ends the read inside it.
         public long plannedRows() {
             return segmentCount == 0 ? 0 : rowsBefore(segmentCount - 1) + segmentRows(segmentCount - 1);
         }

@@ -225,15 +225,17 @@ public final class RowGroupPruning {
     /// every row matches (so per-row filtering can be skipped for it).
     /// A row group that survived pruning, with the index it has **in the file** — not its
     /// position in this list, which pruning makes a different number. Every consumer means
-    /// the file's: the fetch log, the JFR events, the row group a failure names.
+    /// the file's: the fetch log, the JFR events, the row group a failure names. `firstRow` is
+    /// the row of the given list it starts at, the rows of every row group before it, kept or
+    /// pruned, so that a physical row position survives pruning.
     public record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches,
-            int fileRowGroupIndex, RowGroupFilterEvaluator.LeafDecisions leafDecisions,
+            int fileRowGroupIndex, long firstRow, RowGroupFilterEvaluator.LeafDecisions leafDecisions,
             BitSet bloomFilterColumns) {}
 
-    /// The row groups of a file that pruning by statistics keeps, and the [RowGroupFilterEvent]
-    /// reporting it, for the read to commit once it reaches the file; `null` when the read does not
-    /// prune by metadata.
-    public record FilteredRowGroups(List<FilteredRowGroup> rowGroups, Event event) {
+    /// The row groups of a file that pruning by statistics keeps, the rows of every row group it
+    /// was given, kept or pruned, and the [RowGroupFilterEvent] reporting it, for the read to
+    /// commit once it reaches the file; `null` when the read does not prune by metadata.
+    public record FilteredRowGroups(List<FilteredRowGroup> rowGroups, long rowCount, Event event) {
     }
 
     public FilteredRowGroups filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
@@ -243,16 +245,21 @@ public final class RowGroupPruning {
         // reading rows.
         if (!prunesByMetadata()) {
             List<FilteredRowGroup> unpruned = new ArrayList<>(rowGroups.size());
+            long firstRow = 0;
             for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
-                unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex, null,
+                unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex, firstRow, null,
                         new BitSet()));
+                firstRow += rowGroups.get(rgIndex).numRows();
             }
-            return new FilteredRowGroups(unpruned, null);
+            return new FilteredRowGroups(unpruned, firstRow, null);
         }
         List<FilteredRowGroup> filtered = new ArrayList<>(rowGroups.size());
         int fullyMatching = 0;
+        long nextFirstRow = 0;
         for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
             RowGroup rg = rowGroups.get(rgIndex);
+            long firstRow = nextFirstRow;
+            nextFirstRow += rg.numRows();
             FilterDecision decision;
             RowGroupFilterEvaluator.LeafDecisions leafDecisions = new RowGroupFilterEvaluator.LeafDecisions();
             // Planning reads nothing: it decides on statistics and records the columns whose
@@ -271,7 +278,7 @@ public final class RowGroupPruning {
             }
             // A row group statistics proved to match in full is not pruned on entry, so it
             // fetches no bloom filter, although an open leaf before the deciding one asked for one.
-            filtered.add(new FilteredRowGroup(rg, alwaysMatches, rgIndex, leafDecisions,
+            filtered.add(new FilteredRowGroup(rg, alwaysMatches, rgIndex, firstRow, leafDecisions,
                     alwaysMatches ? new BitSet() : bloomFilterColumns.columns()));
         }
 
@@ -281,6 +288,6 @@ public final class RowGroupPruning {
         event.rowGroupsKept = filtered.size();
         event.rowGroupsSkipped = rowGroups.size() - filtered.size();
         event.rowGroupsFullyMatching = fullyMatching;
-        return new FilteredRowGroups(filtered, event);
+        return new FilteredRowGroups(filtered, nextFirstRow, event);
     }
 }
