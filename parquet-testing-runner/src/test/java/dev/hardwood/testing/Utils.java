@@ -14,6 +14,10 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -369,13 +373,20 @@ public class Utils {
             }
             default -> {
                 // parquet-java's Avro reader applies the DECIMAL logical-type conversion
-                // to INT32/INT64-backed decimals, surfacing a BigDecimal. Hardwood's row
-                // API exposes the same via getDecimal(), so read it that way and compare
-                // BigDecimal-to-BigDecimal. (BYTE_ARRAY/FIXED-backed decimals are read as
-                // raw bytes on both sides, so refValue is not a BigDecimal for those.)
-                Object actualValue = refValue instanceof BigDecimal
-                        ? actual.getDecimal(fieldName)
-                        : getLeafValue(actual, fieldName, resolved);
+                // to INT32/INT64-backed decimals, surfacing a BigDecimal. (BYTE_ARRAY/FIXED-
+                // backed decimals are read as raw bytes on both sides, so refValue is not a
+                // BigDecimal for those.) It converts the temporal logical types too, to
+                // java.time values. Hardwood's row API exposes each of these through a typed
+                // accessor, so read the field with the one matching the reference value and
+                // compare like with like.
+                Object actualValue = switch (refValue) {
+                    case BigDecimal decimal -> actual.getDecimal(fieldName);
+                    case Instant timestamp -> actual.getTimestamp(fieldName);
+                    case LocalDateTime localTimestamp -> actual.getLocalTimestamp(fieldName);
+                    case LocalDate date -> actual.getDate(fieldName);
+                    case LocalTime time -> actual.getTime(fieldName);
+                    default -> getLeafValue(actual, fieldName, resolved);
+                };
                 compareLeafValues(context, refValue, actualValue);
             }
         }
@@ -578,7 +589,7 @@ public class Utils {
                     case MAP -> compareMap(elemContext, resolvedElement.getValueType(),
                             (Map<?, ?>) refElement, mapIt.next());
                     default -> compareLeafValues(elemContext, refElement,
-                            getLeafListElement(actualList, i, resolvedElement));
+                            getLeafListElement(actualList, i, refElement, resolvedElement));
                 }
             }
             i++;
@@ -586,8 +597,22 @@ public class Utils {
     }
 
     /// Read a leaf element at `index` from a [PqList], picking the typed accessor
+    /// matching the reference element when parquet-java converted it to a `java.time`
+    /// value, and the one matching the Avro element schema otherwise.
+    private static Object getLeafListElement(PqList list, int index, Object refElement,
+            org.apache.avro.Schema elementSchema) {
+        return switch (refElement) {
+            case Instant timestamp -> list.timestamps().get(index);
+            case LocalDateTime localTimestamp -> list.localTimestamps().get(index);
+            case LocalDate date -> list.dates().get(index);
+            case LocalTime time -> list.times().get(index);
+            default -> getPhysicalListElement(list, index, elementSchema);
+        };
+    }
+
+    /// Read a leaf element at `index` from a [PqList], picking the typed accessor
     /// matching the Avro element schema.
-    private static Object getLeafListElement(PqList list, int index, org.apache.avro.Schema elementSchema) {
+    private static Object getPhysicalListElement(PqList list, int index, org.apache.avro.Schema elementSchema) {
         return switch (elementSchema.getType()) {
             case BOOLEAN -> list.booleans().get(index);
             case INT -> list.ints().get(index);
@@ -641,13 +666,26 @@ public class Utils {
                 case MAP -> compareMap(entryContext, resolvedValue.getValueType(),
                         (Map<?, ?>) refValue, actualEntry.getMapValue());
                 default -> compareLeafValues(entryContext, refValue,
-                        getLeafMapValue(actualEntry, resolvedValue));
+                        getLeafMapValue(actualEntry, refValue, resolvedValue));
             }
         }
     }
 
+    /// Read a leaf (non-nested) map value via the typed accessor matching the reference
+    /// value when parquet-java converted it to a `java.time` value, and the one matching
+    /// the Avro schema otherwise.
+    private static Object getLeafMapValue(PqMap.Entry entry, Object refValue, org.apache.avro.Schema valueSchema) {
+        return switch (refValue) {
+            case Instant timestamp -> entry.getTimestampValue();
+            case LocalDateTime localTimestamp -> entry.getLocalTimestampValue();
+            case LocalDate date -> entry.getDateValue();
+            case LocalTime time -> entry.getTimeValue();
+            default -> getPhysicalMapValue(entry, valueSchema);
+        };
+    }
+
     /// Read a leaf (non-nested) map value via the typed accessor matching the Avro schema.
-    private static Object getLeafMapValue(PqMap.Entry entry, org.apache.avro.Schema valueSchema) {
+    private static Object getPhysicalMapValue(PqMap.Entry entry, org.apache.avro.Schema valueSchema) {
         return switch (valueSchema.getType()) {
             case BOOLEAN -> entry.getBooleanValue();
             case INT -> entry.getIntValue();
