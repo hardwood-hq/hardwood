@@ -37,6 +37,8 @@ final class TrackedPage {
     /// a header that did not parse
     private PageFormatProbe.HeaderAt header;
     private JobScheduler.FrontierPage frontier;
+    /// whether it has told its chunk's dictionary that its decode ended
+    private boolean decodeEnded;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -134,6 +136,14 @@ final class TrackedPage {
     /// Its header was parsed into `header`, under the read's lock.
     void headerRead(PageFormatProbe.HeaderAt header) {
         this.header = header;
+    }
+
+    /// Tells its chunk's dictionary, once, that its decode ended or it will not decode.
+    void decodeEnded() {
+        if (!decodeEnded && data() && dictionary != null) {
+            decodeEnded = true;
+            dictionary.pageEnded();
+        }
     }
 
     /// Its page in its column's frontier, `null` for a page decoded through levels or a dictionary page.

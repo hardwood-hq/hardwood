@@ -10,6 +10,8 @@ package dev.hardwood.internal.reader.engine;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
+import java.util.TreeMap;
+import java.util.function.LongConsumer;
 
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.pipeline.BatchCell;
@@ -126,6 +128,11 @@ final class BatchPublisher {
     /// the first batch some column has not published
     private long head;
     private final ReadFailure readFailure;
+    /// per column, bytes held until the consumer takes the batch whose rows reach their end key,
+    /// summed by end key ([#ride])
+    private final List<TreeMap<Long, Long>> riders = new ArrayList<>();
+    /// returns bytes to the read's ledger, under the read's lock
+    private LongConsumer release = bytes -> { };
 
     BatchPublisher(RangeFetcher fetcher, ReadFailure readFailure, List<BatchExchange<?>> exchanges, int batchRows,
                long capRows) {
@@ -137,6 +144,45 @@ final class BatchPublisher {
         this.columns = exchanges.size();
         this.published = new long[columns];
         this.opened = new long[columns];
+        for (int c = 0; c < columns; c++) {
+            riders.add(new TreeMap<>());
+        }
+    }
+
+    /// Sets what returns bytes to the read's ledger: what rides on a batch past the end of its
+    /// column's stream.
+    void releaseWith(LongConsumer release) {
+        this.release = release;
+    }
+
+    /// `bytes` the read charged for what `column`'s rows before `endKey` hold, a dictionary or a
+    /// page, ride on the first batch of the column it publishes whose rows reach `endKey`: the
+    /// consumer's take of it returns them.
+    void ride(int column, long endKey, long bytes) {
+        if (bytes > 0) {
+            riders.get(column).merge(endKey, bytes, Long::sum);
+        }
+    }
+
+    /// The bytes riding on `column`'s riders that batch `b` reaches.
+    private long ridersReached(int column, Batch b) {
+        long bytes = 0;
+        for (long r : riders.get(column).headMap(b.endKey(), true).values()) {
+            bytes += r;
+        }
+        return bytes;
+    }
+
+    /// Returns what still rides for `column`, whose stream has ended.
+    private void releaseRiders(int column) {
+        long bytes = 0;
+        for (long r : riders.get(column).values()) {
+            bytes += r;
+        }
+        riders.get(column).clear();
+        if (bytes > 0) {
+            release.accept(bytes);
+        }
     }
 
     /// A unit is batched: its batches are `batches`, its first row at key `base`, and the
@@ -338,6 +384,7 @@ final class BatchPublisher {
             }
             if (i == planned) {
                 if (allBatched) {
+                    releaseRiders(c);
                     exchange.finish();
                 }
                 return;
@@ -347,8 +394,18 @@ final class BatchPublisher {
                 passed(c, i, b);
                 continue;
             }
-            if (!b.complete(c) || !exchange.tryPublish(b.cell(c).columnBatch())) {
+            if (!b.complete(c)) {
                 return;
+            }
+            Object batch = b.cell(c).columnBatch();
+            long riding = ridersReached(c, b);
+            BatchExchange.ride(batch, riding);
+            if (!exchange.tryPublish(batch)) {
+                BatchExchange.ride(batch, 0);
+                return;
+            }
+            if (riding > 0) {
+                riders.get(c).headMap(b.endKey(), true).clear();
             }
             b.cell(c).release();
             passed(c, i, b);

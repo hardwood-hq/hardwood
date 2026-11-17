@@ -192,6 +192,8 @@ final class JobScheduler {
         private long bytes;
         /// of `bytes`, those no free holder of the column brings
         private long fresh;
+        /// the buffers its decode's task holds while it runs
+        private long task;
         private boolean bounded;
 
         private FrontierPage(int column, long key, long seq) {
@@ -240,9 +242,6 @@ final class JobScheduler {
     /// the highest key of a fetch started that holds bytes: how far the read's data has reached
     private long fetchedTo;
     private long held;
-    /// of `held`, the buffers of this read's running tasks, which their ends release
-    private long heldTransient;
-    private long releasedTransient;
     /// per column, the bytes charged for its free holders
     private IntToLongFunction freeHeldBytes = column -> 0;
     /// per flat column, of its free holders' bytes, those running claims count on reusing
@@ -278,11 +277,13 @@ final class JobScheduler {
         return page;
     }
 
-    /// Bounds what the decode of `page` adds to its column's batch holders at most, `bytes`, of
-    /// which `fresh` no free holder of the column brings; also the claim its decode starts with.
-    void bound(FrontierPage page, long bytes, long fresh) {
+    /// Bounds what the decode of `page` keeps past its end at most, `bytes`, of which `fresh` no
+    /// free holder of the column brings, and the buffers its task holds while it runs, `task`;
+    /// `bytes` is also the claim its decode starts with.
+    void bound(FrontierPage page, long bytes, long fresh, long task) {
         page.bytes = bytes;
         page.fresh = fresh;
+        page.task = task;
         if (!page.bounded) {
             page.bounded = true;
             unbounded.remove(page);
@@ -399,57 +400,45 @@ final class JobScheduler {
         if (!needed && page != null && pastUnknown(job)) {
             return DECODES;
         }
-        // the job need forces holds what it reads uncharged: R holds what the read chose to start
-        long charged = forced ? 0 : job.cost();
+        long cost = job.cost();
         // a decode's claim counts on the column's free holders no running claim counts on: they are
         // charged already, and its cells reuse them
         long claim = page == null ? 0 : page.bytes - available(page);
-        // the claim of a page the consumer's next batch needs is taken from the reserve, which kept
-        // room for it, whether its decode is forced or starts beside the forced one
-        boolean claimNeeded = needed && claim > 0;
-        if (!forced && !charge(charged + (claimNeeded ? 0 : claim), !claimNeeded && claim > 0 ? reserve(job) : 0)) {
+        if (forced) {
+            if (page == null) {
+                // a fetch or plan need forces holds what it reads uncharged
+                cost = 0;
+            }
+            else if (cost + claim > 0 && heldOnLedger() + cost + claim > budget.limit()) {
+                // the reserve kept room for the decode need forces; where the room is not there, what
+                // the consumer's rows hold takes it, and the decode fails the read, allocating nothing
+                job.claim.refused(cost + claim, heldOnLedger() + cost + claim, budget.limit());
+                cost = 0;
+                claim = 0;
+            }
+            else {
+                budget.charge(cost + claim);
+                held += cost + claim;
+            }
+        }
+        else if (!charge(cost + claim, reserve(job))) {
             // a plan starts first whatever its key, so a refused one holds back only the plans after
             // it: work keyed below it, need's among it, is still tried
             return job.kind() == Kind.PLAN ? PLANS : FETCHES | DECODES;
-        }
-        if (claimNeeded && budget.held() + claim > budget.limit()) {
-            if (budget.heldBeyondTasks() + claim <= budget.limit()) {
-                // running tasks' buffers take the room, and their ends release it whatever the
-                // consumer does: the job waits for them
-                if (!forced && charged > 0) {
-                    budget.release(charged);
-                    held -= charged;
-                }
-                waitForRoom();
-                return DECODES;
-            }
-            // what does not fit the ledger beside what only consumers' progress releases fails the
-            // job, which allocates nothing
-            job.claim.refused(claim, budget.held() + claim, budget.limit());
-            claim = 0;
-        }
-        else if (claimNeeded) {
-            budget.charge(claim);
-            held += claim;
-        }
-        if (page != null && !job.claim.isRefused()) {
-            job.earmarked = page.bytes - claim;
-            earmarked[page.column] += job.earmarked;
         }
         if (needed) {
             job.startedNeeded();
             neededInFlight++;
         }
         if (job.charge() != null) {
-            job.charge().take(charged, ahead);
-            if (job.cpu() && charged > 0) {
-                job.charge().transientBuffers();
-                budget.markTransient(charged);
-                heldTransient += charged;
-            }
+            job.charge().take(cost, ahead);
         }
         if (page != null) {
             leave(page);
+            if (!job.claim.isRefused()) {
+                job.earmarked = page.bytes - claim;
+                earmarked[page.column] += job.earmarked;
+            }
             job.claim.take(claim, false);
         }
         if (ahead) {
@@ -485,7 +474,7 @@ final class JobScheduler {
             if (job.cpu() && job.charge() != null) {
                 release(job.charge());
             }
-            settle(job);
+            settle(job, false);
             job.onValue().accept(value);
         };
     }
@@ -498,7 +487,7 @@ final class JobScheduler {
             if (job.charge() != null) {
                 release(job.charge());
             }
-            settle(job);
+            settle(job, true);
             job.onFailure().accept(t);
         };
     }
@@ -518,13 +507,15 @@ final class JobScheduler {
         this.freeHeldBytes = freeHeldBytes;
     }
 
-    /// What need could force next beside `job`: per flat column, what the first page of its
-    /// frontier, `job`'s aside, adds to its batch holders beyond its free ones. Decodes start in
-    /// key order, so where they stop, the next decode need forces in a column is that one; a
-    /// column's free holders only grow until that decode takes them. A frontier page without a
-    /// bound reserves nothing: no decode past it starts ahead ([#pastUnknown]).
+    /// What need could force next beside `job`: per column, what the first page of its frontier,
+    /// `job`'s aside, keeps past its decode beyond the column's free holders, and the largest of
+    /// those pages' task buffers, as need forces one decode at a time. Decodes start in key order,
+    /// so where they stop, the next decode need forces in a column is that one; a column's free
+    /// holders only grow until that decode takes them. A frontier page without a bound reserves
+    /// nothing: no decode past it starts ahead ([#pastUnknown]).
     private long reserve(Job<?> job) {
         long reserve = 0;
+        long task = 0;
         for (int column = 0; column < frontier.size(); column++) {
             TreeSet<FrontierPage> pages = frontier.get(column);
             FrontierPage first = pages == null || pages.isEmpty() ? null : pages.first();
@@ -533,9 +524,10 @@ final class JobScheduler {
             }
             if (first != null && first.bounded) {
                 reserve += first.bytes - available(first);
+                task = Math.max(task, first.task);
             }
         }
-        return reserve;
+        return reserve + task;
     }
 
     /// Of what the decode of `page` adds to its column's batch holders, the bytes the column's
@@ -545,19 +537,18 @@ final class JobScheduler {
         return Math.min(free, page.bytes - page.fresh);
     }
 
-    /// Waits for R's next release, which runs `wake` once.
-    private void waitForRoom() {
-        long seen = budget.releases();
-        if (waitingForRoom.compareAndSet(false, true)) {
-            budget.whenReleased(seen, roomReleased);
-        }
+    /// What R holds, less what this read has returned under the lock and hands back once it lets go
+    /// of it.
+    private long heldOnLedger() {
+        return budget.held() - released;
     }
 
-    /// Takes `bytes` from R where they fit beside `reserve`; else waits for its next release.
+    /// Takes `bytes` from R where they fit beside `reserve`, counting what this read returns once
+    /// it lets go of the lock as returned; else waits for R's next release.
     private boolean charge(long bytes, long reserve) {
         if (bytes > 0) {
             long seen = budget.releases();
-            if (!budget.tryCharge(bytes, reserve)) {
+            if (!budget.tryCharge(bytes, reserve - released)) {
                 if (waitingForRoom.compareAndSet(false, true)) {
                     budget.whenReleased(seen, roomReleased);
                 }
@@ -574,10 +565,6 @@ final class JobScheduler {
         if (bytes > 0) {
             held -= bytes;
             released += bytes;
-            if (charge.isTransient()) {
-                heldTransient -= bytes;
-                releasedTransient += bytes;
-            }
             if (charge.ahead()) {
                 fetchedAhead -= bytes;
             }
@@ -630,17 +617,17 @@ final class JobScheduler {
         return r;
     }
 
-    /// Of the bytes [#takeReleased] returned last, those counted as running tasks' buffers.
-    long takeReleasedTransient() {
-        long r = releasedTransient;
-        releasedTransient = 0;
-        return r;
-    }
-
     /// Settles the claim of `job`, as it ends, to what its work counted: returns what it did not
     /// draw, and charges what it drew beyond its claim, whether or not that fits, as it is
     /// allocated already.
-    private void settle(Job<?> job) {
+    private void settle(Job<?> job, boolean failed) {
+        if (job.claim != null && job.tally == null) {
+            earmarked[job.page.column] -= job.earmarked;
+            if (failed) {
+                release(job.claim);
+            }
+            return;
+        }
         if (job.claim != null) {
             earmarked[job.page.column] -= job.earmarked;
             long claimed = job.claim.takeBack();
@@ -681,8 +668,6 @@ final class JobScheduler {
         budget.cancel(roomReleased);
         released += held;
         held = 0;
-        releasedTransient += heldTransient;
-        heldTransient = 0;
         fetchedAhead = 0;
     }
 }

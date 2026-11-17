@@ -28,18 +28,22 @@ import dev.hardwood.schema.ColumnProjection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A read under a heap quota with room for about one page of each column, and so hardly any for
-/// decoding ahead, still reads every row: the pages its consumer's next batch needs take the
-/// room the read reserves for them, and wait for running tasks' buffers rather than fail.
+/// A read under a heap quota with room for about one page and one dictionary of each column, and
+/// so hardly any for decoding ahead, still reads every row: the pages and dictionaries its
+/// consumer's next batch needs take the room the read reserves for them.
 class TightHeapQuotaTest {
 
     private static final int COLUMNS = 4;
     private static final int PAGE_VALUES = 5 * 1024 * 1024;
     /// at least the rows a batch of the read holds
     private static final int BATCH_ROWS = 65_536;
+    /// what each row group's dictionary decompresses to, and its entries take
+    private static final int DICTIONARY_BYTES = 2 * DecodeBuffers.RETAINED_BYTES;
     /// per column, one page of `long` values, the batch it shares with the next page, which either
-    /// page's decode may allocate, and a batch's worth for the page's fetched bytes
-    private static final long QUOTA = (long) COLUMNS * (PAGE_VALUES + 2 * BATCH_ROWS) * Long.BYTES;
+    /// page's decode may allocate, a batch's worth for the page's fetched bytes, and its chunk's
+    /// dictionary; and one dictionary parse's buffers
+    private static final long QUOTA = (long) COLUMNS * ((PAGE_VALUES + 2L * BATCH_ROWS) * Long.BYTES + DICTIONARY_BYTES)
+            + DICTIONARY_BYTES;
 
     @AfterEach
     void clearBuffer() {
@@ -53,7 +57,7 @@ class TightHeapQuotaTest {
     @CsvSource({ "0, false", "1, false", "4, false", "0, true", "4, true" })
     void readUnderAQuotaOfOnePagePerColumnReadsEveryRow(int threads, boolean indexed) throws IOException {
         System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Long.toString(QUOTA));
-        byte[] file = RleExpansionFile.buildWide(COLUMNS, 3, 2 * DecodeBuffers.RETAINED_BYTES, PAGE_VALUES, indexed);
+        byte[] file = RleExpansionFile.buildWide(COLUMNS, 3, DICTIONARY_BYTES, PAGE_VALUES, indexed);
 
         try (HardwoodContext context = HardwoodContext.create(threads);
                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
@@ -73,7 +77,7 @@ class TightHeapQuotaTest {
     @CsvSource({ "0, false", "4, false", "0, true", "4, true" })
     void columnReadUnderAQuotaOfOnePagePerColumnReadsEveryRow(int threads, boolean indexed) throws IOException {
         System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Long.toString(QUOTA));
-        byte[] file = RleExpansionFile.buildWide(COLUMNS, 3, 2 * DecodeBuffers.RETAINED_BYTES, PAGE_VALUES, indexed);
+        byte[] file = RleExpansionFile.buildWide(COLUMNS, 3, DICTIONARY_BYTES, PAGE_VALUES, indexed);
 
         try (HardwoodContext context = HardwoodContext.create(threads);
                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);

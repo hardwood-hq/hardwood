@@ -130,6 +130,9 @@ final class PageTracker {
                 add(placement, new TrackedPage(u, c, key, page,
                         overlapping(ranges, keys, key, page.location().offset(), length), dictionary, true));
             }
+            if (dictionary != null) {
+                dictionary.seal();
+            }
         }
         for (int i = 0; i < ranges.size(); i++) {
             if (!ranges.get(i).output().hasValue()) {
@@ -167,6 +170,7 @@ final class PageTracker {
     /// Adds `tracked`, a dictionary page, which decodes once its bytes are there.
     void addDictionaryPage(TrackedPage tracked) {
         hold(tracked);
+        tracked.frontier(scheduler.enter(tracked.column(), tracked.key()));
         decodeWhenReady(tracked);
     }
 
@@ -174,9 +178,12 @@ final class PageTracker {
     /// levels decodes before it is placed, a flat page once placed too ([#place]).
     void add(CellWriter.ChunkPlacement placement, TrackedPage tracked) {
         hold(tracked);
+        if (tracked.dictionary() != null) {
+            tracked.dictionary().pageAdded();
+        }
         cells.add(tracked.column(), placement, tracked);
-        if (tracked.data() && !columns.nested(tracked.column())) {
-            tracked.frontier(scheduler.enter(tracked.column(), tracked.key()));
+        tracked.frontier(scheduler.enter(tracked.column(), tracked.key()));
+        if (!columns.nested(tracked.column())) {
             ColumnSchema schema = columns.schema(tracked.column());
             int kept = tracked.placeholder() > 0
                     ? PageInfo.keptRecords(schema, PageRowMask.ALL, tracked.placeholder())
@@ -195,6 +202,10 @@ final class PageTracker {
     private void bound(TrackedPage tracked) {
         ColumnSchema schema = columns.schema(tracked.column());
         PageHeader header = header(tracked);
+        if (!tracked.data() || columns.nested(tracked.column())) {
+            boundKept(tracked, schema, header);
+            return;
+        }
         boolean numeric = WorkingSet.Column.numeric(schema);
         if (!numeric && header == null && tracked.placeholder() == 0) {
             return;
@@ -212,7 +223,35 @@ final class PageTracker {
         }
         // a reused holder keeps its last validity until the cell's replaces it as the cell completes
         long bytes = reached * holderBytes(tracked.column(), schema) + validity + fresh;
-        scheduler.bound(tracked.frontier(), bytes, fresh);
+        scheduler.bound(tracked.frontier(), bytes, fresh, chargedTaskBytes(tracked, header));
+    }
+
+    /// Bounds what the decode of `tracked`, a dictionary page or a page decoded through levels,
+    /// keeps past its end, from its `header`: a dictionary's entries, which its parse holds as
+    /// buffers while it runs too; a page's batches, levels and offsets with its buffers, which the
+    /// column keeps until its cells fill. A page without its header has no bound yet.
+    private void boundKept(TrackedPage tracked, ColumnSchema schema, PageHeader header) {
+        long kept;
+        long task = 0;
+        if (!tracked.data()) {
+            if (header == null || header.type() != PageType.DICTIONARY_PAGE) {
+                return;
+            }
+            kept = WorkingSet.Column.dictionaryEntries(schema, header.dictionaryPageHeader().numValues(),
+                    header.uncompressedPageSize());
+            task = chargedTaskBytes(tracked, header);
+        }
+        else if (tracked.placeholder() > 0) {
+            kept = WorkingSet.Column.keptPage(schema, tracked.placeholder(), 0, Encoding.PLAIN);
+        }
+        else if (header == null || header.type() == PageType.DICTIONARY_PAGE) {
+            return;
+        }
+        else {
+            kept = WorkingSet.Column.keptPage(schema, DataPage.numValues(header), header.uncompressedPageSize(),
+                    DataPage.encoding(header));
+        }
+        scheduler.bound(tracked.frontier(), kept, kept, task);
     }
 
     /// The bytes the arrays of one cell's batch holder of `column` take at most beside its
@@ -328,10 +367,7 @@ final class PageTracker {
         AllocationTally tally = new AllocationTally();
         scheduler.add(decodeJob(tracked, claim, tally, buffers -> {
             if (claim.isRefused()) {
-                throw columns.withContext(tracked.column(), new ParquetReadException("Data page needs "
-                        + claim.refusedNeeded() + " bytes for its batches, which takes the context's heap quota to "
-                        + claim.refusedTotal() + " bytes, more than its limit of " + claim.refusedLimit() + " ("
-                        + ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY + ")"), tracked.task());
+                throw columns.withContext(tracked.column(), refusal("Data page", claim), tracked.task());
             }
             Dictionary dictionary = tracked.dictionary() == null ? null : tracked.dictionary().output().value();
             return cells.decode(tracked.column(), tracked.task(),
@@ -340,6 +376,7 @@ final class PageTracker {
             // its ranges are held by the batch of its last row until every column has published it,
             // as R holds the bytes fetched ahead of the consumer
             publisher.hold(tracked.column(), tracked.task().segments().getLast().cell(), tracked.ranges());
+            tracked.decodeEnded();
             for (Cell cell : completed) {
                 publisher.completed(tracked.column(), cell);
             }
@@ -348,10 +385,15 @@ final class PageTracker {
 
     /// Decodes and measures a page decoded through levels, which can then be placed.
     private void addMeasure(TrackedPage tracked) {
-        scheduler.add(decodeJob(tracked, null, null, buffers -> {
+        bound(tracked);
+        Charge claim = new Charge();
+        scheduler.add(decodeJob(tracked, claim, null, buffers -> {
             NestedPageTask task = cells.nestedTask(tracked,
                     tracked.placeholder() > 0 ? null : tracked.dataPage(),
                     tracked.dictionary() == null ? null : tracked.dictionary().output().value());
+            if (claim.isRefused()) {
+                throw columns.withContext(tracked.column(), refusal("Data page", claim), task);
+            }
             try {
                 task.decodeAndMeasure(buffers);
             }
@@ -360,6 +402,9 @@ final class PageTracker {
             }
             return task;
         }, task -> {
+            // the column keeps the page until its cells fill, and its batches hold its values until
+            // the consumer takes them
+            publisher.ride(tracked.column(), tracked.key() + task.info().records(), claim.takeBack());
             tracked.ready(task);
             done(tracked);
             place(tracked.column());
@@ -375,10 +420,18 @@ final class PageTracker {
     private <T> JobScheduler.Job<T> decodeJob(TrackedPage tracked, Charge claim, AllocationTally tally,
                                               JobScheduler.Work<T> work, Consumer<T> onValue,
                                               Consumer<Throwable> onFailure) {
-        long bytes = taskBytes(tracked, header(tracked));
-        long cost = bytes > DecodeBuffers.RETAINED_BYTES ? bytes : 0;
+        // a page decoded through levels keeps its buffers past its task, which its claim holds
+        long cost = tracked.data() && columns.nested(tracked.column()) ? 0 : chargedTaskBytes(tracked, header(tracked));
         return new JobScheduler.Job<>(tracked.key(), cost, JobScheduler.Kind.DECODE, cost > 0 ? new Charge() : null,
-                claim == null ? null : tracked.frontier(), claim, tally, work, onValue, onFailure);
+                tracked.frontier(), claim, tally, work, onValue, onFailure);
+    }
+
+    /// The buffers the task decoding `tracked` holds where they exceed
+    /// [DecodeBuffers#RETAINED_BYTES], which the read charges; `0` for a smaller task, as a
+    /// context keeps that much per thread anyway.
+    private long chargedTaskBytes(TrackedPage tracked, PageHeader header) {
+        long bytes = taskBytes(tracked, header);
+        return bytes > DecodeBuffers.RETAINED_BYTES ? bytes : 0;
     }
 
     /// The buffers the task decoding `tracked` holds, from its `header` ([DataPage#taskBytes]), or
@@ -429,8 +482,13 @@ final class PageTracker {
     /// pages wait on.
     private void addDictionaryDecode(TrackedPage tracked) {
         Output<Dictionary> output = tracked.dictionary().output();
-        scheduler.add(decodeJob(tracked, null, null, buffers -> {
+        bound(tracked);
+        Charge claim = new Charge();
+        scheduler.add(decodeJob(tracked, claim, null, buffers -> {
             try {
+                if (claim.isRefused()) {
+                    throw refusal("Dictionary page", claim);
+                }
                 return parseDictionary(tracked, buffers);
             }
             catch (Exception e) {
@@ -438,6 +496,7 @@ final class PageTracker {
                         tracked.unit().listing().rowGroup(), ExceptionContext.DICTIONARY_PAGE);
             }
         }, values -> {
+            holdDictionary(tracked.column(), tracked.unit(), tracked.dictionary(), claim.takeBack());
             done(tracked);
             output.arrived(values);
         }, t -> {
@@ -462,8 +521,35 @@ final class PageTracker {
                 columns.workingSet(tracked.column()), buffers));
     }
 
+    /// The failure of a decode need forced whose `claim` did not fit the context's heap quota:
+    /// `what` needs the bytes the claim names.
+    static ParquetReadException refusal(String what, Charge claim) {
+        return new ParquetReadException(what + " needs " + claim.refusedNeeded() + " bytes to decode, which takes "
+                + "the context's heap quota to " + claim.refusedTotal() + " bytes, more than its limit of "
+                + claim.refusedLimit() + " (" + ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY + ")");
+    }
+
+    /// Holds `bytes` charged for the entries of `dictionary`, `u`'s chunk of `column`'s: a numeric
+    /// column's until every data page of the chunk has decoded, after which its batches hold the
+    /// values they took from it; a binary column's while a batch holds rows of the chunk, as its
+    /// batches refer to its entries.
+    void holdDictionary(int column, Unit.Batched u, ChunkDictionary dictionary, long bytes) {
+        if (WorkingSet.Column.numeric(columns.schema(column))) {
+            dictionary.holdUntilDecoded(bytes, scheduler::releaseTaken);
+        }
+        else {
+            publisher.ride(column, chunkEnd(u), bytes);
+        }
+    }
+
+    /// The key past the last row of `u`'s row group the read takes.
+    static long chunkEnd(Unit.Batched u) {
+        return u.key(u.listing().metaData().numRows());
+    }
+
     /// A page is done with its ranges; the last reader of each returns it.
     private void done(TrackedPage tracked) {
+        tracked.decodeEnded();
         if (tracked.frontier() != null) {
             scheduler.leave(tracked.frontier());
         }

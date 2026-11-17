@@ -36,6 +36,9 @@ public final class NestedBatch {
     public int[] definitionLevels;
     public int[] repetitionLevels;
     public int[] recordOffsets;
+    /// Bytes the read charged for what the batch's records hold, a dictionary of their chunk or the
+    /// pages they were decoded from, returned as the consumer takes the batch; `0` for none.
+    public long riderBytes;
 
     // File name of the originating file (set by the cell's fill before publish)
     public String fileName;

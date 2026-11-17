@@ -513,6 +513,9 @@ final class HeaderScanner {
     /// Lets go of what the scan holds, and ends its chunk.
     private void release(Scan s) {
         s.placement().allAdded();
+        if (s.dictionary() != null) {
+            s.dictionary().seal();
+        }
         fetcher.readersDone(s.stop());
     }
 }

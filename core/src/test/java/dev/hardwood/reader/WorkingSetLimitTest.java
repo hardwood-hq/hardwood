@@ -35,7 +35,6 @@ class WorkingSetLimitTest {
     private static final String MAX_WORKING_SET_BYTES_PROPERTY = "hardwood.internal.maxWorkingSetBytes";
     private static final String HEAP_QUOTA_PROPERTY = "hardwood.internal.readAheadBytes";
 
-    private static final String LIMIT_OF_ONE = "more than its limit of 1 (hardwood.internal.maxWorkingSetBytes)";
     private static final String QUOTA_OF_ONE = "more than its limit of 1 (hardwood.internal.readAheadBytes)";
 
     private static final int DICTIONARY_BYTES = 1024 * 1024;
@@ -150,18 +149,17 @@ class WorkingSetLimitTest {
                 .hasMessage("hardwood.internal.maxWorkingSetBytes must be a positive byte count, but was: 0");
     }
 
-    /// Every way a read reaches a page charges it before decompressing it, so a working-set limit
-    /// and a heap quota of one byte fail each read: nested and binary columns on the working set, a
-    /// flat column's batches on the quota, `DATA_PAGE_V2`, optional columns, the page index's plan
-    /// and the column reader. Without a pool the read's order is the same each run,
-    /// so the same charges are made and the same page fails.
+    /// Every way a read reaches a page charges it before decompressing it, so a heap quota of one
+    /// byte fails each read: nested and flat columns, dictionaries, `DATA_PAGE_V2`, optional
+    /// columns, the page index's plan and the column reader. Without a pool the read's order is
+    /// the same each run, so the same charges are made and the same page fails.
     @ParameterizedTest
     @CsvSource(delimiter = '|', textBlock = """
-            compat_maxrep_list.parquet         | [compat_maxrep_list.parquet: row group 0, column 'g.list.element', page 0] Data page needs 96 bytes to decode, which takes the read's working set to 96 bytes, %1$s
-            misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2128 bytes to decode, which takes the read's working set to 2128 bytes, %1$s
-            dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 1600 bytes to decode, which takes the read's working set to 1600 bytes, %1$s
-            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 80000 bytes for its batches, which takes the context's heap quota to 80000 bytes, %2$s
-            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 8000 bytes for its batches, which takes the context's heap quota to 8000 bytes, %2$s
+            compat_maxrep_list.parquet         | [compat_maxrep_list.parquet: row group 0, column 'g.list.element', page 0] Data page needs 120 bytes to decode, which takes the context's heap quota to 120 bytes, %s
+            misaligned_pages_nested_v2.parquet | [misaligned_pages_nested_v2.parquet: row group 0, column 'narrow', page 0] Data page needs 2660 bytes to decode, which takes the context's heap quota to 2660 bytes, %s
+            dict_string_map.parquet            | [dict_string_map.parquet: row group 0, column 'id', dictionary page] Dictionary page needs 800 bytes to decode, which takes the context's heap quota to 800 bytes, %s
+            page_index_test.parquet            | [page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 80000 bytes to decode, which takes the context's heap quota to 80000 bytes, %s
+            inline_null_pages_v2.parquet       | [inline_null_pages_v2.parquet: row group 0, column 'id', page 0] Data page needs 8000 bytes to decode, which takes the context's heap quota to 8000 bytes, %s
             """)
     void everyPathChargesBeforeDecompressing(String file, String message) {
         System.setProperty(MAX_WORKING_SET_BYTES_PROPERTY, "1");
@@ -169,7 +167,7 @@ class WorkingSetLimitTest {
 
         assertThatThrownBy(() -> readAll(Path.of("src/test/resources", file)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage(message.formatted(LIMIT_OF_ONE, QUOTA_OF_ONE));
+                .hasMessage(message.formatted(QUOTA_OF_ONE));
     }
 
     @Test
@@ -189,7 +187,7 @@ class WorkingSetLimitTest {
         })
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("[page_index_test.parquet: row group 0, column 'id', page 0] Data page needs 80000 bytes "
-                        + "for its batches, which takes the context's heap quota to 80000 bytes, " + QUOTA_OF_ONE);
+                        + "to decode, which takes the context's heap quota to 80000 bytes, " + QUOTA_OF_ONE);
     }
 
     private static void readAll(Path file) throws IOException {

@@ -37,6 +37,11 @@ public final class FlatBatch {
     /// measured them; a binary batch's values count theirs ([BinaryBatchValues#heldBytes()]).
     public long heldBytes;
 
+    /// Bytes the read charged for what the batch's rows hold beside its arrays, a dictionary of
+    /// their chunk or pages they were decoded from, returned as the consumer takes the batch,
+    /// recycled or not; `0` for none.
+    public long riderBytes;
+
     /// The bytes the read charged for the batch's arrays, returned as the batch leaves the read.
     public long chargedBytes() {
         return values instanceof BinaryBatchValues binary ? heldBytes + binary.heldBytes() : heldBytes;

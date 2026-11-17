@@ -58,6 +58,17 @@ public record DataPage(PageHeader header, int headerSize, ByteBuffer bytes) {
         };
     }
 
+    /// The values the data page `header` heads declares.
+    ///
+    /// @throws IllegalStateException for a page that is not a data page
+    public static int numValues(PageHeader header) {
+        return switch (header.type()) {
+            case DATA_PAGE -> header.dataPageHeader().numValues();
+            case DATA_PAGE_V2 -> header.dataPageHeaderV2().numValues();
+            default -> throw new IllegalStateException("Not a data page: " + header.type());
+        };
+    }
+
     /// The encoding of the values of the data page `header` heads.
     ///
     /// @throws IllegalStateException for a page that is not a data page

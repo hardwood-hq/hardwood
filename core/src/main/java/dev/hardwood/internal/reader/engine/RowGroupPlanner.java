@@ -21,6 +21,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
+import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.internal.reader.plan.IndexWindow;
 import dev.hardwood.internal.reader.plan.RowGroupPruning;
@@ -473,7 +474,12 @@ final class RowGroupPlanner {
 
     /// Charges the dictionary `u`'s dictionary pruning decoded for `column` as the column takes it,
     /// against the batches `u` places; a charge over the read's limit fails the read at the unit.
+    /// The context's ledger holds its entries, allocated already, while a batch holds rows of its
+    /// chunk.
     private void chargePreloaded(Unit.Batched u, int column) {
+        long entries = WorkingSet.Column.entries(columns.schema(column), u.plan().preloaded()[column]);
+        scheduler.settleHeld(entries);
+        publisher.ride(column, PageTracker.chunkEnd(u), entries);
         try {
             columns.chargeDictionary(column, u, () -> {
                 columns.workingSet(column).dictionary(u.plan().preloaded()[column]);

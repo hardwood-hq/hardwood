@@ -83,6 +83,35 @@ one of them fits depends on what the others hold and reserve.
 The retained decode buffers are charged as held, so a context whose threads keep large sets
 leaves less of Q to its reads.
 
+## Folding the working set into the ledger
+
+The reserve keeps the invariant `held + reserves <= Q` only for the decodes it covers, so every
+decode a read can be forced into joins its column's frontier: flat data pages, nested data
+pages and dictionary pages. A frontier page carries two bounds: what its decode keeps past its
+end, and the buffers its task holds while it runs.
+
+- **Reserve.** Per read, the kept bound of each column's first frontier page, less the free
+  holders no running claim counts on, plus the largest task bound among those pages: one decode
+  is forced at a time.
+- **Task buffers.** Every decode above `DecodeBuffers.RETAINED_BYTES` charges them as it starts,
+  the forced one included, and returns them as it ends. A decode beside the forced one that does
+  not fit waits for a release; the forced one fits by the invariant or fails the read.
+- **Flat batches.** A claim settled to the decode's allocation tally (stage 1).
+- **Dictionaries.** A dictionary page's kept bound is its entries, from its header; the parse
+  claims it and the column holds it until the consumer takes the last batch with rows of its
+  chunk. A dictionary parsed for pruning is charged as it is parsed and held the same way.
+- **Nested pages.** The kept bound is the page's batches, levels and offsets from its value
+  count (`WorkingSet.Column#keptPage` today), claimed by the decode and held until the consumer
+  takes the last batch with values of the page.
+- **Reconstructed values.** A `DELTA_BYTE_ARRAY` page's reconstructed bytes are known once its
+  decode has read the prefix and suffix lengths, before it allocates them. The decode draws them
+  past its claim where they fit beside the reserves. Otherwise a forced decode fails the read, and
+  a decode ahead of need gives up, frees its buffers and leaves its page in the frontier with the
+  exact bound it learned, so it starts again when that fits or need forces it.
+- **What goes.** The working set as a per-read limit, `batchesOnLedger`, the forced decode's
+  uncharged buffers, and the count of running tasks' buffers that decided whether a needed page
+  waits or fails. `WorkingSet` stays for decoding outside a read (the metadata tools).
+
 ## Decisions
 
 1. **Scope:** one quota per `HardwoodContext`. Decided.

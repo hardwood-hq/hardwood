@@ -178,10 +178,7 @@ public final class WorkingSet {
         ///
         /// @throws ParquetReadException if the read's working set would exceed its limit
         public void dictionary(int numValues, int uncompressedSize) {
-            long entries = uncompressedSize;
-            if (!isNumeric(schema.type())) {
-                entries += Integer.BYTES * (numValues + 1L);
-            }
+            long entries = dictionaryEntries(schema, numValues, uncompressedSize);
             set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), uncompressedSize,
                     entries + uncompressedSize, "Dictionary page");
         }
@@ -191,9 +188,7 @@ public final class WorkingSet {
         ///
         /// @throws ParquetReadException if the read's working set would exceed its limit
         public void dictionary(Dictionary dictionary) {
-            long entries = dictionary instanceof Dictionary.ByteArrayDictionary binary
-                    ? binary.byteCount() + Integer.BYTES * ((long) dictionary.size() + binary.chunkCount())
-                    : (long) dictionary.size() * valueWidth(schema.type());
+            long entries = entries(schema, dictionary);
             set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), 0, entries, "Dictionary page");
         }
 
@@ -231,11 +226,31 @@ public final class WorkingSet {
             }
         }
 
+        /// The bytes the entries of `dictionary`, parsed for `schema`'s column, take.
+        public static long entries(ColumnSchema schema, Dictionary dictionary) {
+            return dictionary instanceof Dictionary.ByteArrayDictionary binary
+                    ? binary.byteCount() + Integer.BYTES * ((long) dictionary.size() + binary.chunkCount())
+                    : (long) dictionary.size() * valueWidth(schema.type());
+        }
+
         /// What a page of a column that keeps its pages' bytes and levels takes while the column
         /// keeps it, as [#page(int, int, long, Encoding, boolean)] charges it with every byte of the
         /// page decompressed: its batches with their levels and offsets, and its buffers.
         public long keptPage(int numValues, int uncompressedSize, Encoding encoding) {
-            return batches(numValues, uncompressedSize, true) + pageBuffers(schema, numValues, uncompressedSize, encoding);
+            return keptPage(schema, numValues, uncompressedSize, encoding);
+        }
+
+        /// What a page of `schema`'s column, which keeps its pages' bytes and levels, takes while the
+        /// column keeps it, as [#keptPage(int, int, Encoding)] gives it.
+        public static long keptPage(ColumnSchema schema, int numValues, int uncompressedSize, Encoding encoding) {
+            return batchBytes(schema, numValues, uncompressedSize) + (long) numValues * Integer.BYTES * NESTED_BATCH_INTS
+                    + pageBuffers(schema, numValues, uncompressedSize, encoding);
+        }
+
+        /// The bytes the entries of a dictionary page of `schema`'s column take, from its header:
+        /// as many as the page and, for a binary column, an offset per entry.
+        public static long dictionaryEntries(ColumnSchema schema, int numValues, int uncompressedSize) {
+            return uncompressedSize + (isNumeric(schema.type()) ? 0 : Integer.BYTES * (numValues + 1L));
         }
 
         /// Charges the open batch of a column that keeps its pages' bytes and levels, which holds

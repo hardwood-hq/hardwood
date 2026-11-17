@@ -108,6 +108,7 @@ public final class ReadEngine implements Closeable {
         scheduler.freeHeldBytes(column -> this.exchanges.get(column).freeHeldBytes());
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
+        publisher.releaseWith(scheduler::releaseTaken);
         ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), read.files().footersSupplied());
         cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
                 batchSize, context.decompressorFactory(), filters);

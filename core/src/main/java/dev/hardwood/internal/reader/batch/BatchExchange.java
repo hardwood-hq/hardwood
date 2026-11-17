@@ -243,6 +243,29 @@ public class BatchExchange<B> {
         return freeHeldBytes.get();
     }
 
+    private static long takeRiderBytes(Object batch) {
+        long bytes = 0;
+        if (batch instanceof FlatBatch flat) {
+            bytes = flat.riderBytes;
+            flat.riderBytes = 0;
+        }
+        else if (batch instanceof NestedBatch nested) {
+            bytes = nested.riderBytes;
+            nested.riderBytes = 0;
+        }
+        return bytes;
+    }
+
+    /// Sets the bytes that ride on `batch` ([FlatBatch#riderBytes], [NestedBatch#riderBytes]).
+    public static void ride(Object batch, long bytes) {
+        if (batch instanceof FlatBatch flat) {
+            flat.riderBytes = bytes;
+        }
+        else if (batch instanceof NestedBatch nested) {
+            nested.riderBytes = bytes;
+        }
+    }
+
     private static long heldBytesOf(Object batch) {
         return batch instanceof FlatBatch flat ? flat.chargedBytes() : 0;
     }
@@ -255,8 +278,9 @@ public class BatchExchange<B> {
         }
     }
 
-    /// Sets what runs on the consumer's thread with the bytes a batch it takes was charged
-    /// ([FlatBatch#chargedBytes()]), where they are not `0`.
+    /// Sets what runs on the consumer's thread with the bytes a batch it takes returns: what rides
+    /// on it, and in detaching mode its arrays' ([FlatBatch#chargedBytes()]), where they are not
+    /// `0`.
     public void setTakenListener(LongConsumer listener) {
         this.takenListener = listener;
     }
@@ -299,9 +323,9 @@ public class BatchExchange<B> {
         }
         LongConsumer released = takenListener;
         // a recycled holder stays the read's, charged, until the read ends; a detached batch leaves
-        // it, once
-        if (released != null && freeQueue == null) {
-            long bytes = heldBytesOf(batch);
+        // it, once; what rides on a batch leaves with the take either way
+        if (released != null) {
+            long bytes = takeRiderBytes(batch) + (freeQueue == null ? heldBytesOf(batch) : 0);
             if (bytes > 0) {
                 released.accept(bytes);
             }
