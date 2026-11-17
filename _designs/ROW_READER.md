@@ -120,7 +120,7 @@ Tests: `PqRowApiTest`, `NoColumnsFileReadTest`, `EngineTrackingTest`, `MultiFile
 | `head` + `tail`, `tail` + `skip`, `tail` + `FilterPredicate`, `tail` + `RowGroupPredicate` | `IllegalArgumentException` from `build()` |
 | `tail` on a reader over several files | `UnsupportedOperationException` from `build()` |
 
-`skip(0)` is the default and changes nothing. The semantics users rely on (the controls count over the surviving relation, in file order) are in [row-selection.md](../docs/content/concepts/row-selection.md); how `head` and `skip` count under a `FilterPredicate` is in [RECORD_FILTERING.md](RECORD_FILTERING.md#row-selection-over-the-filtered-relation). This section covers the unfiltered case, where a logical position is a physical one.
+`skip(0)` is the default and changes nothing. The semantics users rely on (the controls count over the surviving relation, in file order) are in [row-selection.md](../docs/content/concepts/row-selection.md); how `head` and `skip` count under a `FilterPredicate` is in [RECORD_FILTERING.md](RECORD_FILTERING.md#row-selection-over-the-filtered-relation). This section covers the unfiltered case, where a logical position is a physical one. The column readers take `head` and `skip` with the same meaning, through the same read ([COLUMN_READER.md](COLUMN_READER.md#row-selection)).
 
 ### head
 

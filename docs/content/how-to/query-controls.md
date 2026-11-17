@@ -190,6 +190,8 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 When combined with a filter, the limit applies to the number of **matching** rows, not the total number of scanned rows.
 
+`ColumnReaderBuilder` and `ColumnReadersBuilder` take `head(long)` with the same meaning.
+
 ## Split-Aware Reading
 
 When you partition a file across parallel readers (Flink `BulkFormat`, Spark file source, MapReduce-style splits), each reader is assigned a byte range and is responsible for only the row groups owned by it. Express this with `RowGroupPredicate.byteRange(start, end)`, passed to any builder's `filter(...)`:
@@ -210,7 +212,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 A row group is included if and only if its **midpoint**, the start of its first column chunk plus half of its on-disk compressed size, falls in `[start, end)`, the Hadoop-input-format split convention. Across a partitioning of the file into disjoint byte ranges, every row group lands in exactly one range. [Row Selection](../concepts/row-selection.md#physical-splitting-is-separate) describes how this relates to the other controls.
 
-**Granularity is row-group, not row.** A row group whose midpoint is in `[0, 1000)` is read in full, including any rows whose data extends beyond byte 1000. For row-level windowing, combine `RowGroupPredicate` with [`skip(...)`](#skipping-rows-skip) and [`head(...)`](#row-limit).
+**Granularity is row-group, not row.** A row group whose midpoint is in `[0, 1000)` is read in full, including any rows whose data extends beyond byte 1000. For row-level windowing, combine `RowGroupPredicate` with [`skip(...)`](#skipping-rows-skip) and [`head(...)`](#row-limit), or on the column readers with [`rowRange(...)`](#reading-a-row-range-rowrange).
 
 `RowGroupPredicate` composes with [`FilterPredicate`](#predicate-pushdown-filter) via intersection: a row group is read if and only if it passes both. `RowGroupPredicate.and(...)` intersects several row-group conditions.
 
@@ -267,6 +269,8 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 For multi-file readers, physical `skip(N)` is a global offset across the input files in order. Hardwood reads the footers of skipped files to count their rows, but skipped files' data pages are not fetched or decoded.
 
+`ColumnReaderBuilder` and `ColumnReadersBuilder` take `skip(long)` with the same meaning, with and without a filter.
+
 **With a filter,** `skip(n)` discards the first `n` rows that match the predicate. The reader decodes earlier row groups to count matches, pruning only those whose statistics prove no match. A `skip` past the number of matching rows yields an empty reader rather than throwing.
 
 ```java
@@ -281,3 +285,33 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
     // ...
 }
 ```
+
+## Reading a Row Range (`rowRange`)
+
+The `rowRange(start, end)` method of `ColumnReaderBuilder` and `ColumnReadersBuilder` reads the rows at physical positions `[start, end)`. With a filter, the reader returns the rows in that range that match the predicate: the range is applied to the file's rows, and the filter to the rows inside it.
+
+```java
+// The rows at positions 1,000,000 to 1,499,999 whose fare_amount is above 10.
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     ColumnReaders columns = fileReader.buildColumnReaders(ColumnProjection.columns("id", "fare_amount"))
+             .filter(FilterPredicate.gt("fare_amount", 10.0))
+             .rowRange(1_000_000, 1_500_000)
+             .build()) {
+
+    while (columns.nextBatch()) {
+        // ...
+    }
+}
+```
+
+Row groups outside the range are not opened, and their pages are not fetched or decoded. In the row groups at either end of the range, a column with an OffsetIndex has only the pages that overlap the range fetched. The rows before `start` in its row group are read and discarded instead where that row group is in a file after the first, or where a nested column of the read has no OffsetIndex.
+
+Positions count the rows of the file's row groups in file order:
+
+- For a reader opened with `openAll` over several files, positions count across the files in order, as for a physical `skip`. The footers of files before the range are read to count their rows; their data pages are not fetched.
+- With a `RowGroupPredicate`, positions count the rows of the row groups it keeps.
+- A range that ends past the last row is cut at it, and a range that starts at or past it, or with `start == end`, reads no row.
+
+`rowRange` cannot be combined with `head` or `skip`: `build()` throws `IllegalArgumentException`. A negative `start`, or an `end` below `start`, throws `IllegalArgumentException` from `rowRange`.
+
+`rowRange` differs from `skip` under a filter: `filter(p).skip(n)` discards the first `n` matching rows, wherever they lie, while `filter(p).rowRange(n, end)` discards every row before position `n`, matching or not. See [Row Selection](../concepts/row-selection.md#physical-row-ranges).
