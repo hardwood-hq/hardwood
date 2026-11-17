@@ -181,14 +181,14 @@ A JAR found on a classpath, in a bug report or in a dependency tree can be trace
 
 ### Capturing the revision
 
-The `capture-git-info` execution of `maven-antrun-plugin` is bound to `initialize` in the parent's `<build><plugins>`, so every module runs it, under `-Dquick` too. It runs `git rev-parse --short=7 HEAD` and `git status --porcelain` in the repository root and exports two properties:
+Two `maven-antrun-plugin` executions bound to `initialize` run `git` in the repository root, under `-Dquick` too, and export one property each:
 
-| Property | Value |
-|---|---|
-| `revision` | The short SHA; `unknown` when `git` is missing, fails, or prints nothing (a build outside a checkout, such as an unpacked source archive) |
-| `revisionDirty` | `true` when `git status --porcelain` lists any tracked or untracked change, otherwise `false` (also `false` when `git` fails) |
+| Execution | Runs in | Command | Property | Value |
+|---|---|---|---|---|
+| `capture-git-info` | Every module (parent's `<build><plugins>`) | `git rev-parse --short=7 HEAD` | `revision` | The short SHA; `unknown` when `git` is missing, fails, or prints nothing (a build outside a checkout, such as an unpacked source archive) |
+| `capture-git-dirty` | `hardwood-core` only | `git status --porcelain` | `revisionDirty` | `true` when `git status --porcelain` lists any tracked or untracked change, otherwise `false` (also `false` when `git` fails) |
 
-Both invocations are best effort: a missing `git` never fails the build.
+Each module that packages a JAR needs `revision` in its own build, since Maven properties do not cross module boundaries. `revisionDirty` has a single consumer, `hardwood-core`'s `build-info.properties`, and `git status` costs far more than `git rev-parse` on a large working tree, so only core runs it; a module that needs the flag adds the same execution. Both invocations are best effort: a missing `git` never fails the build.
 
 ### Consumers
 

@@ -166,6 +166,39 @@
       </resource>
     </resources>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <executions>
+          <execution>
+            <!-- Capture the working-tree dirty flag for `build-info.properties`. Only
+                 core reads it, so `git status` runs here rather than in the parent's
+                 `capture-git-info`, which every module runs. Best-effort: when git is
+                 missing or fails, `revisionDirty` falls back to `false`. -->
+            <id>capture-git-dirty</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <exportAntProperties>true</exportAntProperties>
+              <target>
+                <exec executable="git" outputproperty="gitStatus" errorproperty="gitStatusErr" resultproperty="gitStatusExit" failifexecutionfails="false" failonerror="false" dir="${maven.multiModuleProjectDirectory}">
+                  <arg value="status" />
+                  <arg value="--porcelain" />
+                </exec>
+                <condition property="revisionDirty" value="true">
+                  <and>
+                    <equals arg1="${gitStatusExit}" arg2="0" />
+                    <not><equals arg1="${gitStatus}" arg2="" trim="true" /></not>
+                  </and>
+                </condition>
+                <property name="revisionDirty" value="false" />
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <!-- Compile Java 22+ specific code for FFM API -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
