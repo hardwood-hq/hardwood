@@ -10,9 +10,13 @@ package dev.hardwood.internal;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.DateTimeException;
+import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.concurrent.CompletionException;
 
 import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.SchemaIncompatibleException;
+import dev.hardwood.row.VariantTypeException;
 
 /// Utility for enriching exception messages with the file, and where in it a read failed.
 ///
@@ -36,6 +40,31 @@ public final class ExceptionContext {
     public static final int DICTIONARY_PAGE = -2;
 
     private static final String INTERNAL_PACKAGE = "dev.hardwood.internal";
+
+    /// How an exception of each type the reader raises is wrapped in a new one of the same type,
+    /// keyed by its exact class; see [#wrapInSameType].
+    private static final Map<Class<? extends RuntimeException>, SameTypeWrapper> SAME_TYPE_WRAPPERS =
+            Map.ofEntries(
+                    Map.entry(IllegalArgumentException.class, IllegalArgumentException::new),
+                    Map.entry(IllegalStateException.class, IllegalStateException::new),
+                    Map.entry(UnsupportedOperationException.class, UnsupportedOperationException::new),
+                    Map.entry(NullPointerException.class,
+                            (message, e) -> caused(new NullPointerException(message), e)),
+                    Map.entry(IndexOutOfBoundsException.class,
+                            (message, e) -> caused(new IndexOutOfBoundsException(message), e)),
+                    // What a typed accessor raises when asked for a type its column does not
+                    // hold: the cast the decode makes, which the caller is told about as that cast.
+                    Map.entry(ClassCastException.class,
+                            (message, e) -> caused(new ClassCastException(message), e)),
+                    // What a `TIME` outside a day raises on its way to a `LocalTime`, which the
+                    // CLI's value markers catch by type.
+                    Map.entry(DateTimeException.class, DateTimeException::new),
+                    Map.entry(NoSuchElementException.class, NoSuchElementException::new),
+                    Map.entry(VariantTypeException.class,
+                            (message, e) -> caused(new VariantTypeException(message), e)),
+                    Map.entry(ParquetReadException.class, ParquetReadException::new),
+                    Map.entry(SchemaIncompatibleException.class, SchemaIncompatibleException::new),
+                    Map.entry(CompletionException.class, CompletionException::new));
 
     private static final String SUPPLIED_FOOTER_HINT =
             " (footer supplied by the MetadataSource; the file may have changed since the footer was read)";
@@ -167,9 +196,11 @@ public final class ExceptionContext {
     /// original exception type and cause chain. Returns the original exception
     /// unchanged when the file name is unavailable or the prefix is already present.
     ///
-    /// The one type not preserved is an internal [ParquetReadException] subclass, which
-    /// leaves as a plain [ParquetReadException] with the original as its cause, prefixed or
-    /// not; see [#asReadFailure].
+    /// Only the types the reader raises itself are preserved ([#wrapInSameType]). Any other
+    /// [ParquetReadException] subclass leaves as a plain [ParquetReadException] and any other
+    /// type as a [RuntimeException], with the original as its cause; an internal
+    /// [ParquetReadException] subclass is restated that way even when the prefix is already
+    /// present (see [#asReadFailure]).
     ///
     /// **Cause-chain note for [UncheckedIOException]:** because the type requires
     /// an [IOException] cause, the original [UncheckedIOException] is attached as
@@ -217,85 +248,9 @@ public final class ExceptionContext {
         }
         String prefix = readPrefix(fileName, rowGroup, column, page);
         String newMessage = prefix + (originalMessage != null ? originalMessage : e.getClass().getSimpleName());
-        if (isInternalReadFailure(e)) {
-            return new ParquetReadException(newMessage, e);
-        }
-
-        if (e instanceof UncheckedIOException uio) {
-            // Not a case the reader produces: every wrap it makes to leave a lambda is
-            // undone by the method enclosing that lambda, and `InputFile.readRange`
-            // declares `IOException`, so an implementation has a checked channel and no
-            // reason to reach for the unchecked one. The arm is here because this method
-            // takes an arbitrary `RuntimeException` and must not silently change its type
-            // — `UncheckedIOException` declares (String, IOException) and not
-            // (String, Throwable), so the reflective path below cannot construct one and
-            // would hand the caller a plain `RuntimeException` instead.
-            //
-            // Its cause must be an IOException, so the original cannot be chained; it
-            // is kept as suppressed.
-            IOException ioCause = uio.getCause();
-            if (ioCause == null) {
-                ioCause = new IOException(originalMessage);
-            }
-            UncheckedIOException wrapped = new UncheckedIOException(newMessage, ioCause);
-            wrapped.addSuppressed(e);
-            return wrapped;
-        }
-        if (e.getClass() == IllegalArgumentException.class) {
-            return new IllegalArgumentException(newMessage, e);
-        }
-        if (e.getClass() == IllegalStateException.class) {
-            return new IllegalStateException(newMessage, e);
-        }
-        if (e.getClass() == NullPointerException.class) {
-            NullPointerException wrapped = new NullPointerException(newMessage);
-            wrapped.initCause(e);
-            return wrapped;
-        }
-        if (e.getClass() == IndexOutOfBoundsException.class) {
-            IndexOutOfBoundsException wrapped = new IndexOutOfBoundsException(newMessage);
-            wrapped.initCause(e);
-            return wrapped;
-        }
-        // What a typed accessor raises when asked for a type its column does not hold: the
-        // cast the decode makes, which the caller is told about as that cast.
-        if (e.getClass() == ClassCastException.class) {
-            ClassCastException wrapped = new ClassCastException(newMessage);
-            wrapped.initCause(e);
-            return wrapped;
-        }
-
-        // What a `TIME` outside a day raises on its way to a `LocalTime`, which callers (the
-        // CLI's value markers among them) catch by type. It is rebuilt directly rather than
-        // reflectively, since a native image keeps no reflective constructors it was not told of.
-        if (e.getClass() == DateTimeException.class) {
-            return new DateTimeException(newMessage, e);
-        }
-
-        // For CompletionException and other wrapper types: try to preserve the type
-        // via the (String, Throwable) constructor. For CompletionException, preserve
-        // the original cause rather than wrapping the CompletionException itself,
-        // so the cause chain stays shallow.
-        try {
-            Throwable preservedCause = (e instanceof CompletionException && e.getCause() != null)
-                    ? e.getCause()
-                    : e;
-            return e.getClass()
-                    .getConstructor(String.class, Throwable.class)
-                    .newInstance(newMessage, preservedCause);
-        }
-        catch (ReflectiveOperationException ignored) {
-            // Type cannot be preserved
-        }
-        // A ParquetReadException subclass without that constructor still has to leave as
-        // one. What callers catch is the base type, so degrading it to RuntimeException
-        // silently takes the failure out of every `catch (ParquetReadException)` between
-        // here and the top — the file is still what is wrong, and it stops being reported
-        // that way.
-        if (e instanceof ParquetReadException) {
-            return new ParquetReadException(newMessage, e);
-        }
-        return new RuntimeException(newMessage, e);
+        // an internal ParquetReadException subclass is not among the types kept, so it leaves as
+        // a plain ParquetReadException
+        return wrapInSameType(newMessage, e);
     }
 
     /// Appends to a read failure of a file whose footer a [dev.hardwood.MetadataSource] supplied
@@ -372,6 +327,61 @@ public final class ExceptionContext {
         return message == null || message.equals(cause.toString())
                 ? cause
                 : new IOException(message, cause);
+    }
+
+    /// `e` wrapped in a new exception of its own type with `message` and `e` as its cause. An
+    /// [UncheckedIOException] keeps its [IOException] as its cause instead, with `e` kept as
+    /// suppressed.
+    ///
+    /// The same type is kept for every type the reader raises, keyed by exact class, since a
+    /// subclass wrapped as its supertype would leave as that supertype; an
+    /// [UncheckedIOException] of any class leaves as one, the type its declared cause allows. Any
+    /// other type leaves as a [ParquetReadException] if it is one, since what callers catch is the
+    /// base type and the file is still what is wrong, and as a [RuntimeException] otherwise.
+    ///
+    /// No constructor is found reflectively: a native image keeps none it was not told of, so a
+    /// reflective wrap would keep a type on the JVM that a native image loses, out of reach there
+    /// of the `catch` clauses callers, the CLI's among them, write for it.
+    static RuntimeException wrapInSameType(String message, RuntimeException e) {
+        if (e instanceof UncheckedIOException unchecked) {
+            return uncheckedIo(message, unchecked);
+        }
+        SameTypeWrapper wrapper = SAME_TYPE_WRAPPERS.get(e.getClass());
+        if (wrapper != null) {
+            return wrapper.wrap(message, e);
+        }
+        return e instanceof ParquetReadException
+                ? new ParquetReadException(message, e)
+                : new RuntimeException(message, e);
+    }
+
+    /// An [UncheckedIOException] with `message`. Not a case the reader produces: every wrap it
+    /// makes to leave a lambda is undone by the method enclosing that lambda, and
+    /// `InputFile.readRange` declares `IOException`, so an implementation has a checked channel
+    /// and no reason to reach for the unchecked one. It is wrapped because [#addReadContext]
+    /// takes an arbitrary `RuntimeException` and must not silently change its type.
+    ///
+    /// Its cause must be an [IOException], so the original cannot be chained; it is kept as
+    /// suppressed.
+    private static UncheckedIOException uncheckedIo(String message, UncheckedIOException e) {
+        IOException ioCause = e.getCause();
+        if (ioCause == null) {
+            ioCause = new IOException(e.getMessage());
+        }
+        UncheckedIOException wrapped = new UncheckedIOException(message, ioCause);
+        wrapped.addSuppressed(e);
+        return wrapped;
+    }
+
+    /// Wraps an exception in a new one of its own type with a message.
+    @FunctionalInterface
+    private interface SameTypeWrapper {
+        RuntimeException wrap(String message, RuntimeException original);
+    }
+
+    private static <T extends RuntimeException> T caused(T wrapper, Throwable cause) {
+        wrapper.initCause(cause);
+        return wrapper;
     }
 
     /// Whether `e` is a [ParquetReadException] of a type callers cannot name, one declared

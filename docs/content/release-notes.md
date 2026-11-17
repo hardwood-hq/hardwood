@@ -64,6 +64,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - A read of a Variant column whose annotation declares a specification version other than 1 fails with `UnsupportedOperationException`, instead of decoding the column as version 1 ([#777](https://github.com/hardwood-hq/hardwood/issues/777))
 - `getValue` on an `INT(8)` or `INT(16)` column fails with `ParquetReadException` on a stored value outside the annotation's range instead of returning its low bits ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
 - `hardwood print` and `dive` show a value outside its `INT(8)` or `INT(16)` range, or a `TIME` outside a day, as a marker, and `hardwood convert` fails on it ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
+- In a GraalVM native image, a read failure keeps the exception type it has on the JVM instead of losing it; an exception of the application's own type, such as one a `MetadataSource` throws, reaches the caller as the cause of a `RuntimeException` naming the file, on the JVM and in a native image ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
 
 ## 1.1.0.Beta3 (2026-10-21)
 

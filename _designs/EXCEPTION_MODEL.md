@@ -111,6 +111,22 @@ and a page filter drops pages before either is read. A byte offset is not carrie
 known only deep inside a parse, with no boundary there to hand it to. The context lives in
 the message only; `ParquetReadException` carries no position fields.
 
+Adding the context wraps the exception in a new one of the same type, with the located message
+and the original as its cause (`ExceptionContext.wrapInSameType`), so a caller catches what was
+raised by the type it was raised as, with or without the context. An `UncheckedIOException` is
+the one whose cause is not the original: its cause must be an `IOException`, so it takes the
+original's, and the original is kept as suppressed. The same type is kept for every unchecked
+type the read path raises, each wrapped by a constructor the code names, keyed by its class;
+none is found by reflection. A native image
+(the CLI binary, or an application embedding Hardwood) keeps no constructor it was not told of,
+so a reflective wrap would keep a type on the JVM that the native image loses, out of reach
+there of a `catch` for it, and tests on the JVM would not show it. Any other type, such as one
+a caller's `MetadataSource` raises, leaves as a
+`ParquetReadException` if it is one, an internal subclass included, and as a `RuntimeException`
+otherwise, on the JVM and in a native image alike. `ExceptionContextTest` covers the wrap, and
+`NativeBinarySmokeIT` the CLI's report of an `UnsupportedOperationException` from the native
+binary.
+
 ## Crossing a thread boundary
 
 A checked exception cannot travel through a `Runnable`, a `Supplier`, or a function

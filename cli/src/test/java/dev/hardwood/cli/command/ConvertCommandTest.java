@@ -581,6 +581,16 @@ class ConvertCommandTest implements ConvertCommandContract {
                 "Error writing %s: %s (No such file or directory)".formatted(csv, csv));
     }
 
+    /// A codec Hardwood does not implement fails the conversion as a read error naming the column.
+    @Test
+    void codecItDoesNotImplementFailsTheConversion() {
+        Cli.Result result = Cli.launch("convert", "-f", Cli.file("/lzo_codec.parquet"), "--format", "csv");
+
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.errorOutput()).isEqualTo("Error reading file: [lzo_codec.parquet: row group 0, column 'name', page 0] "
+                + "LZO compression is not supported\nWrote 0 rows before the failure; the output is incomplete.");
+    }
+
     /// `convert` writes data other tools ingest, so a value its annotation does not admit fails the
     /// command, naming the file and the column, in either format.
     @Test

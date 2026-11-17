@@ -53,6 +53,7 @@ from parquet_annotators import (
     misplace_dictionary_page_offset,
     understate_data_page_offset,
     recut_v1_pages,
+    relabel_codec_as_lzo,
 )
 
 
@@ -6383,6 +6384,23 @@ _copy_if_exists(
     f'{_codec_dir}/lz4_hadoop.parquet',
     'build parquet-testing-runner to fetch the apache/parquet-testing data set',
 )
+
+# A column whose chunk declares LZO, a codec Hardwood does not implement: reading it fails with
+# the UnsupportedOperationException that names the codec, which the CLI's print and convert report
+# as a read error. Read by cli's NativeBinarySmokeIT too, since a native image must keep the type
+# through the file context core adds to it.
+_lzo_path = 'core/src/test/resources/lzo_codec.parquet'
+pq.write_table(
+    pa.table({
+        'id': pa.array([1, 2], type=pa.int32()),
+        'name': pa.array(['a', 'b'], type=pa.string()),
+    }),
+    _lzo_path,
+    compression=None,
+    use_dictionary=False,
+)
+relabel_codec_as_lzo(_lzo_path, 'name')
+print(f"\nGenerated {_lzo_path}: column 'name' declares the LZO codec")
 
 # Dictionary-encoded FLOAT / DOUBLE columns holding -0.0 but never +0.0, so a
 # +0.0 probe is provably absent from the dictionary while a -0.0 probe is
