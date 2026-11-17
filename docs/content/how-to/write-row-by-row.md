@@ -112,9 +112,9 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("
 }
 ```
 
-With the schema above, a person whose `name` is `null` is skipped with the message `Field name is REQUIRED; it must be set to a non-null value in every record`, and `close()` publishes every other person.
+With the schema above, a person whose `name` is `null` is skipped, with a message naming the field, and `close()` publishes every other person.
 
-Which failures `tryWriteRow` returns as `Rejected`, and which still fail the writer, is listed under [`RowWriteResult`](../reference/writer.md#rowwriteresult).
+Which failures `tryWriteRow` returns as `Rejected`, and which still fail the writer, is described under [`RowWriteResult`](../reference/writer.md#rowwriteresult).
 
 ## Structs, Lists, and Maps
 

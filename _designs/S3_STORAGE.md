@@ -136,6 +136,8 @@ Two invariants follow. Nothing is visible at the key until the closing `PUT` or 
 
 S3 sends a completion's `200` status before the completion is done, and reports a failure that follows as an `Error` document in that body; `S3Xml` reads the body and raises it as a failed completion, which is retried like a `500` when its code is `InternalError`, `SlowDown` or `ServiceUnavailable`. Every request is retried as in [Errors and retries](#errors-and-retries). A retried `CreateMultipartUpload` whose first response was lost leaves an upload the output does not know of, and an output whose process ends leaves its started upload behind; both are removed only by a bucket lifecycle rule. A completion that succeeded but whose response was lost through every retry makes `close()` throw although the object exists, the one case where a failed `close()` does not leave the destination unchanged.
 
+A write request answered with a status other than the one it expects raises an `IOException` "{request} s3://{bucket}/{key} failed: HTTP {status} {code}: {message}", where `{request}` is `PUT`, `Create multipart upload`, `Upload part {n} of`, `Complete multipart upload` or `Abort multipart upload`, and the code and message come from the `Error` document in the body (`S3Xml.errorSummary`); a body without one adds nothing after the status. `S3OutputFileTest` covers the form.
+
 A source built with `anonymous()` refuses `outputFile(...)` with an `IllegalStateException`, since S3 does not accept unsigned writes to a bucket that is not public-write.
 
 Tests: `S3OutputFileTest`, `S3XmlTest`, `S3SourceOutputTest`, `S3OutputFileIT` (s3). The lost-completion case is untested.

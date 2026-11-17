@@ -82,17 +82,7 @@ SchemaElement tag = new SchemaElement("tag", PhysicalType.INT32, 3, RepetitionTy
 
 ## Errors
 
-The factories throw `IllegalArgumentException` for these inputs:
-
-| Condition | Factory |
-|---|---|
-| `repetition` is `null` | `group`, `primitive`, `fixedLengthPrimitive` |
-| `type` is `null` | `primitive` |
-| `type` is `FIXED_LEN_BYTE_ARRAY` | `primitive` |
-| `numChildren` is negative | `group`, `root` |
-| `typeLength` is zero or less | `fixedLengthPrimitive` |
-
-A factory checks one element; `fromSchemaElements` checks the complete list.
+A factory throws `IllegalArgumentException` when its arguments cannot describe a valid element, such as a `null` repetition, or a `FIXED_LEN_BYTE_ARRAY` type passed to `primitive` instead of `fixedLengthPrimitive`. A factory checks one element; `fromSchemaElements` checks the complete list.
 
 ## Canonical constructor
 

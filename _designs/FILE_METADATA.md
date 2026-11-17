@@ -150,7 +150,7 @@ The page limit keeps each size a header declares within the array it sizes, so n
 
 ## Metadata model
 
-The parsed metadata is a tree of public records in `dev.hardwood.metadata`, reached through `ParquetFileReader.getFileMetaData()` → `FileMetaData.rowGroups()` → `RowGroup.columns()` → `ColumnChunk.metaData()`. The records mirror the Thrift structs field by field; the user-facing description is in [metadata.md](../docs/content/how-to/metadata.md).
+The parsed metadata is a tree of public records in `dev.hardwood.metadata`, reached through `ParquetFileReader.getFileMetaData()` → `FileMetaData.rowGroups()` → `RowGroup.columns()` → `ColumnChunk.metaData()`. The records mirror the Thrift structs field by field.
 
 | Record | Absent optional fields |
 |---|---|
@@ -239,7 +239,7 @@ Per-reader state is not cached: the reference schema check, `FileColumnOrdinals`
 | `getFileMetaData()` | the first file's footer, read at open; usable after close |
 | `getFileMetaData(int)` | one file's footer; index `0` returns the same instance as `getFileMetaData()`; a later index loads unless the cache holds the file's footer, or joins a load a data reader started; `IllegalStateException` after close |
 
-Each call reads at most one footer, so the checked `IOException` it declares belongs to that one file. The user-facing description is in [metadata.md](../docs/content/how-to/metadata.md#metadata-for-multiple-files).
+Each call reads at most one footer, so the checked `IOException` it declares belongs to that one file.
 
 ### Lifetime and failure
 

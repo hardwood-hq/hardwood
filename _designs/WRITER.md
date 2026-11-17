@@ -8,8 +8,9 @@ Related documents:
 - [WRITER_ENCODING.md](WRITER_ENCODING.md): how a buffered column chunk becomes pages (page layout and cuts, the `AUTO` dictionary decision and its probes, named encoding policies, codecs, statistics)
 - [THREADING.md](THREADING.md): the threads a write runs on beside the reads of a shared context, and a context of zero threads
 - [WRITER_VALIDATION.md](WRITER_VALIDATION.md): how produced files are checked against independent readers
-- [docs/content/concepts/write-model.md](../docs/content/concepts/write-model.md): the user-facing account of the same model
+- [docs/content/concepts/write-model.md](../docs/content/concepts/write-model.md): the user-facing account of the same model, including its memory bounds
 - [docs/content/reference/writer.md](../docs/content/reference/writer.md): the options and rejections
+- [docs/content/how-to/write-failures.md](../docs/content/how-to/write-failures.md): how a caller handles a failed write
 
 ## Write model
 
@@ -94,7 +95,9 @@ The end states are final because an output handed to a second writer must not re
 - **Publish failure.** A failure inside `OutputFile.close()` is the backend's to clean up, by the `close()` contract above; the writer is already closed and does not also call `discard()`.
 - **Discard failure.** A discard that fails is thrown (from `close()` or `abort()`), or attached as suppressed to the exception that caused it, since it leaves the temporary file behind.
 
-`keyValueMetadata` and `createdBy` stay callable on a failed writer until `close()`; they change nothing, since no footer is written. How the exception types divide between caller error, destination and writer is in [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md); the user-facing account is [write-failures.md](../docs/content/how-to/write-failures.md).
+A call that the writer's state, or the state of the batch or builder it is made on, does not allow raises `IllegalStateException`.
+
+`keyValueMetadata` and `createdBy` stay callable on a failed writer until `close()`; they change nothing, since no footer is written. How the exception types divide between caller error, destination and writer is in [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md).
 
 Tests: `WriterFailureTest`, `WriterCodecFailureTest`, `ChannelOutputFileTest`, `InMemoryOutputFileTest`, `WriterSchemaShapeTest`.
 
@@ -217,7 +220,7 @@ A writer's heap is dominated by the open row group, and `retainedBytes()` is the
 - **The page index.** Each flushed row group's `ColumnIndex` and `OffsetIndex` are held until `close()` writes them, so the index grows with the file: per data page, a location and, where the chunk has a column index, two bounds. A bound is the type's width for a fixed-width column; a `BYTE_ARRAY` bound is at most `statisticsTruncationLength` bytes, except a `max` with no shorter upper bound and a binary `DECIMAL` bound, which are written whole. Pages are at most `pageTargetRows` records but may hold fewer where the byte target cuts first, so the index grows by at least one entry per `pageTargetRows` records per column.
 - **Bloom filters.** Each flushed row group's filters are held until `close()` writes them, the other thing that grows with the file: per row group and configured column, a bitset of about 1.2 bytes per distinct value of the chunk at the default probability, rounded up to a power of two ([WRITER_ENCODING.md](WRITER_ENCODING.md#sizing)). While a chunk's filter is built at flush, it is sized for the chunk's present values where the chunk states no cardinality, up to about 2.4 bytes per present value and at most 128 MiB, and folded in place; the kept bitset is copied out of it, so the transient peak is that array plus the kept filter.
 
-Where the row target cuts first, peak heap is the row count times what a record retains: a byte per level stream per entry, 4 bytes of index per present value while its chunk is interning (plus a dictionary entry if the value is new), or the value's width once the chunk has stopped interning. A column whose values are narrower than its levels (a flat `OPTIONAL` `BOOLEAN`, one bit of value against one byte of level) is the case where the level store dominates. The user-facing sizing guide is [write-model.md](../docs/content/concepts/write-model.md#memory-bounds).
+Where the row target cuts first, peak heap is the row count times what a record retains: a byte per level stream per entry, 4 bytes of index per present value while its chunk is interning (plus a dictionary entry if the value is new), or the value's width once the chunk has stopped interning. A column whose values are narrower than its levels (a flat `OPTIONAL` `BOOLEAN`, one bit of value against one byte of level) is the case where the level store dominates.
 
 `ParquetFileWriter.retainedBytes()` and `peakRetainedBytes()` are package-private and exist for the tests that hold the account against a heap measurement, which is the only check that the account means what it says.
 
