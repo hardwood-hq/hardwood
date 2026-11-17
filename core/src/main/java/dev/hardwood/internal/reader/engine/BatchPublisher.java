@@ -22,11 +22,13 @@ import dev.hardwood.internal.reader.plan.BatchPlan;
 /// whose rows reach the failure's row. Used under the read's lock.
 ///
 /// A batch is made as the read reaches it, not as its unit is batched: by a placement opening a
-/// cell in it, by a column that reads its unit publishing up to it, or by the consumer's position.
-/// Each unit's batches are placed by arithmetic on its segments, so none needs the batches before
-/// it made, and the batches a read holds follow the rows its pages deliver, at most one batch
-/// ahead of them, rather than the rows a footer declares, which no page has confirmed yet. A
-/// column that skips a unit passes its batches without making them.
+/// cell in it, or by a column that reads its unit publishing up to it; the consumer's position
+/// reads the key of a batch not yet made from its unit's segments. Each unit's batches are placed
+/// by arithmetic on its segments, so none needs the batches before it made, and the batches a
+/// read holds follow the rows its pages deliver, at most one batch ahead of them, rather than the
+/// rows a footer declares, which no page has confirmed yet. A column that skips a unit passes its
+/// batches without making them until the read's failure has settled; it then makes them up to the
+/// first one reaching the failure's row, which the failure bounds by the rows delivered.
 final class BatchPublisher {
 
     /// A batched unit, and the batches made of those it starts.

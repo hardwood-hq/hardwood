@@ -152,9 +152,8 @@ public final class ColumnPlacer<C> {
     /// row group and column, since a failure between work items can be one every column shares.
     ///
     /// @param failure the failure that ended the read
-    /// @param column the column's path, for the shortfall's message
     /// @return the open cell, unsealed, if the column is short of the plan; `null` otherwise
-    public C sealOpenCell(Throwable failure, String column) {
+    public C sealOpenCell(Throwable failure) {
         if (stopped) {
             return null;
         }

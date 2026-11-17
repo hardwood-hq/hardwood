@@ -85,6 +85,19 @@ class ReadDriverTest {
         closer.join();
     }
 
+    /// A result that throws fails the read with what it threw, classified as every failure of a
+    /// read is: a file's check met while a result is applied reaches the reader as a
+    /// `ParquetReadException`, not raw.
+    @Test
+    void aResultThatThrowsFailsTheReadWithTheClassifiedFailure() {
+        driver.update(() -> {
+            throw new ArithmeticException("integer overflow");
+        });
+
+        assertThat(applied).containsExactly(
+                "broken: dev.hardwood.reader.ParquetReadException: integer overflow");
+    }
+
     @Test
     void holderAppliesAResultQueuedWhileItHoldsTheLock() {
         driver.locked(() -> {

@@ -513,7 +513,7 @@ final class RowGroupPlanner {
         catch (ParquetReadException e) {
             // a row count the plan cannot take: the read fails at the unit's first row, and no unit
             // after it is batched
-            readFailure.failAt(u.base(), columns.rowGroupFailure(e, u.file().name(), u.rowGroup()));
+            readFailure.failAt(u.base(), columns.withContext(e, u.file().name(), u.rowGroup()));
             return;
         }
         Unit.Batched p = planned.batched(batches);

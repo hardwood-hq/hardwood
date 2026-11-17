@@ -17,6 +17,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.reader.step.ReadQueue;
@@ -63,7 +64,8 @@ final class ReadDriver {
 
     /// @param fetchAheadBytes F
     /// @param position reconciles the read's parts and says where the consumer stands, at each poll
-    /// @param broken fails the read with what a result or a poll threw; under the lock
+    /// @param broken fails the read with what a result or a poll threw, a runtime failure classified
+    ///        as every failure of a read is ([ExceptionContext#asReadFailure]); under the lock
     /// @param queue the read's queue on a context of zero threads, `null` on one with a pool
     ReadDriver(HardwoodContextImpl context, ReadQueue queue, long fetchAheadBytes,
                Supplier<JobScheduler.Position> position, Consumer<Throwable> broken) {
@@ -117,7 +119,7 @@ final class ReadDriver {
                 r.run();
             }
             catch (RuntimeException | Error e) {
-                broken.accept(e);
+                broken.accept(classified(e));
             }
         }
         if (!closed) {
@@ -126,7 +128,7 @@ final class ReadDriver {
                 jobs = scheduler.start(position.get());
             }
             catch (RuntimeException | Error e) {
-                broken.accept(e);
+                broken.accept(classified(e));
                 jobs = scheduler.start(position.get());
             }
             for (JobScheduler.Job<?> job : jobs) {
@@ -136,6 +138,13 @@ final class ReadDriver {
                 started.add(job);
             }
         }
+    }
+
+    /// `t` as the read's failure: a runtime failure classified as a read failure, an [Error] as
+    /// thrown. A result throws where a check of the file meets it while the result is applied, and
+    /// the reader raises what the read failed with.
+    private static Throwable classified(Throwable t) {
+        return t instanceof RuntimeException e ? ExceptionContext.asReadFailure(e) : t;
     }
 
     /// Lets go of the lock once every queued result is applied, then releases to R what they
