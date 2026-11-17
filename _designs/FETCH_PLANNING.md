@@ -127,7 +127,7 @@ Tests: `ReadYieldTest`, `ReadAheadTest`, `SpeculativeErrorTest`, `FilesAheadTest
 
 ## Page masking
 
-A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapping `[start, end)` intervals relative to the page's first row, counted in values for a flat column and in top-level records (repetition level 0) for a nested one. `PageRowMask.ALL` keeps the page whole; a page with no matching row gets no mask and is not read. Masks come from the row group's `RowRanges`, which are the column-index result under a filter ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#column-index)) or the range `[residue, numRows)` a fast `tail` sets on the first work item ([ROW_READER.md](ROW_READER.md#tail)). A nested column's decode trims the page to its kept records before measuring it, so nested placement and filling see only kept records ([NESTED_DECODE.md](NESTED_DECODE.md#masked-pages)); a flat column's fill reads each kept interval.
+A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapping `[start, end)` intervals relative to the page's first row, counted in values for a flat column and in top-level records (repetition level 0) for a nested one. `PageRowMask.ALL` keeps the page whole; a page with no matching row gets no mask and is not read. Masks come from the row group's `RowRanges`: the column-index result under a filter ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#column-index)), cut to the read's physical window where the row group holds an end of it (`PagePlanner.windowed`). The window's start is a `skip` residue or the rows before a fast `tail` ([ROW_READER.md](ROW_READER.md#tail)), or the start of a column read's `rowRange`; its end only a `rowRange` sets ([COLUMN_READER.md](COLUMN_READER.md#row-selection)). A nested column's decode trims the page to its kept records before measuring it, so nested placement and filling see only kept records ([NESTED_DECODE.md](NESTED_DECODE.md#masked-pages)); a flat column's fill reads each kept interval.
 
 ### The mask-capability gate
 
@@ -135,13 +135,22 @@ A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapp
 
 So a row group takes page masks when every nested decoded column has an OffsetIndex; otherwise its ranges are promoted to all rows, no page takes a mask, and the filter falls to row-group statistics and per-row evaluation. The gate needs no bytes: the OffsetIndex offsets in the footer decide it. A fast `tail` is taken only where the first kept row group passes it (`PreparedRead.takesMask`, [ROW_READER.md](ROW_READER.md#tail)).
 
+The two ends of a physical window are masked by different rules:
+
+| End | Masked where | Otherwise |
+|---|---|---|
+| Start, in the row group the skip lands in | the row group is of the first file and passes the gate, decided when the read is prepared (`PreparedRead.takesMask`) | the rows before the start stay placed: the row group keeps all its rows, or, where a filter narrows them, the rows before the start join those it keeps, so the rows it places start with those before the start and the consumer drops them ([READ_PIPELINE.md](READ_PIPELINE.md#units-and-files)); a row group the filter keeps no row of places none |
+| End, in the row group the window ends in | the row group passes the gate (`PagePlanner.takesMask`) | the batch plan ends the read after the row group's kept rows before the end ([READ_PIPELINE.md](READ_PIPELINE.md#row-limits)) |
+
+The start needs the decision before the read starts, since a row reader drops the residue as it is built; the end needs none, so it is masked in any file.
+
 Under a mask a scan asks `RowRanges.maskForPage` for each flat page's mask from the rows counted so far; a page with no match is skipped without reading its body, though its bytes may have been fetched with the chunk, so the saving is decompression and decode. A null placeholder under a partial mask stands for the masked record count, so sibling columns agree on row counts.
 
-Tests: `MisalignedPageBoundariesTest`, `MisalignedPageBoundariesNoIndexTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `EmptyPageRangesUnindexedColumnTest`, `MaskProbeIoTest`.
+Tests: `MisalignedPageBoundariesTest`, `MisalignedPageBoundariesNoIndexTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `EmptyPageRangesUnindexedColumnTest`, `MaskProbeIoTest`, `ColumnReaderRowRangeTest`.
 
 ## Row limits
 
-`maxRows` narrows fetches only on an unfiltered read. With a filter, `head(n)` counts matching rows, which a scan may find anywhere, so every surviving page stays fetchable and the cap is enforced downstream ([READ_PIPELINE.md](READ_PIPELINE.md#row-limits)); listing stops only once row groups statistics prove to match cover it, before the first they leave undecided. Without one, listing stops once the limit is covered, and each unit gets the remainder of the budget after the rows listed before it, plus the skip residue on the first unit, since page row indices restart at 0 in every row group; earlier row groups are covered whole and only the last one is cut.
+A physical window narrows fetches with or without a filter: only the row groups it overlaps are listed, and the row group its end lies in takes the end as its share `m` below. `maxRows` narrows fetches only on an unfiltered read. With a filter, `head(n)` counts matching rows, which a scan may find anywhere, so every surviving page stays fetchable and the cap is enforced downstream ([READ_PIPELINE.md](READ_PIPELINE.md#row-limits)); listing stops only once row groups statistics prove to match cover it, before the first they leave undecided. Without one, listing stops once the limit is covered, and each unit gets the remainder of the budget after the rows listed before it, plus the skip residue on the first unit, since page row indices restart at 0 in every row group; earlier row groups are covered whole and only the last one is cut.
 
 | Chunk | Effect of the unit's share `m` |
 |---|---|
@@ -182,7 +191,7 @@ Tests: `CrossColumnCoalesceTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`
 ## Boundaries
 
 - **Scanned chunks ignore row ranges (#1025).** A chunk without an OffsetIndex under a mask is fetched whole, and its unmatched page bodies are skipped after the fact.
-- **Page-level skip for a residue past the first file (#381).** The residue of a physical `skip` that lands in a later file is fetched and decoded, although a page mask could drop its leading pages as it does in the first file.
+- **Page-level skip for a residue past the first file (#381).** The residue of a physical `skip`, or of a `rowRange` start, that lands in a later file is fetched and decoded, although a page mask could drop its leading pages as it does in the first file. Under a filter, its page filtering keeps the residue beside the matching rows.
 - **Nested columns without an OffsetIndex take no mask (#1306).** A row group with one reads every page of every column and filters per record, and `tail` decodes and discards the residue.
 - **No overlap of data with the page index.** A unit's data ranges start once its plan has read its page index, also where every row of the row group is read.
 - **A storage-dependent gap (#763, #827).** The gap limit is one constant for every backend.

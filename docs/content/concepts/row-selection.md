@@ -13,7 +13,9 @@
 
 Hardwood gives a `RowReader` five controls for
 narrowing what comes back: `filter`, `head`, `tail`, `skip`, and the `byteRange` row-group
-predicate. **Row selection counts over the result set, not over the file.**
+predicate. The column readers take the same controls except `tail`, plus `rowRange`. **Row
+selection counts over the result set, not over the file**, except for `byteRange` and `rowRange`,
+which name positions in the file.
 
 ## Two questions: which rows, and where they live
 
@@ -22,10 +24,11 @@ Selection has two independent axes, and each control belongs to exactly one of t
 - **Which rows you want: the logical result.** A `FilterPredicate` (`WHERE`), and the
   positional controls `head`, `tail`, and `skip`.
 - **Where data lives in the file: the physical layout.** `RowGroupPredicate.byteRange(...)`,
-  at row-group granularity. This is the lever for splitting a file across parallel readers.
+  at row-group granularity, the lever for splitting a file across parallel readers; and, on the
+  column readers, `rowRange(start, end)`, at row granularity.
 
-Keeping these apart is what makes the controls predictable: physical positioning is `byteRange`'s
-job, and nothing else's.
+Keeping these apart is what makes the controls predictable: physical positioning is the job of
+`byteRange` and `rowRange`, and of nothing else.
 
 ## The result set
 
@@ -63,11 +66,26 @@ them, though groups whose statistics prove no row can match are skipped wholesal
 logical controls by intersection: under `byteRange(...).filter(p).skip(n).head(k)`, the result
 set is the matching rows *within this reader's row groups*, and `skip`/`head` count over that.
 
+## Physical row ranges
+
+`rowRange(start, end)` selects the rows at positions `[start, end)` of the file, before the filter.
+With a filter, the result is the rows inside the range that match, so the filter narrows the range
+and never moves it. The positions are known from the file's metadata alone, so the reader opens
+only the row groups the range overlaps, whatever the filter. Which pages it fetches in the row
+groups at either end is in [Reading a Row Range](../how-to/query-controls.md#reading-a-row-range-rowrange).
+
+Under a filter, `rowRange` and `skip` answer different questions. On a file whose rows 0–99 hold
+no match, `filter(p).skip(100)` discards the first 100 *matches*, which lie past row 99, while
+`filter(p).rowRange(100, end)` discards the first 100 *rows*, none of which match, and returns
+every match from row 100 on. `rowRange` composes with `byteRange` by counting the rows of the row
+groups `byteRange` keeps.
+
 ## Supported combinations
 
-`head`, `skip`, and `byteRange` each compose with a `FilterPredicate`. `tail` + filter is rejected
-at `build()`: the *last* `n` matching rows have no row-group-statistics shortcut, so it would
-require a reverse scan over the whole file.
+`head`, `skip`, `byteRange` and `rowRange` each compose with a `FilterPredicate`. `tail` + filter is
+rejected at `build()`: the *last* `n` matching rows have no row-group-statistics shortcut, so it
+would require a reverse scan over the whole file. `rowRange` + `head` and `rowRange` + `skip` are
+rejected at `build()`, since the range already fixes the first row and the row count.
 
 ## Further reading
 

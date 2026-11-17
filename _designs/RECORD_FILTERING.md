@@ -198,12 +198,13 @@ Tests: `AlwaysMatchingRowGroupTest`, `BatchPlanTest`, `FilterOnlyColumnSkipTest`
 
 ## Row selection over the filtered relation
 
-The **surviving relation** is the rows of the row groups kept by the `RowGroupPredicate`, intersected with the rows matching the `FilterPredicate`, in file order. `head`, `skip` and `tail` count over it (`LIMIT`, `OFFSET`, last `n`); there is no mode in which they count physical rows under a filter. The reader-facing explanation, including why physical positioning is `byteRange`'s job alone, is in [row-selection.md](../docs/content/concepts/row-selection.md).
+The **surviving relation** is the rows of the row groups kept by the `RowGroupPredicate`, intersected with the rows matching the `FilterPredicate`, in file order. `head`, `skip` and `tail` count over it (`LIMIT`, `OFFSET`, last `n`); there is no mode in which they count physical rows under a filter. Physical positioning is `byteRange`'s, at row-group granularity, and the column readers' `rowRange`'s, at row granularity. The reader-facing explanation is in [row-selection.md](../docs/content/concepts/row-selection.md).
 
 - **`byteRange`** keeps a row group when its midpoint (first chunk's start plus half the row group's compressed size) falls in `[start, end)`, so disjoint ranges partition a file's row groups. `ParquetFileReader` applies it before the engine, so statistics are asked only of the kept row groups.
 - **`head(n)`** with a filter is the matching-row cap above.
 - **`skip(n)`** without a filter is a physical seek to the row group the offset lands in (see [ROW_READER.md](ROW_READER.md#skip)). With a filter, row-group statistics bound values and not match counts, so there is no seek: the reader is built over the whole kept relation with a matching-row cap of `n + head` (none without `head`) and discards the first `n` matches.
 - **`byteRange` with `skip`/`head`** counts within the kept row groups, so a resume point in a filtered split read is a `(byteRange, logical offset)` pair.
+- **`rowRange(a, b)`** (column readers) bounds the physical rows `[a, b)` of the row groups the `RowGroupPredicate` keeps, in file order, and the filter applies to the rows inside it. Positions are counted before statistics prune a row group, so a filter narrows the range and never shifts it. Its planning and fetches are in [COLUMN_READER.md](COLUMN_READER.md#row-selection) and [FETCH_PLANNING.md](FETCH_PLANNING.md#page-masking).
 
 `build()` rejects these combinations, with `IllegalArgumentException` unless noted:
 
@@ -212,11 +213,12 @@ The **surviving relation** is the rows of the row groups kept by the `RowGroupPr
 | `tail` + `FilterPredicate` | The last `n` matching rows are not known from statistics; this needs a reverse scan or a window over a full forward scan |
 | `tail` + `RowGroupPredicate` | `tail` plans from the total row count, which a row-group filter changes |
 | `tail` + `head`, `tail` + `skip` | Mutually exclusive controls |
+| `rowRange` + `head`, `rowRange` + `skip` (column readers) | The range fixes the first row and the row count itself |
 | `RowGroupPredicate` on a reader over several files, on the row reader and `ColumnReaders` (`UnsupportedOperationException`) | A byte range names positions in one file |
 
-The column readers take a `FilterPredicate` and a `RowGroupPredicate` but no row-count controls.
+The column readers take `head` and `skip` with these meanings, and `rowRange`; they have no `tail`.
 
-Tests: `RowGroupFilterTest`, `PredicatePushDownTest`, `BuilderCombinationTest`.
+Tests: `RowGroupFilterTest`, `PredicatePushDownTest`, `BuilderCombinationTest`, `DifferentialColumnReadTest`.
 
 ## Boundaries
 

@@ -52,6 +52,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - `StructBuilder.setValue` writes a field from a value in the form `getValue` returns, so rows can be copied without switching on field types ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - A filtered `ColumnReader` or `ColumnReaders` returns no batch without rows: `nextBatch()` passes over the batches the filter keeps no row of ([#1815](https://github.com/hardwood-hq/hardwood/issues/1815))
 - The field id of each schema element (`field_id`, used by Iceberg, Delta Lake and DuckLake) is available as `ColumnSchema.fieldId()` and `SchemaNode.fieldId()`. A file written with a schema read from another file keeps the field ids, and `FileSchema.Builder` can set them ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
+- `ColumnReaderBuilder` and `ColumnReadersBuilder` take `head(long)` and `skip(long)`, with the meaning they have on `RowReaderBuilder`, and `rowRange(start, end)`, which reads the rows at physical positions `[start, end)` and, with a filter, the matching rows among them, reading only the row groups that overlap the range ([#433](https://github.com/hardwood-hq/hardwood/issues/433))
 
 **Bug fixes:**
 
