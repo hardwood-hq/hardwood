@@ -1,0 +1,116 @@
+# Plan: a heap quota per HardwoodContext
+
+Tracking issue: #1841. Related: #1842 (direct memory on S3, outside this plan's heap quota).
+
+Hardwood will never cause an `OutOfMemoryError` by itself: everything a `HardwoodContext`
+holds on the heap, across all of its reads, is charged against one quota, and a read whose
+needs do not fit fails with a `ParquetReadException` before it allocates. The application
+keeps the rest of the heap: if its own use plus the quota fits the heap, no file, however
+crafted, and no number of concurrent reads can exhaust it through Hardwood.
+
+## Threat model
+
+A service reads Parquet files it does not trust, possibly several at once on one context. A
+file must not be able to take down the JVM.
+
+| Shape | Bounded today |
+| --- | --- |
+| A page or dictionary declaring a huge size (bomb) | yes: declared sizes are checked against the working-set limit before allocating |
+| Many columns of moderate pages (50 `INT64` columns of 20 MiB pages) | only by the working-set limit, which defaults to the whole heap and trips after the heap is full: `OutOfMemoryError` from 25 columns at 512m |
+| Many concurrent reads, each moderate | no: the working-set limit is per read, so N reads hold up to N heaps |
+| A record spanning many pages; large dictionaries | charged to the working set, so as the second row |
+| Pages decoded ahead of the consumer, the next row group's dictionaries | no: outside the working set (VALUE_DECODE.md, Boundaries) |
+| Huge footers and metadata | yes, bounded at parse (FILE_METADATA.md) |
+| Large S3 ranges | direct memory, #1842 |
+
+The second and third rows are the reason for a quota per context rather than a limit per read.
+
+## Today
+
+| Holder | Bound | Scope |
+| --- | --- | --- |
+| A read's working set W: dictionaries, the largest page's batches per column, one task's buffers | `hardwood.internal.maxWorkingSetBytes`, default the whole heap | per read |
+| Read-ahead R: ranges fetched ahead, decodes and dictionary parses above `DecodeBuffers.RETAINED_BYTES` beside the one the consumer needs, pruning parses | `hardwood.internal.readAheadBytes`, default 25 % of the heap | per context |
+| Buffers each decode thread keeps between tasks | `DecodeBuffers.RETAINED_BYTES` per set, not charged | per context |
+| Pages decoded ahead of the consumer | the look-ahead, in rows, not bytes | per read |
+
+Measured on `yellow_tripdata_2016-01.parquet` (151 MB, one row group, pages of up to 4.2M
+values written by Arrow 7), full row read: the working set charges 381 MiB; the smallest
+heap that reads it is 371 MiB on a context of zero threads and 418 MiB on the default pool.
+Live bytes at the read's peak are 342 MiB on zero threads and 385 MiB on the pool; the pool's
+extra is charged to R. A nested read (`list<int64>`) and a flat read with small pages charge a
+few MiB against 40 to 60 MiB live: the batches decoded ahead of the consumer on the pool, ~48 MB
+by the look-ahead's estimate, and the pages nested cells keep until their batch is published,
+are charged nowhere, since a decode within `DecodeBuffers.RETAINED_BYTES` charges R nothing.
+
+## Target model
+
+One ledger per `HardwoodContext` holding a quota Q, by default 75 % of the maximum heap,
+configurable on the context's builder. Every holder in the table above charges the ledger
+what it holds now: before it allocates, and returning it as it lets go. A page's batches are
+charged as its decode starts and returned batch by batch as each is published; a dictionary
+while a batch holds rows of its chunk; a task's buffers while it runs; a range from its fetch
+until the batches decoded from it are published. Nothing is charged as a high-water mark, so
+the ledger's total tracks what the context holds and is an upper bound of it.
+
+Charges are of two kinds:
+
+- **Needed**: what the consumer's next batch cannot be produced without: each column's pages
+  covering it, their dictionaries, the task decoding them. The decode or fetch that need
+  forces.
+- **Chosen**: what a read holds ahead to keep its consumer fed: ranges fetched ahead, pages
+  decoded ahead, decodes and parses running beside the needed one.
+
+**Reserve.** Each read keeps free in the ledger what need could force next: per column, the
+first page not yet decoded or admitted, and the dictionary pages of a row group the frontier
+enters. Decodes ahead run in key order, so where they stop, the next forced decode is exactly
+that frontier. Its sizes come from the page headers the chunk's scan reads before decodes are
+admitted; a frontier page whose header has not been read counts its compressed size times its
+codec's expansion bound.
+
+**Admission.** A chosen charge starts only where the ledger holds it beside everything charged
+and every read's reserve: `held + charge + reserves <= Q`. Otherwise it waits for a release.
+A needed charge is taken from the read's reserve, so it always fits; a needed charge larger than
+the reserve the read could keep, which only a read alone on the ledger meets, fails the read
+with `ParquetReadException` naming the page, what it needs and the quota. A needed charge never
+waits and nothing is evicted.
+
+Whether a read alone on its context reads or fails then depends on the file and Q: it fails
+only when the pages a batch needs, beside what that batch's rows hold, exceed Q. Decoding ahead
+uses whatever the reserves leave of Q, at every heap size. Concurrent reads share Q, so whether
+one of them fits depends on what the others hold and reserve.
+
+The retained decode buffers are charged as held, so a context whose threads keep large sets
+leaves less of Q to its reads.
+
+## Decisions
+
+1. **Scope:** one quota per `HardwoodContext`. Decided.
+2. **Default:** 75 % of the maximum heap. Decided.
+3. **Needed and chosen charges:** current holdings against one Q, with a reserve per read for
+   what need could force next (Target model). Decided. Rejected: a fixed split of Q between
+   needed and chosen (a file whose pages hold millions of values lost its decode-ahead, ~10 %
+   slower at heaps it fits in), failing or waiting a needed charge that chosen holdings crowd
+   out (timing-dependent, or deadlocking on the read's own read-ahead), and evicting chosen
+   holdings (the reserve keeps the room free instead).
+4. **Public option:** Q only, on the context builder, as bytes (`heapQuota(long)`) or as a
+   share of the maximum heap (`heapQuota(double)`), which follows the heap when `-Xmx` changes;
+   the internal properties `maxWorkingSetBytes` and `readAheadBytes` go. Decided.
+
+## Open
+
+- **Pages decoded through levels.** A nested page's batches depend on its records, which its
+  header does not give; the reserve and charge take an upper bound from its value count.
+
+## Stages
+
+| # | Stage | Gate before the next stage |
+| --- | --- | --- |
+| 0 | An `OutOfMemoryError` on a Hardwood thread reaches the reader's thread instead of hanging the read | done (5f67dfbbd) |
+| 1 | Current charges and the reserve, on the flat path: a page's batches charged from its decode until published, batch by batch; the working set's high-water marks replaced; the reserve per read; decodes ahead admitted by the rule | charges ≥ live bytes (heap dumps of reads paused mid-read; the smallest heap a read runs in also holds the collector's headroom) on the taxi and wide-schema files, pool and zero threads; taxi read time at 680m and 1g as `main` |
+| 2 | The nested path, dictionaries, fetches ahead and retained decode buffers on the ledger; one ledger per context for all reads | the shapes of the threat model under a child JVM: each either reads or fails with `ParquetReadException`, never `OutOfMemoryError`, at heaps from 128m to 1g, including several concurrent reads on one context |
+| 3 | The public option on the context builder, user docs, internal properties removed | docs reviewed |
+| 4 | Performance | flat, nested and 1BRC benchmarks neutral on the container and the N300 |
+
+The PR completing stage 4 folds the end state into VALUE_DECODE.md and READ_PIPELINE.md and
+deletes this plan.
