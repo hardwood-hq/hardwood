@@ -141,14 +141,18 @@ final class ReadDriver {
             }
         }
         if (!closed && !lost) {
-            List<JobScheduler.Job<?>> jobs;
+            // a check of the file the position meets fails the read, which the position then
+            // reaches; a throw starting jobs leaves those it started undispatched, and abandons the
+            // read ([#unlock])
+            JobScheduler.Position at;
             try {
-                jobs = scheduler.start(position.get());
+                at = position.get();
             }
             catch (RuntimeException | Error e) {
                 broken.accept(classified(e));
-                jobs = scheduler.start(position.get());
+                at = position.get();
             }
+            List<JobScheduler.Job<?>> jobs = scheduler.start(at);
             for (JobScheduler.Job<?> job : jobs) {
                 // counted under the lock, so that a close never finds the read idle with a job
                 // started and not yet dispatched
@@ -168,7 +172,8 @@ final class ReadDriver {
     /// Lets go of the lock once every queued result is applied, then releases to R what they
     /// returned, counts their jobs as ended and dispatches what they started; takes the lock again
     /// where a result was queued as it let go. A poll that throws, a bug or an `Error`, still lets
-    /// go of the lock, counts and dispatches before the throw goes on; a release to R that throws,
+    /// go of the lock, counts and dispatches, and abandons the read ([#lost]) before the throw goes
+    /// on to the caller; a release to R that throws,
     /// from another read's waiter, still counts and dispatches. The jobs to dispatch are copied
     /// before the lock is let go, which allocates: where that fails, they never run ([#lost]).
     private void unlock() {
@@ -219,10 +224,14 @@ final class ReadDriver {
                     dispatch(job);
                 }
             }
+            // the read's own bookkeeping threw, which no rule of the read lets happen: it starts no
+            // further job, so it is abandoned, whichever thread met the throw
             if (thrown != null) {
+                lost(thrown);
                 throw thrown;
             }
             if (error != null) {
+                lost(error);
                 throw error;
             }
         } while (!results.isEmpty() && lock.tryLock());
@@ -294,6 +303,11 @@ final class ReadDriver {
     /// running ([#awaitIdle]); what the read still holds in R is returned by the close's
     /// [JobScheduler#releaseAll].
     private void lost(Throwable t) {
+        if (lost) {
+            // abandoned already, with the first failure
+            signalClose();
+            return;
+        }
         lost = true;
         Throwable failure = t;
         try {

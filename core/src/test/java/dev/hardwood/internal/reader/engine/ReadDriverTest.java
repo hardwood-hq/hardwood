@@ -79,7 +79,7 @@ class ReadDriverTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("poll");
 
-        assertThat(applied).containsExactly("result", "broken: poll");
+        assertThat(applied).containsExactly("result", "broken: poll", "abandoned: poll");
         // a close on another thread takes the lock, which the throw let go of
         Thread closer = Thread.ofPlatform().start(throwing::close);
         closer.join();
