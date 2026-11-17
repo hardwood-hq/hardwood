@@ -161,7 +161,9 @@ group reads as the unannotated list it is in structure. A `VARIANT` annotation t
 dropped: it makes the field a list of variants, which the reader does not serve. Like the
 missing width below, a read that projects the group's columns is refused when the reader is built,
 here with `UnsupportedOperationException`, rather than answered as something else, and the
-file's other columns stay readable.
+file's other columns stay readable. A `VARIANT` annotation naming a specification version the
+reader does not implement is kept and refused the same way: the version is recognized, so it is
+not an unknown annotation to drop, and the group's bytes cannot be read under it.
 
 A missing width is not in that class. A `FIXED_LEN_BYTE_ARRAY` without one cannot be decoded
 at all — the width sizes the buffer and spaces the offsets — so `FixedWidthValidator` refuses

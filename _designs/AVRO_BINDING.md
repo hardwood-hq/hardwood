@@ -75,11 +75,13 @@ Values keep Avro's raw representation: temporal values are the stored number, an
 | `REQUIRED` | `T` |
 | `repeated` field outside a `LIST` or `MAP` group ([NESTED_DECODE.md](NESTED_DECODE.md#unannotated-repeated-fields)) | non-null `array` of the required element: the element's own type for a primitive, a `map` for a group that reads as a legacy map, a `record` for any other group |
 
-Synthetic levels (`list`, `key_value`) are collapsed during conversion and appear in no schema or name. Error messages name value paths without them, except the two rejections core raises: the `FIXED_LEN_BYTE_ARRAY` width rejection (`FixedWidthValidator`) and the bare repeated `VARIANT` refusal, which name the full Parquet path.
+Synthetic levels (`list`, `key_value`) are collapsed during conversion and appear in no schema or name. Error messages name value paths without them, except the rejections core raises, which name the full Parquet path: the `FIXED_LEN_BYTE_ARRAY` width rejection (`FixedWidthValidator`), the bare repeated `VARIANT` refusal and the refusal of a `VARIANT` group of an unsupported specification version.
 
 A group that is neither a list, a map nor a Variant is a record, as the row reader serves it as a struct; that includes a group carrying an annotation other than `LIST`, `MAP` or `VARIANT`, such as `FILE`, whose record holds the group's stored children. Conversion also rejects a `LIST` group with no discoverable element and a `MAP` group with no discoverable key.
 
 Core drops any annotation other than `VARIANT` from a bare repeated group when the file is opened, so such a group converts as an unannotated one ([NESTED_DECODE.md](NESTED_DECODE.md#unannotated-repeated-fields)). A projected bare repeated `VARIANT` group is refused with core's own `UnsupportedOperationException` (`BareRepeatedGroups.refuseTouchedVariants`), since conversion meets it before the row reader does; a projection that excludes it converts.
+
+A `VARIANT` group of a specification version other than `1` converts like any other, to the same record, and a projection that includes it is refused when `build()` builds the core row reader, with core's `UnsupportedOperationException` naming the file and the group (`VariantSpecVersions.refuseTouchedUnsupported`); a projection that excludes it reads.
 
 **Map keys.** An Avro map fixes its keys as strings, and materialization reads each key through `PqMap.Entry.getStringKey`. A map whose key is not a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON` is rejected, naming the map's path and the key type. A `UUID` key converts to an Avro string but is rejected too: `getStringKey` refuses a key that is not text (`LogicalAccessorKind.requireText`), so the map would fail on its first row instead of at `build()`. The check covers the projected schema only, so a file with such a map reads through a projection that excludes it.
 
@@ -90,7 +92,7 @@ Core drops any annotation other than `VARIANT` from a bare repeated group when t
 | Rejection | Exception |
 |---|---|
 | `FIXED_LEN_BYTE_ARRAY` with no or a non-positive `type_length` (through core's `FixedWidthValidator`), `LIST` group with no element, `MAP` group with no key | `SchemaIncompatibleException` |
-| Map key that is not a string, projected bare repeated `VARIANT` group, root named after a canonical `fixed` type in use, two siblings with one raw name | `UnsupportedOperationException` |
+| Map key that is not a string, projected bare repeated `VARIANT` group, projected `VARIANT` group of a specification version other than `1` (through core's row reader), root named after a canonical `fixed` type in use, two siblings with one raw name | `UnsupportedOperationException` |
 | A node the name resolver did not name | `IllegalStateException` (a converter defect) |
 
 Tests: `AvroSchemaConverterTest`, `AvroRowReaderTest` (hardwood-avro).

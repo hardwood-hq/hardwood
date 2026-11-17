@@ -115,7 +115,8 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
 
     /// The `VARIANT` annotation, for a group holding a self-describing, semi-structured value.
     ///
-    /// @param specVersion spec version declared by the writer (currently always `1`)
+    /// @param specVersion spec version declared by the writer; the reader reads a Variant group of
+    ///        version `1` only
     static VariantType variant(int specVersion) {
         return new VariantType(specVersion);
     }
@@ -343,7 +344,8 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
     /// Variant spec. Annotates a group whose children are `metadata` (binary) and
     /// `value` (binary), optionally with a `typed_value` sibling for shredded form.
     ///
-    /// @param specVersion spec version declared by the writer (currently always `1`)
+    /// @param specVersion spec version declared by the writer; the reader reads a Variant group of
+    ///        version `1` only
     record VariantType(int specVersion) implements LogicalType {
         public VariantType {
             if (specVersion < 1) {

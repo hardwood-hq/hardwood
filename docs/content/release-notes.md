@@ -61,6 +61,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - A `DATA_PAGE` whose repetition or definition levels are in the deprecated `BIT_PACKED` encoding is read correctly, instead of failing or returning wrong nulls and nesting ([#569](https://github.com/hardwood-hq/hardwood/issues/569))
 - A read of a malformed file fails with `ParquetReadException` naming what is wrong, instead of an `ArrayIndexOutOfBoundsException`, `NullPointerException` or `IllegalStateException`, a stalled read or a wrong answer ([#1715](https://github.com/hardwood-hq/hardwood/issues/1715), [#1685](https://github.com/hardwood-hq/hardwood/issues/1685), [#1630](https://github.com/hardwood-hq/hardwood/issues/1630))
 - A repetition or definition level above its column's maximum fails the read with `ParquetReadException`, instead of reading as a null or a value in no list ([#1685](https://github.com/hardwood-hq/hardwood/issues/1685))
+- A read of a Variant column whose annotation declares a specification version other than 1 fails with `UnsupportedOperationException`, instead of decoding the column as version 1 ([#777](https://github.com/hardwood-hq/hardwood/issues/777))
 
 ## 1.1.0.Beta3 (2026-10-21)
 

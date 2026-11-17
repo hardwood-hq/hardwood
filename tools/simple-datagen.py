@@ -3274,6 +3274,46 @@ print("\nGenerated variant_test.parquet:")
 print("  - 4 rows: BOOLEAN_TRUE, BOOLEAN_FALSE, INT32(42), short string 'hi'")
 print("  - `var` is a VARIANT-annotated group of {metadata, value} binaries")
 
+# The same file with `var` annotated VARIANT(specification_version=2), a version
+# of the Variant specification the reader does not implement (hardwood-hq/hardwood#777).
+pq.write_table(
+    variant_unshredded_table,
+    'core/src/test/resources/variant_spec_version_2_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_spec_version_2_test.parquet', 'var', spec_version=2)
+
+print("\nGenerated variant_spec_version_2_test.parquet:")
+print("  - variant_test.parquet with `var` annotated VARIANT(2)")
+
+# A VARIANT(2) group whose children are not the version-1 shape: a group
+# `header {a: int32}` first, then `payload: binary`, beside `id` 1 and 2.
+variant_v2_shape_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('var', pa.struct([
+        pa.field('header', pa.struct([pa.field('a', pa.int32(), False)]), False),
+        pa.field('payload', pa.binary(), False),
+    ]), True),
+])
+variant_v2_shape_table = pa.table({
+    'id': [1, 2],
+    'var': [{'header': {'a': 1}, 'payload': b'\x01'}, {'header': {'a': 2}, 'payload': b'\x02'}],
+}, schema=variant_v2_shape_schema)
+pq.write_table(
+    variant_v2_shape_table,
+    'core/src/test/resources/variant_spec_version_2_shape_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_spec_version_2_shape_test.parquet', 'var',
+                          spec_version=2)
+
+print("\nGenerated variant_spec_version_2_shape_test.parquet:")
+print("  - `var` annotated VARIANT(2) over children {header {a}, payload}, not the version-1 shape")
+
 # A Variant column that separates the two ways a cell can read as "null": row 2
 # is a null Variant column (the group itself is absent), row 3 carries the
 # Variant null, which is a value. `convert --null-string` applies to the first

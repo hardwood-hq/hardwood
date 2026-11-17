@@ -18,6 +18,7 @@ import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
+import dev.hardwood.internal.schema.VariantSpecVersions;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.ConvertedType;
@@ -367,8 +368,12 @@ public class FileSchema {
                         groupChildren,
                         defLevel,
                         repLevel);
-                if (groupNode.isVariant()) {
-                    validateVariantGroup(groupNode);
+                if (groupNode.logicalType() instanceof LogicalType.VariantType variant) {
+                    // Only the shape of the version the reader implements is known; a read of a
+                    // group of another version is refused by VariantSpecVersions.
+                    if (variant.specVersion() == VariantSpecVersions.SUPPORTED) {
+                        validateVariantGroup(groupNode);
+                    }
                 }
                 else if (groupNode.isFile()) {
                     FileReferences.validateGroup(groupNode, String.join(".", currentPath));
