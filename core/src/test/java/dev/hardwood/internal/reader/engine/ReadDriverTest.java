@@ -34,7 +34,7 @@ class ReadDriverTest {
     private final HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(0, fetches::add);
     private final ReadQueue queue = new ReadQueue(context);
     private final ReadDriver driver = new ReadDriver(context, queue, Long.MAX_VALUE, () -> ANYWHERE,
-            t -> applied.add("broken: " + t));
+            t -> applied.add("broken: " + t), t -> applied.add("abandoned: " + t));
 
     @AfterEach
     void closeContext() {
@@ -73,7 +73,7 @@ class ReadDriverTest {
     void aPollThatKeepsThrowingLeavesTheLockFree() throws InterruptedException {
         ReadDriver throwing = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
             throw new IllegalStateException("poll");
-        }, t -> applied.add("broken: " + t.getMessage()));
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
 
         assertThatThrownBy(() -> throwing.update(() -> applied.add("result")))
                 .isInstanceOf(IllegalStateException.class)
@@ -83,6 +83,34 @@ class ReadDriverTest {
         // a close on another thread takes the lock, which the throw let go of
         Thread closer = Thread.ofPlatform().start(throwing::close);
         closer.join();
+    }
+
+    /// A job's end whose application throws past the driver's own handling, as an
+    /// `OutOfMemoryError` does where the heap is exhausted, abandons the read on the job's thread
+    /// rather than escaping it: the thread survives, the read starts nothing further, and a close
+    /// does not wait for the job.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aJobWhoseEndThrowsAbandonsTheRead() {
+        boolean[] pollThrows = { false };
+        ReadDriver throwing = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
+            if (pollThrows[0]) {
+                throw new OutOfMemoryError("poll");
+            }
+            return ANYWHERE;
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+        JobScheduler s = throwing.scheduler();
+        JobScheduler.Job<?> next = job("next", 20, 0, JobScheduler.Kind.FETCH, null, () -> {
+        });
+        JobScheduler.Job<?> fetch = job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> s.add(next));
+        throwing.update(() -> s.add(fetch));
+        pollThrows[0] = true;
+
+        fetches.poll().run();
+
+        assertThat(applied).containsExactly("fetch", "broken: poll", "abandoned: poll");
+        assertThat(fetches).isEmpty();
+        throwing.close();
     }
 
     /// A result that throws fails the read with what it threw, classified as every failure of a

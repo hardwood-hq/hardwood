@@ -103,7 +103,7 @@ public final class ReadEngine implements Closeable {
         }
         this.exchanges = List.copyOf(started);
         driver = new ReadDriver(context, readQueue, fetchAheadBytes(),
-                this::reconcile, t -> readFailure.failAt(0, t));
+                this::reconcile, t -> readFailure.failAt(0, t), this::abandon);
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
@@ -140,6 +140,15 @@ public final class ReadEngine implements Closeable {
     static long fetchAheadBytes() {
         return InternalProperty.longValue(FETCH_AHEAD_BYTES_PROPERTY, DEFAULT_FETCH_AHEAD_BYTES, 0,
                 "a non-negative byte count");
+    }
+
+    /// Ends every column's stream with `t` at once, from any thread and without the read's lock:
+    /// the driver's way out when reporting a failure under the lock has itself failed
+    /// ([BatchExchange#abandon]).
+    private void abandon(Throwable t) {
+        for (int c = 0; c < exchanges.size(); c++) {
+            exchanges.get(c).abandon(t);
+        }
     }
 
     /// Each decoded column's exchange, in decoded order.

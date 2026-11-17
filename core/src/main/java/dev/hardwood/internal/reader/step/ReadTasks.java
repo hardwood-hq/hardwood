@@ -30,6 +30,9 @@ import java.util.function.BooleanSupplier;
 /// look and its park. Any number of threads may wait at once.
 public final class ReadTasks {
 
+    /// The longest a thread parks before it looks again without a signal ([#park]).
+    private static final long PARK_BOUND_NANOS = 500_000_000L;
+
     private final AtomicInteger count = new AtomicInteger();
     private final AtomicLong signals = new AtomicLong();
     private final Set<Thread> parked = ConcurrentHashMap.newKeySet();
@@ -72,13 +75,15 @@ public final class ReadTasks {
     }
 
     /// Parks the calling thread unless a signal came after `seen`. Returns on a signal, an unpark
-    /// or an interrupt, and may return for no reason, so the caller looks again.
+    /// or an interrupt, and may return for no reason, so the caller looks again. Returns after
+    /// [#PARK_BOUND_NANOS] at the latest: a signal sent with the heap exhausted, from a read that
+    /// lost a job's end, counts but may fail to unpark.
     public void park(long seen) {
         Thread current = Thread.currentThread();
         parked.add(current);
         try {
             if (signals.get() == seen) {
-                LockSupport.park(this);
+                LockSupport.parkNanos(this, PARK_BOUND_NANOS);
             }
         }
         finally {

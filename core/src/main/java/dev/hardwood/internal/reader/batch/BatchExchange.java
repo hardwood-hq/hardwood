@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -57,6 +58,10 @@ public class BatchExchange<B> {
     /// left to succeed or not.
     private static final Object END_OF_STREAM = new Object();
 
+    /// How long a poll waiting on a pool's read goes without looking at whether the read was
+    /// abandoned ([#abandon]), whose wake-up is not guaranteed.
+    private static final long ABANDONED_CHECK_MILLIS = 500;
+
     private final BlockingQueue<Object> readyQueue;
     private final BlockingQueue<B> freeQueue;
     private final Supplier<B> batchFactory;
@@ -70,6 +75,9 @@ public class BatchExchange<B> {
     private final AtomicLong readyRows = new AtomicLong();
 
     private final AtomicReference<Throwable> error = new AtomicReference<>();
+    /// The failure the read was abandoned with ([#abandon]), raised ahead of every batch not yet
+    /// taken; `null` for none.
+    private volatile Throwable abandoned;
     private volatile boolean finished;
     /// Run on the consumer's thread after it takes a batch, for a column whose [#tryPublish]
     /// found no room; `null` for none.
@@ -319,6 +327,27 @@ public class BatchExchange<B> {
         finish();
     }
 
+    /// Fails the stream with `t` where the read cannot report it through [#signalError]: a thread
+    /// of the read met `t`, such as an `OutOfMemoryError` with the heap exhausted, while reporting
+    /// a failure. The failure is a field write, which neither allocates nor links code: [#poll()]
+    /// raises `t` before it returns a further batch, and a poll waiting on a pool's read looks at
+    /// the field at least every [#ABANDONED_CHECK_MILLIS]. Offering [#END_OF_STREAM], which wakes
+    /// such a poll at once, is only tried, since it can allocate; the flag [#finish()] sets is left
+    /// alone, as a stream that ends with no failure recorded reads as complete. [#signalError] is
+    /// not used: its atomic update, run for the first time, links its call site, which allocates.
+    public void abandon(Throwable t) {
+        if (abandoned == null) {
+            abandoned = t;
+        }
+        try {
+            readyQueue.offer(END_OF_STREAM);
+            signalQueue();
+        }
+        catch (Throwable ignored) {
+            // the field is what fails the stream; the offer only wakes a waiting poll sooner
+        }
+    }
+
     // ==================== Consumer Side ====================
 
     /// Polls for the next batch. Returns the batch if available, or `null` if
@@ -337,6 +366,7 @@ public class BatchExchange<B> {
     /// because it is only read once a poll has come back empty.
     @SuppressWarnings("unchecked")
     public B poll() throws InterruptedException, IOException {
+        throwIfAbandoned();
         Object batch = taken(readyQueue.poll());
         if (batch == END_OF_STREAM) {
             checkError();
@@ -357,7 +387,7 @@ public class BatchExchange<B> {
         BatchWaitEvent event = new BatchWaitEvent();
         event.begin();
         try {
-            batch = taken(readyQueue.take());
+            batch = taken(awaitBatch());
             if (batch == END_OF_STREAM) {
                 checkError();
                 return null;
@@ -380,6 +410,7 @@ public class BatchExchange<B> {
     @SuppressWarnings("unchecked")
     private B drive() throws InterruptedException, IOException {
         while (true) {
+            throwIfAbandoned();
             long seen = queue.tasks().signals();
             Object batch = taken(readyQueue.poll());
             if (batch == END_OF_STREAM) {
@@ -415,6 +446,31 @@ public class BatchExchange<B> {
                 throw new InterruptedException();
             }
         }
+    }
+
+    /// Takes the next item of the ready queue, waiting for one, and raises the failure the read
+    /// was abandoned with as soon as it is set, whether or not an item arrives.
+    private Object awaitBatch() throws InterruptedException {
+        Object batch;
+        while ((batch = readyQueue.poll(ABANDONED_CHECK_MILLIS, TimeUnit.MILLISECONDS)) == null) {
+            throwIfAbandoned();
+        }
+        return batch;
+    }
+
+    /// Raises the failure the read was abandoned with ([#abandon]), if any.
+    private void throwIfAbandoned() {
+        Throwable t = abandoned;
+        if (t == null) {
+            return;
+        }
+        if (t instanceof Error e) {
+            throw e;
+        }
+        if (t instanceof RuntimeException e) {
+            throw e;
+        }
+        throw new IllegalStateException("Read of column '" + columnName + "' abandoned", t);
     }
 
     /// The sentinel read as nothing, so that a queue holding only it reads as an empty one.
@@ -467,6 +523,7 @@ public class BatchExchange<B> {
     /// `OutOfMemoryError` reported as a `RuntimeException` is catchable by handlers that must never
     /// see it.
     public void checkError() throws IOException {
+        throwIfAbandoned();
         Throwable t = error.get();
         if (t != null) {
             if (t instanceof IOException io) {

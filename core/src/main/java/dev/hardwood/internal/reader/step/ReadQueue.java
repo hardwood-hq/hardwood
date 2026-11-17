@@ -9,9 +9,7 @@ package dev.hardwood.internal.reader.step;
 
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.function.Consumer;
 
-import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.DecodeExecutor;
 import dev.hardwood.internal.HardwoodContextImpl;
 
@@ -42,12 +40,12 @@ public final class ReadQueue {
         return tasks;
     }
 
-    /// Queues a job, at the tail, to run with a set of the context's decode buffers on the
-    /// thread that takes it.
+    /// Queues a job, at the tail, to run on the thread that takes it; a job that decodes takes a
+    /// set of the context's decode buffers with [HardwoodContextImpl#runInPlace].
     ///
     /// @throws RejectedExecutionException if the context is closed, as its pool would refuse it
-    public void executePage(Consumer<DecodeBuffers> task) {
-        addLast(() -> context.runInPlace(task));
+    public void execute(Runnable task) {
+        addLast(task);
     }
 
     private void addLast(Runnable task) {

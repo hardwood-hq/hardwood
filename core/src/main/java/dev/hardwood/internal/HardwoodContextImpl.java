@@ -227,9 +227,17 @@ public class HardwoodContextImpl implements HardwoodContext {
         decodeExecutor.execute(task);
     }
 
-    /// Runs `task` on the calling thread, with a set of the context's decode buffers: a page task a
-    /// read on a context without a pool runs on the thread driving it
-    /// ([dev.hardwood.internal.reader.step.ReadQueue]).
+    /// Runs `task` on the context's pool without a set of decode buffers; a task that decodes
+    /// takes one with [#runInPlace].
+    ///
+    /// @throws RejectedExecutionException if the context is closed
+    public void execute(Runnable task) {
+        decodeExecutor.execute(task);
+    }
+
+    /// Runs `task` on the calling thread, with a set of the context's decode buffers: a page task
+    /// of a read, run by a thread of the pool or, on a context without one, by the thread driving
+    /// the read ([dev.hardwood.internal.reader.step.ReadQueue]).
     public void runInPlace(Consumer<DecodeBuffers> task) {
         decodeExecutor.runInPlace(task);
     }

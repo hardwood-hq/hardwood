@@ -58,8 +58,16 @@ public final class DecodeExecutor {
         pool().execute(() -> withBuffers(task));
     }
 
-    /// Runs `task` on the calling thread with a set of buffers: a page task of a read on a context
-    /// without a pool, run by the thread driving the read.
+    /// Runs `task` on the pool without a set of buffers; a task that decodes takes one with
+    /// [#runInPlace], inside a frame of its own that sees that fail.
+    ///
+    /// @throws RejectedExecutionException if the pool is shut down
+    public void execute(Runnable task) {
+        pool().execute(task);
+    }
+
+    /// Runs `task` on the calling thread with a set of buffers: a page task of a read, run by a
+    /// thread of the pool or, on a context without one, by the thread driving the read.
     public void runInPlace(Consumer<DecodeBuffers> task) {
         withBuffers(task);
     }

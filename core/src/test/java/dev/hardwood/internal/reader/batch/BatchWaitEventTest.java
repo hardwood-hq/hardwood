@@ -47,7 +47,7 @@ class BatchWaitEventTest extends AbstractJfrRecorderTest {
         // Published only once the consumer waits in the empty ready queue; nothing else takes the
         // queue's lock before the publish, so a waiting consumer is one inside poll()'s wait
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (consumer.getState() != Thread.State.WAITING) {
+        while (consumer.getState() != Thread.State.TIMED_WAITING) {
             assertThat(System.nanoTime() - deadline).as("the consumer waits for a batch").isNegative();
             Thread.sleep(1);
         }
