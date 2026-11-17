@@ -26,9 +26,9 @@ whether to fix their code or stop trusting the file.
 | `IOException` | the bytes did not arrive | yes |
 | `StaleMetadataException` | an `IOException`: the footer a `MetadataSource` supplied does not describe the file; the file is intact | yes, once the source reads the footer afresh |
 | `ParquetReadException` | they arrived and are not valid Parquet | no |
-| `SchemaIncompatibleException` | a `ParquetReadException`: schemas that cannot be reconciled across a multi-file read, or a footer disagreeing with itself | no |
+| `SchemaIncompatibleException` | a `ParquetReadException`: a schema that does not fit the read, across files or within one footer | no |
 | `ParquetWriteException` | the writer could not produce the file, and neither the caller nor the destination is at fault | no |
-| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it: encryption, an absent codec library, an unimplemented encoding, a chunk in another file, a column chunk read without an OffsetIndex or a range-backed file over 2 GB | no |
+| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it | no |
 | `IllegalArgumentException`, `NullPointerException`, `IndexOutOfBoundsException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held, or the writer was handed input it does not accept | no |
 | `VariantTypeException` | unchecked: a Variant `as*` accessor called on a value of another type tag | no |
 

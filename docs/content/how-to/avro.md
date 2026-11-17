@@ -99,7 +99,7 @@ A `repeated` field outside a `LIST` or `MAP` group is a required list of require
 
 A group carrying an annotation other than `LIST`, `MAP` or `VARIANT`, such as a `LIST` element group annotated `MAP_KEY_VALUE`, maps to an Avro record of its fields.
 
-Building an `AvroRowReader` fails with an error when a projected `LIST` group has no element field, a projected `MAP` group has no key field, or a projected `FIXED_LEN_BYTE_ARRAY` column declares no positive type length.
+Building an `AvroRowReader` fails with an error when a projected group or column is missing something its type needs, such as a `LIST` group with no element field. A projection that leaves that group or column out reads normally.
 
 ## Lifecycle
 
