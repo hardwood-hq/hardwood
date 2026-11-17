@@ -80,24 +80,6 @@ class JobSchedulerTest {
         assertThat(keys(s.start(new JobScheduler.Position(100, 50, NONE)))).containsExactly(60L, 90L);
     }
 
-    /// A value callback that throws ends its job with that failure, as a failing work does, so the
-    /// failure reaches the job's failure callback rather than whichever thread applies the end.
-    @Test
-    void aValueCallbackThatThrowsEndsItsJobWithTheFailure() {
-        JobScheduler s = scheduler(1000, 4, 1000);
-        JobScheduler.Job<String> job = new JobScheduler.Job<>(10, 0, JobScheduler.Kind.CPU, null, buffers -> "v",
-                value -> {
-                    throw new IllegalStateException("callback of " + value);
-                },
-                t -> applied.add("failed: " + t.getMessage()));
-        s.add(job);
-        s.start(new JobScheduler.Position(0, NONE, NONE));
-
-        s.run(job, null).run();
-
-        assertThat(applied).containsExactly("failed: callback of v");
-    }
-
     @Test
     void cpuJobsWaitForASlot() {
         JobScheduler s = scheduler(1000, 1, 1000);

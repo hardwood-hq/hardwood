@@ -326,7 +326,7 @@ final class CellWriter {
     /// Stops `column`'s placement at `failure`: its open cell is sealed where the plan lets it
     /// close there, else abandoned, which moves the failure to it.
     private void stop(int column, Throwable failure) {
-        BatchCell<?> abandoned = placers.get(column).sealOpenCell(failure, columns.schema(column).fieldPath().toString());
+        BatchCell<?> abandoned = placers.get(column).sealOpenCell(failure);
         if (abandoned != null) {
             readFailure.failAt(abandoned.firstRow(), column, failure);
         }
