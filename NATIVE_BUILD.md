@@ -67,6 +67,8 @@ The solution differs by codec:
 
   **`HARDWOOD_LIB_PATH`** names a directory of native libraries to load instead of the embedded ones. A library is matched by its base name, with or without version suffix or `lib` prefix (e.g. `libzstd-jni-1.5.7-9.so`, `snappyjava.dll`); a library missing there is loaded from the embedded copy. The Docker image extracts the libraries once at image build time into `/usr/local/lib/hardwood/` and sets `HARDWOOD_LIB_PATH` to it, so containers need no writable, executable directory.
 
+- **zstd-jni's Java binding** — zstd-jni is a multi-release JAR: its `META-INF/versions/22/` classes call libzstd through FFM rather than JNI, and native-image supports an FFM downcall only with a registration of its signature. The image therefore uses the JNI binding. The `unpack-zstd-jni-classes` execution unpacks zstd-jni's base classes, without `META-INF/versions/`, into `target/zstd-jni-classes`; the `native-maven-plugin` configuration excludes the zstd-jni JAR from the image classpath and adds that directory with `-cp`. JNI needs no metadata for the zstd-jni calls Hardwood makes. `NativeCompressionCodecIT` covers ZSTD decompression in the binary.
+
 - **libdeflate (GZIP acceleration)** — libdeflate uses the Java 22+ Foreign Function & Memory (FFM) API, which relies on runtime downcall handles that cannot be created inside a native image. `LibdeflateLoader` detects the native image context via the `org.graalvm.nativeimage.imagecode` system property and returns `isAvailable() = false`, dead-code-eliminating the entire FFM path. The `--initialize-at-build-time` directive in `core`'s `native-image.properties` ensures GraalVM constant-folds this check at image build time.
 
 ### Build arguments (`native-maven-plugin` `buildArgs` in `cli/pom.xml`)
@@ -76,6 +78,7 @@ The solution differs by codec:
 | `-march=compatibility` | Produces a binary targeting a generic x86\_64/arm64 baseline rather than the build machine's specific CPU generation. Without this, the binary may crash with `SIGILL` on older hardware. |
 | `--gc=serial` | Replaces the default G1 garbage collector with the serial GC, removing GC infrastructure code from the binary. Appropriate for a short-lived CLI process and meaningfully reduces binary size. |
 | `-J--enable-native-access=ALL-UNNAMED` | Passed to the JVM _running the Mandrel build process_ (not the native image itself). Required because GraalVM's image builder uses native access internally on JDK 21+. |
+| `-cp target/zstd-jni-classes` | Supplies zstd-jni's classes without its Java 22+ FFM binding, in place of the excluded zstd-jni JAR (see above). |
 
 ### Blocked certificates
 
