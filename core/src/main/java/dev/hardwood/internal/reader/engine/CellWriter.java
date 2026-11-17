@@ -17,6 +17,7 @@ import java.util.function.Supplier;
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.reader.batch.AllocationTally;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BitmapWords;
@@ -333,8 +334,10 @@ final class CellWriter {
     }
 
     /// Decodes a placed flat page, `page` where it is read from its bytes, and fills its segments,
-    /// on a job; returns the cells whose last fill it was, completed.
-    List<Cell> decode(int column, PageTask task, Supplier<DataPage> page, Dictionary dictionary, DecodeBuffers buffers)
+    /// on a job; returns the cells whose last fill it was, completed. `tally` counts what the
+    /// batch holders' arrays gain or lose.
+    List<Cell> decode(int column, PageTask task, Supplier<DataPage> page, Dictionary dictionary, DecodeBuffers buffers,
+                      AllocationTally tally)
             throws Exception {
         PageDecoder.LevelScratch levels = FlatFill.scratch(buffers);
         try {
@@ -353,17 +356,17 @@ final class CellWriter {
             List<Cell> completed = new ArrayList<>(1);
             for (Segment segment : task.segments()) {
                 Cell cell = segment.cell();
-                FlatBatch batch = cell.allocate(exchange(column), columns.schema(column));
+                FlatBatch batch = cell.allocate(exchange(column), columns.schema(column), tally);
                 if (binary) {
-                    BinaryFill.fill(segment, bytes, (BinaryBatchValues) batch.values, maxDefinitionLevel);
+                    BinaryFill.fill(segment, bytes, (BinaryBatchValues) batch.values, maxDefinitionLevel, tally);
                 }
                 else {
-                    FlatFill.fill(segment, fixed, batch.values, maxDefinitionLevel);
+                    FlatFill.fill(segment, fixed, batch.values, maxDefinitionLevel, tally);
                 }
                 FlatFill.copyDefinitionLevels(segment, binary ? bytes.definitionLevels() : fixed.definitionLevels(),
                         batch.definitionLevels, maxDefinitionLevel);
                 if (cell.pending().decrementAndGet() == 0) {
-                    complete(column, cell);
+                    complete(column, cell, tally);
                     completed.add(cell);
                 }
             }
@@ -403,25 +406,39 @@ final class CellWriter {
         }
     }
 
+    /// Whether `column`'s batches carry the matches of a filter fragment.
+    boolean filtered(int column) {
+        return filter(column) != null;
+    }
+
+    private ColumnBatchMatcher filter(int column) {
+        return filters != null && column < filters.length ? filters[column] : null;
+    }
+
     @SuppressWarnings("unchecked")
     private BatchExchange<FlatBatch> exchange(int column) {
         return (BatchExchange<FlatBatch>) exchanges.get(column);
     }
 
-    /// Completes the column's batch of a flat cell once its last fill and its seal are both done.
-    private void complete(int column, Cell cell) {
-        FlatBatch batch = cell.allocate(exchange(column), columns.schema(column));
+    /// Completes the column's batch of a flat cell once its last fill and its seal are both done;
+    /// `tally` counts what the batch's arrays gain or lose.
+    private void complete(int column, Cell cell, AllocationTally tally) {
+        FlatBatch batch = cell.allocate(exchange(column), columns.schema(column), tally);
         int records = cell.records();
         batch.recordCount = records;
         FlatFill.backfillValidity(cell);
         long[] validity = cell.validity();
         int words = (records + 63) >>> 6;
+        // the cell's validity was counted as a fill installed it; the batch's last one, if any, goes
+        long before = batch.heldBytes + cell.validityBytes();
         batch.validity = validity == null || validity.length == words ? validity : Arrays.copyOf(validity, words);
+        batch.heldBytes = batch.ownArrayBytes();
+        tally.add(batch.heldBytes - before);
         batch.fileName = cell.fileName();
         batch.filterAlwaysMatches = cell.alwaysMatches();
-        ColumnBatchMatcher filter = filters != null && column < filters.length ? filters[column] : null;
+        ColumnBatchMatcher filter = filter(column);
         if (batch.values instanceof BinaryBatchValues values) {
-            BinaryFill.finish(cell, values, views[column]);
+            BinaryFill.finish(cell, values, views[column], tally);
         }
         if (filter != null) {
             testFilter(filter, batch, records);
@@ -467,7 +484,9 @@ final class CellWriter {
         @Override
         public void sealed(Cell cell) {
             if (cell.pending().decrementAndGet() == 0) {
-                complete(column, cell);
+                AllocationTally tally = new AllocationTally();
+                complete(column, cell, tally);
+                scheduler.settleHeld(tally.bytes());
                 publisher.completed(column, cell);
             }
         }

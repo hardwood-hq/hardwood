@@ -36,9 +36,6 @@ public final class NestedBatch {
     public int[] definitionLevels;
     public int[] repetitionLevels;
     public int[] recordOffsets;
-    /// The bytes the read charged for the batch while it held it, returned to its ledger once the
-    /// consumer takes the batch ([BatchExchange#setTakenListener]); `0` for none.
-    public long heldBytes;
 
     // File name of the originating file (set by the cell's fill before publish)
     public String fileName;

@@ -71,7 +71,7 @@ public final class InPlacePageReads {
             return ids;
         }
         BinaryBatchValues chunks = new BinaryBatchValues(size);
-        values.copyPlain(0, size, starts, ends, bufferIds, 0, new PlainBytes(chunks, values.bytes(0, size)));
+        values.copyPlain(0, size, starts, ends, bufferIds, 0, new PlainBytes(chunks, values.bytes(0, size), null));
         return chunks;
     }
 }

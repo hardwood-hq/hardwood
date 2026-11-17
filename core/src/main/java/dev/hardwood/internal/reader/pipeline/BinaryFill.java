@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.pipeline;
 
 import java.util.Arrays;
 
+import dev.hardwood.internal.reader.batch.AllocationTally;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.batch.PlainBytes;
@@ -49,24 +50,26 @@ public final class BinaryFill implements FlatFill.Run {
     /// Fills `segment` from `values` into the cell's batch `out`.
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
-    public static void fill(Segment segment, BinaryPageValues values, BinaryBatchValues out, int maxDefinitionLevel) {
-        FlatFill.ValidityWriter validity = new FlatFill.ValidityWriter(segment, maxDefinitionLevel);
+    /// @param tally counts the arrays the segment creates in `out` and its cell
+    public static void fill(Segment segment, BinaryPageValues values, BinaryBatchValues out, int maxDefinitionLevel,
+                            AllocationTally tally) {
+        FlatFill.ValidityWriter validity = new FlatFill.ValidityWriter(segment, maxDefinitionLevel, tally);
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         if (dictionary != null) {
-            int[] ids = out.installDictionary(dictionary);
+            int[] ids = out.installDictionary(dictionary, tally);
             // Only a null writes a view: an all-present page leaves the views to the cell's completion
             boolean nulls = !values.allPresent();
             if (nulls) {
-                out.installViews();
+                out.installViews(tally);
             }
             FlatFill.forEachRun(segment, new BinaryFill(values, validity, nulls ? out.fillStarts() : null,
                     nulls ? out.fillEnds() : null, nulls ? out.fillBufferIds() : null, ids, null));
             segment.wroteIds = true;
             return;
         }
-        out.installViews();
+        out.installViews(tally);
         FlatFill.forEachRun(segment, new BinaryFill(values, validity, out.fillStarts(), out.fillEnds(),
-                out.fillBufferIds(), null, new PlainBytes(out, measure(segment, values))));
+                out.fillBufferIds(), null, new PlainBytes(out, measure(segment, values), tally)));
     }
 
     /// The bytes of the segment's plain values.
@@ -90,7 +93,9 @@ public final class BinaryFill implements FlatFill.Run {
     /// Finishes a completed cell's batch: in a batch with entry ids, the values of the segments
     /// that wrote none have none, the ids are complete when every segment wrote them, and `demand`
     /// decides whether the batch gets its window now ([BinaryBatchValues#finishFill]).
-    public static void finish(Cell cell, BinaryBatchValues out, BinaryBatchValues.ViewDemand demand) {
+    /// `tally` counts the window it builds.
+    public static void finish(Cell cell, BinaryBatchValues out, BinaryBatchValues.ViewDemand demand,
+                              AllocationTally tally) {
         if (out.dictionary != null) {
             boolean complete = true;
             for (Segment segment : cell.segments()) {
@@ -101,6 +106,6 @@ public final class BinaryFill implements FlatFill.Run {
             }
             out.idsComplete = complete;
         }
-        out.finishFill(cell.records(), demand);
+        out.finishFill(cell.records(), demand, tally);
     }
 }

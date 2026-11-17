@@ -33,27 +33,41 @@ public final class FlatBatch {
     /// at a file or by a row cap, can hold far fewer rows than its arrays have room for, and
     /// a detaching exchange limits its ready queue by this so that the limit bounds memory.
     public int capacity;
-    /// The bytes the read charged for the batch while it held it, returned to its ledger once the
-    /// consumer takes the batch ([BatchExchange#setTakenListener]); `0` for none.
+    /// The bytes of its own arrays the read charged, [#ownArrayBytes()] as its cell last
+    /// measured them; a binary batch's values count theirs ([BinaryBatchValues#heldBytes()]).
     public long heldBytes;
 
-    /// The bytes of the arrays it holds: its values, definition levels and matches. Its validity,
-    /// which it takes from its cell only as the cell completes, is not counted.
-    public long arrayBytes() {
-        long bytes = switch (values) {
-            case null -> 0;
-            case int[] a -> (long) a.length * Integer.BYTES;
-            case long[] a -> (long) a.length * Long.BYTES;
-            case double[] a -> (long) a.length * Double.BYTES;
-            case float[] a -> (long) a.length * Float.BYTES;
-            case boolean[] a -> a.length;
-            case BinaryBatchValues binary -> binary.arrayBytes();
-            default -> throw new IllegalStateException("Unexpected batch values: " + values.getClass());
-        };
+    /// The bytes the read charged for the batch's arrays, returned as the batch leaves the read.
+    public long chargedBytes() {
+        return values instanceof BinaryBatchValues binary ? heldBytes + binary.heldBytes() : heldBytes;
+    }
+
+    /// The bytes of its own arrays: its values where they are primitive, its definition levels,
+    /// matches and validity.
+    public long ownArrayBytes() {
+        long bytes = 0;
+        Object v = values;
+        if (v instanceof long[] a) {
+            bytes = (long) a.length * Long.BYTES;
+        }
+        else if (v instanceof int[] a) {
+            bytes = (long) a.length * Integer.BYTES;
+        }
+        else if (v instanceof double[] a) {
+            bytes = (long) a.length * Double.BYTES;
+        }
+        else if (v instanceof float[] a) {
+            bytes = (long) a.length * Float.BYTES;
+        }
+        else if (v instanceof boolean[] a) {
+            bytes = a.length;
+        }
         bytes += definitionLevels == null ? 0 : (long) definitionLevels.length * Integer.BYTES;
         bytes += matches == null ? 0 : (long) matches.length * Long.BYTES;
+        bytes += validity == null ? 0 : (long) validity.length * Long.BYTES;
         return bytes;
     }
+
     public String fileName;
     /// Per-batch matches mask, populated by
     /// [dev.hardwood.internal.predicate.ColumnBatchMatcher] on the task that completes the

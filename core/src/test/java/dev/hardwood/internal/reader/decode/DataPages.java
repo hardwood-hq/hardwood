@@ -387,7 +387,7 @@ public final class DataPages {
             bytes += cursor.bytes(r, Math.min(r + keep, size));
         }
         BinaryBatchValues chunks = new BinaryBatchValues(size);
-        PlainBytes dest = new PlainBytes(chunks, bytes);
+        PlainBytes dest = new PlainBytes(chunks, bytes, null);
         for (int r = 0; r < size; r += keep + drop) {
             cursor.copyPlain(r, Math.min(keep, size - r), starts, ends, bufferIds, r, dest);
         }
@@ -426,7 +426,7 @@ public final class DataPages {
         }
         BinaryBatchValues chunks = new BinaryBatchValues(length);
         int[] bufferIds = new int[length];
-        cursor.copyPlain(from, length, starts, ends, bufferIds, 0, new PlainBytes(chunks, cursor.bytes(from, cursor.size())));
+        cursor.copyPlain(from, length, starts, ends, bufferIds, 0, new PlainBytes(chunks, cursor.bytes(from, cursor.size()), null));
         byte[][] buffers = chunks.buffers();
         int[] definitionLevels = cursor.definitionLevels();
         for (int i = 0; i < length; i++) {

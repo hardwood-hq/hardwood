@@ -70,12 +70,12 @@ class PlainBytesTest {
                 data, 0, data.length, new PageDecoder.LevelScratch());
         BinaryBatchValues out = new BinaryBatchValues(VALUES);
         out.prepareForFill();
-        out.installViews();
-        PlainBytes dest = new PlainBytes(out, (long) VALUES * WIDTH);
+        out.installViews(null);
+        PlainBytes dest = new PlainBytes(out, (long) VALUES * WIDTH, null);
         int half = VALUES / 2;
         page.cursor().copyPlain(0, half, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), 0, dest);
         page.cursor().copyPlain(half, VALUES - half, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), half, dest);
-        out.finishFill(VALUES, new BinaryBatchValues.ViewDemand());
+        out.finishFill(VALUES, new BinaryBatchValues.ViewDemand(), null);
 
         assertValues(out, VALUES);
         assertThat(out.bufferCount()).isEqualTo(1 + 2);
@@ -170,21 +170,21 @@ class PlainBytesTest {
     private static BinaryBatchValues copy(BinaryPageValues page, int values) {
         BinaryBatchValues out = new BinaryBatchValues(values);
         out.prepareForFill();
-        out.installViews();
+        out.installViews(null);
         page.copyPlain(0, values, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), 0,
-                new PlainBytes(out, page.bytes(0, values)));
-        out.finishFill(values, new BinaryBatchValues.ViewDemand());
+                new PlainBytes(out, page.bytes(0, values), null));
+        out.finishFill(values, new BinaryBatchValues.ViewDemand(), null);
         return out;
     }
 
     private static void fill(BinaryBatchValues values, String... entries) {
         values.prepareForFill();
-        values.installViews();
+        values.installViews(null);
         long total = 0;
         for (String entry : entries) {
             total += entry.length();
         }
-        PlainBytes dest = new PlainBytes(values, total);
+        PlainBytes dest = new PlainBytes(values, total, null);
         for (int i = 0; i < entries.length; i++) {
             byte[] bytes = entries[i].getBytes(StandardCharsets.UTF_8);
             System.arraycopy(bytes, 0, dest.room(bytes.length), dest.position(), bytes.length);
@@ -193,7 +193,7 @@ class PlainBytesTest {
             values.fillEnds()[i] = dest.position() + bytes.length;
             dest.advance(bytes.length);
         }
-        values.finishFill(entries.length, new BinaryBatchValues.ViewDemand());
+        values.finishFill(entries.length, new BinaryBatchValues.ViewDemand(), null);
     }
 
     private static String string(BinaryBatchValues values, int i) {

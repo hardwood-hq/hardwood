@@ -18,6 +18,7 @@ import java.util.function.IntToLongFunction;
 import java.util.stream.Stream;
 
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.reader.batch.AllocationTally;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 
 /// Decides which ready job of a read starts, and knows nothing of Parquet. Runs under the
@@ -62,9 +63,10 @@ final class JobScheduler {
 
     /// A job: `cost` bytes, taken by `charge` as it starts, then `work` outside the lock; as it
     /// ends, under the lock, `onValue` takes the value its work produced, or `onFailure` its failure.
-    /// A decode may also keep `keptCost` bytes past its end, the batches it filled ahead of the
-    /// consumer: taken by `kept` as it starts, and returned by whoever holds them then
-    /// ([#release(Charge)]), or as it fails.
+    /// A decode of a flat page also fills batch holders: it starts with a claim of its frontier
+    /// page's bound, held by `claim`, and its work counts into `tally` what the holders' arrays
+    /// gained or lost; as it ends, the claim is settled to the tally ([#settle]), and the holders
+    /// hold those bytes until they leave the read.
     static final class Job<T> {
         /// lowered while the job waits, where the read learns it serves an earlier row ([#lower])
         private long key;
@@ -72,11 +74,13 @@ final class JobScheduler {
         private final Kind kind;
         /// what holds the bytes once started; `null` for a job that holds none
         private final Charge charge;
-        private final long keptCost;
-        /// what holds the bytes kept past its end; `null` for a job that keeps none
-        private final Charge kept;
-        /// the column whose page it decodes, for the read's reserve; `-1` for none
-        private final int column;
+        /// the page it decodes in its column's frontier; `null` for a job that fills no holder
+        private final FrontierPage page;
+        /// what holds its claim while it runs; `null` for a job that fills no holder
+        private final Charge claim;
+        private final AllocationTally tally;
+        /// of its column's free holders, the bytes its claim counts on reusing ([#earmark])
+        private long earmarked;
         private final Work<T> work;
         private final Consumer<T> onValue;
         private final Consumer<Throwable> onFailure;
@@ -86,18 +90,18 @@ final class JobScheduler {
 
         Job(long key, long cost, Kind kind, Charge charge, Work<T> work, Consumer<T> onValue,
             Consumer<Throwable> onFailure) {
-            this(key, cost, kind, charge, 0, null, -1, work, onValue, onFailure);
+            this(key, cost, kind, charge, null, null, null, work, onValue, onFailure);
         }
 
-        Job(long key, long cost, Kind kind, Charge charge, long keptCost, Charge kept, int column, Work<T> work,
-            Consumer<T> onValue, Consumer<Throwable> onFailure) {
+        Job(long key, long cost, Kind kind, Charge charge, FrontierPage page, Charge claim, AllocationTally tally,
+            Work<T> work, Consumer<T> onValue, Consumer<Throwable> onFailure) {
             this.key = key;
             this.cost = cost;
             this.kind = kind;
             this.charge = charge;
-            this.keptCost = keptCost;
-            this.kept = kept;
-            this.column = column;
+            this.page = page;
+            this.claim = claim;
+            this.tally = tally;
             this.work = work;
             this.onValue = onValue;
             this.onFailure = onFailure;
@@ -120,11 +124,6 @@ final class JobScheduler {
         /// What holds its bytes once started, `null` for a job that holds none.
         Charge charge() {
             return charge;
-        }
-
-        /// What holds the bytes it keeps past its end, `null` for a job that keeps none.
-        Charge kept() {
-            return kept;
         }
 
         Work<T> work() {
@@ -181,23 +180,29 @@ final class JobScheduler {
         }
     }
 
-    /// A data page need could force later whose decode is not added yet: at its key, what its
-    /// decode would allocate at most ([#reserve]), or, for a page whose bound is not known yet (a
-    /// binary page whose header has not arrived), a mark that no decode past it starts ahead.
-    static final class Pending {
-        private final long key;
+    /// A flat column's data page from when the read finds it until its decode starts or it will
+    /// not decode: at its key, what its decode adds to the column's batch holders at most, or,
+    /// while that is not known, nothing, and no decode keyed at or past it starts ahead of need.
+    /// Each flat column also has one past its last page found, never bounded: the pages the read
+    /// has not found yet ([#found]).
+    static final class FrontierPage {
+        private final int column;
+        private long key;
         private final long seq;
         private long bytes;
-        private boolean unbounded;
+        /// of `bytes`, those no free holder of the column brings
+        private long fresh;
+        private boolean bounded;
 
-        private Pending(long key, long seq) {
+        private FrontierPage(int column, long key, long seq) {
+            this.column = column;
             this.key = key;
             this.seq = seq;
         }
     }
 
-    private static final Comparator<Pending> PENDING_ORDER = (a, b) -> a.key != b.key ? Long.compare(a.key, b.key)
-            : Long.compare(a.seq, b.seq);
+    private static final Comparator<FrontierPage> FRONTIER_ORDER = (a, b) -> a.key != b.key
+            ? Long.compare(a.key, b.key) : Long.compare(a.seq, b.seq);
 
     private static final Comparator<Job<?>> ORDER = (a, b) -> a.key() != b.key() ? Long.compare(a.key(), b.key())
             : Long.compare(a.seq(), b.seq());
@@ -217,13 +222,14 @@ final class JobScheduler {
 
     /// ready jobs by kind, each lowest key first
     private final List<TreeSet<Job<?>>> ready = Stream.of(KINDS).map(k -> new TreeSet<>(ORDER)).toList();
-    /// per column, its ready decodes that keep bytes past their end, lowest key first ([#reserve])
-    private final List<TreeSet<Job<?>>> waitingKept = new ArrayList<>();
-    /// per column, its data pages whose decode is not added yet, lowest key first ([#reserve])
-    private final List<TreeSet<Pending>> pending = new ArrayList<>();
-    /// per flat column, the key past its last page found, `-1` for a column not registered ([#known])
-    private long[] knownEnd = new long[0];
-    private long pendingSeq;
+    /// per flat column, its frontier: the pages whose decode has not started, lowest key first;
+    /// `null` for a column decoded through levels
+    private final List<TreeSet<FrontierPage>> frontier = new ArrayList<>();
+    /// per flat column, its frontier page past the last page found
+    private final List<FrontierPage> notFound = new ArrayList<>();
+    /// the frontier pages of every column without a bound, lowest key first
+    private final TreeSet<FrontierPage> unbounded = new TreeSet<>(FRONTIER_ORDER);
+    private long frontierSeq;
     private long seq;
     private int cpuInFlight;
     /// the jobs started and not ended, lowest key first
@@ -239,6 +245,8 @@ final class JobScheduler {
     private long releasedTransient;
     /// per column, the bytes charged for its free holders
     private IntToLongFunction freeHeldBytes = column -> 0;
+    /// per flat column, of its free holders' bytes, those running claims count on reusing
+    private long[] earmarked = new long[0];
     /// set once [#releaseAll] has returned every charge
     private boolean releasedAll;
     /// bytes returned under the lock, for the driver to release to R once it has let go of it
@@ -259,81 +267,78 @@ final class JobScheduler {
     void add(Job<?> job) {
         job.added(seq++);
         ready.get(job.kind().ordinal()).add(job);
-        if (keeps(job)) {
-            waitingKept(job.column).add(job);
+    }
+
+    /// Adds the data page of the flat `column` at `key` to its frontier, without a bound until
+    /// [#bound] gives it one.
+    FrontierPage enter(int column, long key) {
+        FrontierPage page = new FrontierPage(column, key, frontierSeq++);
+        frontier(column).add(page);
+        unbounded.add(page);
+        return page;
+    }
+
+    /// Bounds what the decode of `page` adds to its column's batch holders at most, `bytes`, of
+    /// which `fresh` no free holder of the column brings; also the claim its decode starts with.
+    void bound(FrontierPage page, long bytes, long fresh) {
+        page.bytes = bytes;
+        page.fresh = fresh;
+        if (!page.bounded) {
+            page.bounded = true;
+            unbounded.remove(page);
         }
     }
 
-    /// Registers a data page of `column` at `key` whose decode is not added yet; its bound is set
-    /// with [#bound].
-    Pending pend(int column, long key) {
-        Pending p = new Pending(key, pendingSeq++);
-        while (pending.size() <= column) {
-            pending.add(new TreeSet<>(PENDING_ORDER));
+    /// `page` leaves its column's frontier: its decode starts, or it will not decode.
+    void leave(FrontierPage page) {
+        frontier.get(page.column).remove(page);
+        unbounded.remove(page);
+    }
+
+    /// Records that the flat `column`'s pages are found up to `end`, the key past the last one;
+    /// a column registered with `0` has none found yet.
+    void found(int column, long end) {
+        TreeSet<FrontierPage> pages = frontier(column);
+        while (notFound.size() <= column) {
+            notFound.add(null);
         }
-        pending.get(column).add(p);
-        return p;
-    }
-
-    /// Sets what the decode of the page `p` stands for would allocate at most, `bytes`, or that
-    /// it is not known yet (`unbounded`).
-    static void bound(Pending p, long bytes, boolean unbounded) {
-        p.bytes = bytes;
-        p.unbounded = unbounded;
-    }
-
-    /// The page `p` stands for has its decode added, or will not decode.
-    void unpend(int column, Pending p) {
-        if (column < pending.size()) {
-            pending.get(column).remove(p);
+        FrontierPage past = notFound.get(column);
+        if (past == null) {
+            past = new FrontierPage(column, end, frontierSeq++);
+            notFound.set(column, past);
         }
-    }
-
-    /// Records that `column`'s pages are known up to `end`, the key past the last one found; a
-    /// column registered with `0` knows none yet.
-    void known(int column, long end) {
-        if (column >= knownEnd.length) {
-            int from = knownEnd.length;
-            knownEnd = Arrays.copyOf(knownEnd, column + 1);
-            Arrays.fill(knownEnd, from, knownEnd.length, -1);
+        else if (end > past.key) {
+            pages.remove(past);
+            unbounded.remove(past);
+            past.key = end;
         }
-        knownEnd[column] = Math.max(knownEnd[column], end);
+        else {
+            return;
+        }
+        pages.add(past);
+        unbounded.add(past);
     }
 
-    /// Whether some page need could force before `job`'s is not bounded yet, which leaves no room
-    /// to reserve for it: a registered column whose pages are not known as far as `job`'s key,
-    /// or a page below it whose bound is not known (a binary page whose header has not arrived).
+    private TreeSet<FrontierPage> frontier(int column) {
+        while (frontier.size() <= column) {
+            frontier.add(null);
+        }
+        if (column >= earmarked.length) {
+            earmarked = Arrays.copyOf(earmarked, column + 1);
+        }
+        TreeSet<FrontierPage> pages = frontier.get(column);
+        if (pages == null) {
+            pages = new TreeSet<>(FRONTIER_ORDER);
+            frontier.set(column, pages);
+        }
+        return pages;
+    }
+
+    /// Whether a page need could force no later than `job`'s has no bound yet, which leaves no
+    /// room to reserve for it: a page found whose bound is not known (a binary page whose header
+    /// has not arrived), or one not found yet.
     private boolean pastUnknown(Job<?> job) {
-        for (int column = 0; column < knownEnd.length; column++) {
-            long end = knownEnd[column];
-            if (end >= 0 && end <= job.key()) {
-                return true;
-            }
-        }
-        for (TreeSet<Pending> pages : pending) {
-            for (Pending p : pages) {
-                if (p.key >= job.key()) {
-                    break;
-                }
-                if (p.unbounded) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /// Whether `job` is a decode that keeps bytes past its end, which the read's reserve counts.
-    private static boolean keeps(Job<?> job) {
-        return job.kind() == Kind.DECODE && job.kept() != null && job.column >= 0;
-    }
-
-    /// The waiting decodes of `column` that keep bytes, lowest key first.
-    private TreeSet<Job<?>> waitingKept(int column) {
-        while (waitingKept.size() <= column) {
-            waitingKept.add(new TreeSet<>(ORDER));
-        }
-        return waitingKept.get(column);
+        return !unbounded.isEmpty() && unbounded.first().key <= job.key();
     }
 
     /// Keys `job` at `key` where that is lower and the job has not started: work the read keyed by
@@ -341,24 +346,14 @@ final class JobScheduler {
     void lower(Job<?> job, long key) {
         TreeSet<Job<?>> set = ready.get(job.kind().ordinal());
         if (key < job.key() && set.remove(job)) {
-            if (keeps(job)) {
-                waitingKept(job.column).remove(job);
-            }
             job.keyAt(key);
             set.add(job);
-            if (keeps(job)) {
-                waitingKept(job.column).add(job);
-            }
         }
     }
 
-    /// Takes `job` out before it starts; returns whether it was waiting.
+    /// Takes `job`, a fetch, out before it starts; returns whether it was waiting.
     boolean remove(Job<?> job) {
-        boolean removed = ready.get(job.kind().ordinal()).remove(job);
-        if (removed && keeps(job)) {
-            waitingKept(job.column).remove(job);
-        }
-        return removed;
+        return ready.get(job.kind().ordinal()).remove(job);
     }
 
     /// Starts what the position and the bounds let start, lowest key first.
@@ -400,27 +395,25 @@ final class JobScheduler {
         }
         // a page decoded ahead of need takes room only where room is reserved for every page need
         // could force before it, which takes every column's pages below it being known
-        if (!needed && keeps(job) && pastUnknown(job)) {
+        FrontierPage page = job.page;
+        if (!needed && page != null && pastUnknown(job)) {
             return DECODES;
         }
         // the job need forces holds what it reads uncharged: R holds what the read chose to start
         long charged = forced ? 0 : job.cost();
-        long kept = job.kept() == null ? 0 : job.keptCost;
-        // the batches of a page the consumer's next batch needs are taken from the reserve, which
-        // kept room for them, whether its decode is forced or starts beside the forced one
-        boolean keptNeeded = needed && kept > 0;
-        if (keptNeeded) {
-            // the cells it fills with its column's free holders, charged already, allocate nothing;
-            // its true-up settles what it did allocate
-            kept = Math.max(0, kept - freeHeldBytes.applyAsLong(job.column));
-        }
-        if (!forced && !charge(charged + (keptNeeded ? 0 : kept), !keptNeeded && kept > 0 ? reserve(job) : 0)) {
+        // a decode's claim counts on the column's free holders no running claim counts on: they are
+        // charged already, and its cells reuse them
+        long claim = page == null ? 0 : page.bytes - available(page);
+        // the claim of a page the consumer's next batch needs is taken from the reserve, which kept
+        // room for it, whether its decode is forced or starts beside the forced one
+        boolean claimNeeded = needed && claim > 0;
+        if (!forced && !charge(charged + (claimNeeded ? 0 : claim), !claimNeeded && claim > 0 ? reserve(job) : 0)) {
             // a plan starts first whatever its key, so a refused one holds back only the plans after
             // it: work keyed below it, need's among it, is still tried
             return job.kind() == Kind.PLAN ? PLANS : FETCHES | DECODES;
         }
-        if (keptNeeded && kept > 0 && budget.held() + kept > budget.limit()) {
-            if (budget.heldBeyondTasks() + kept <= budget.limit()) {
+        if (claimNeeded && budget.held() + claim > budget.limit()) {
+            if (budget.heldBeyondTasks() + claim <= budget.limit()) {
                 // running tasks' buffers take the room, and their ends release it whatever the
                 // consumer does: the job waits for them
                 if (!forced && charged > 0) {
@@ -430,19 +423,18 @@ final class JobScheduler {
                 waitForRoom();
                 return DECODES;
             }
-        }
-        if (keptNeeded) {
             // what does not fit the ledger beside what only consumers' progress releases fails the
             // job, which allocates nothing
-            long total = budget.held() + kept;
-            if (kept > 0 && total > budget.limit()) {
-                job.kept().refused(kept, total, budget.limit());
-                kept = 0;
-            }
-            else {
-                budget.charge(kept);
-                held += kept;
-            }
+            job.claim.refused(claim, budget.held() + claim, budget.limit());
+            claim = 0;
+        }
+        else if (claimNeeded) {
+            budget.charge(claim);
+            held += claim;
+        }
+        if (page != null && !job.claim.isRefused()) {
+            job.earmarked = page.bytes - claim;
+            earmarked[page.column] += job.earmarked;
         }
         if (needed) {
             job.startedNeeded();
@@ -456,8 +448,9 @@ final class JobScheduler {
                 heldTransient += charged;
             }
         }
-        if (job.kept() != null) {
-            job.kept().take(kept, false);
+        if (page != null) {
+            leave(page);
+            job.claim.take(claim, false);
         }
         if (ahead) {
             fetchedAhead += job.cost();
@@ -492,6 +485,7 @@ final class JobScheduler {
             if (job.cpu() && job.charge() != null) {
                 release(job.charge());
             }
+            settle(job);
             job.onValue().accept(value);
         };
     }
@@ -504,9 +498,7 @@ final class JobScheduler {
             if (job.charge() != null) {
                 release(job.charge());
             }
-            if (job.kept() != null) {
-                release(job.kept());
-            }
+            settle(job);
             job.onFailure().accept(t);
         };
     }
@@ -526,33 +518,31 @@ final class JobScheduler {
         this.freeHeldBytes = freeHeldBytes;
     }
 
-    /// What need could force next beside `job`: per column, what its first page not decoded,
-    /// `job`'s aside, would allocate beyond the column's free holders: a decode added and not
-    /// started, or a page whose decode is not added yet ([#pend]), whichever comes first. Decodes
-    /// start in key order, so where they stop, the next decode need forces in a column is that
-    /// one; a column's free holders only grow until that decode takes them.
+    /// What need could force next beside `job`: per flat column, what the first page of its
+    /// frontier, `job`'s aside, adds to its batch holders beyond its free ones. Decodes start in
+    /// key order, so where they stop, the next decode need forces in a column is that one; a
+    /// column's free holders only grow until that decode takes them. A frontier page without a
+    /// bound reserves nothing: no decode past it starts ahead ([#pastUnknown]).
     private long reserve(Job<?> job) {
         long reserve = 0;
-        for (int column = 0; column < Math.max(waitingKept.size(), pending.size()); column++) {
-            Job<?> first = null;
-            if (column < waitingKept.size()) {
-                TreeSet<Job<?>> waiting = waitingKept.get(column);
-                first = waiting.isEmpty() ? null : waiting.first();
-                if (first == job) {
-                    first = waiting.higher(job);
-                }
+        for (int column = 0; column < frontier.size(); column++) {
+            TreeSet<FrontierPage> pages = frontier.get(column);
+            FrontierPage first = pages == null || pages.isEmpty() ? null : pages.first();
+            if (first != null && first == job.page) {
+                first = pages.higher(first);
             }
-            Pending page = column < pending.size() && !pending.get(column).isEmpty() ? pending.get(column).first() : null;
-            long bytes;
-            if (page != null && (first == null || page.key < first.key())) {
-                bytes = page.bytes;
+            if (first != null && first.bounded) {
+                reserve += first.bytes - available(first);
             }
-            else {
-                bytes = first == null ? 0 : first.keptCost;
-            }
-            reserve += Math.max(0, bytes - freeHeldBytes.applyAsLong(column));
         }
         return reserve;
+    }
+
+    /// Of what the decode of `page` adds to its column's batch holders, the bytes the column's
+    /// free holders cover that no running claim counts on.
+    private long available(FrontierPage page) {
+        long free = Math.max(0, freeHeldBytes.applyAsLong(page.column) - earmarked[page.column]);
+        return Math.min(free, page.bytes - page.fresh);
     }
 
     /// Waits for R's next release, which runs `wake` once.
@@ -604,6 +594,11 @@ final class JobScheduler {
         }
     }
 
+    /// The bytes the read holds on R.
+    long held() {
+        return held;
+    }
+
     /// The highest key of a fetch started that holds bytes, `0` before the first.
     long fetchedTo() {
         return fetchedTo;
@@ -642,12 +637,32 @@ final class JobScheduler {
         return r;
     }
 
-    /// Charges `bytes` a decode allocated beyond what it was admitted with, whether or not they fit:
-    /// they are allocated already.
-    void chargeHeld(long bytes) {
-        if (!releasedAll) {
+    /// Settles the claim of `job`, as it ends, to what its work counted: returns what it did not
+    /// draw, and charges what it drew beyond its claim, whether or not that fits, as it is
+    /// allocated already.
+    private void settle(Job<?> job) {
+        if (job.claim != null) {
+            earmarked[job.page.column] -= job.earmarked;
+            long claimed = job.claim.takeBack();
+            if (claimed > 0 || job.tally.bytes() != 0) {
+                settleHeld(job.tally.bytes() - claimed);
+            }
+        }
+    }
+
+    /// Charges `bytes` the read's batch holders gained, or returns them, negative, where they lost
+    /// them, whether or not they fit: they are allocated already.
+    void settleHeld(long bytes) {
+        if (releasedAll || bytes == 0) {
+            return;
+        }
+        if (bytes > 0) {
             budget.charge(bytes);
             held += bytes;
+        }
+        else {
+            held += bytes;
+            released -= bytes;
         }
     }
 

@@ -278,7 +278,7 @@ class PageTrimmerTest {
         int[] ids = new int[size];
         int[] bufferIds = new int[size];
         BinaryBatchValues chunks = new BinaryBatchValues(size);
-        PlainBytes dest = new PlainBytes(chunks, runs.bytes(trimmed.binary(), 0, size));
+        PlainBytes dest = new PlainBytes(chunks, runs.bytes(trimmed.binary(), 0, size), null);
         int kept = 0;
         while (kept < size) {
             int run = runs.runOf(kept);

@@ -36,7 +36,7 @@ final class TrackedPage {
     /// its header, parsed by the scan that found it or for its charge; `null` until then, and for
     /// a header that did not parse
     private PageFormatProbe.HeaderAt header;
-    private JobScheduler.Pending pending;
+    private JobScheduler.FrontierPage frontier;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -136,13 +136,13 @@ final class TrackedPage {
         this.header = header;
     }
 
-    /// Its entry in the read's reserve while its decode is not added, `null` for none.
-    JobScheduler.Pending pending() {
-        return pending;
+    /// Its page in its column's frontier, `null` for a page decoded through levels or a dictionary page.
+    JobScheduler.FrontierPage frontier() {
+        return frontier;
     }
 
-    void pending(JobScheduler.Pending pending) {
-        this.pending = pending;
+    void frontier(JobScheduler.FrontierPage frontier) {
+        this.frontier = frontier;
     }
 
     /// Its header, `null` until parsed and where it did not parse.

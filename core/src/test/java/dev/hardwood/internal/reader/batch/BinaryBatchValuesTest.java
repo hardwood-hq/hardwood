@@ -172,9 +172,9 @@ class BinaryBatchValuesTest {
     void aSecondDictionaryInOneBatchIsRejected() {
         BinaryBatchValues values = new BinaryBatchValues(4);
         values.prepareForFill();
-        values.installDictionary(STATIONS);
+        values.installDictionary(STATIONS, null);
 
-        assertThatThrownBy(() -> values.installDictionary(dictionary("Accra", "Lima")))
+        assertThatThrownBy(() -> values.installDictionary(dictionary("Accra", "Lima"), null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("A batch holds values of two column chunks' dictionaries");
     }
@@ -282,7 +282,7 @@ class BinaryBatchValuesTest {
     private static void fill(BinaryBatchValues values, Dictionary.ByteArrayDictionary dictionary,
                              BinaryBatchValues.ViewDemand demand, Object... entries) {
         values.prepareForFill();
-        int[] ids = dictionary != null ? values.installDictionary(dictionary) : null;
+        int[] ids = dictionary != null ? values.installDictionary(dictionary, null) : null;
         int plainBytes = 0;
         boolean views = false;
         for (Object entry : entries) {
@@ -294,9 +294,9 @@ class BinaryBatchValuesTest {
                 views |= (Integer) entry < 0;
             }
         }
-        PlainBytes dest = new PlainBytes(values, plainBytes);
+        PlainBytes dest = new PlainBytes(values, plainBytes, null);
         if (views) {
-            values.installViews();
+            values.installViews(null);
         }
         for (int i = 0; i < entries.length; i++) {
             if (entries[i] instanceof String text) {
@@ -321,7 +321,7 @@ class BinaryBatchValuesTest {
                 }
             }
         }
-        values.finishFill(entries.length, demand);
+        values.finishFill(entries.length, demand, null);
     }
 
     private static Dictionary.ByteArrayDictionary dictionary(String... entries) {

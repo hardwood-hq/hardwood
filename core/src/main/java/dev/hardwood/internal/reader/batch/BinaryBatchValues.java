@@ -81,21 +81,36 @@ public final class BinaryBatchValues {
     /// Whether the batch is a recycled holder's, which keeps its full chunks for its next fill
     /// ([#prepareForFill]), and whose fills take full chunks so that they can be reused.
     private boolean keepsChunks;
-    /// The bytes of the arrays it holds: its views, buffer ids, entry ids, its own chunks and the
-    /// spare ones. A dictionary's chunks, which every batch drawing on it shares, are not its own.
-    /// Read while other segments of its cell may still be filling it, the count of its chunks can
-    /// be stale; a later measure counts them.
-    public long arrayBytes() {
+    /// The bytes of the arrays it holds that the read charged: counted as each is created
+    /// ([AllocationTally]), and measured again as [#prepareForFill] lets go of some. Guarded by
+    /// the batch's monitor.
+    private long heldBytes;
+
+    /// The bytes of the arrays it holds that the read charged: its views, entry ids, its own
+    /// chunks, the spare ones and the window its completing thread built. A dictionary's chunks,
+    /// which every batch drawing on it shares, are not its own; a window built on demand is its
+    /// consumer's.
+    public synchronized long heldBytes() {
+        return heldBytes;
+    }
+
+    /// The bytes [#heldBytes()] counts, measured from the arrays it holds.
+    private long ownBytes() {
         long bytes = intArrayBytes(starts) + intArrayBytes(ends) + intArrayBytes(bufferIds) + intArrayBytes(dictIndices);
-        byte[][] own = buffers;
-        for (int i = 0, n = Math.min(bufferCount, own == null ? 0 : own.length); i < n; i++) {
-            bytes += own[i] == null ? 0 : own[i].length;
+        for (int i = 1; i < bufferCount; i++) {
+            bytes += buffers[i].length;
         }
-        byte[][] spares = spare;
-        for (int i = 0, n = Math.min(spareCount, spares.length); i < n; i++) {
-            bytes += spares[i] == null ? 0 : spares[i].length;
+        for (int i = 0; i < spareCount; i++) {
+            bytes += spare[i].length;
+        }
+        if (window != null) {
+            bytes += windowBytes(window);
         }
         return bytes;
+    }
+
+    private static long windowBytes(Window window) {
+        return intArrayBytes(window.bufferIds()) + intArrayBytes(window.starts()) + intArrayBytes(window.ends());
     }
 
     private static long intArrayBytes(int[] array) {
@@ -310,8 +325,8 @@ public final class BinaryBatchValues {
     }
 
     /// Readies a slot for a positional fill: its arrays are kept, its contents and buffers are not.
-    /// Runs before any segment writes.
-    public void prepareForFill() {
+    /// Runs before any segment writes; [#heldBytes()] drops by what it lets go of.
+    public synchronized void prepareForFill() {
         if (keepsChunks) {
             keepFullChunks();
         }
@@ -321,14 +336,25 @@ public final class BinaryBatchValues {
         idsComplete = false;
         window = null;
         viewDemand = null;
+        heldBytes = ownBytes();
     }
 
     /// Installs the view arrays for a segment that writes views, unless a segment already has.
     /// A segment reads them with [#fillStarts], [#fillEnds] and [#fillBufferIds] after this.
-    public synchronized void installViews() {
+    ///
+    /// @param tally counts the arrays it creates, `null` for a fill whose batches the read does not
+    ///        charge
+    public synchronized void installViews(AllocationTally tally) {
         if (starts == null) {
             allocateViews();
+            counted(tally, 3L * capacity * Integer.BYTES);
         }
+    }
+
+    /// Counts `bytes` its arrays gained into its own count and `tally`; under its monitor.
+    private void counted(AllocationTally tally, long bytes) {
+        heldBytes += bytes;
+        AllocationTally.add(tally, bytes);
     }
 
     /// The view arrays, for a segment that ran [#installViews].
@@ -373,7 +399,7 @@ public final class BinaryBatchValues {
 
     /// Adds a full chunk to the batch's buffers, a spare one where the last fill left one, and
     /// returns its id; [#chunk(int)] gives the chunk.
-    synchronized int takeChunk() {
+    synchronized int takeChunk(AllocationTally tally) {
         byte[] chunk;
         if (spareCount > 0) {
             chunk = spare[--spareCount];
@@ -381,6 +407,7 @@ public final class BinaryBatchValues {
         }
         else {
             chunk = new byte[CHUNK_BYTES];
+            counted(tally, CHUNK_BYTES);
         }
         return addBuffer(chunk);
     }
@@ -390,8 +417,15 @@ public final class BinaryBatchValues {
         return buffers[id];
     }
 
+    /// Adds `buffer`, created for the batch, to its buffers, counting it into `tally`, and returns
+    /// its id.
+    synchronized int addNewBuffer(byte[] buffer, AllocationTally tally) {
+        counted(tally, buffer.length);
+        return addBuffer(buffer);
+    }
+
     /// Adds `buffer` to the batch's buffers and returns its id.
-    synchronized int addBuffer(byte[] buffer) {
+    private int addBuffer(byte[] buffer) {
         if (bufferCount == buffers.length) {
             buffers = Arrays.copyOf(buffers, bufferCount * 2);
         }
@@ -403,10 +437,11 @@ public final class BinaryBatchValues {
     /// returns the ids array the segment writes into.
     ///
     /// @throws IllegalStateException if the batch already holds the ids of another dictionary
-    public synchronized int[] installDictionary(Dictionary.ByteArrayDictionary dict) {
+    public synchronized int[] installDictionary(Dictionary.ByteArrayDictionary dict, AllocationTally tally) {
         if (dictionary == null) {
             dictionary = dict;
             if (dictIndices == null || dictIndices.length < capacity) {
+                counted(tally, (long) (capacity - (dictIndices == null ? 0 : dictIndices.length)) * Integer.BYTES);
                 dictIndices = new int[capacity];
             }
         }
@@ -419,12 +454,13 @@ public final class BinaryBatchValues {
     /// Ends a positional fill of `valueCount` values once every segment is written, on the thread
     /// that completes the cell, before the batch is published: a batch with dictionary values gets
     /// its window built here where `demand` has been raised, and keeps `demand` to raise otherwise.
-    public void finishFill(int valueCount, ViewDemand demand) {
+    public synchronized void finishFill(int valueCount, ViewDemand demand, AllocationTally tally) {
         if (dictionary == null) {
             return;
         }
         if (demand.requested) {
             window = buildWindow(valueCount);
+            counted(tally, windowBytes(window));
         }
         else {
             viewDemand = demand;

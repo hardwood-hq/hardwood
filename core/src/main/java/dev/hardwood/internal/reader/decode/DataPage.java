@@ -58,18 +58,6 @@ public record DataPage(PageHeader header, int headerSize, ByteBuffer bytes) {
         };
     }
 
-    /// The bytes the batches of the flat page `header` heads hold once it is decoded, from the
-    /// header ([WorkingSet.Column#batchBytes]); `0` for a page that is not a data page.
-    public static long batchBytes(PageHeader header, ColumnSchema schema) {
-        return switch (header.type()) {
-            case DATA_PAGE -> WorkingSet.Column.batchBytes(schema, header.dataPageHeader().numValues(),
-                    header.uncompressedPageSize());
-            case DATA_PAGE_V2 -> WorkingSet.Column.batchBytes(schema, header.dataPageHeaderV2().numValues(),
-                    header.uncompressedPageSize());
-            default -> 0;
-        };
-    }
-
     /// The encoding of the values of the data page `header` heads.
     ///
     /// @throws IllegalStateException for a page that is not a data page

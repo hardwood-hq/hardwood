@@ -102,31 +102,26 @@ public class BatchExchange<B> {
         this.readyRowLimit = (long) READY_QUEUE_CAPACITY * batchCapacity;
     }
 
-    /// Creates a recycling exchange that pre-allocates batch holders.
-    ///
-    /// Three batches are pre-allocated (`READY_QUEUE_CAPACITY + 1`): one filling
-    /// plus up to two queued. The consumer must return consumed batches to `freeQueue()`.
-    /// A decoded column fills holders past those three while it decodes ahead
-    /// ([#newBatch]); the free queue keeps at most three of the holders returned, for holders
-    /// whose arrays are allocated per batch anyway.
+    /// Creates a recycling exchange. A decoded column takes a returned holder where one is free,
+    /// and has the factory make one otherwise ([#newBatch]), as it fills the batches it decodes
+    /// ahead; the consumer must return consumed batches ([#recycle]). The free queue keeps at most
+    /// `READY_QUEUE_CAPACITY + 1` of the holders returned, for holders whose arrays are allocated
+    /// per batch anyway.
     ///
     /// @param columnName column name for error messages
-    /// @param batchFactory creates the initial batch holders, and those a decoded column
-    ///        needs beyond them
+    /// @param batchFactory creates the batch holders a decoded column needs beyond those returned
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]
     public static <B> BatchExchange<B> recycling(String columnName, Supplier<B> batchFactory) {
         return recycling(columnName, batchFactory, new ArrayBlockingQueue<>(READY_QUEUE_CAPACITY + 1));
     }
 
-    /// Creates a recycling exchange whose free queue keeps every holder returned, the ones a
-    /// decoded column filled past the three pre-allocated while it decoded ahead included, so
-    /// that a read reuses the arrays of every holder its read-ahead filled rather than allocating
-    /// new ones. The holders kept are at most those the read-ahead filled at once.
+    /// Creates a recycling exchange whose free queue keeps every holder returned, so that a read
+    /// reuses the arrays of every holder its read-ahead filled rather than allocating new ones.
+    /// The holders kept are at most those the read-ahead filled at once.
     ///
     /// @param columnName column name for error messages
-    /// @param batchFactory creates the initial batch holders, and those a decoded column
-    ///        needs beyond them
+    /// @param batchFactory creates the batch holders a decoded column needs beyond those returned
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]
     public static <B> BatchExchange<B> recyclingEveryHolder(String columnName, Supplier<B> batchFactory) {
@@ -136,10 +131,6 @@ public class BatchExchange<B> {
     private static <B> BatchExchange<B> recycling(String columnName, Supplier<B> batchFactory,
                                                   BlockingQueue<B> freeQueue) {
         ArrayBlockingQueue<Object> readyQueue = new ArrayBlockingQueue<>(READY_QUEUE_CAPACITY);
-
-        for (int i = 0; i < READY_QUEUE_CAPACITY + 1; i++) {
-            freeQueue.add(batchFactory.get());
-        }
 
         return new BatchExchange<>(columnName, readyQueue, freeQueue, batchFactory, null, 0);
     }
@@ -253,13 +244,7 @@ public class BatchExchange<B> {
     }
 
     private static long heldBytesOf(Object batch) {
-        if (batch instanceof FlatBatch flat) {
-            return flat.heldBytes;
-        }
-        if (batch instanceof NestedBatch nested) {
-            return nested.heldBytes;
-        }
-        return 0;
+        return batch instanceof FlatBatch flat ? flat.chargedBytes() : 0;
     }
 
     /// Returns `batch` to the free queue, counting the bytes it was charged.
@@ -271,7 +256,7 @@ public class BatchExchange<B> {
     }
 
     /// Sets what runs on the consumer's thread with the bytes a batch it takes was charged
-    /// ([FlatBatch#heldBytes], [NestedBatch#heldBytes]), where they are not `0`.
+    /// ([FlatBatch#chargedBytes()]), where they are not `0`.
     public void setTakenListener(LongConsumer listener) {
         this.takenListener = listener;
     }
@@ -313,9 +298,10 @@ public class BatchExchange<B> {
             readyRows.addAndGet(-rowsOf(taken));
         }
         LongConsumer released = takenListener;
-        // a recycled holder stays the read's, charged, until the read ends
+        // a recycled holder stays the read's, charged, until the read ends; a detached batch leaves
+        // it, once
         if (released != null && freeQueue == null) {
-            long bytes = takeHeldBytes(batch);
+            long bytes = heldBytesOf(batch);
             if (bytes > 0) {
                 released.accept(bytes);
             }
@@ -325,20 +311,6 @@ public class BatchExchange<B> {
             listener.run();
         }
         return batch;
-    }
-
-    /// The bytes `batch` was charged, which it holds no longer.
-    private static long takeHeldBytes(Object batch) {
-        long bytes = 0;
-        if (batch instanceof FlatBatch flat) {
-            bytes = flat.heldBytes;
-            flat.heldBytes = 0;
-        }
-        else if (batch instanceof NestedBatch nested) {
-            bytes = nested.heldBytes;
-            nested.heldBytes = 0;
-        }
-        return bytes;
     }
 
     /// A batch of no rows counts as one, so that the row limit also bounds the batches queued.

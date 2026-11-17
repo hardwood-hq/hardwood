@@ -28,15 +28,18 @@ import dev.hardwood.schema.ColumnProjection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A read under a heap quota with room for one page of each column, and so hardly any for
+/// A read under a heap quota with room for about one page of each column, and so hardly any for
 /// decoding ahead, still reads every row: the pages its consumer's next batch needs take the
 /// room the read reserves for them, and wait for running tasks' buffers rather than fail.
 class TightHeapQuotaTest {
 
     private static final int COLUMNS = 4;
     private static final int PAGE_VALUES = 5 * 1024 * 1024;
-    /// one page of `long` values per column
-    private static final long QUOTA = (long) COLUMNS * PAGE_VALUES * Long.BYTES;
+    /// at least the rows a batch of the read holds
+    private static final int BATCH_ROWS = 65_536;
+    /// per column, one page of `long` values, the batch it shares with the next page, which either
+    /// page's decode may allocate, and a batch's worth for the page's fetched bytes
+    private static final long QUOTA = (long) COLUMNS * (PAGE_VALUES + 2 * BATCH_ROWS) * Long.BYTES;
 
     @AfterEach
     void clearBuffer() {

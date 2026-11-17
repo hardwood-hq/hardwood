@@ -221,4 +221,16 @@ public final class ReadEngine implements Closeable {
     public void awaitQuiescent() {
         driver.awaitIdle();
     }
+
+    /// The bytes the read holds on its context's ledger, once no job is in flight and the updates
+    /// queued for its lock are applied, for tests: exact where the ledger's own count can still
+    /// wait for a release another thread is about to make.
+    public long quiescentHeldBytes() {
+        driver.awaitIdle();
+        // a lock round applies what consumers queued while a job's thread held the lock
+        driver.locked(() -> { });
+        long[] held = new long[1];
+        driver.locked(() -> held[0] = driver.scheduler().held());
+        return held[0];
+    }
 }

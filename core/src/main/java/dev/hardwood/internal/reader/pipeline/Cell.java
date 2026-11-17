@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
+import dev.hardwood.internal.reader.batch.AllocationTally;
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.FlatBatch;
@@ -92,6 +93,9 @@ public final class Cell implements BatchCell<FlatBatch> {
     /// The cell's validity bits, once a segment met a null. Installed once, by compare-and-set.
     @SuppressWarnings("unused")
     private volatile long[] validity;
+    /// The bytes of [#validity], counted into the tally of the fill that installed it; the cell's
+    /// completion reads it after every fill.
+    private long validityBytes;
 
     public Cell(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow) {
         this.fileName = fileName;
@@ -125,12 +129,15 @@ public final class Cell implements BatchCell<FlatBatch> {
     /// did: a returned holder's array when it is large enough, a new one otherwise. Runs on the first task that reaches the cell; another that reaches it
     /// meanwhile parks on the cell's lock until the array exists, rather than spinning while it is
     /// zeroed, and the lock orders the array's creation before its writes into it.
-    public FlatBatch allocate(BatchExchange<FlatBatch> exchange, ColumnSchema column) {
+    ///
+    /// @param tally counts what the holder's arrays gain or lose
+    public FlatBatch allocate(BatchExchange<FlatBatch> exchange, ColumnSchema column, AllocationTally tally) {
         if (!allocated) {
             allocation.lock();
             try {
                 if (!allocated) {
                     FlatBatch taken = exchange.newBatch();
+                    long before = taken.chargedBytes();
                     if (taken.values == null || taken.capacity < capacity) {
                         taken.values = BatchExchange.allocateArray(column, capacity);
                         taken.capacity = capacity;
@@ -141,6 +148,8 @@ public final class Cell implements BatchCell<FlatBatch> {
                     if (taken.values instanceof BinaryBatchValues binary) {
                         binary.prepareForFill();
                     }
+                    taken.heldBytes = taken.ownArrayBytes();
+                    AllocationTally.add(tally, taken.chargedBytes() - before);
                     columnBatch = taken;
                     allocated = true;
                 }
@@ -152,11 +161,6 @@ public final class Cell implements BatchCell<FlatBatch> {
         return columnBatch;
     }
 
-
-    /// The records the arrays of the column's batch take.
-    public int capacity() {
-        return capacity;
-    }
 
     @Override
     public long batchIndex() {
@@ -229,14 +233,26 @@ public final class Cell implements BatchCell<FlatBatch> {
     }
 
     /// The cell's validity bits, installing cleared words for [#capacity] records if no segment
-    /// has yet. Two segments meeting their first null at once install one array between them.
-    long[] installValidity() {
+    /// has yet, counted into `tally`. Two segments meeting their first null at once install one
+    /// array between them.
+    long[] installValidity(AllocationTally tally) {
         long[] current = validity();
         if (current != null) {
             return current;
         }
         long[] created = new long[(capacity + 63) >>> 6];
         long[] witness = (long[]) VALIDITY.compareAndExchange(this, (long[]) null, created);
-        return witness != null ? witness : created;
+        if (witness != null) {
+            return witness;
+        }
+        validityBytes = (long) created.length * Long.BYTES;
+        AllocationTally.add(tally, validityBytes);
+        return created;
+    }
+
+    /// The bytes of its validity bits, `0` while no segment met a null; read once every fill of
+    /// it is done.
+    public long validityBytes() {
+        return validityBytes;
     }
 }

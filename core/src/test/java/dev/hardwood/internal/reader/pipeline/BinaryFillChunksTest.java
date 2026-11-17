@@ -51,14 +51,14 @@ class BinaryFillChunksTest {
         page.add("z".repeat(chunk + 1));
         page.add("tail");
         Cell cell = new Cell("f.parquet", false, page.size(), page.size(), 0);
-        BinaryBatchValues out = (BinaryBatchValues) cell.allocate(BatchExchange.detachingFlat("v", page.size()), COLUMN)
+        BinaryBatchValues out = (BinaryBatchValues) cell.allocate(BatchExchange.detachingFlat("v", page.size()), COLUMN, null)
                 .values;
         BatchPlan.RowGroupBatches rowGroup = new BatchPlan(page.size(), false, false, 0)
                 .plan(0, 0, "f.parquet", false, page.size());
         Segment segment = place(cell, rowGroup, 0, page.size());
-        BinaryFill.fill(segment, plain(page), out, 1);
+        BinaryFill.fill(segment, plain(page), out, 1, null);
         FlatFill.backfillValidity(cell);
-        BinaryFill.finish(cell, out, new BinaryBatchValues.ViewDemand());
+        BinaryFill.finish(cell, out, new BinaryBatchValues.ViewDemand(), null);
 
         byte[][] buffers = out.buffers();
         int[] bufferIds = out.bufferIds();

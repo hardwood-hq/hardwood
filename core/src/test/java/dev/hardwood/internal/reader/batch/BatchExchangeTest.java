@@ -89,23 +89,19 @@ class BatchExchangeTest {
             return holder;
         });
 
-        int preallocated = holders.size();
         Object taken = exchange.newBatch();
         assertThat(exchange.tryPublish(taken)).isTrue();
         exchange.finish();
         exchange.drainReady();
 
-        List<Object> pooled = new ArrayList<>();
-        for (int i = 0; i < preallocated; i++) {
-            pooled.add(exchange.newBatch());
-        }
+        Object pooled = exchange.newBatch();
 
         assertThat(holders)
-                .as("the free pool held every holder, so the factory made no new one")
-                .hasSize(preallocated);
+                .as("the free pool held the published holder, so the factory made no new one")
+                .hasSize(1);
         assertThat(pooled)
                 .as("the published batch came back and nothing was lost with it")
-                .containsExactlyInAnyOrderElementsOf(holders);
+                .isSameAs(taken);
     }
 
     /// A column that publishes without waiting fills a returned holder when one is free, and a new
@@ -118,14 +114,10 @@ class BatchExchangeTest {
             created.add(batch);
             return batch;
         });
-        Object returned = created.getFirst();
-
-        assertThat(exchange.newBatch()).isSameAs(returned);
-        assertThat(exchange.newBatch()).isSameAs(created.get(1));
-        assertThat(exchange.newBatch()).isSameAs(created.get(2));
+        Object returned = exchange.newBatch();
         Object fresh = exchange.newBatch();
 
-        assertThat(fresh).isSameAs(created.get(3));
+        assertThat(created).containsExactly(returned, fresh);
         exchange.recycle(returned);
         assertThat(exchange.newBatch()).isSameAs(returned);
     }

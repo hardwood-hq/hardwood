@@ -12,6 +12,7 @@ import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 
 import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.reader.batch.AllocationTally;
 import dev.hardwood.internal.reader.batch.BitmapWords;
 import dev.hardwood.internal.reader.decode.FlatPageValues;
 import dev.hardwood.internal.reader.decode.PageDecoder;
@@ -57,8 +58,10 @@ public final class FlatFill {
     /// Fills `segment` from its page's `values`, read in place, into the cell's array `out`.
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
-    public static void fill(Segment segment, FlatPageValues values, Object out, int maxDefinitionLevel) {
-        ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel);
+    /// @param tally counts the cell's validity where the segment installs it
+    public static void fill(Segment segment, FlatPageValues values, Object out, int maxDefinitionLevel,
+                            AllocationTally tally) {
+        ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel, tally);
         forEachRun(segment, (pageRow, destPos, length) -> {
             values.copy(pageRow, out, destPos, length);
             validity.mark(values.definitionLevels(), pageRow, destPos, length);
@@ -136,6 +139,7 @@ public final class FlatFill {
 
         private final Segment segment;
         private final int maxDefinitionLevel;
+        private final AllocationTally tally;
         /// The segment's first and last word, and whether a neighbour may share each.
         private final int firstWord;
         private final int lastWord;
@@ -144,9 +148,10 @@ public final class FlatFill {
         /// The cell's bitmap, `null` until the segment meets its first null.
         private long[] words;
 
-        ValidityWriter(Segment segment, int maxDefinitionLevel) {
+        ValidityWriter(Segment segment, int maxDefinitionLevel, AllocationTally tally) {
             this.segment = segment;
             this.maxDefinitionLevel = maxDefinitionLevel;
+            this.tally = tally;
             int start = segment.cellOffset;
             int end = start + segment.records();
             this.firstWord = start >>> 6;
@@ -180,7 +185,7 @@ public final class FlatFill {
         /// Takes the cell's bitmap at the segment's first null, `bit`, and sets the bits of the
         /// segment's values before it, all present.
         private void install(int bit) {
-            words = segment.cell.installValidity();
+            words = segment.cell.installValidity(tally);
             segment.wroteValidity = true;
             setRange(segment.cellOffset, bit);
         }

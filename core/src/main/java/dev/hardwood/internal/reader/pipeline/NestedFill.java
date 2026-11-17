@@ -179,7 +179,7 @@ final class NestedFill {
             NestedSegment segment = segments.get(i);
             plainBytes += segment.page.measure.bytes(segment.valueStart, segment.valueEnd);
         }
-        PlainBytes dest = new PlainBytes(out, plainBytes);
+        PlainBytes dest = new PlainBytes(out, plainBytes, null);
         boolean[] wroteIds = new boolean[segments.size()];
         // Where each segment's values start among the batch's, its last entry the value count
         int[] valueStarts = new int[segments.size() + 1];
@@ -203,7 +203,7 @@ final class NestedFill {
             }
             out.idsComplete = complete;
         }
-        out.finishFill(valueCount, viewDemand);
+        out.finishFill(valueCount, viewDemand, null);
     }
 
     /// Writes one segment's binary values from value `valueStart`: its plain values' bytes to
@@ -220,14 +220,14 @@ final class NestedFill {
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         int[] ids = null;
         if (dictionary != null) {
-            ids = out.installDictionary(dictionary);
+            ids = out.installDictionary(dictionary, null);
             if (!values.allPresent()) {
-                out.installViews();
+                out.installViews(null);
             }
             wroteIds[index] = true;
         }
         else {
-            out.installViews();
+            out.installViews(null);
         }
         int kept = segment.valueStart;
         int end = segment.valueEnd;

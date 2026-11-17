@@ -19,6 +19,7 @@ public final class PlainBytes {
     private static final byte[] EMPTY = new byte[0];
 
     private final BinaryBatchValues out;
+    private final AllocationTally tally;
     /// The fill's bytes not yet placed.
     private long remaining;
     private byte[] chunk;
@@ -26,8 +27,11 @@ public final class PlainBytes {
     private int pos;
 
     /// @param bytes the bytes of every plain value the fill copies
-    public PlainBytes(BinaryBatchValues out, long bytes) {
+    /// @param tally counts the chunks it creates, `null` for a fill whose batches the read does
+    ///        not charge
+    public PlainBytes(BinaryBatchValues out, long bytes, AllocationTally tally) {
         this.out = out;
+        this.tally = tally;
         this.remaining = bytes;
     }
 
@@ -49,12 +53,12 @@ public final class PlainBytes {
             if (out.keepsChunks() && length <= BinaryBatchValues.CHUNK_BYTES
                     && remaining >= BinaryBatchValues.CHUNK_BYTES / 2) {
                 // A recycled holder's chunks are full, so that its next fill can reuse them
-                id = out.takeChunk();
+                id = out.takeChunk(tally);
                 chunk = out.chunk(id);
             }
             else {
                 chunk = new byte[(int) Math.max(length, Math.min(BinaryBatchValues.CHUNK_BYTES, remaining))];
-                id = out.addBuffer(chunk);
+                id = out.addNewBuffer(chunk, tally);
             }
             pos = 0;
         }
