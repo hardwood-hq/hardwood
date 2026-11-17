@@ -14,10 +14,14 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/// JFR event emitted when the prefetch queue cannot supply a decoded page in time.
+/// JFR event declared for a prefetch queue that cannot supply a decoded page in time.
 ///
-/// A miss indicates that the decode pipeline cannot keep up with consumption,
-/// causing the prefetch depth to increase adaptively.
+/// Hardwood does not emit this event: a read has no prefetch queue whose depth grows on a
+/// miss. A consumer waiting for decoded data is reported by [BatchWaitEvent].
+///
+/// @deprecated Hardwood never emits this event; it will be removed in the next major release.
+///             Use [BatchWaitEvent] to observe the consumer's stalls.
+@Deprecated(since = "1.1", forRemoval = true)
 @Name("dev.hardwood.PrefetchMiss")
 @Label("Prefetch Miss")
 @Category({"Hardwood", "Pipeline"})
