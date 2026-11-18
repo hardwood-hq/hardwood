@@ -75,9 +75,10 @@ final class PageTracker {
     /// dictionary pages, and tracks its planned pages a slice of rows at a time as the look-ahead
     /// reaches them ([#trackSlice]); returns the ranges and the placement's chunks, for the scans
     /// of its chunks without an OffsetIndex. A range is keyed at the first row its planned pages
-    /// serve, or, read by a scan, at the row as far into the chunk as it lies. Tracking holds each
+    /// serve, or, read by a scan, at the row as far into the chunk as it lies. Each planned page
+    /// in a range is one of its readers from here, before the page is tracked; tracking holds each
     /// range as one more reader, so that one its pages are done with stays until the scans hold
-    /// it too ([#handedToScans]), and once more until its last slice is tracked.
+    /// it too ([#handedToScans]).
     ScanInput track(Unit.Batched u) {
         List<RangeFetch> ranges = new ArrayList<>();
         int n = u.plan().pages().length;
@@ -133,7 +134,6 @@ final class PageTracker {
         }
         if (first != Long.MAX_VALUE) {
             for (int i = 0; i < ranges.size(); i++) {
-                ranges.get(i).addReader();
                 if (keys[i] != Long.MAX_VALUE) {
                     failOnFailure(ranges.get(i), keys[i], keyColumns[i]);
                 }
@@ -172,7 +172,7 @@ final class PageTracker {
 
     /// Tracks each column's planned pages starting below `key` plus a slice's rows, places them,
     /// and adds the slice starting at the first page left; a column with none left has every page
-    /// added. The last slice lets go of the ranges it held.
+    /// added.
     private void trackSlice(Slices slices, long key) {
         Unit.Batched u = slices.unit();
         long end = key + sliceRows;
@@ -199,10 +199,7 @@ final class PageTracker {
             }
             place(c);
         }
-        if (next == Long.MAX_VALUE) {
-            fetcher.readersDone(slices.ranges());
-        }
-        else {
+        if (next != Long.MAX_VALUE) {
             addSlice(slices, next);
         }
     }
@@ -231,14 +228,12 @@ final class PageTracker {
 
     /// Adds `tracked`, a dictionary page, which decodes once its bytes are there.
     void addDictionaryPage(TrackedPage tracked) {
-        hold(tracked);
         decodeWhenReady(tracked);
     }
 
     /// Adds `tracked`, a data page of `chunk`, to its column's placement. A page decoded through
     /// levels decodes before it is placed, a flat page once placed too ([#place]).
     void add(CellWriter.ChunkPlacement placement, TrackedPage tracked) {
-        hold(tracked);
         cells.add(tracked.column(), placement, tracked);
         decodeWhenReady(tracked);
     }
@@ -270,24 +265,21 @@ final class PageTracker {
         return found;
     }
 
-    /// Lowers the entry in `keys` of each of `ranges` that holds part of `[offset, offset + length)`,
-    /// a page of `column` serving row `key`, to it, and records the column in `keyColumns`; columns
-    /// come in ascending order, so of two pages serving one row the lower column's stays.
+    /// Each of `ranges` that holds part of `[offset, offset + length)`, a page of `column` serving
+    /// row `key`, has the page as one more reader until it is done; its entry in `keys` is lowered
+    /// to `key`, recording the column in `keyColumns`. Columns come in ascending order, so of two
+    /// pages serving one row the lower column's stays.
     private static void lowerKeys(List<RangeFetch> ranges, long[] keys, int[] keyColumns, int column, long key,
                                   long offset, int length) {
         for (int i = 0; i < ranges.size(); i++) {
             RangeFetch r = ranges.get(i);
-            if (r.range().start() < offset + length && r.range().end() > offset && key < keys[i]) {
-                keys[i] = key;
-                keyColumns[i] = column;
+            if (r.range().start() < offset + length && r.range().end() > offset) {
+                r.addReader();
+                if (key < keys[i]) {
+                    keys[i] = key;
+                    keyColumns[i] = column;
+                }
             }
-        }
-    }
-
-    /// `tracked` will read its ranges until done.
-    private void hold(TrackedPage tracked) {
-        for (RangeFetch r : tracked.ranges()) {
-            r.addReader();
         }
     }
 

@@ -370,7 +370,7 @@ final class HeaderScanner {
                 TrackedPage dictionaryPage = new TrackedPage(s.unit(), s.column(), key(s),
                         NeededPage.dictionary(f.offset(), f.length()), within(s, f), dictionary, false);
                 dictionaryPage.headerRead(f.parsed());
-                fetcher.keyAt(dictionaryPage.ranges(), dictionaryPage.key());
+                fetcher.pageIn(dictionaryPage.ranges(), dictionaryPage.key());
                 tracker.addDictionaryPage(dictionaryPage);
             }
             else if (type == PageType.DATA_PAGE || type == PageType.DATA_PAGE_V2) {
@@ -422,7 +422,7 @@ final class HeaderScanner {
         }
         // the ranges were keyed by where they lie in the chunk; the page they hold serves its own
         // row, which may be lower
-        fetcher.keyAt(tracked.ranges(), tracked.key());
+        fetcher.pageIn(tracked.ranges(), tracked.key());
         tracker.add(s.placement(), tracked);
     }
 
