@@ -34,7 +34,7 @@ class ReadDriverTest {
     private final HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(0, fetches::add);
     private final ReadQueue queue = new ReadQueue(context);
     private final ReadDriver driver = new ReadDriver(context, queue, Long.MAX_VALUE, () -> ANYWHERE,
-            t -> applied.add("broken: " + t));
+            t -> applied.add("broken: " + t), t -> applied.add("abandoned: " + t));
 
     @AfterEach
     void closeContext() {
@@ -73,7 +73,7 @@ class ReadDriverTest {
     void aPollThatKeepsThrowingLeavesTheLockFree() throws InterruptedException {
         ReadDriver throwing = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
             throw new IllegalStateException("poll");
-        }, t -> applied.add("broken: " + t.getMessage()));
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
 
         assertThatThrownBy(() -> throwing.update(() -> applied.add("result")))
                 .isInstanceOf(IllegalStateException.class)
@@ -83,6 +83,115 @@ class ReadDriverTest {
         // a close on another thread takes the lock, which the throw let go of
         Thread closer = Thread.ofPlatform().start(throwing::close);
         closer.join();
+    }
+
+    /// A job's end whose application throws, as an `OutOfMemoryError` does where reporting it
+    /// allocates with the heap exhausted, abandons the read on the job's thread: the throw stays
+    /// there, and a close does not wait for the job whose end was never applied.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aJobWhoseEndThrowsAbandonsTheRead() {
+        boolean[] pollThrows = { false };
+        ReadDriver throwing = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
+            if (pollThrows[0]) {
+                throw new OutOfMemoryError("poll");
+            }
+            return ANYWHERE;
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+        JobScheduler s = throwing.scheduler();
+        throwing.update(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
+        })));
+        pollThrows[0] = true;
+
+        fetches.poll().run();
+
+        assertThat(applied).containsExactly("fetch", "broken: poll", "abandoned: poll");
+        throwing.close();
+    }
+
+    /// A job's end whose application dispatches a further job, and the dispatch throws: the read
+    /// is abandoned, and its close returns, though the further job counts as started and never
+    /// ends.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aDispatchThatThrowsAbandonsTheReadAndItsCloseReturns() {
+        ArrayDeque<Runnable> dispatched = new ArrayDeque<>();
+        int[] executed = { 0 };
+        try (HardwoodContextImpl failing = HardwoodContextImpl.withIoExecutor(0, run -> {
+            if (++executed[0] > 1) {
+                throw new OutOfMemoryError("dispatch");
+            }
+            dispatched.add(run);
+        })) {
+            ReadDriver read = new ReadDriver(failing, new ReadQueue(failing), Long.MAX_VALUE, () -> ANYWHERE,
+                    t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+            JobScheduler s = read.scheduler();
+            JobScheduler.Job<?> next = job("next", 20, 0, JobScheduler.Kind.FETCH, null, () -> {
+            });
+            read.update(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> s.add(next))));
+
+            dispatched.poll().run();
+
+            assertThat(applied).containsExactly("fetch", "abandoned: dispatch");
+            read.close();
+        }
+    }
+
+    /// A read woken for room by another read's release, whose bookkeeping then throws on that
+    /// read's thread, is abandoned there, and the read whose release woke it goes on: one read's
+    /// failure never reaches another.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aReadWokenByAnotherReadsReleaseFailsAloneWhereItThrows() {
+        boolean[] pollThrows = { false };
+        ReadDriver waiting = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
+            if (pollThrows[0]) {
+                throw new OutOfMemoryError("poll");
+            }
+            return ANYWHERE;
+        }, t -> applied.add("waiting broken: " + t.getMessage()),
+                t -> applied.add("waiting abandoned: " + t.getMessage()));
+        // a fetch ahead larger than R waits for R's next release
+        JobScheduler.Job<?> large = job("large", 10, Long.MAX_VALUE / 2, JobScheduler.Kind.FETCH, new Charge(), () -> {
+        });
+        waiting.update(() -> waiting.scheduler().add(large));
+        pollThrows[0] = true;
+        JobScheduler s = driver.scheduler();
+        JobScheduler.Job<?> charged = job("charged", 10, 1, JobScheduler.Kind.CPU, new Charge(), () -> {
+        });
+        driver.update(() -> s.add(charged));
+
+        // its end releases R, which wakes the waiting read on this read's job
+        assertThat(queue.runOne()).isTrue();
+
+        assertThat(applied).containsExactly("charged", "waiting broken: poll", "waiting abandoned: poll");
+        driver.awaitIdle();
+        waiting.close();
+    }
+
+    /// A result applied on a thread that runs none of the read's jobs, the consumer's taking a
+    /// batch, whose application throws: the read is abandoned rather than the throw leaving it with
+    /// counts that never balance, and its close returns.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aResultAppliedOnTheConsumersThreadThatThrowsAbandonsTheRead() {
+        boolean[] pollThrows = { false };
+        ReadDriver read = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
+            if (pollThrows[0]) {
+                throw new OutOfMemoryError("poll");
+            }
+            return ANYWHERE;
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+        JobScheduler s = read.scheduler();
+        // a fetch dispatched and never run, so the read's counts do not balance
+        read.update(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
+        })));
+        pollThrows[0] = true;
+
+        read.updateOrAbandon(() -> applied.add("room"));
+
+        assertThat(applied).containsExactly("room", "broken: poll", "abandoned: poll");
+        read.close();
     }
 
     /// A result that throws fails the read with what it threw, classified as every failure of a

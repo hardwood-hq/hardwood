@@ -56,7 +56,12 @@ final class ReadDriver {
     private final ReadTasks tasks;
     /// fails the read with what a result threw, which no rule of the read should let happen
     private final Consumer<Throwable> broken;
+    /// fails every column's stream with a failure that cannot be reported under the lock
+    private final Consumer<Throwable> onAbandon;
     private boolean closed;
+    /// set once a job's end could not be applied: the read is abandoned, and its jobs' counts no
+    /// longer balance
+    private volatile boolean abandoned;
     /// jobs whose results were applied since the lock was last let go, counted as ended once what
     /// they started is counted and what they returned is released to R, so that a close that finds
     /// the read idle finds nothing on its way back to R
@@ -66,17 +71,21 @@ final class ReadDriver {
     /// @param position reconciles the read's parts and says where the consumer stands, at each poll
     /// @param broken fails the read with what a result or a poll threw, a runtime failure classified
     ///        as every failure of a read is ([ExceptionContext#asReadFailure]); under the lock
+    /// @param onAbandon fails every column's stream with a failure that reporting a job's end threw,
+    ///        without allocating ([BatchExchange#abandon])
     /// @param queue the read's queue on a context of zero threads, `null` on one with a pool
     ReadDriver(HardwoodContextImpl context, ReadQueue queue, long fetchAheadBytes,
-               Supplier<JobScheduler.Position> position, Consumer<Throwable> broken) {
+               Supplier<JobScheduler.Position> position, Consumer<Throwable> broken,
+               Consumer<Throwable> onAbandon) {
         this.broken = broken;
+        this.onAbandon = onAbandon;
         this.readAhead = context.readAheadBuffer();
         this.queue = queue;
         this.context = context;
         this.io = context.ioExecutor();
         this.tasks = queue != null ? queue.tasks() : new ReadTasks();
         this.position = position;
-        this.scheduler = new JobScheduler(readAhead, () -> update(NOTHING),
+        this.scheduler = new JobScheduler(readAhead, () -> updateOrAbandon(NOTHING),
                 2 * (queue != null ? 1 : context.threads()), fetchAheadBytes);
     }
 
@@ -92,6 +101,28 @@ final class ReadDriver {
         if (!lock.isHeldByCurrentThread() && lock.tryLock()) {
             unlock();
         }
+    }
+
+    /// [#update] where nothing above would take a throw for this read: on a thread of its own job,
+    /// or of another read whose release of R wakes this one, or of a footer load. Applying a result
+    /// can throw, as reporting a failure does when the heap is exhausted and the report allocates;
+    /// the result is then never applied and the read cannot go on. It is abandoned, which allocates
+    /// nothing, so that the consumer raises the failure rather than wait for a batch that never
+    /// comes, and the throw stays here, reaching neither another read nor the thread's pool.
+    void updateOrAbandon(Runnable result) {
+        try {
+            update(result);
+        }
+        catch (Throwable t) {
+            abandon(t);
+        }
+    }
+
+    /// Abandons the read with `t`, which applying a result threw ([#updateOrAbandon]).
+    private void abandon(Throwable t) {
+        abandoned = true;
+        onAbandon.accept(t);
+        tasks.signal();
     }
 
     /// Runs `action` under the lock, waiting for it, then polls and dispatches.
@@ -203,8 +234,15 @@ final class ReadDriver {
         }
     }
 
+    /// Runs `job` and applies its end as [#updateOrAbandon] applies a result, from building the
+    /// result on: building it allocates too.
     private void finish(JobScheduler.Job<?> job, DecodeBuffers buffers) {
-        update(ended(scheduler.run(job, buffers)));
+        try {
+            update(ended(scheduler.run(job, buffers)));
+        }
+        catch (Throwable t) {
+            abandon(t);
+        }
     }
 
     private Runnable ended(Runnable apply) {
@@ -217,11 +255,11 @@ final class ReadDriver {
     /// Waits until no job of the read is in flight, running the read's queue meanwhile on a context
     /// of zero threads.
     void awaitIdle() {
-        tasks.await(tasks::idle, queue);
+        tasks.await(() -> tasks.idle() || abandoned, queue);
     }
 
-    /// Starts no further job, waits until none is in flight, and returns every charge still held
-    /// to R. Interrupts nothing. Idempotent.
+    /// Starts no further job, waits until none is in flight, or for an abandoned read not at all,
+    /// and returns every charge still held to R. Interrupts nothing. Idempotent.
     void close() {
         locked(() -> closed = true);
         awaitIdle();
