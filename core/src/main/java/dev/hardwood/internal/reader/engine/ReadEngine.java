@@ -118,16 +118,16 @@ public final class ReadEngine implements Closeable {
                         filter != null, limit == 0 ? 0 : limit + read.leadingRows()), schemas, filterOnly,
                 read.pruning(), limit > 0 ? limit : Long.MAX_VALUE, filter != null, read.skip(), read.maskedRows());
         footers = new FooterReader(read.files(), scheduler, planner, readFailure, read.compatibility(), filter,
-                limit > 0, driver::updateOrAbandon);
+                limit > 0, driver::submitOrAbandon);
         for (int c = 0; c < n; c++) {
             int column = c;
             if (readQueue != null) {
                 started.get(c).setQueue(readQueue);
             }
-            started.get(c).setRoomListener(() -> driver.updateOrAbandon(() -> publisher.publishable(column)));
+            started.get(c).setRoomListener(() -> driver.submitOrAbandon(() -> publisher.publishable(column)));
         }
         try {
-            driver.locked(() -> footers.start(read.file(), schema, read.firstKept(), read.firstOrdinals()));
+            driver.runLocked(() -> footers.start(read.file(), schema, read.firstKept(), read.firstOrdinals()));
         }
         catch (RuntimeException | Error e) {
             closeAfter(e);
@@ -193,10 +193,10 @@ public final class ReadEngine implements Closeable {
     /// Interrupts nothing. Idempotent.
     @Override
     public void close() {
-        driver.locked(publisher::stop);
+        driver.runLocked(publisher::stop);
         driver.close();
         // under the lock, beside another read's load ending, which then starts nothing
-        driver.locked(footers::close);
+        driver.runLocked(footers::close);
         closeListener.run();
     }
 

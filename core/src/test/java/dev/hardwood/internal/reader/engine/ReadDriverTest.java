@@ -56,7 +56,7 @@ class ReadDriverTest {
         });
         JobScheduler.Job<?> fetch = job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> s.add(decode));
 
-        driver.update(() -> s.add(fetch));
+        driver.submit(() -> s.add(fetch));
         assertThat(fetches).hasSize(1);
         assertThat(queue.runOne()).isFalse();
 
@@ -75,7 +75,7 @@ class ReadDriverTest {
             throw new IllegalStateException("poll");
         }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
 
-        assertThatThrownBy(() -> throwing.update(() -> applied.add("result")))
+        assertThatThrownBy(() -> throwing.submit(() -> applied.add("result")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("poll");
 
@@ -83,6 +83,32 @@ class ReadDriverTest {
         // a close on another thread takes the lock, which the throw let go of
         Thread closer = Thread.ofPlatform().start(throwing::close);
         closer.join();
+    }
+
+    /// A job's end applied by a holder whose poll then keeps throwing still counts the job as
+    /// ended: the throw reaches the holder's caller, and a close that follows returns.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void aJobEndedBeforeAPollThatKeepsThrowingStillCountsAsEnded() {
+        boolean[] pollThrows = { false };
+        ReadDriver throwing = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
+            if (pollThrows[0]) {
+                throw new IllegalStateException("poll");
+            }
+            return ANYWHERE;
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+        JobScheduler s = throwing.scheduler();
+        throwing.submit(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
+        })));
+
+        // the fetch ends while this thread holds the lock, so its end is applied as the lock is let go
+        assertThatThrownBy(() -> throwing.runLocked(() -> {
+            fetches.poll().run();
+            pollThrows[0] = true;
+        })).isInstanceOf(IllegalStateException.class).hasMessage("poll");
+
+        assertThat(applied).containsExactly("fetch", "broken: poll");
+        throwing.close();
     }
 
     /// A job's end whose application throws, as an `OutOfMemoryError` does where reporting it
@@ -99,7 +125,7 @@ class ReadDriverTest {
             return ANYWHERE;
         }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
         JobScheduler s = throwing.scheduler();
-        throwing.update(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
+        throwing.submit(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
         })));
         pollThrows[0] = true;
 
@@ -128,7 +154,7 @@ class ReadDriverTest {
             JobScheduler s = read.scheduler();
             JobScheduler.Job<?> next = job("next", 20, 0, JobScheduler.Kind.FETCH, null, () -> {
             });
-            read.update(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> s.add(next))));
+            read.submit(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> s.add(next))));
 
             dispatched.poll().run();
 
@@ -154,12 +180,12 @@ class ReadDriverTest {
         // a fetch ahead larger than R waits for R's next release
         JobScheduler.Job<?> large = job("large", 10, Long.MAX_VALUE / 2, JobScheduler.Kind.FETCH, new Charge(), () -> {
         });
-        waiting.update(() -> waiting.scheduler().add(large));
+        waiting.submit(() -> waiting.scheduler().add(large));
         pollThrows[0] = true;
         JobScheduler s = driver.scheduler();
         JobScheduler.Job<?> charged = job("charged", 10, 1, JobScheduler.Kind.CPU, new Charge(), () -> {
         });
-        driver.update(() -> s.add(charged));
+        driver.submit(() -> s.add(charged));
 
         // its end releases R, which wakes the waiting read on this read's job
         assertThat(queue.runOne()).isTrue();
@@ -184,14 +210,38 @@ class ReadDriverTest {
         }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
         JobScheduler s = read.scheduler();
         // a fetch dispatched and never run, so the read's counts do not balance
-        read.update(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
+        read.submit(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
         })));
         pollThrows[0] = true;
 
-        read.updateOrAbandon(() -> applied.add("room"));
+        read.submitOrAbandon(() -> applied.add("room"));
 
         assertThat(applied).containsExactly("room", "broken: poll", "abandoned: poll");
         read.close();
+    }
+
+    /// A read abandoned while its close waits for a job that never ends: the close returns.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void aReadAbandonedWhileItsCloseWaitsLetsTheCloseReturn() throws Exception {
+        ReadDriver read = new ReadDriver(context, queue, Long.MAX_VALUE, () -> ANYWHERE, t -> {
+            throw new OutOfMemoryError("report");
+        }, t -> applied.add("abandoned: " + t.getMessage()));
+        JobScheduler s = read.scheduler();
+        // a fetch dispatched and never run, so the close waits for it
+        read.submit(() -> s.add(job("fetch", 10, 0, JobScheduler.Kind.FETCH, null, () -> {
+        })));
+        Thread closer = Thread.ofPlatform().start(read::close);
+        while (closer.getState() != Thread.State.TIMED_WAITING && closer.getState() != Thread.State.WAITING) {
+            Thread.sleep(1);
+        }
+
+        read.submitOrAbandon(() -> {
+            throw new IllegalStateException("result");
+        });
+        closer.join();
+
+        assertThat(applied).containsExactly("abandoned: report");
     }
 
     /// A result that throws fails the read with what it threw, classified as every failure of a
@@ -199,7 +249,7 @@ class ReadDriverTest {
     /// `ParquetReadException`, not raw.
     @Test
     void aResultThatThrowsFailsTheReadWithTheClassifiedFailure() {
-        driver.update(() -> {
+        driver.submit(() -> {
             throw new ArithmeticException("integer overflow");
         });
 
@@ -209,8 +259,8 @@ class ReadDriverTest {
 
     @Test
     void holderAppliesAResultQueuedWhileItHoldsTheLock() {
-        driver.locked(() -> {
-            driver.update(() -> applied.add("queued"));
+        driver.runLocked(() -> {
+            driver.submit(() -> applied.add("queued"));
             applied.add("held");
         });
 
@@ -222,7 +272,7 @@ class ReadDriverTest {
         JobScheduler s = driver.scheduler();
         Charge never = new Charge();
         never.reader();
-        driver.update(() -> s.add(job("decode", 10, 100, JobScheduler.Kind.DECODE, never, () -> {
+        driver.submit(() -> s.add(job("decode", 10, 100, JobScheduler.Kind.DECODE, never, () -> {
         })));
         assertThat(context.readAheadBuffer().held()).isEqualTo(100);
 
@@ -237,7 +287,7 @@ class ReadDriverTest {
         JobScheduler s = driver.scheduler();
         driver.close();
 
-        driver.update(() -> s.add(job("decode", 10, 0, JobScheduler.Kind.DECODE, null, () -> {
+        driver.submit(() -> s.add(job("decode", 10, 0, JobScheduler.Kind.DECODE, null, () -> {
         })));
 
         assertThat(queue.runOne()).isFalse();
@@ -249,7 +299,7 @@ class ReadDriverTest {
         JobScheduler s = driver.scheduler();
         context.close();
 
-        driver.update(() -> s.add(job("decode", 10, 0, JobScheduler.Kind.DECODE, null, () -> {
+        driver.submit(() -> s.add(job("decode", 10, 0, JobScheduler.Kind.DECODE, null, () -> {
         })));
 
         assertThat(applied).containsExactly(

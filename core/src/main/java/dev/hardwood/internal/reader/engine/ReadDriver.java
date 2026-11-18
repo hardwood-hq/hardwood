@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader.engine;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
@@ -32,21 +31,53 @@ import dev.hardwood.internal.reader.step.ReadTasks;
 /// queued result before it lets go. Once it has let go, it dispatches the jobs its polls started
 /// and returns to R what the results released, since R runs other reads' waiters on the releasing
 /// thread.
+///
+/// The read moves through the states of [State]; only a running read starts jobs.
 final class ReadDriver {
+
+    /// Where the read stands in its life. A close moves a running read to [#CLOSING] and, once
+    /// no job is in flight, to [#CLOSED]; it moves an abandoned read to [#CLOSED] at once. A read
+    /// running or closing is abandoned where a job's end cannot be applied; a closed one stays
+    /// closed.
+    private enum State {
+        /// starts what the scheduler lets start
+        RUNNING,
+        /// starts nothing, and its close waits until no job is in flight
+        CLOSING,
+        /// a job's end could not be applied: starts nothing, and its jobs' counts no longer
+        /// balance, so nothing waits for them
+        ABANDONED,
+        /// every charge it held is returned to R
+        CLOSED;
+
+        /// Whether a wait for the read to go idle can end only with its jobs.
+        boolean awaitsJobs() {
+            return this == RUNNING || this == CLOSING;
+        }
+    }
+
+    /// A result that ends a job: counted as ended once the lock is let go, after what it returned
+    /// is released to R, so that a close that finds the read idle finds nothing on its way back to R.
+    private record JobEnd(Runnable apply) implements Runnable {
+        @Override
+        public void run() {
+            apply.run();
+        }
+    }
 
     /// a result that changes nothing, queued where only the scheduler's answer may have changed (R
     /// has room again, an action under the lock completed), so that the lock's holder asks it again
     /// before it lets go
-    private static final Runnable NOTHING = () -> {
+    private static final Runnable POLL_AGAIN = () -> {
     };
 
     private final ReentrantLock lock = new ReentrantLock();
     /// results of jobs that ended while another thread held the lock, for the holder to apply
     private final ConcurrentLinkedQueue<Runnable> results = new ConcurrentLinkedQueue<>();
-    /// the jobs the holder's polls started, dispatched once it has let go of the lock
-    private final List<JobScheduler.Job<?>> started = new ArrayList<>();
+    /// moved by the transitions below, each synchronized on the driver; read without the lock
+    private volatile State state = State.RUNNING;
     private final JobScheduler scheduler;
-    private final Supplier<JobScheduler.Position> position;
+    private final Supplier<JobScheduler.Position> reconcile;
     private final ReadAheadBuffer readAhead;
     /// the read's queue on a context of zero threads, `null` on one with a pool
     private final ReadQueue queue;
@@ -55,37 +86,30 @@ final class ReadDriver {
     /// the jobs started and not yet applied, which a close waits for
     private final ReadTasks tasks;
     /// fails the read with what a result threw, which no rule of the read should let happen
-    private final Consumer<Throwable> broken;
+    private final Consumer<Throwable> onApplyFailure;
     /// fails every column's stream with a failure that cannot be reported under the lock
     private final Consumer<Throwable> onAbandon;
-    private boolean closed;
-    /// set once a job's end could not be applied: the read is abandoned, and its jobs' counts no
-    /// longer balance
-    private volatile boolean abandoned;
-    /// jobs whose results were applied since the lock was last let go, counted as ended once what
-    /// they started is counted and what they returned is released to R, so that a close that finds
-    /// the read idle finds nothing on its way back to R
-    private int finished;
 
     /// @param fetchAheadBytes F
-    /// @param position reconciles the read's parts and says where the consumer stands, at each poll
-    /// @param broken fails the read with what a result or a poll threw, a runtime failure classified
-    ///        as every failure of a read is ([ExceptionContext#asReadFailure]); under the lock
+    /// @param reconcile reconciles the read's parts and says where the consumer stands, at each poll
+    /// @param onApplyFailure fails the read with what a result or a poll threw, a runtime failure
+    ///        classified as every failure of a read is ([ExceptionContext#asReadFailure]); under the
+    ///        lock
     /// @param onAbandon fails every column's stream with a failure that reporting a job's end threw,
     ///        without allocating ([BatchExchange#abandon])
     /// @param queue the read's queue on a context of zero threads, `null` on one with a pool
     ReadDriver(HardwoodContextImpl context, ReadQueue queue, long fetchAheadBytes,
-               Supplier<JobScheduler.Position> position, Consumer<Throwable> broken,
+               Supplier<JobScheduler.Position> reconcile, Consumer<Throwable> onApplyFailure,
                Consumer<Throwable> onAbandon) {
-        this.broken = broken;
+        this.onApplyFailure = onApplyFailure;
         this.onAbandon = onAbandon;
         this.readAhead = context.readAheadBuffer();
         this.queue = queue;
         this.context = context;
         this.io = context.ioExecutor();
         this.tasks = queue != null ? queue.tasks() : new ReadTasks();
-        this.position = position;
-        this.scheduler = new JobScheduler(readAhead, () -> updateOrAbandon(NOTHING),
+        this.reconcile = reconcile;
+        this.scheduler = new JobScheduler(readAhead, () -> submitOrAbandon(POLL_AGAIN),
                 2 * (queue != null ? 1 : context.threads()), fetchAheadBytes);
     }
 
@@ -93,82 +117,81 @@ final class ReadDriver {
         return scheduler;
     }
 
-    /// Applies `result` and dispatches what it made possible; or, where another thread holds the
-    /// lock, leaves it to that thread. On the thread holding the lock, it is applied before the
-    /// lock is let go.
-    void update(Runnable result) {
+    /// Queues `result` for the thread holding the lock, and drains the queue where none holds it:
+    /// applies the result and dispatches what it made possible. On the thread holding the lock, it
+    /// is applied before the lock is let go.
+    void submit(Runnable result) {
         results.add(result);
         if (!lock.isHeldByCurrentThread() && lock.tryLock()) {
-            unlock();
+            drainAndUnlock();
         }
     }
 
-    /// [#update] where nothing above would take a throw for this read: on a thread of its own job,
+    /// [#submit] where nothing above would take a throw for this read: on a thread of its own job,
     /// or of another read whose release of R wakes this one, or of a footer load. Applying a result
     /// can throw, as reporting a failure does when the heap is exhausted and the report allocates;
     /// the result is then never applied and the read cannot go on. It is abandoned, which allocates
     /// nothing, so that the consumer raises the failure rather than wait for a batch that never
     /// comes, and the throw stays here, reaching neither another read nor the thread's pool.
-    void updateOrAbandon(Runnable result) {
+    void submitOrAbandon(Runnable result) {
         try {
-            update(result);
+            submit(result);
         }
         catch (Throwable t) {
             abandon(t);
         }
     }
 
-    /// Abandons the read with `t`, which applying a result threw ([#updateOrAbandon]).
+    /// Abandons the read with `t`, which applying a result threw ([#submitOrAbandon]).
     private void abandon(Throwable t) {
-        abandoned = true;
+        toAbandoned();
         onAbandon.accept(t);
         tasks.signal();
     }
 
     /// Runs `action` under the lock, waiting for it, then polls and dispatches.
-    void locked(Runnable action) {
+    void runLocked(Runnable action) {
         lock.lock();
         try {
             action.run();
             // asks the scheduler only where the action completed: one that threw leaves the read
             // half changed, which the caller fails
-            results.add(NOTHING);
+            results.add(POLL_AGAIN);
         }
         finally {
-            unlock();
+            drainAndUnlock();
         }
     }
 
-    /// Applies the queued results and polls for what they made possible; under the lock.
-    private void applyQueued() {
-        Runnable r = results.poll();
-        if (r == null) {
-            return;
+    /// Runs `result` under the lock; one that throws fails the read.
+    private void apply(Runnable result) {
+        try {
+            result.run();
         }
-        for (; r != null; r = results.poll()) {
-            try {
-                r.run();
-            }
-            catch (RuntimeException | Error e) {
-                broken.accept(classified(e));
-            }
+        catch (RuntimeException | Error e) {
+            onApplyFailure.accept(classified(e));
         }
-        if (!closed) {
-            List<JobScheduler.Job<?>> jobs;
-            try {
-                jobs = scheduler.start(position.get());
-            }
-            catch (RuntimeException | Error e) {
-                broken.accept(classified(e));
-                jobs = scheduler.start(position.get());
-            }
-            for (JobScheduler.Job<?> job : jobs) {
-                // counted under the lock, so that a close never finds the read idle with a job
-                // started and not yet dispatched
-                tasks.started();
-                started.add(job);
-            }
+    }
+
+    /// Starts what the scheduler lets start, where the read is running, and counts it as started;
+    /// under the lock, so that a close never finds the read idle with a job started and not yet
+    /// dispatched.
+    private List<JobScheduler.Job<?>> startReady() {
+        if (state != State.RUNNING) {
+            return List.of();
         }
+        List<JobScheduler.Job<?>> jobs;
+        try {
+            jobs = scheduler.start(reconcile.get());
+        }
+        catch (RuntimeException | Error e) {
+            onApplyFailure.accept(classified(e));
+            jobs = scheduler.start(reconcile.get());
+        }
+        for (int i = 0; i < jobs.size(); i++) {
+            tasks.started();
+        }
+        return jobs;
     }
 
     /// `t` as the read's failure: a runtime failure classified as a read failure, an [Error] as
@@ -178,91 +201,123 @@ final class ReadDriver {
         return t instanceof RuntimeException e ? ExceptionContext.asReadFailure(e) : t;
     }
 
-    /// Lets go of the lock once every queued result is applied, then releases to R what they
-    /// returned, counts their jobs as ended and dispatches what they started; takes the lock again
-    /// where a result was queued as it let go. A poll that throws, a bug, still lets go of the lock;
-    /// a release to R that throws, from another read's waiter, still counts and dispatches.
-    private void unlock() {
+    /// Drains the queued results on the thread holding the lock, until none is left, and lets go of
+    /// it: applies them and polls for what they made possible, then lets go of the lock,
+    /// releases to R what the results returned, counts their jobs as ended and dispatches what the
+    /// poll started; takes the lock again where a result was queued as it let go. A poll that
+    /// throws, a bug, still lets go of the lock, and the jobs whose results were applied still
+    /// count as ended; a release to R that throws, from another read's waiter, still counts and
+    /// dispatches.
+    private void drainAndUnlock() {
         do {
-            List<JobScheduler.Job<?>> dispatch;
-            long released;
-            int ended;
+            List<JobScheduler.Job<?>> dispatch = List.of();
+            int ended = 0;
             try {
-                applyQueued();
+                Runnable r = results.poll();
+                if (r != null) {
+                    for (; r != null; r = results.poll()) {
+                        if (r instanceof JobEnd) {
+                            ended++;
+                        }
+                        apply(r);
+                    }
+                    dispatch = startReady();
+                }
             }
             finally {
-                dispatch = List.copyOf(started);
-                started.clear();
-                released = scheduler.takeReleased();
-                ended = finished;
-                finished = 0;
+                long released = scheduler.takeReleased();
                 lock.unlock();
-            }
-            try {
-                if (released > 0) {
-                    readAhead.release(released);
-                }
-            }
-            finally {
-                for (; ended > 0; ended--) {
-                    tasks.ended();
-                }
-                for (JobScheduler.Job<?> job : dispatch) {
-                    dispatch(job);
-                }
+                afterUnlock(released, ended, dispatch);
             }
         } while (!results.isEmpty() && lock.tryLock());
+    }
+
+    /// Releases `released` to R, counts `ended` jobs as ended and dispatches `dispatch`, outside
+    /// the lock.
+    private void afterUnlock(long released, int ended, List<JobScheduler.Job<?>> dispatch) {
+        try {
+            if (released > 0) {
+                readAhead.release(released);
+            }
+        }
+        finally {
+            for (; ended > 0; ended--) {
+                tasks.ended();
+            }
+            for (JobScheduler.Job<?> job : dispatch) {
+                dispatch(job);
+            }
+        }
     }
 
     private void dispatch(JobScheduler.Job<?> job) {
         try {
             if (job.cpu()) {
                 if (queue != null) {
-                    queue.executePage(buffers -> finish(job, buffers));
+                    queue.executePage(buffers -> runJob(job, buffers));
                 }
                 else {
-                    context.execute(buffers -> finish(job, buffers));
+                    context.execute(buffers -> runJob(job, buffers));
                 }
             }
             else {
-                io.execute(() -> finish(job, null));
+                io.execute(() -> runJob(job, null));
             }
         }
         catch (RejectedExecutionException e) {
             // a closed context refuses the job: it ends here, with its failure
-            update(ended(scheduler.refused(job, HardwoodContextImpl.contextClosed(e))));
+            submit(new JobEnd(scheduler.refused(job, HardwoodContextImpl.contextClosed(e))));
         }
     }
 
-    /// Runs `job` and applies its end as [#updateOrAbandon] applies a result, from building the
-    /// result on: building it allocates too.
-    private void finish(JobScheduler.Job<?> job, DecodeBuffers buffers) {
+    /// Runs `job`'s work and submits its end as [#submitOrAbandon] submits a result, from building
+    /// the result on: building it allocates too.
+    private void runJob(JobScheduler.Job<?> job, DecodeBuffers buffers) {
         try {
-            update(ended(scheduler.run(job, buffers)));
+            submit(new JobEnd(scheduler.run(job, buffers)));
         }
         catch (Throwable t) {
             abandon(t);
         }
     }
 
-    private Runnable ended(Runnable apply) {
-        return () -> {
-            finished++;
-            apply.run();
-        };
-    }
-
     /// Waits until no job of the read is in flight, running the read's queue meanwhile on a context
-    /// of zero threads.
+    /// of zero threads; for an abandoned or closed read not at all.
     void awaitIdle() {
-        tasks.await(() -> tasks.idle() || abandoned, queue);
+        tasks.await(() -> tasks.idle() || !state.awaitsJobs(), queue);
     }
 
     /// Starts no further job, waits until none is in flight, or for an abandoned read not at all,
     /// and returns every charge still held to R. Interrupts nothing. Idempotent.
     void close() {
-        locked(() -> closed = true);
+        runLocked(this::toClosing);
         awaitIdle();
-        locked(scheduler::releaseAll);
+        runLocked(() -> {
+            if (toClosed()) {
+                scheduler.releaseAll();
+            }
+        });
+    }
+
+    /// A running read starts closing.
+    private synchronized void toClosing() {
+        if (state == State.RUNNING) {
+            state = State.CLOSING;
+        }
+    }
+
+    /// A running or closing read is abandoned; a closed one stays closed. Allocates nothing, as it
+    /// runs where an allocation has just failed.
+    private synchronized void toAbandoned() {
+        if (state == State.RUNNING || state == State.CLOSING) {
+            state = State.ABANDONED;
+        }
+    }
+
+    /// The read is closed; returns whether it was not before.
+    private synchronized boolean toClosed() {
+        boolean was = state != State.CLOSED;
+        state = State.CLOSED;
+        return was;
     }
 }
