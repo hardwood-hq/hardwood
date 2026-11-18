@@ -313,17 +313,22 @@ final class HeaderScanner {
         long position = s.position();
         long values = s.values() - s.valuesRead();
         long end = s.end();
-        // a page is handed on only where the ranges held reach its end
+        // a page is handed on only where the ranges held reach its end, or where it stores more
+        // than the read can hold, to be refused before its body is fetched
         long held = s.ranges().getLast().range().end();
+        long storable = columns.workingSet(s.column()).storableBytes();
         s.start(arrivedTo);
         scheduler.add(new JobScheduler.Job<>(key(s), 0, JobScheduler.Kind.CPU, null,
-                buffers -> walk(arrived, position, end, held, values), step -> scanned(s, step), t -> failed(s, t)));
+                buffers -> walk(arrived, position, end, held, storable, values), step -> scanned(s, step),
+                t -> failed(s, t)));
     }
 
     /// Walks the headers from `position` as far as `arrived` reaches, up to `end` or `values`
-    /// values, stopping before a page that ends past `held`, where the ranges held end, or at a
-    /// header that does not parse, with the pages before it; on a job.
-    private static Step walk(List<RangeFetch> arrived, long position, long end, long held, long values) {
+    /// values, stopping before a page that ends past `held`, where the ranges held end, unless it
+    /// stores more than `storable` bytes, or at a header that does not parse, with the pages before
+    /// it; on a job.
+    private static Step walk(List<RangeFetch> arrived, long position, long end, long held, long storable,
+            long values) {
         List<Found> found = new ArrayList<>();
         while (position < end && values > 0) {
             PageFormatProbe.HeaderAt parsed;
@@ -337,7 +342,7 @@ final class HeaderScanner {
                 }
                 parsed = read.value();
                 long pageEnd = PageFormatProbe.pageEnd(parsed, position, end);
-                if (pageEnd > held) {
+                if (pageEnd > held && pageEnd - position <= storable) {
                     return new Step(found, position, null);
                 }
                 // a page whose header and body together pass an int fails the read
@@ -370,8 +375,10 @@ final class HeaderScanner {
                 TrackedPage dictionaryPage = new TrackedPage(s.unit(), s.column(), key(s),
                         NeededPage.dictionary(f.offset(), f.length()), within(s, f), dictionary, false);
                 dictionaryPage.headerRead(f.parsed());
-                fetcher.pageIn(dictionaryPage.ranges(), dictionaryPage.key());
-                tracker.addDictionaryPage(dictionaryPage);
+                if (!tracker.refused(dictionaryPage)) {
+                    fetcher.pageIn(dictionaryPage.ranges(), dictionaryPage.key());
+                    tracker.addDictionaryPage(dictionaryPage);
+                }
             }
             else if (type == PageType.DATA_PAGE || type == PageType.DATA_PAGE_V2) {
                 int values = type == PageType.DATA_PAGE ? f.header().dataPageHeader().numValues()
@@ -420,6 +427,10 @@ final class HeaderScanner {
         else {
             tracked.headerRead(f.parsed());
         }
+        // a page of nulls reads none of its bytes
+        if (!nulls && tracker.refused(tracked)) {
+            return;
+        }
         // the ranges were keyed by where they lie in the chunk; the page they hold serves its own
         // row, which may be lower
         fetcher.pageIn(tracked.ranges(), tracked.key());
@@ -453,9 +464,11 @@ final class HeaderScanner {
     }
 
     /// The scan has passed every byte it holds and its chunk goes on: the next piece of it, at
-    /// most S, is fetched at the scan's row, held by the scan alone.
+    /// most S, is fetched at the scan's row, held by the scan alone. It starts where the scan is
+    /// where that lies past the ranges held, as after a page refused before its body was fetched.
     private void fetchRest(Scan s) {
-        long from = s.ranges().isEmpty() ? s.position() : s.ranges().getLast().range().end();
+        long from = s.ranges().isEmpty() ? s.position()
+                : Math.max(s.position(), s.ranges().getLast().range().end());
         if (from >= s.end()) {
             return;
         }

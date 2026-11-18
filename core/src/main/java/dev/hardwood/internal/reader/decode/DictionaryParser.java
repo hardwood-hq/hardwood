@@ -66,13 +66,15 @@ public final class DictionaryParser {
     /// @throws ParquetReadException if the offsets or the page header contradict the chunk
     public static DataPage readPage(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
             throws IOException {
-        return readPage(ByteSource.of(inputFile), columnChunk, messagePrefix).get();
+        return readPage(ByteSource.of(inputFile), columnChunk, messagePrefix, Long.MAX_VALUE).get();
     }
 
     /// As [#readPage(InputFile, ColumnChunk, String)], over the bytes `bytes` holds: the page, or
-    /// the range it needs, the opening read or then the whole page.
-    public static Parsed<DataPage> readPage(ByteSource bytes, ColumnChunk columnChunk, String messagePrefix)
-            throws IOException {
+    /// the range it needs, the opening read or then the whole page. A dictionary page storing more
+    /// than `maxPageBytes`, its header included, is not read past its header: `null`, as for a
+    /// chunk without one.
+    public static Parsed<DataPage> readPage(ByteSource bytes, ColumnChunk columnChunk, String messagePrefix,
+            long maxPageBytes) throws IOException {
         Extent extent = extent(columnChunk, messagePrefix);
         int openingRead = Math.toIntExact(Math.min(extent.openingRead(), extent.availableBytes()));
         ByteBuffer region = bytes.read(extent.start(), openingRead);
@@ -99,6 +101,9 @@ public final class DictionaryParser {
                     + "Malformed Parquet metadata: the dictionary page header declares "
                     + pageLength + " bytes but only " + extent.availableBytes()
                     + " bytes remain in the chunk");
+        }
+        if (pageLength > maxPageBytes) {
+            return Parsed.of(null);
         }
         if (pageLength <= region.remaining()) {
             return Parsed.of(new DataPage(header, headerSize, region.slice(0, pageLength)));

@@ -51,6 +51,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 **Bug fixes:**
 
 - A read whose decode runs out of heap raises the `OutOfMemoryError` to its caller instead of hanging ([#1841](https://github.com/hardwood-hq/hardwood/issues/1841))
+- A page storing more bytes than the read's memory limit fails the read with `ParquetReadException` before it is decoded, and before it is fetched where the file's page index locates it, instead of running out of heap or, on S3, direct memory ([#1842](https://github.com/hardwood-hq/hardwood/issues/1842))
 - A shredded Variant row that sets both `value` and `typed_value` for a value that is not an object fails the read with `ParquetReadException`, instead of reading `typed_value` and dropping `value` ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
 - An array element of a shredded Variant whose shredded object is null reads its `value`, such as a Variant `NULL`, instead of failing the read ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
 - An array element of a shredded Variant whose shredded object is present with no fields set reads as an empty object instead of Variant `NULL` ([#315](https://github.com/hardwood-hq/hardwood/issues/315))

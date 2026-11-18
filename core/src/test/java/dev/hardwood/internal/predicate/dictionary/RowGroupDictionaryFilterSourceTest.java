@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 import java.util.BitSet;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InMemoryOutputFile;
@@ -20,6 +21,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.reader.batch.Dictionary;
+import dev.hardwood.internal.reader.decode.DataPage;
+import dev.hardwood.internal.reader.decode.DictionaryParser;
+import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 import dev.hardwood.metadata.ColumnChunk;
@@ -103,6 +107,11 @@ class RowGroupDictionaryFilterSourceTest {
     private static final Path MISSING_PAGE_OFFSET = Paths.get("src/test/resources/dict_missing_page_offset.parquet");
 
     private static final int DICTIONARY_COLUMN = 1;
+
+    @AfterEach
+    void clearLimit() {
+        System.clearProperty(WorkingSet.MAX_WORKING_SET_BYTES_PROPERTY);
+    }
 
     /// Every value of the fixture's dictionary column is dictionary-encoded, so the chunk really is
     /// eligible; substituting `encoding_stats` is what makes each ineligible shape reachable
@@ -214,6 +223,23 @@ class RowGroupDictionaryFilterSourceTest {
         withFixture(MISSING_PAGE_OFFSET, fixture -> {
             assertThat(fixture.metaData().dictionaryPageOffset())
                     .isNull();
+            assertThat(entryCount(fixture.source().forColumn(DICTIONARY_COLUMN))).isEqualTo(50);
+        });
+    }
+
+    @Test
+    void aDictionaryPageStoringMoreThanTheLimitIsNotReadPastItsHeader() throws Exception {
+        // Without `dictionary_page_offset` nothing but the page's header sizes it, so the limit is
+        // applied there: a page storing more is left to the read of the chunk, which refuses it.
+        withFixture(MISSING_PAGE_OFFSET, fixture -> {
+            DataPage page = DictionaryParser.readPage(fixture.inputFile(),
+                    fixture.rowGroup().columns().get(DICTIONARY_COLUMN), "");
+            long pageBytes = page.headerSize() + page.header().compressedPageSize();
+
+            System.setProperty(WorkingSet.MAX_WORKING_SET_BYTES_PROPERTY, Long.toString(pageBytes - 1));
+            assertThat(fixture.source().forColumn(DICTIONARY_COLUMN)).isNull();
+
+            System.clearProperty(WorkingSet.MAX_WORKING_SET_BYTES_PROPERTY);
             assertThat(entryCount(fixture.source().forColumn(DICTIONARY_COLUMN))).isEqualTo(50);
         });
     }

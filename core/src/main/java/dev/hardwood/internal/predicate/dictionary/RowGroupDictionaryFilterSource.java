@@ -18,6 +18,7 @@ import dev.hardwood.internal.predicate.DictionarySource;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DataPage;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
+import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.internal.reader.step.Parsed;
 import dev.hardwood.metadata.ColumnChunk;
@@ -206,13 +207,27 @@ public final class RowGroupDictionaryFilterSource implements DictionarySource {
         return hasDictionaryPage && hasDataPage;
     }
 
-    /// The column's dictionary page, `null` where it has none this source can use, or the range it
-    /// needs.
+    /// Whether a filter may prune by `chunk`'s dictionary: the chunk is fully dictionary-encoded
+    /// ([#isFullyDictionaryEncoded]), and its dictionary page, where the footer gives its extent,
+    /// stores no more than a read's working-set limit. A larger page could not be decoded, and
+    /// reading it to prune would fetch it whole first, so its leaves stay open and the read of the
+    /// chunk refuses the page before fetching it.
+    public static boolean prunesBy(ColumnChunk chunk) {
+        ColumnMetaData metaData = chunk.metaData();
+        if (!isFullyDictionaryEncoded(metaData)) {
+            return false;
+        }
+        Long start = metaData.dictionaryPageOffset();
+        return start == null || start <= 0 || metaData.dataPageOffset() <= start
+                || metaData.dataPageOffset() - start <= WorkingSet.maxWorkingSetBytes();
+    }
+
+    /// The column's dictionary page, `null` where it has none this source can use ([#prunesBy]) or
+    /// its header shows it storing more than a read's working-set limit, or the range it needs.
     private Parsed<DataPage> readPage(int columnIndex) throws IOException {
         ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
-        ColumnMetaData metaData = columnChunk.metaData();
 
-        if (!isFullyDictionaryEncoded(metaData)) {
+        if (!prunesBy(columnChunk)) {
             return Parsed.of(null);
         }
 
@@ -226,7 +241,8 @@ public final class RowGroupDictionaryFilterSource implements DictionarySource {
         // `dictionary_page_offset` points it at the dictionary page instead, which the page's own
         // header tells apart. A first data page preceding the dictionary page cannot be read at
         // all, so that fails rather than degrading to "no dictionary".
-        return DictionaryParser.readPage(bytes, columnChunk, columnPrefix(metaData));
+        return DictionaryParser.readPage(bytes, columnChunk, columnPrefix(columnChunk.metaData()),
+                WorkingSet.maxWorkingSetBytes());
     }
 
     /// The dictionary `page`, the column's dictionary page, holds.

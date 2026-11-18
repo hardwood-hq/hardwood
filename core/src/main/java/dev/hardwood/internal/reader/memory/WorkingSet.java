@@ -108,7 +108,7 @@ public final class WorkingSet {
     /// whenever it is set. A value that is not a positive byte count is rejected rather than
     /// replaced by the default: an override that does not take effect leaves the reader refusing
     /// the very file it was set for.
-    static long maxWorkingSetBytes() {
+    public static long maxWorkingSetBytes() {
         return InternalProperty.longValue(MAX_WORKING_SET_BYTES_PROPERTY,
                 Runtime.getRuntime().maxMemory() / 100 * DEFAULT_HEAP_PERCENT, 1, "a positive byte count");
     }
@@ -157,6 +157,24 @@ public final class WorkingSet {
             this.set = set;
             this.index = index;
             this.schema = schema;
+        }
+
+        /// The most bytes a page may store for the read to hold it ([#requireStorable]).
+        public long storableBytes() {
+            return set.limit;
+        }
+
+        /// Refuses a page whose stored bytes alone exceed the read's limit, before any of them are
+        /// fetched or copied: its decode holds at least those bytes at once, so no working set
+        /// within the limit holds it.
+        ///
+        /// @param what the page, as a message names it
+        /// @throws ParquetReadException if `storedBytes` exceeds the read's limit
+        public void requireStorable(long storedBytes, String what) {
+            if (storedBytes > storableBytes()) {
+                throw new ParquetReadException(what + " stores " + storedBytes + " bytes, more than the read's "
+                        + "working-set limit of " + set.limit + " (" + MAX_WORKING_SET_BYTES_PROPERTY + ")");
+            }
         }
 
         /// Charges a dictionary page before it is decompressed and parsed: the entries the column
