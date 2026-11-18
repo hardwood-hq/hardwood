@@ -51,9 +51,11 @@ final class PageTracker {
     private final CellWriter cells;
     private final ColumnContext columns;
     private final HardwoodContextImpl context;
+    /// the rows of a unit whose planned pages are tracked at once: a batch byte budget's
+    private final long sliceRows;
 
     PageTracker(JobScheduler scheduler, RangeFetcher fetcher, BatchPublisher publisher, ReadFailure readFailure,
-                CellWriter cells, ColumnContext columns, HardwoodContextImpl context) {
+                CellWriter cells, ColumnContext columns, HardwoodContextImpl context, long sliceRows) {
         this.scheduler = scheduler;
         this.fetcher = fetcher;
         this.publisher = publisher;
@@ -61,6 +63,7 @@ final class PageTracker {
         this.cells = cells;
         this.columns = columns;
         this.context = context;
+        this.sliceRows = Math.max(1, sliceRows);
     }
 
     /// What the scans of a batched unit's chunks without an OffsetIndex read: its ranges and
@@ -68,15 +71,17 @@ final class PageTracker {
     record ScanInput(List<RangeFetch> ranges, CellWriter.ChunkPlacement[] placements) {
     }
 
-    /// Starts tracking the pages of `u`, once it is batched: places its planned pages,
-    /// fetches its ranges and decodes each page whose bytes are there; returns the ranges and the
-    /// placement's chunks, for the scans of its chunks without an OffsetIndex. A range a scan reads
-    /// is keyed at the row as far into the chunk as it lies. Tracking holds each range as one
-    /// more reader, so that one its pages are done with stays until the scans hold it too;
-    /// [#handedToScans] lets go of it.
+    /// Starts tracking the pages of `u`, once it is batched: fetches its ranges, decodes its
+    /// dictionary pages, and tracks its planned pages a slice of rows at a time as the look-ahead
+    /// reaches them ([#trackSlice]); returns the ranges and the placement's chunks, for the scans
+    /// of its chunks without an OffsetIndex. A range is keyed at the first row its planned pages
+    /// serve, or, read by a scan, at the row as far into the chunk as it lies. Tracking holds each
+    /// range as one more reader, so that one its pages are done with stays until the scans hold
+    /// it too ([#handedToScans]), and once more until its last slice is tracked.
     ScanInput track(Unit.Batched u) {
         List<RangeFetch> ranges = new ArrayList<>();
-        CellWriter.ChunkPlacement[] placements = new CellWriter.ChunkPlacement[u.plan().pages().length];
+        int n = u.plan().pages().length;
+        CellWriter.ChunkPlacement[] placements = new CellWriter.ChunkPlacement[n];
         for (FileRange range : u.plan().ranges()) {
             RangeFetch r = RangeFetch.of(u.listing().file(), range);
             r.addReader();
@@ -85,35 +90,40 @@ final class PageTracker {
         // the first row each range serves among the pages planned in it
         long[] keys = new long[ranges.size()];
         Arrays.fill(keys, Long.MAX_VALUE);
-        for (int c = 0; c < u.plan().pages().length; c++) {
+        // the column of that row's page, the lowest where two serve it
+        int[] keyColumns = new int[ranges.size()];
+        Slices slices = new Slices(u, ranges, placements, new ChunkDictionary[n], new int[n]);
+        long first = Long.MAX_VALUE;
+        for (int c = 0; c < n; c++) {
             List<NeededPage> needed = u.plan().pages()[c];
             CellWriter.ChunkPlacement placement = cells.placement(c, u);
             placements[c] = placement;
-            if (needed != null) {
-                placement.allAdded();
+            if (needed == null) {
+                continue;
             }
-            if (needed == null || needed.isEmpty()) {
+            if (needed.isEmpty()) {
+                placement.allAdded();
                 continue;
             }
             long firstKey = u.key(needed.getFirst().location().firstRowIndex());
-            ChunkDictionary dictionary = null;
+            first = Math.min(first, firstKey);
             if (u.plan().preloaded()[c] != null) {
                 // decoded by the unit's dictionary pruning
-                dictionary = ChunkDictionary.preloaded(u.plan().preloaded()[c]);
+                slices.dictionaries()[c] = ChunkDictionary.preloaded(u.plan().preloaded()[c]);
             }
             else if (u.plan().dictionaryStart()[c] > 0) {
-                dictionary = new ChunkDictionary();
+                ChunkDictionary dictionary = new ChunkDictionary();
+                slices.dictionaries()[c] = dictionary;
                 int length = Math.toIntExact(u.plan().firstDataPage()[c] - u.plan().dictionaryStart()[c]);
+                lowerKeys(ranges, keys, keyColumns, c, firstKey, u.plan().dictionaryStart()[c], length);
                 addDictionaryPage(new TrackedPage(u, c, firstKey, NeededPage.dictionary(u.plan().dictionaryStart()[c], length),
-                        overlapping(ranges, keys, firstKey, u.plan().dictionaryStart()[c], length), dictionary, false));
+                        overlapping(ranges, u.plan().dictionaryStart()[c], length), dictionary, false));
             }
             reportPagesLocated(u.listing().file().name(), u.listing().rowGroup(), columns.schema(c), needed.size(),
                     RowGroupScannedEvent.STRATEGY_OFFSET_INDEX);
             for (NeededPage page : needed) {
-                int length = page.location().compressedPageSize();
-                long key = u.key(page.location().firstRowIndex());
-                add(placement, new TrackedPage(u, c, key, page,
-                        overlapping(ranges, keys, key, page.location().offset(), length), dictionary, true));
+                lowerKeys(ranges, keys, keyColumns, c, u.key(page.location().firstRowIndex()), page.location().offset(),
+                        page.location().compressedPageSize());
             }
         }
         for (int i = 0; i < ranges.size(); i++) {
@@ -121,10 +131,80 @@ final class PageTracker {
                 fetcher.fetch(u.listing().file(), ranges.get(i), key(u, ranges.get(i), keys[i]));
             }
         }
-        for (int c = 0; c < u.plan().pages().length; c++) {
+        if (first != Long.MAX_VALUE) {
+            for (int i = 0; i < ranges.size(); i++) {
+                ranges.get(i).addReader();
+                if (keys[i] != Long.MAX_VALUE) {
+                    failOnFailure(ranges.get(i), keys[i], keyColumns[i]);
+                }
+            }
+            addSlice(slices, first);
+        }
+        for (int c = 0; c < n; c++) {
             place(c);
         }
         return new ScanInput(ranges, placements);
+    }
+
+    /// A range that fails fails the read at the first row its planned pages serve, in that page's
+    /// column, as that page would once tracked: the read meets the failure however far ahead of the
+    /// slices tracked it lies.
+    private void failOnFailure(RangeFetch r, long key, int column) {
+        r.output().whenEnded(() -> {
+            if (r.output().failure() != null) {
+                readFailure.failAt(key, column, r.output().failure());
+            }
+        });
+    }
+
+    /// A unit's planned pages, tracked a slice at a time: per column, its dictionary and the next
+    /// page not tracked.
+    private record Slices(Unit.Batched unit, List<RangeFetch> ranges, CellWriter.ChunkPlacement[] placements,
+                          ChunkDictionary[] dictionaries, int[] next) {
+    }
+
+    /// Tracks the slice of `slices` starting at row `key` once the look-ahead reaches it: a job
+    /// held back as a decode is, whose work is nothing.
+    private void addSlice(Slices slices, long key) {
+        scheduler.add(new JobScheduler.Job<Void>(key, 0, JobScheduler.Kind.DECODE, null, buffers -> null,
+                done -> trackSlice(slices, key), t -> readFailure.failAt(key, t)));
+    }
+
+    /// Tracks each column's planned pages starting below `key` plus a slice's rows, places them,
+    /// and adds the slice starting at the first page left; a column with none left has every page
+    /// added. The last slice lets go of the ranges it held.
+    private void trackSlice(Slices slices, long key) {
+        Unit.Batched u = slices.unit();
+        long end = key + sliceRows;
+        long next = Long.MAX_VALUE;
+        for (int c = 0; c < slices.next().length; c++) {
+            List<NeededPage> needed = u.plan().pages()[c];
+            if (needed == null || slices.next()[c] == needed.size()) {
+                continue;
+            }
+            int i = slices.next()[c];
+            for (; i < needed.size() && u.key(needed.get(i).location().firstRowIndex()) < end; i++) {
+                NeededPage page = needed.get(i);
+                long pageKey = u.key(page.location().firstRowIndex());
+                add(slices.placements()[c], new TrackedPage(u, c, pageKey, page,
+                        overlapping(slices.ranges(), page.location().offset(), page.location().compressedPageSize()),
+                        slices.dictionaries()[c], true));
+            }
+            slices.next()[c] = i;
+            if (i == needed.size()) {
+                slices.placements()[c].allAdded();
+            }
+            else {
+                next = Math.min(next, u.key(needed.get(i).location().firstRowIndex()));
+            }
+            place(c);
+        }
+        if (next == Long.MAX_VALUE) {
+            fetcher.readersDone(slices.ranges());
+        }
+        else {
+            addSlice(slices, next);
+        }
     }
 
     /// The scans of `input`'s chunks hold the ranges they read: tracking lets go of each, and
@@ -179,18 +259,29 @@ final class PageTracker {
         }
     }
 
-    /// Those of `ranges` that hold part of `[offset, offset + length)`, a page serving row `key`:
-    /// lowers each one's entry in `keys` to it.
-    private static List<RangeFetch> overlapping(List<RangeFetch> ranges, long[] keys, long key, long offset, int length) {
+    /// Those of `ranges` that hold part of `[offset, offset + length)`.
+    private static List<RangeFetch> overlapping(List<RangeFetch> ranges, long offset, int length) {
         List<RangeFetch> found = new ArrayList<>(2);
-        for (int i = 0; i < ranges.size(); i++) {
-            RangeFetch r = ranges.get(i);
+        for (RangeFetch r : ranges) {
             if (r.range().start() < offset + length && r.range().end() > offset) {
                 found.add(r);
-                keys[i] = Math.min(keys[i], key);
             }
         }
         return found;
+    }
+
+    /// Lowers the entry in `keys` of each of `ranges` that holds part of `[offset, offset + length)`,
+    /// a page of `column` serving row `key`, to it, and records the column in `keyColumns`; columns
+    /// come in ascending order, so of two pages serving one row the lower column's stays.
+    private static void lowerKeys(List<RangeFetch> ranges, long[] keys, int[] keyColumns, int column, long key,
+                                  long offset, int length) {
+        for (int i = 0; i < ranges.size(); i++) {
+            RangeFetch r = ranges.get(i);
+            if (r.range().start() < offset + length && r.range().end() > offset && key < keys[i]) {
+                keys[i] = key;
+                keyColumns[i] = column;
+            }
+        }
     }
 
     /// `tracked` will read its ranges until done.

@@ -62,11 +62,13 @@ final class CellWriter {
     /// Scratch a column decoded through levels keeps for its next pages.
     private static final int SCRATCH_POOL = 4;
 
-    /// The placement of one column chunk: its pages in page order as they are known, how many are
-    /// placed, whether the chunk has ended, and a scan's failure past its pages.
+    /// The placement of one column chunk: its pages not yet placed, in page order as they are
+    /// known, how many are placed, whether the chunk has ended, and a scan's failure past its
+    /// pages. A placed page is let go of, so that it lives until its decode, not until its chunk's
+    /// last page is placed.
     static final class ChunkPlacement {
         private final Unit.Batched unit;
-        private final List<TrackedPage> pages = new ArrayList<>();
+        private final ArrayDeque<TrackedPage> pages = new ArrayDeque<>();
         private PageDecoder decoder;
         private int placed;
         private boolean ended;
@@ -97,8 +99,9 @@ final class CellWriter {
 
         /// Takes its next page, where that is ready to be placed; `null` otherwise.
         TrackedPage nextReady() {
-            if (placed < pages.size() && pages.get(placed).ready()) {
-                return pages.get(placed++);
+            if (!pages.isEmpty() && pages.peekFirst().ready()) {
+                placed++;
+                return pages.pollFirst();
             }
             return null;
         }
@@ -110,7 +113,7 @@ final class CellWriter {
 
         /// Whether the chunk has ended and every page of it is placed.
         boolean done() {
-            return ended && placed == pages.size();
+            return ended && pages.isEmpty();
         }
 
         /// The chunk's scan failed with `failure` past its pages; the chunk ends there.
