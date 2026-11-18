@@ -53,18 +53,19 @@ class BatchPublisherTest {
 
         JobScheduler.Position at = wide.position(1020);
 
-        assertThat(at.need()).isEqualTo(1100);
+        assertThat(at.need()).isEqualTo(1101);
         assertThat(at.reach()).isEqualTo(1500);
     }
 
-    /// A batch the plan has closed, by adding the next, ends the need where it ends.
+    /// A batch the plan has closed, by adding the next, ends the need one row past it: a column
+    /// with repetition closes the batch only as it places the record after it.
     @Test
-    void needEndsWithAClosedBatch() {
+    void needReachesOneRowPastAClosedBatch() {
         BatchPlan plan = new BatchPlan(BATCH_ROWS, true, false, 0);
         publisher.add(plan.plan(0, 0, "a", false, 20), 1000, new BitSet());
         publisher.add(plan.plan(1, 0, "a", false, 20), 1020, new BitSet());
 
-        assertThat(publisher.position(5000).need()).isEqualTo(1100);
+        assertThat(publisher.position(5000).need()).isEqualTo(1101);
     }
 
     /// A row group whose first rows continue the batch the one before left open, added before any
@@ -127,6 +128,33 @@ class BatchPublisherTest {
         assertThat(drain(payload)).containsExactlyElementsOf(payloadCells.stream().map(c -> c.batch).toList());
         assertThat(drain(filterOnly)).containsExactly(filterCells.get(0).batch, filterCells.get(1).batch);
         assertThat(two.firstUnpublished(5 * BATCH_ROWS)).isEqualTo(5 * BATCH_ROWS);
+    }
+
+    /// A filter-only column that skips a unit passes its batches as the payload column's
+    /// placement makes them, reaching the end of a plan still growing while the payload column has
+    /// published two. The consumer waits for the payload column's third batch, so the need ends
+    /// there, not at the end of the plan (#1814).
+    @Test
+    void needFollowsTheColumnFurthestBehind() throws Exception {
+        BatchExchange<FlatBatch> payload = BatchExchange.detachingFlat("p", BATCH_ROWS);
+        BatchExchange<FlatBatch> filterOnly = BatchExchange.detachingFlat("f", BATCH_ROWS);
+        BatchPublisher two = publisher(List.of(payload, filterOnly));
+        BitSet skipped = new BitSet();
+        skipped.set(1);
+        two.add(new BatchPlan(BATCH_ROWS, false, false, 0).plan(0, 0, "a", false, 5 * BATCH_ROWS), 0, skipped);
+
+        List<TestCell> payloadCells = new ArrayList<>();
+        for (int b = 0; b < 5; b++) {
+            TestCell c = cell(payload, (long) b * BATCH_ROWS);
+            two.open(0, c);
+            payloadCells.add(c);
+        }
+        two.completed(0, payloadCells.get(0));
+        two.completed(0, payloadCells.get(1));
+        two.publish(5 * BATCH_ROWS, false);
+
+        assertThat(filterOnly.isFinished()).isFalse();
+        assertThat(two.position(5 * BATCH_ROWS).need()).isEqualTo(3 * BATCH_ROWS + 1);
     }
 
     private static BatchPublisher publisher(List<BatchExchange<?>> exchanges) {

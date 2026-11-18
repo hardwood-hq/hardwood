@@ -29,9 +29,9 @@ import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 /// whatever its key: it leads to a fetch, whose latency the decodes ahead of it would otherwise
 /// wait out first.
 ///
-/// **Invariant: while no job keyed below need (the consumer's next batch) is in flight, the
-/// lowest ready job keyed below it starts, refused by no bound: a fetch at once, a CPU job at the
-/// next free slot a plan job does not take.** It is
+/// **Invariant: while no job keyed below need (the first row past the consumer's next batch) is
+/// in flight, the lowest ready job keyed below it starts, refused by no bound: a fetch at once, a
+/// CPU job at the next free slot a plan job does not take.** It is
 /// the progress guarantee and no bound of its own: the look-ahead never reaches below need
 /// ([Position]), and that one job holds what it reads uncharged to R and counts against no F, so
 /// the next batch advances one job at a time where the bounds hold everything else back.

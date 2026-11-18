@@ -392,39 +392,45 @@ final class BatchPublisher {
         return (BatchExchange<Object>) exchange;
     }
 
-    /// Where the consumer stands: its need, the work [JobScheduler] guarantees progress to, ends
-    /// with the next batch of the column furthest ahead, which where none is added starts at
-    /// `batchedTo`; where that batch is the last the plan added, the units not yet batched may
-    /// go on with it, so the need reaches the next of them. Decodes reach the cap past the first
-    /// row some column has not published. Nothing past the failure starts.
+    /// Where the consumer stands: its need, the work [JobScheduler] guarantees progress to, reaches
+    /// the first row past its next batch, which where none is added starts at `batchedTo`: a
+    /// column with repetition closes a batch only as it places the record after it, so the decode
+    /// of a page starting where the batch ends completes it. Where that batch is the last the plan
+    /// added, the units not yet batched may go on with it, so the need reaches the next of them.
+    /// Decodes reach the cap past the first row some column has not published. Nothing past the
+    /// failure starts.
     JobScheduler.Position position(long batchedTo) {
-        long furthest = furthest();
-        long need = batchedTo + batchRows;
-        if (furthest >= 0 && furthest < planned) {
+        long next = consumerNext();
+        long need = batchedTo + batchRows + 1;
+        if (next >= 0 && next < planned) {
             // a batch not made is reached by no column yet: it holds at most a batch's rows
-            need = keyOf(furthest) + batchRows;
-            if (made(furthest)) {
-                Batch next = spans.get(spanOf(furthest)).made.get(indexInSpan(furthest));
-                if (next != null) {
-                    need = Math.max(next.endKey(), need);
+            need = keyOf(next) + batchRows + 1;
+            if (made(next)) {
+                Batch b = spans.get(spanOf(next)).made.get(indexInSpan(next));
+                if (b != null) {
+                    need = Math.max(b.endKey() + 1, need);
                 }
             }
-            if (furthest == planned - 1) {
+            if (next == planned - 1) {
                 need = Math.max(need, batchedTo + 1);
             }
         }
         return new JobScheduler.Position(need, firstUnpublished(batchedTo) + capRows, readFailure.row());
     }
 
-    /// The next batch of the column furthest ahead, `-1` where every column has ended.
-    private long furthest() {
-        long furthest = -1;
+    /// The consumer's next batch: the next of the column furthest behind, since a consumer takes
+    /// a batch of every column it reads in a step before the next step; `-1` where every column
+    /// has ended. A column that does not read a unit passes its batches as they are made, ahead
+    /// of the consumer, so the column furthest ahead may be a batch of the plan no decode has
+    /// reached.
+    private long consumerNext() {
+        long next = -1;
         for (int c = 0; c < published.length; c++) {
-            if (!exchanges.get(c).isFinished()) {
-                furthest = Math.max(furthest, published[c]);
+            if (!exchanges.get(c).isFinished() && (next < 0 || published[c] < next)) {
+                next = published[c];
             }
         }
-        return furthest;
+        return next;
     }
 
     /// The key of the first row some column has not published.
