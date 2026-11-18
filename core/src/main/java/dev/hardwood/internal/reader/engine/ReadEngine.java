@@ -110,7 +110,8 @@ public final class ReadEngine implements Closeable {
         ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), read.files().footersSupplied());
         cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
                 batchSize, context.decompressorFactory(), filters);
-        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context);
+        PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context,
+                budgetRows);
         HeaderScanner scanner = new HeaderScanner(scheduler, fetcher, tracker, cells, columns, readFailure,
                 read.pruning().prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
         planner = new RowGroupPlanner(scheduler, fetcher, publisher, readFailure, tracker, scanner, columns,
