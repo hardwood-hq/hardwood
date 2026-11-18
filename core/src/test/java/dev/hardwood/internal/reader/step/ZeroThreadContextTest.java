@@ -555,7 +555,7 @@ class ZeroThreadContextTest {
             });
             assertThat(read.held.await(10, TimeUnit.SECONDS)).as("a read held").isTrue();
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (read.consumer.getState() != Thread.State.WAITING) {
+            while (!(LockSupport.getBlocker(read.consumer) instanceof ReadTasks)) {
                 assertThat(System.nanoTime() - deadline).as("the consumer parked on the held read").isNegative();
                 Thread.onSpinWait();
             }

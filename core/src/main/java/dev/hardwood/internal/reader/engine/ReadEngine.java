@@ -103,7 +103,7 @@ public final class ReadEngine implements Closeable {
         }
         this.exchanges = List.copyOf(started);
         driver = new ReadDriver(context, readQueue, fetchAheadBytes(),
-                this::reconcile, t -> readFailure.failAt(0, t));
+                this::reconcile, t -> readFailure.failAt(0, t), this::abandon);
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
@@ -118,13 +118,13 @@ public final class ReadEngine implements Closeable {
                         filter != null, limit == 0 ? 0 : limit + read.leadingRows()), schemas, filterOnly,
                 read.pruning(), limit > 0 ? limit : Long.MAX_VALUE, filter != null, read.skip(), read.maskedRows());
         footers = new FooterReader(read.files(), scheduler, planner, readFailure, read.compatibility(), filter,
-                limit > 0, driver::update);
+                limit > 0, driver::updateOrAbandon);
         for (int c = 0; c < n; c++) {
             int column = c;
             if (readQueue != null) {
                 started.get(c).setQueue(readQueue);
             }
-            started.get(c).setRoomListener(() -> driver.update(() -> publisher.publishable(column)));
+            started.get(c).setRoomListener(() -> driver.updateOrAbandon(() -> publisher.publishable(column)));
         }
         try {
             driver.locked(() -> footers.start(read.file(), schema, read.firstKept(), read.firstOrdinals()));
@@ -140,6 +140,13 @@ public final class ReadEngine implements Closeable {
     static long fetchAheadBytes() {
         return InternalProperty.longValue(FETCH_AHEAD_BYTES_PROPERTY, DEFAULT_FETCH_AHEAD_BYTES, 0,
                 "a non-negative byte count");
+    }
+
+    /// Fails every column's stream with `t` without allocating ([BatchExchange#abandon]).
+    private void abandon(Throwable t) {
+        for (int c = 0; c < exchanges.size(); c++) {
+            exchanges.get(c).abandon(t);
+        }
     }
 
     /// Each decoded column's exchange, in decoded order.

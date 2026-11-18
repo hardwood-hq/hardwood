@@ -239,4 +239,41 @@ class BatchExchangeTest {
 
         assertThat(polled.get()).as("end of stream").isNull();
     }
+
+    /// A read abandoned with a failure raises that failure ahead of a batch already queued.
+    @Test
+    void anAbandonedReadRaisesItsFailureAheadOfAQueuedBatch() {
+        BatchExchange<String> exchange = BatchExchange.detaching("c", () -> "batch", batch -> 1, 1);
+        assertThat(exchange.tryPublish("batch-1")).isTrue();
+        OutOfMemoryError failure = new OutOfMemoryError("decode");
+
+        exchange.abandon(failure);
+
+        assertThatThrownBy(exchange::poll).isSameAs(failure);
+    }
+
+    /// A consumer already waiting for a batch when the read is abandoned raises the failure.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aConsumerWaitingWhenTheReadIsAbandonedRaisesItsFailure() throws Exception {
+        BatchExchange<String> exchange = BatchExchange.detaching("c", () -> "batch", batch -> 1, 1);
+        AtomicReference<Throwable> raised = new AtomicReference<>();
+        Thread consumer = Thread.ofPlatform().start(() -> {
+            try {
+                exchange.poll();
+            }
+            catch (Throwable t) {
+                raised.set(t);
+            }
+        });
+        while (consumer.getState() != Thread.State.TIMED_WAITING) {
+            Thread.sleep(1);
+        }
+        OutOfMemoryError failure = new OutOfMemoryError("decode");
+
+        exchange.abandon(failure);
+        consumer.join();
+
+        assertThat(raised.get()).isSameAs(failure);
+    }
 }

@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.step;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
@@ -29,6 +30,11 @@ import java.util.function.BooleanSupplier;
 /// before it looks, and parks only while the count is unchanged, so no signal is lost between its
 /// look and its park. Any number of threads may wait at once.
 public final class ReadTasks {
+
+    /// How long a thread waiting on a read parks before it looks again. A read abandoned with the
+    /// heap exhausted may fail to allocate the wake-up of its waiting threads, and a wait that
+    /// looks again ends all the same.
+    public static final long ABANDONED_CHECK_MILLIS = 500;
 
     private final AtomicInteger count = new AtomicInteger();
     private final AtomicLong signals = new AtomicLong();
@@ -71,14 +77,15 @@ public final class ReadTasks {
         }
     }
 
-    /// Parks the calling thread unless a signal came after `seen`. Returns on a signal, an unpark
-    /// or an interrupt, and may return for no reason, so the caller looks again.
+    /// Parks the calling thread unless a signal came after `seen`. Returns on a signal, an unpark,
+    /// an interrupt or after [#ABANDONED_CHECK_MILLIS], and may return for no reason, so the caller
+    /// looks again.
     public void park(long seen) {
         Thread current = Thread.currentThread();
         parked.add(current);
         try {
             if (signals.get() == seen) {
-                LockSupport.park(this);
+                LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(ABANDONED_CHECK_MILLIS));
             }
         }
         finally {
