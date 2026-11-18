@@ -69,10 +69,12 @@ final class RangeFetcher {
         }
     }
 
-    /// Keys the fetches of `ranges` not started yet at `key` where that is lower: a scan found a
-    /// page serving row `key` in them, whose bytes the consumer's need must reach.
-    void keyAt(List<RangeFetch> ranges, long key) {
+    /// A scan found a page serving row `key` in `ranges`: each holds it as one more reader until it
+    /// is done, and a fetch not started yet is keyed at `key` where that is lower, as the consumer's
+    /// need must reach its bytes.
+    void pageIn(List<RangeFetch> ranges, long key) {
         for (RangeFetch r : ranges) {
+            r.addReader();
             JobScheduler.Job<ByteBuffer> job = fetching.get(r);
             if (job != null) {
                 scheduler.lower(job, key);
