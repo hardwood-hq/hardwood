@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Comparator;
@@ -26,6 +27,8 @@ import dev.hardwood.internal.reader.plan.IndexWindow;
 import dev.hardwood.internal.reader.plan.RowGroupPruning;
 import dev.hardwood.internal.reader.plan.UnitListing;
 import dev.hardwood.internal.reader.plan.UnitPlan;
+import dev.hardwood.internal.reader.select.RowRanges;
+import dev.hardwood.internal.reader.step.ByteSource;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetReadException;
@@ -33,7 +36,7 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import jdk.jfr.Event;
 
-/// Plans a read's row groups, moving each through its states ([Unit.State]). Lists each file's row
+/// Plans a read's row groups, moving each through its states ([Unit]). Lists each file's row
 /// groups that statistics and the read's skip and limit keep, as [Unit]s; prunes each unit by its
 /// Bloom filters and dictionaries; reads its window's page index (sliced from the file's tail where
 /// it holds it), from which [PagePlanner] plans its pages and ranges into a [UnitPlan]; and batches
@@ -233,14 +236,15 @@ final class RowGroupPlanner {
                             fetcher.fetch(file, r, listed.base());
                         }
                     }
-                    units.add(new Unit.Listed(listed, m.offsetIndexColumns(), m.columnIndexColumns(), w, dictionaries));
+                    Unit.Listed l = new Unit.Listed(listed, m.offsetIndexColumns(), m.columnIndexColumns(), w, dictionaries);
+                    // one its Bloom filters and dictionaries cannot drop waits for its page index at once
+                    units.add(RowGroupPruning.droppableOnArrival(listed) ? l : new Unit.AwaitingIndex(l, null, List.of()));
                 }
                 first += count;
-                fetch(units.get(w.first()).listing(), w.bloomFilters(), () -> {
-                    for (int i = w.first(); i < w.end(); i++) {
-                        bloomFiltersArrived((Unit.Listed) units.get(i));
-                    }
-                });
+                request(units.get(w.first()).listing(), w.bloomFilters());
+                for (int i = w.first(); i < w.end(); i++) {
+                    start(units.get(i));
+                }
             }
         }
         catch (IOException e) {
@@ -265,12 +269,17 @@ final class RowGroupPlanner {
     /// Fetches those of `ranges` not held, at `u`'s key, then runs `then` once they have arrived; a
     /// range that cannot be read fails the read at `u`.
     private void fetch(UnitListing u, List<RangeFetch> ranges, Runnable then) {
+        request(u, ranges);
+        whenArrived(u, ranges, then);
+    }
+
+    /// Fetches those of `ranges` not held, at `u`'s key.
+    private void request(UnitListing u, List<RangeFetch> ranges) {
         for (RangeFetch r : ranges) {
             if (!r.output().hasValue()) {
                 fetcher.fetch(u.file(), r, u.base());
             }
         }
-        whenArrived(u, ranges, then);
     }
 
     /// Runs `then` once `ranges` have arrived: waits for the first it lacks and, woken, looks again.
@@ -289,16 +298,40 @@ final class RowGroupPlanner {
         }
     }
 
-    /// `l`'s Bloom filters have arrived: it is pruned by them and its dictionaries where they may
-    /// drop it, and waits for its page index otherwise.
-    private void bloomFiltersArrived(Unit.Listed l) {
-        if (RowGroupPruning.droppableOnArrival(l.listing())) {
-            whenArrived(l.listing(), l.dictionaries(), () -> prune(l.pruning()));
+    /// The pruning of `l`, whose Bloom filters and dictionaries have arrived: its read steps read
+    /// the window's Bloom filters, then the dictionary bytes fetched for it, and record what they
+    /// lack.
+    private static Unit.BloomAndDictionaryPruning pruning(Unit.Listed l) {
+        List<RangeFetch> fetched = new ArrayList<>(l.dictionaries());
+        List<FileRange> missing = new ArrayList<>();
+        String reason = "rg=" + l.listing().rowGroup() + " pruning";
+        List<RangeFetch> bloomFilters = l.window().bloomFilters();
+        ByteSource bytes = (offset, length) -> {
+            ByteBuffer found = RangeFetch.read(bloomFilters, offset, length);
+            if (found == null) {
+                found = RangeFetch.read(fetched, offset, length);
+            }
+            if (found == null) {
+                missing.add(new FileRange(offset, length, reason));
+            }
+            return found;
+        };
+        return new Unit.BloomAndDictionaryPruning(l, new RowGroupPruning.Inputs(), fetched, missing, bytes);
+    }
+
+    /// Starts a unit just listed: a listed one is pruned once its Bloom filters and dictionaries
+    /// have arrived; one they cannot drop lets go of them and waits for its page index.
+    private void start(Unit u) {
+        if (u instanceof Unit.Listed l) {
+            List<RangeFetch> reads = new ArrayList<>(l.window().bloomFilters());
+            reads.addAll(l.dictionaries());
+            whenArrived(l.listing(), reads, () -> prune(pruning(l)));
             return;
         }
-        fetcher.readersDone(l.window().bloomFilters());
-        fetcher.readersDone(l.dictionaries());
-        awaitIndex(l.nothingToPrune());
+        Unit.AwaitingIndex a = (Unit.AwaitingIndex) u;
+        fetcher.readersDone(a.listed().window().bloomFilters());
+        fetcher.readersDone(a.listed().dictionaries());
+        awaitIndex(a);
     }
 
     /// Reads `p`'s Bloom filters and the dictionary pages its evaluation may consult, on a job: what
@@ -306,7 +339,7 @@ final class RowGroupPlanner {
     /// until it holds them all. Then evaluates them once: in the same job where no dictionary parse
     /// needs a charge, which is every parse within [DecodeBuffers#RETAINED_BYTES], and otherwise on
     /// a job charged for them ([#evaluate]).
-    private void prune(Unit.Pruning p) {
+    private void prune(Unit.BloomAndDictionaryPruning p) {
         set(p);
         UnitListing u = p.listing();
         p.missing().clear();
@@ -325,7 +358,8 @@ final class RowGroupPlanner {
             }
             else {
                 List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
-                p.fetching(more);
+                p.fetched().addAll(more);
+                p.fetched().sort(Comparator.comparingLong(r -> r.range().start()));
                 fetch(u, more, () -> prune(p));
             }
         }, t -> readFailure.failAt(u.base(), t)));
@@ -335,7 +369,7 @@ final class RowGroupPlanner {
     /// exceeds [DecodeBuffers#RETAINED_BYTES], on a job charged those parses, from the headers
     /// [#prune] parsed: R holds them while it runs, unless need forces it, so that the dictionary
     /// pruning of several row groups parses such dictionaries at once only within R.
-    private void evaluate(Unit.Pruning p) {
+    private void evaluate(Unit.BloomAndDictionaryPruning p) {
         UnitListing u = p.listing();
         long cost = RowGroupPruning.parseBytes(u, p.inputs());
         scheduler.add(new JobScheduler.Job<>(u.base(), cost, planKind(u), cost > 0 ? new Charge() : null,
@@ -345,16 +379,17 @@ final class RowGroupPlanner {
 
     /// `p`'s Bloom filters and dictionaries decided: a unit they dropped is planned with no row,
     /// one they kept waits for its page index.
-    private void pruned(Unit.Pruning p, RowGroupPruning.Arrival arrival) {
+    private void pruned(Unit.BloomAndDictionaryPruning p, RowGroupPruning.Arrival arrival) {
         WindowFetch w = p.listed().window();
         fetcher.readersDone(w.bloomFilters());
         fetcher.readersDone(p.fetched());
+        List<Event> events = arrival.dropEvent() == null ? List.of() : List.of(arrival.dropEvent());
         if (arrival.dropped()) {
-            set(p.dropped(arrival.dropEvent(), schemas.length));
+            set(new Unit.Planned(p.listing(), UnitPlan.empty(schemas.length, RowRanges.NONE), events));
             batchPlanned(w.index());
             return;
         }
-        awaitIndex(p.kept(arrival.dropEvent()));
+        awaitIndex(new Unit.AwaitingIndex(p.listed(), p.inputs().decoded(), events));
     }
 
     /// `a` waits for its window's page index, which the first unit of the window to wait for it
@@ -430,7 +465,9 @@ final class RowGroupPlanner {
                 throw columns.withContext(e, u.file().name(), u.rowGroup());
             }
         }, plan -> {
-            set(a.planned(plan, events));
+            List<Event> all = new ArrayList<>(a.events());
+            all.addAll(events);
+            set(new Unit.Planned(u, plan, List.copyOf(all)));
             batchPlanned(index);
         }, t -> {
             fetcher.readersDone(index);
@@ -516,7 +553,9 @@ final class RowGroupPlanner {
             readFailure.failAt(u.base(), columns.withContext(e, u.file().name(), u.rowGroup()));
             return;
         }
-        Unit.Batched p = planned.batched(batches);
+        // a unit of which the batches read no row (dropped, or past the read's row limit) reads no page
+        Unit.Batched p = new Unit.Batched(u, batches.segmentCount() == 0
+                ? UnitPlan.empty(schemas.length, planned.plan().matching()) : planned.plan(), batches, planned.events());
         set(p);
         if (batches.endsRead()) {
             // the row cap ends the read in it: no further file is listed
