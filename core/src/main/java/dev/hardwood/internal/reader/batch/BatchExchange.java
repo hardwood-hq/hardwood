@@ -13,7 +13,6 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
@@ -52,6 +51,19 @@ import dev.hardwood.schema.ColumnSchema;
 /// @param <B> the batch type (e.g. [FlatBatch] for flat, [NestedBatch] for nested)
 public class BatchExchange<B> {
 
+    /// Where the stream stands. Its column ends it, finished or failed, and a finished stream can
+    /// still fail; a read that cannot report its failure abandons it from any state ([#abandon]).
+    private enum State {
+        /// batches are published
+        OPEN,
+        /// every batch is published
+        FINISHED,
+        /// the batches before the failure are published, and it is raised after them
+        FAILED,
+        /// the failure is raised ahead of every batch
+        ABANDONED
+    }
+
     static final int READY_QUEUE_CAPACITY = 2;
 
     /// Handed to the consumer by [#finish()] so that a poll already waiting on the queue learns
@@ -71,10 +83,11 @@ public class BatchExchange<B> {
     private final long readyRowLimit;
     private final AtomicLong readyRows = new AtomicLong();
 
-    private final AtomicReference<Throwable> error = new AtomicReference<>();
-    /// The failure the read was abandoned with ([#abandon]), raised ahead of every batch.
-    private volatile Throwable abandoned;
-    private volatile boolean finished;
+    /// moved by the transitions below, each synchronized on the exchange; read without a lock
+    private volatile State state = State.OPEN;
+    /// the failure [State#FAILED] or [State#ABANDONED] raises, written before the state: the first
+    /// failure signalled, or the one the read was abandoned with, which replaces it
+    private volatile Throwable cause;
     /// Run on the consumer's thread after it takes a batch, for a column whose [#tryPublish]
     /// found no room; `null` for none.
     private volatile Runnable roomListener;
@@ -283,42 +296,41 @@ public class BatchExchange<B> {
 
     /// Marks the stream ended, and hands a waiting consumer the sentinel that says so.
     ///
-    /// The flag alone is not enough. A consumer inside [#poll()]'s wait is waiting on the queue,
-    /// not on the flag, and reads the flag only when the queue hands it something.
+    /// The state alone is not enough. A consumer inside [#poll()]'s wait is waiting on the queue,
+    /// not on the state, and reads the state only when the queue hands it something.
     ///
     /// The offer is deliberately non-blocking and its result deliberately ignored. A consumer is
     /// only ever left waiting when it found the queue empty, and in that state the offer has room
     /// and succeeds. It fails only when the queue is full, which only the recycling mode's bounded
     /// queue can be, and a consumer with batches still to take is not waiting for anything: by the
-    /// time it has taken them, `finished` is set and [#poll()] returns without waiting at all.
+    /// time it has taken them, the stream has ended and [#poll()] returns without waiting at all.
     ///
     /// That makes the sentinel or a batch the element that releases every waiting consumer: the
-    /// flag is set before the offer, a consumer waits only after reading it unset, so a consumer
+    /// state is set before the offer, a consumer waits only after reading it open, so a consumer
     /// waiting when the offer fails is waiting on a full queue, and takes a batch.
     public void finish() {
-        finished = true;
+        toFinished();
         readyQueue.offer(END_OF_STREAM);
         signalQueue();
     }
 
+    /// Whether the stream has ended: finished, failed or abandoned.
     public boolean isFinished() {
-        return finished;
+        return state != State.OPEN;
     }
 
     /// Fails the stream with `t` where the read cannot report it through [#signalError], as when
-    /// reporting it threw with the heap exhausted: a field write, which allocates nothing, raised
-    /// by [#poll()] and [#checkError()] ahead of every batch. The wake-up of a waiting poll is best
-    /// effort, as it allocates; a waiting poll looks at the field at least every
-    /// [ReadTasks#ABANDONED_CHECK_MILLIS].
+    /// reporting it threw with the heap exhausted: a transition of the stream's state, which
+    /// allocates nothing, raised by [#poll()] and [#checkError()] ahead of every batch, in place of
+    /// a failure signalled before. The wake-up of a waiting poll is best effort, as it allocates; a
+    /// waiting poll looks at the state at least every [ReadTasks#ABANDONED_CHECK_MILLIS].
     public void abandon(Throwable t) {
-        if (abandoned == null) {
-            abandoned = t;
-        }
+        toAbandoned(t);
         try {
             readyQueue.offer(END_OF_STREAM);
         }
         catch (Throwable ignored) {
-            // the field fails the stream; the offer only wakes a waiting poll sooner
+            // the state fails the stream; the offer only wakes a waiting poll sooner
         }
     }
 
@@ -326,18 +338,45 @@ public class BatchExchange<B> {
     /// released as promptly as a clean end releases it, and raises the error on its way out
     /// rather than after the next poll expires.
     ///
-    /// The first error signalled is the one raised, since it is the failure that ended the stream.
-    /// Each later one is attached to it as a suppressed exception rather than dropped, so a
-    /// failure that follows the first, such as an `OutOfMemoryError` in another decode task,
-    /// still reaches the caller.
+    /// The first error signalled is the one raised, since it is the failure that ended the stream,
+    /// unless the read is abandoned, whose failure is raised in its place. Each later error is
+    /// attached to the failure raised as a suppressed exception rather than dropped, so a failure
+    /// that follows the first, such as an `OutOfMemoryError` in another decode task, still reaches
+    /// the caller.
     public void signalError(Throwable t) {
-        if (!error.compareAndSet(null, t)) {
-            Throwable first = error.get();
-            if (first != t) {
-                first.addSuppressed(t);
-            }
+        Throwable first = toFailed(t);
+        if (first != null && first != t) {
+            first.addSuppressed(t);
         }
         finish();
+    }
+
+    /// An open stream is finished.
+    private synchronized void toFinished() {
+        if (state == State.OPEN) {
+            state = State.FINISHED;
+        }
+    }
+
+    /// An open or finished stream fails with `t`; returns the failure a failed or abandoned one
+    /// already raises, `null` where it fails now.
+    private synchronized Throwable toFailed(Throwable t) {
+        if (state == State.OPEN || state == State.FINISHED) {
+            cause = t;
+            state = State.FAILED;
+            return null;
+        }
+        return cause;
+    }
+
+    /// The stream is abandoned with `t`, which replaces a failure signalled before: an `Error`
+    /// abandons a read, and it is the JVM's. Allocates nothing, as it runs where an allocation has
+    /// just failed.
+    private synchronized void toAbandoned(Throwable t) {
+        if (state != State.ABANDONED) {
+            cause = t;
+            state = State.ABANDONED;
+        }
     }
 
     // ==================== Consumer Side ====================
@@ -345,17 +384,17 @@ public class BatchExchange<B> {
     /// Polls for the next batch. Returns the batch if available, or `null` if
     /// the pipeline has finished and the queue is drained.
     ///
-    /// This method handles the ordering between `readyQueue` and `finished`
+    /// This method handles the ordering between `readyQueue` and the stream's state
     /// correctly: a non-blocking poll is attempted first, and if the queue is
-    /// empty the method falls through to a waiting take. The `finished` flag
+    /// empty the method falls through to a waiting take. The state
     /// is only checked **after** a poll returns null, guaranteeing that any
     /// batch published before `finish()` is visible.
     ///
     /// The end of the stream arrives twice over, and the ordering above is why that is safe. It
     /// arrives as [#END_OF_STREAM] through the queue, which is what releases a poll already
-    /// waiting, and it arrives as the `finished` flag, which is what a poll entering later reads
-    /// before it waits at all. Both are behind every batch: the sentinel by queue order, the flag
-    /// because it is only read once a poll has come back empty.
+    /// waiting, and it arrives as the state, which is what a poll entering later reads before it
+    /// waits at all. Both are behind every batch: the sentinel by queue order, the state because
+    /// it is only read once a poll has come back empty.
     @SuppressWarnings("unchecked")
     public B poll() throws InterruptedException, IOException {
         throwIfAbandoned();
@@ -367,8 +406,8 @@ public class BatchExchange<B> {
         if (batch != null) {
             return (B) batch;
         }
-        if (finished) {
-            return (B) drop(taken(readyQueue.poll()));
+        if (state != State.OPEN) {
+            return (B) afterEnd();
         }
         if (queue != null) {
             return drive();
@@ -416,8 +455,8 @@ public class BatchExchange<B> {
             if (batch != null) {
                 return (B) batch;
             }
-            if (finished) {
-                return (B) drop(taken(readyQueue.poll()));
+            if (state != State.OPEN) {
+                return (B) afterEnd();
             }
             if (Thread.interrupted()) {
                 throw new InterruptedException();
@@ -427,7 +466,7 @@ public class BatchExchange<B> {
             }
             if (queue.tasks().idle()) {
                 // Looked at again: work that ended before the queue was idle published before
-                if (readyQueue.isEmpty() && !finished) {
+                if (readyQueue.isEmpty() && state == State.OPEN) {
                     throw new IllegalStateException("The read of column '" + columnName
                             + "' stalled: no batch is ready, and no task is queued or running and no read in flight");
                 }
@@ -439,13 +478,23 @@ public class BatchExchange<B> {
             do {
                 queue.tasks().park(seen);
             }
-            while (queue.tasks().signals() == seen && abandoned == null && !Thread.currentThread().isInterrupted());
+            while (queue.tasks().signals() == seen && state != State.ABANDONED && !Thread.currentThread().isInterrupted());
             event.column = columnName;
             event.commit();
             if (Thread.interrupted()) {
                 throw new InterruptedException();
             }
         }
+    }
+
+    /// What a poll takes once the stream has ended: a batch still queued, or, where none is, the
+    /// end, or the failure of a stream abandoned meanwhile.
+    private Object afterEnd() throws IOException {
+        Object batch = drop(taken(readyQueue.poll()));
+        if (batch == null) {
+            throwIfAbandoned();
+        }
+        return batch;
     }
 
     /// The sentinel read as nothing, so that a queue holding only it reads as an empty one.
@@ -483,49 +532,45 @@ public class BatchExchange<B> {
                 freeQueue.offer(batch);
             }
         }
-        if (finished) {
+        if (state != State.OPEN) {
             readyQueue.offer(END_OF_STREAM);
         }
     }
 
     /// Raises the failure the read was abandoned with, if it was.
-    private void throwIfAbandoned() {
-        Throwable t = abandoned;
-        if (t instanceof Error e) {
-            throw e;
-        }
-        if (t instanceof RuntimeException e) {
-            throw e;
-        }
-        if (t != null) {
-            throw new IllegalStateException("The read of column '" + columnName + "' was abandoned", t);
+    private void throwIfAbandoned() throws IOException {
+        if (state == State.ABANDONED) {
+            throw raised(cause);
         }
     }
 
     /// Checks if the pipeline encountered an error and throws if so.
     /// Call this after detecting a finished/null batch to surface pipeline errors.
-    ///
-    /// An [IOException], a `RuntimeException` and an [Error] are all rethrown as they stand.
-    /// The read has already said what a failure means by the time it reaches here — a decode failure is a `ParquetReadException`, a fetch
-    /// failure the `IOException` it was — and an `Error` is neither the file's fault nor something
-    /// a caller retries. Relabelling any of them would undo that one frame below the reader, and an
-    /// `OutOfMemoryError` reported as a `RuntimeException` is catchable by handlers that must never
-    /// see it.
     public void checkError() throws IOException {
-        throwIfAbandoned();
-        Throwable t = error.get();
-        if (t != null) {
-            if (t instanceof IOException io) {
-                throw io;
-            }
-            if (t instanceof RuntimeException re) {
-                throw re;
-            }
-            if (t instanceof Error e) {
-                throw e;
-            }
-            throw new RuntimeException("Error in pipeline for column '" + columnName + "'", t);
+        State s = state;
+        if (s == State.FAILED || s == State.ABANDONED) {
+            throw raised(cause);
         }
+    }
+
+    /// `t` as the stream raises it, whether it failed or was abandoned: an [IOException], a
+    /// `RuntimeException` and an [Error] are thrown as they stand, anything else is returned
+    /// wrapped. The read has already said what a failure means by the time it reaches here (a
+    /// decode failure is a `ParquetReadException`, a fetch failure the `IOException` it was), and an
+    /// `Error` is neither the file's fault nor something a caller retries. Relabelling any of them
+    /// would undo that one frame below the reader, and an `OutOfMemoryError` reported as a
+    /// `RuntimeException` is catchable by handlers that must never see it.
+    private RuntimeException raised(Throwable t) throws IOException {
+        if (t instanceof IOException io) {
+            throw io;
+        }
+        if (t instanceof RuntimeException re) {
+            throw re;
+        }
+        if (t instanceof Error e) {
+            throw e;
+        }
+        return new IllegalStateException("The read of column '" + columnName + "' failed", t);
     }
 
     // ==================== Utilities ====================
