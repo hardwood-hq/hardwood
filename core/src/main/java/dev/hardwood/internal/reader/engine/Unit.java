@@ -7,10 +7,7 @@
  */
 package dev.hardwood.internal.reader.engine;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.Comparator;
 import java.util.List;
 
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
@@ -23,89 +20,41 @@ import dev.hardwood.internal.reader.select.RowRanges;
 import dev.hardwood.internal.reader.step.ByteSource;
 import jdk.jfr.Event;
 
-/// A row group of the read in one of its states, each holding what the row group has in it. A
-/// state's transitions return the next state; [RowGroupPlanner] keeps each unit's current state
-/// and replaces it on each transition, and the parts after the planner read the [Batched] one.
-/// Each state holds the unit's listing, what its file's listing decided of it.
+/// A row group of the read in one of its states, each holding what the row group has in it.
+/// [RowGroupPlanner] moves each unit from state to state, making the next state's record as it
+/// takes a step, and the parts after the planner read the [Batched] one. Each state holds the
+/// unit's listing, what its file's listing decided of it.
 sealed interface Unit {
 
     UnitListing listing();
 
-    /// Listed: its file's footer is parsed and its statistics keep it. `offsetIndexes` and
+    /// Listed: its file's footer is parsed, its statistics keep it, and its Bloom filters or
+    /// dictionaries may drop it; it waits for them, which its window and its own requests fetch.
+    /// It holds what listing decided its planning reads, which `BloomAndDictionaryPruning` and `AwaitingIndex` keep: `offsetIndexes` and
     /// `columnIndexes` are the file ordinals of the columns whose OffsetIndex and ColumnIndex its
     /// plan reads, from `window`, which also holds its Bloom filters; `dictionaries` are the
     /// dictionary pages its dictionary pruning reads whose extent the footer gives, fetched with
     /// the window's Bloom filters and held by it alone.
     record Listed(UnitListing listing, BitSet offsetIndexes, BitSet columnIndexes,
                   RowGroupPlanner.WindowFetch window, List<RangeFetch> dictionaries) implements Unit {
-
-        /// Its Bloom filters and dictionary pages have arrived and it has a leaf they may decide.
-        Pruning pruning() {
-            List<RangeFetch> fetched = new ArrayList<>(dictionaries);
-            List<FileRange> missing = new ArrayList<>();
-            String reason = "rg=" + listing.rowGroup() + " pruning";
-            ByteSource held = held(window.bloomFilters(), fetched);
-            ByteSource bytes = (offset, length) -> {
-                ByteBuffer found = held.read(offset, length);
-                if (found == null) {
-                    missing.add(new FileRange(offset, length, reason));
-                }
-                return found;
-            };
-            return new Pruning(this, new RowGroupPruning.Inputs(), fetched, missing, bytes);
-        }
-
-        /// Neither its Bloom filters nor its dictionaries can drop it: it waits for its page index.
-        AwaitingIndex nothingToPrune() {
-            return new AwaitingIndex(this, null, List.of());
-        }
-    }
-
-    /// What Bloom-filter and dictionary pruning read from: the window's Bloom filters, then the
-    /// dictionary bytes fetched for them.
-    private static ByteSource held(List<RangeFetch> bloomFilters, List<RangeFetch> fetched) {
-        return (offset, length) -> {
-            ByteBuffer found = RangeFetch.read(bloomFilters, offset, length);
-            return found != null ? found : RangeFetch.read(fetched, offset, length);
-        };
     }
 
     /// Pruning by its Bloom filters and dictionaries: they are read from `bytes`, a read step at a
     /// time until none lacks anything, then evaluated once. `inputs` holds what the steps read,
     /// `fetched` the dictionary bytes fetched for it, in file order, and `missing` what the last
-    /// step lacked.
-    /// Only the planner sees it.
-    record Pruning(Listed listed, RowGroupPruning.Inputs inputs, List<RangeFetch> fetched, List<FileRange> missing,
+    /// step lacked. Only the planner sees it.
+    record BloomAndDictionaryPruning(Listed listed, RowGroupPruning.Inputs inputs, List<RangeFetch> fetched, List<FileRange> missing,
                    ByteSource bytes) implements Unit {
 
         @Override
         public UnitListing listing() {
             return listed.listing();
         }
-
-        /// A pass lacked bytes, `more`, which the next reads once fetched.
-        void fetching(List<RangeFetch> more) {
-            fetched.addAll(more);
-            fetched.sort(Comparator.comparingLong(r -> r.range().start()));
-        }
-
-        /// Its Bloom filters and dictionaries kept it, reporting `event` unless it is `null`: its
-        /// page index is waited for.
-        AwaitingIndex kept(Event event) {
-            return new AwaitingIndex(listed, inputs.decoded(), event == null ? List.of() : List.of(event));
-        }
-
-        /// Its Bloom filters or dictionaries dropped it, reporting `event` unless it is `null`: it
-        /// is planned with no row of its `columns`.
-        Planned dropped(Event event, int columns) {
-            return new Planned(listing(), UnitPlan.empty(columns, RowRanges.NONE),
-                    event == null ? List.of() : List.of(event));
-        }
     }
 
-    /// Awaiting its page index: kept by its Bloom filters and dictionaries, whose decoded
-    /// `dictionaries` its pages decode with (`null` for none), with the `events` its pruning
-    /// reports so far.
+    /// Awaiting its page index: kept by its Bloom filters and dictionaries, or one neither can
+    /// drop, whose decoded `dictionaries` its pages decode with (`null` for none), with the
+    /// `events` its pruning reports so far.
     record AwaitingIndex(Listed listed, RowGroupDictionaryFilterSource.DecodedDictionaries dictionaries, List<Event> events)
             implements Unit {
 
@@ -113,25 +62,11 @@ sealed interface Unit {
         public UnitListing listing() {
             return listed.listing();
         }
-
-        /// Its page index arrived and gave `plan`, reporting `pageEvents`.
-        Planned planned(UnitPlan plan, List<Event> pageEvents) {
-            List<Event> all = new ArrayList<>(events);
-            all.addAll(pageEvents);
-            return new Planned(listing(), plan, List.copyOf(all));
-        }
     }
 
     /// Planned: `plan` gives the rows its filter keeps, each column's pages and dictionary page,
     /// and its ranges; `events` is what its pruning reports once the read reaches it.
     record Planned(UnitListing listing, UnitPlan plan, List<Event> events) implements Unit {
-
-        /// It and every unit before it are planned: the batch plan gives it `batches`, and a unit
-        /// of which they read no row (dropped, or past the read's row limit) reads no page.
-        Batched batched(BatchPlan.RowGroupBatches batches) {
-            return new Batched(listing, batches.segmentCount() == 0
-                    ? UnitPlan.empty(plan.pages().length, plan.matching()) : plan, batches, events);
-        }
     }
 
     /// Batched: its batches are taken from the batch plan; its ranges are fetched and its pages handed to its
