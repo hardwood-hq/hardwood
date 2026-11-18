@@ -252,6 +252,20 @@ class BatchExchangeTest {
         assertThatThrownBy(exchange::poll).isSameAs(failure);
     }
 
+    /// A read abandoned after its column failed raises what it was abandoned with: an
+    /// `OutOfMemoryError` is not hidden behind the failure before it.
+    @Test
+    void anAbandonAfterAFailureRaisesWhatTheReadWasAbandonedWith() {
+        BatchExchange<String> exchange = BatchExchange.detaching("c", () -> "batch", batch -> 1, 1);
+        exchange.signalError(new IllegalStateException("decode failed"));
+        OutOfMemoryError failure = new OutOfMemoryError("report");
+
+        exchange.abandon(failure);
+
+        assertThatThrownBy(exchange::poll).isSameAs(failure);
+        assertThatThrownBy(exchange::checkError).isSameAs(failure);
+    }
+
     /// A consumer already waiting for a batch when the read is abandoned raises the failure.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
