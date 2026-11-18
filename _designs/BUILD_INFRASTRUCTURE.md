@@ -91,7 +91,7 @@ Tests: `NoVarTest`, `NoLegacyJavadocTest` (error-prone-checks).
 
 Each job:
 
-1. Restores `~/.m2/repository` from the Actions cache.
+1. Restores `~/.m2/wrapper/dists` (the Maven distribution) and `~/.m2/repository` from the Actions cache.
 2. Deletes `~/.m2/repository/dev/hardwood`.
 3. Builds its dependency closure with `-Dquick install -pl <its modules> -am`. `build-core`, whose modules have no Hardwood dependencies outside its own list, skips this step and names `hardwood-error-prone-checks` in its `-pl` list instead. `javadoc-and-integration-tests` installs every module except `integration-test` (`-pl '!:hardwood-integration-test'`, no `-am`), because `javadoc:javadoc` runs over the whole reactor.
 4. Builds and verifies its own modules without `-Dquick`: `clean install -fae`, `clean verify` for the integration tests, and `-Dnative verify -Dgroups=native` in `native-build-check`, which runs only the `native`-tagged ITs against the binary it builds.
@@ -119,6 +119,7 @@ The cache restores the local repository of an earlier run, including the `dev.ha
 - The key is `maven-<os>-<job>-<hash of all pom.xml>`, with fallbacks to the same job under any POM hash, then to related jobs, then to any Maven cache.
 - `main-build.yml` saves its caches (`actions/cache`). `pr-build.yml` only restores them (`actions/cache/restore`): a pull request can restore caches saved on its own ref or on `main`, and a cache saved by a PR would serve only re-runs of that PR while taking space from `main`'s caches and the performance datasets.
 - Every PR job therefore has a counterpart in `main-build.yml` under the same job name that resolves at least the same dependencies. The PR-only `predicate-audit` job falls back to the `build-modules` cache, which is why `build-modules` compiles `predicate-audit` on `main` as well. A job added to `pr-build.yml` needs such a counterpart, or every run downloads what the cache lacks.
+- The Maven distribution that `./mvnw` unpacks has a cache of its own, keyed `maven-wrapper-<os>-<hash of .mvn/wrapper/maven-wrapper.properties>` and shared by every job, so the distribution is downloaded only when the wrapper properties change. `main-build.yml` and `performance.yml` restore and save it, `pr-build.yml` only restores it, and the Graal packaging jobs of `release-cli.yml` and `cli-early-access.yml`, whose `setup-graalvm` caches only the repository, restore and save it per OS. Jobs that set up their JDK with `setup-java`'s `cache: maven` get an equivalent cache, under that action's own key.
 
 The closure is not offline: a cache miss or a changed POM resolves third-party artifacts from Maven Central during the run.
 
@@ -141,7 +142,7 @@ Every input the build downloads is pinned. The JDKs are pinned by major version,
 |---|---|---|
 | GitHub Actions | Full commit SHA, with the release tag in a trailing comment | Dependabot, one weekly pull request for all actions |
 | Runner images | A versioned label (`ubuntu-24.04`, `windows-2025-vs2026`, `macos-26`); no `-latest` label | Hand |
-| Maven | The wrapper's `distributionUrl` and `distributionSha256Sum`; the wrapper refuses a distribution with another SHA-256 | Hand, the sum taken from a distribution checked against Apache's published SHA-512 and release signature |
+| Maven | The wrapper's `distributionUrl` and `distributionSha256Sum`; the wrapper refuses to unpack a downloaded distribution with another SHA-256; a distribution restored from the Actions cache is not checked again, and the cache is trusted as `~/.m2/repository` is | Hand, the sum taken from a distribution checked against Apache's published SHA-512 and release signature |
 | Maven artifacts | Their versions in the POMs; `--strict-checksums` fails the build on an artifact whose checksum is missing or wrong | Dependabot, weekly, minor and patch updates grouped |
 | Container base images | A Fedora release tag (`fedora-minimal:44`) rather than a digest, so each build of the CLI image picks up that release's package updates | Dependabot, weekly, for the CLI image and the dev container |
 | Build JDKs | Temurin by major version through `actions/setup-java` (`java-version: '25'`, and `'21'` for the Java 21 integration tests), resolved to the latest update on each run | Floats with the releases |
