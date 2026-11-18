@@ -78,8 +78,8 @@ public final class RowGroupPruning {
                 unit.leafDecisions(), plan);
         BitSet asked = plan.columns();
         for (int c = asked.nextSetBit(0); c >= 0; c = asked.nextSetBit(c + 1)) {
-            if (c < unit.metaData().columns().size() && RowGroupDictionaryFilterSource.isFullyDictionaryEncoded(
-                    unit.metaData().columns().get(c).metaData())) {
+            if (c < unit.metaData().columns().size()
+                    && RowGroupDictionaryFilterSource.prunesBy(unit.metaData().columns().get(c))) {
                 columns.set(c);
             }
         }

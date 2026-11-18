@@ -93,7 +93,7 @@ final class PageTracker {
         Arrays.fill(keys, Long.MAX_VALUE);
         // the column of that row's page, the lowest where two serve it
         int[] keyColumns = new int[ranges.size()];
-        Slices slices = new Slices(u, ranges, placements, new ChunkDictionary[n], new int[n]);
+        Slices slices = new Slices(u, ranges, placements, new ChunkDictionary[n], new int[n], new int[n]);
         long first = Long.MAX_VALUE;
         for (int c = 0; c < n; c++) {
             List<NeededPage> needed = u.plan().pages()[c];
@@ -113,17 +113,36 @@ final class PageTracker {
                 slices.dictionaries()[c] = ChunkDictionary.preloaded(u.plan().preloaded()[c]);
             }
             else if (u.plan().dictionaryStart()[c] > 0) {
+                int length = Math.toIntExact(u.plan().firstDataPage()[c] - u.plan().dictionaryStart()[c]);
+                Exception tooLarge = tooLarge(u, c, length, ExceptionContext.DICTIONARY_PAGE, "Dictionary page");
+                if (tooLarge != null) {
+                    // its data pages cannot decode without it, so none of the chunk is read
+                    readFailure.failAt(firstKey, c, tooLarge);
+                    slices.ends()[c] = 0;
+                    continue;
+                }
                 ChunkDictionary dictionary = new ChunkDictionary();
                 slices.dictionaries()[c] = dictionary;
-                int length = Math.toIntExact(u.plan().firstDataPage()[c] - u.plan().dictionaryStart()[c]);
                 lowerKeys(ranges, keys, keyColumns, c, firstKey, u.plan().dictionaryStart()[c], length);
                 addDictionaryPage(new TrackedPage(u, c, firstKey, NeededPage.dictionary(u.plan().dictionaryStart()[c], length),
                         overlapping(ranges, u.plan().dictionaryStart()[c], length), dictionary, false));
             }
             reportPagesLocated(u.listing().file().name(), u.listing().rowGroup(), columns.schema(c), needed.size(),
                     RowGroupScannedEvent.STRATEGY_OFFSET_INDEX);
-            for (NeededPage page : needed) {
-                lowerKeys(ranges, keys, keyColumns, c, u.key(page.location().firstRowIndex()), page.location().offset(),
+            slices.ends()[c] = needed.size();
+            for (int i = 0; i < needed.size(); i++) {
+                NeededPage page = needed.get(i);
+                long key = u.key(page.location().firstRowIndex());
+                // refused before it lowers its ranges' keys, so that a range only it or the
+                // chunk's later pages read is keyed past the failure and never fetched; neither
+                // is tracked
+                Exception tooLarge = tooLarge(u, c, page.location().compressedPageSize(), page.pageIndex(), "Data page");
+                if (tooLarge != null) {
+                    readFailure.failAt(key, c, tooLarge);
+                    slices.ends()[c] = i;
+                    break;
+                }
+                lowerKeys(ranges, keys, keyColumns, c, key, page.location().offset(),
                         page.location().compressedPageSize());
             }
         }
@@ -157,10 +176,11 @@ final class PageTracker {
         });
     }
 
-    /// A unit's planned pages, tracked a slice at a time: per column, its dictionary and the next
-    /// page not tracked.
+    /// A unit's planned pages, tracked a slice at a time: per column, its dictionary, the next
+    /// page not tracked, and the page tracking ends before, short of the column's pages where one
+    /// is refused for its size ([#tooLarge]).
     private record Slices(Unit.Batched unit, List<RangeFetch> ranges, CellWriter.ChunkPlacement[] placements,
-                          ChunkDictionary[] dictionaries, int[] next) {
+                          ChunkDictionary[] dictionaries, int[] next, int[] ends) {
     }
 
     /// Tracks the slice of `slices` starting at row `key` once the look-ahead reaches it: a job
@@ -179,11 +199,12 @@ final class PageTracker {
         long next = Long.MAX_VALUE;
         for (int c = 0; c < slices.next().length; c++) {
             List<NeededPage> needed = u.plan().pages()[c];
-            if (needed == null || slices.next()[c] == needed.size()) {
+            if (needed == null || slices.next()[c] >= slices.ends()[c]) {
                 continue;
             }
             int i = slices.next()[c];
-            for (; i < needed.size() && u.key(needed.get(i).location().firstRowIndex()) < end; i++) {
+            int last = slices.ends()[c];
+            for (; i < last && u.key(needed.get(i).location().firstRowIndex()) < end; i++) {
                 NeededPage page = needed.get(i);
                 long pageKey = u.key(page.location().firstRowIndex());
                 add(slices.placements()[c], new TrackedPage(u, c, pageKey, page,
@@ -194,7 +215,7 @@ final class PageTracker {
             if (i == needed.size()) {
                 slices.placements()[c].allAdded();
             }
-            else {
+            else if (i < last) {
                 next = Math.min(next, u.key(needed.get(i).location().firstRowIndex()));
             }
             place(c);
@@ -236,6 +257,38 @@ final class PageTracker {
     void add(CellWriter.ChunkPlacement placement, TrackedPage tracked) {
         cells.add(tracked.column(), placement, tracked);
         decodeWhenReady(tracked);
+    }
+
+    /// Whether `tracked`, a page a header scan found, is refused for storing more bytes than the
+    /// read's working-set limit ([#tooLarge]), checked before the scan keys its ranges to it and
+    /// adds it: the read fails at the page, which is never added and holds no range, and a refused
+    /// dictionary page fails its chunk's dictionary, which the chunk's data pages wait on.
+    boolean refused(TrackedPage tracked) {
+        Exception tooLarge = tooLarge(tracked.unit(), tracked.column(), tracked.page().location().compressedPageSize(),
+                tracked.data() ? tracked.page().pageIndex() : ExceptionContext.DICTIONARY_PAGE,
+                tracked.data() ? "Data page" : "Dictionary page");
+        if (tooLarge == null) {
+            return false;
+        }
+        readFailure.failAt(tracked.key(), tracked.column(), tooLarge);
+        if (!tracked.data()) {
+            tracked.dictionary().output().failed(tooLarge);
+        }
+        return true;
+    }
+
+    /// The failure of a page of `column` in `u` storing `stored` bytes, where they alone exceed the
+    /// read's working-set limit ([WorkingSet.Column#requireStorable]); `null` where they do not. A
+    /// page of a planned chunk is checked before its ranges are keyed to it, and one a scan finds
+    /// before the scan keys them ([#refused]).
+    private Exception tooLarge(Unit.Batched u, int column, long stored, int pageIndex, String what) {
+        try {
+            columns.workingSet(column).requireStorable(stored, what);
+            return null;
+        }
+        catch (ParquetReadException e) {
+            return columns.withContext(column, e, u.listing().file().name(), u.listing().rowGroup(), pageIndex);
+        }
     }
 
     /// Places the pages `column` can place, ending each flat page's placement, which its decode waits
