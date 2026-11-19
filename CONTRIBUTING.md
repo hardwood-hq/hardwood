@@ -64,7 +64,7 @@ Thrift table is the one row caught by a test rather than by the compiler. What n
 whether the decoder is *correct*, so cover that yourself — a round trip through the writer where
 Hardwood can write the encoding, and a `parquet-testing` fixture where it can only read it.
 
-Finally, update `docs/content/` for the public enums, and `ROADMAP.md` and `FORMAT_COVERAGE.md` for
+Finally, update `docs/content/` for the public enums, including `reference/format-support.md` for
 the capability itself. Nothing in the build checks those.
 
 ## Design docs and plans

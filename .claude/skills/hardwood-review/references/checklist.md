@@ -127,9 +127,9 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 - **Why:** The PR #418 design said "≥ 2 distinct projected columns" but the code was `leaves.size() < 2`. Both shipped together. Easy to catch if you grep.
 - **How:** Read the design doc's gate descriptions. For each numeric or boolean claim, find the code that implements it. Quote them side-by-side if they differ.
 
-### C4. ROADMAP update
-- **Rule:** When a feature ships, update ROADMAP.md.
-- **How:** Diff completes a plan or ships a roadmap item but has no `ROADMAP.md` change → flag.
+### C4. Format support update
+- **Rule:** A change that adds or removes a read or write capability updates `docs/content/reference/format-support.md`; one that changes how a `parquet.thrift` field is handled updates `FORMAT_COVERAGE.md`.
+- **How:** Diff adds an encoding, codec, type, metadata structure, storage backend or module capability, or changes a field's read/write handling, with no change to the matching file → flag.
 
 ---
 

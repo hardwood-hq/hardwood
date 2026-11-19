@@ -35,7 +35,7 @@ A new design document gets a node in the map in `ARCHITECTURE.md` and a row in i
 A design document states what would need a design discussion to change. Tuning constants and class internals stay out; class names appear as pointers to where something lives. Name tests sparingly: a section may end with one line naming the test classes that cover it, and an invariant no test enforces is marked untested.
 A design document opens with one or two sentences stating its scope, led by a verb ("Describes how …", "Covers …"), followed by a `Related documents:` list that links each neighbouring document (design documents, repository documents such as `TESTING.md`, and user pages) with what it covers. Cross-references do not go in the opening prose.
 Design documents describe the current state. Do not include references to the development process, alternative approaches that were considered and rejected, benchmark results, or commentary on how the design evolved. Write as if the reader has no context on the conversation that produced the document.
-Update the status in the roadmap after implementing a feature.
+When a change adds or removes a capability listed in `docs/content/reference/format-support.md`, update that page in the same PR; when it changes how a `parquet.thrift` field is read or written, update `FORMAT_COVERAGE.md`.
 
 # Public API
 

@@ -83,7 +83,7 @@ See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide fo
 
 - **Local files** (memory-mapped via `InputFile.of(Path)`) may be arbitrarily large; each individual column chunk must be at most 2 GB of compressed data.
 - **In-memory** (`InputFile.of(ByteBuffer)`) and **object-store** sources are limited to 2 GB per file. Split larger datasets across multiple files and read them with `Hardwood.openAll(...)` or `ParquetFileReader.openAll(...)`.
-- **Writing** is under active development as of Hardwood 1.1, and is documented in the [development docs](https://hardwood.dev/dev/) until 1.1 is released. It targets local files via `OutputFile.of(Path)`; output to object storage is coming soon.
+- **Writing** is under active development as of Hardwood 1.1, and is documented in the [development docs](https://hardwood.dev/dev/) until 1.1 is released. It targets local files, memory and S3.
 
 ---
 
@@ -93,7 +93,6 @@ See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide fo
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture, key design decisions, module layout, and a map of the design documents in `_designs/`. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: workflow, commit format, PR expectations. |
-| [ROADMAP.md](ROADMAP.md) | Implementation status, roadmap, and milestones. |
 | [NATIVE_BUILD.md](NATIVE_BUILD.md) | How the GraalVM native CLI build works. |
 | [PERFORMANCE.md](PERFORMANCE.md) | Benchmark results and how to run performance tests. |
 | [TESTING.md](TESTING.md) | How the automated tests are organised and run, plus manual testing recipes (e.g. S3 via s3proxy). |
@@ -119,7 +118,7 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for the full g
 
 LLM-assisted contributions are welcome, but vibe coding — accepting AI-generated changes without understanding them — is not. The aspiration is a high-quality, maintainable, performant, safe codebase.
 
-See [ROADMAP.md](ROADMAP.md) for the detailed implementation status, roadmap, and milestones.
+See [Format Support](https://hardwood.dev/dev/reference/format-support/) for the parts of the Parquet format Hardwood reads and writes, and the [roadmap](https://hardwood.dev/dev/#roadmap) for planned features.
 
 ---
 

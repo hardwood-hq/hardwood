@@ -1,14 +1,13 @@
 # Parquet Format Coverage
 
-Field-level companion to [ROADMAP.md](ROADMAP.md). For every struct/union in the
-Parquet [`parquet.thrift`](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift)
+For every struct/union in the Parquet
+[`parquet.thrift`](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift)
 metadata definition, this table records whether Hardwood reads the field and
 whether it acts on it.
 
-ROADMAP tracks *capabilities* (encodings, codecs, bloom filters, the writer);
-this table tracks *metadata fields*. It covers the footer/page metadata Hardwood
-parses, not the breadth of encoding/compression decoders (that lives in ROADMAP
-phases 2 and 8) or the value-conversion layer (phase 7.4).
+It tracks *metadata fields*. Capabilities (types, encodings, codecs, metadata
+structures, storage) and whether each is read or written are in
+[Format Support](docs/content/reference/format-support.md).
 
 ## Legend
 
@@ -244,9 +243,9 @@ integer and binary types (#105). Dive surfacing is #507. The writer produces `BL
 
 ## Capability gaps at a glance
 
-The ❌ rows cluster into a handful of capabilities, cross-referenced to ROADMAP:
+The ❌ rows cluster into a handful of capabilities:
 
-- **Modular encryption** — entire feature stubbed to fail-fast. #128 (ROADMAP has no phase yet).
+- **Modular encryption** — entire feature stubbed to fail-fast. #128.
 - **Statistics completeness** — distinct_count and the exactness flags are parsed but drive no filtering (#483).
 - **Declared sort order** — `sorting_columns` (written, not read) and `is_sorted`; #483, #1258.
 - **Deprecated / niche** — split-file `file_path` (surfaced, and reading such a chunk fails rather than decoding this file's bytes), index pages, row-group ordinals: no planned support.
