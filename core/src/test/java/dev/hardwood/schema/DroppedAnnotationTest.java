@@ -16,6 +16,7 @@ import dev.hardwood.internal.predicate.CapturedWarnings;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
+import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -99,7 +100,7 @@ class DroppedAnnotationTest {
                 SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL));
 
         SchemaNode.GroupNode map = (SchemaNode.GroupNode) FileSchema.fromSchemaElements(
-                BareRepeatedGroups.dropAnnotations(elements)).getRootNode().children().getFirst();
+                UnreadableAnnotations.drop(BareRepeatedGroups.dropAnnotations(elements))).getRootNode().children().getFirst();
 
         assertThat(map.isMap()).isTrue();
     }
@@ -135,7 +136,7 @@ class DroppedAnnotationTest {
         SchemaElement group = new SchemaElement("g", null, null, RepetitionType.OPTIONAL, 1, converted,
                 null, null, null, annotation);
         SchemaElement leaf = SchemaElement.primitive(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED);
-        return (SchemaNode.GroupNode) FileSchema.fromSchemaElements(List.of(root, group, leaf))
+        return (SchemaNode.GroupNode) FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, group, leaf)))
                 .getRootNode().children().getFirst();
     }
 
@@ -146,6 +147,6 @@ class DroppedAnnotationTest {
 
     private static LogicalType annotationOf(SchemaElement leaf) {
         SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
-        return FileSchema.fromSchemaElements(List.of(root, leaf)).getColumn(COLUMN).logicalType();
+        return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, leaf))).getColumn(COLUMN).logicalType();
     }
 }

@@ -24,6 +24,7 @@ import dev.hardwood.internal.io.MappedInputFile;
 import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
+import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -115,10 +116,11 @@ public final class ParquetMetadataReader {
     }
 
     /// The schema the reader reads a file with: the footer's schema elements, less the
-    /// annotations [BareRepeatedGroups] drops. Every footer the reader uses passes through here,
-    /// whether read by the reader or supplied by a [MetadataSource].
+    /// annotations [BareRepeatedGroups] and [UnreadableAnnotations] drop. Every footer the reader
+    /// uses passes through here, whether read by the reader or supplied by a [MetadataSource].
     public static FileSchema schemaOf(FileMetaData metaData) {
-        return FileSchema.fromSchemaElements(BareRepeatedGroups.dropAnnotations(metaData.schema()));
+        return FileSchema.fromSchemaElements(
+                UnreadableAnnotations.drop(BareRepeatedGroups.dropAnnotations(metaData.schema())));
     }
 
     /// Opens `inputFile` for a read whose footers come from `source`. For [#FROM_FILE] no reader

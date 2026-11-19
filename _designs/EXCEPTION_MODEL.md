@@ -6,7 +6,7 @@ Related documents:
 
 - [READ_PIPELINE.md](READ_PIPELINE.md): how the pipeline's threads hand a failure to the consumer
 - [FILE_METADATA.md](FILE_METADATA.md): the malformed-input policy of the footer parser
-- [LOGICAL_TYPES.md](LOGICAL_TYPES.md): which annotations `FileSchema` drops
+- [LOGICAL_TYPES.md](LOGICAL_TYPES.md): which annotations the reader drops
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): why a column with a dropped annotation has no readable bounds
 - [WRITER.md](WRITER.md): which exceptions out of a write call fail the writer
 - [WRITER_INPUT.md](WRITER_INPUT.md): which row-writer rejections are returned rather than thrown
@@ -170,7 +170,7 @@ physical accessors work and a logical accessor fails as on any unannotated colum
 need one, because the column's writer ordered its bounds by the dropped annotation:
 `BoundsReadability` reads no bounds for the column
 ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bounds-readability)). The two are dropped in different
-places, `LogicalTypeReader` and `FileSchema`, and warn differently: an unrecognized annotation
+places, `LogicalTypeReader` and `UnreadableAnnotations`, and warn differently: an unrecognized annotation
 means a newer format version, an unusable one means the writer produced something no version
 defines. Only the second can be shown wrong, so only it could ever be a candidate for
 refusing the read.

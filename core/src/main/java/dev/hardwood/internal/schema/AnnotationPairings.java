@@ -164,7 +164,7 @@ public final class AnnotationPairings {
     }
 
     /// A group's annotation as the reader keeps it: `annotation` where
-    /// [AnnotationKind#annotatesGroup()] holds, `null` otherwise. `FileSchema` and
+    /// [AnnotationKind#annotatesGroup()] holds, `null` otherwise. `UnreadableAnnotations` and
     /// `BareRepeatedGroups` both read a group through this and [#readableGroupConvertedType], so
     /// they cannot disagree about which structure it is.
     public static LogicalType readableGroupAnnotation(LogicalType annotation) {
