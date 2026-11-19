@@ -220,6 +220,16 @@ try (RowReader in = reader.rowReader();
 
 A nested struct, list or map is copied with its contents. A struct's fields are matched by name, so the target struct can declare its fields in another order, or fewer of them; a field the source lacks is written as null. A value not in the field's form, such as a `String` for a `DOUBLE` field, fails with an error. See [Logical Types and Row Setters](../reference/writer.md#logical-types-and-row-setters) for the form each type takes.
 
+A file holding an `INT96` or `VARIANT` column, or a schema shape the row writer does not produce, cannot be copied this way: the copy fails when the writer or its row writer is created, or on the first such value. See [Schema Shapes](../reference/writer.md#schema-shapes) and [Physical Types and Columnar Setters](../reference/writer.md#physical-types-and-columnar-setters).
+
+To copy the source file's key-value metadata, pass it to the writer:
+
+```java
+writer.keyValueMetadata(reader.getFileMetaData().keyValueMetadata());
+```
+
+Some entries describe the schema they were written with, such as `ARROW:schema`, the pandas descriptor and `org.apache.spark.sql.parquet.row.metadata`. Carry those over only when the target schema is the source's; on a changed schema, a reader that trusts them reads the file under the wrong types or fails.
+
 ## Configuring the Writer
 
 Pass a `WriterConfig` to `create`:
