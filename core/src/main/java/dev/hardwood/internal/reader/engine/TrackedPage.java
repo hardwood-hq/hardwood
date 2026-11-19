@@ -33,9 +33,12 @@ final class TrackedPage {
     /// the rows a page its inline statistics drop stands for, as nulls without bytes; `0` for a
     /// page read from its bytes
     private int placeholder;
-    /// its header, parsed by the scan that found it or for its charge; `null` until then, and for
-    /// a header that did not parse
+    /// its header, parsed by the scan that found it, by its header job or for its charge; `null`
+    /// until then, and for a header that did not parse
     private PageFormatProbe.HeaderAt header;
+    /// ended once the job parsing its header off the read's lock has ended; `null` for a page
+    /// without one
+    private Output<Void> headerJob;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -130,9 +133,19 @@ final class TrackedPage {
         return RangeFetch.read(ranges, page.location().offset(), page.location().compressedPageSize());
     }
 
-    /// Its header was parsed into `header`, under the read's lock.
+    /// Its header was parsed into `header`.
     void headerRead(PageFormatProbe.HeaderAt header) {
         this.header = header;
+    }
+
+    /// Its header is parsed off the read's lock by a job that ends `headerJob`.
+    void headerJob(Output<Void> headerJob) {
+        this.headerJob = headerJob;
+    }
+
+    /// The output of the job parsing its header off the read's lock, `null` for a page without one.
+    Output<Void> headerJob() {
+        return headerJob;
     }
 
     /// Its header, `null` until parsed and where it did not parse.

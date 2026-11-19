@@ -12,10 +12,12 @@ import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 import dev.hardwood.reader.FilterPredicate;
@@ -43,14 +45,15 @@ class LargeDecodeTaskTest {
     }
 
     /// Eight columns whose one data page each decompresses to 160 MiB, a few KiB on disk, read
-    /// with no read-ahead buffer on a pool of eight threads and on none: the read returns every row
-    /// in a heap that cannot hold the eight pages' buffers at once.
+    /// with no read-ahead buffer on a pool of eight threads and on none, their pages found by a
+    /// scan or listed by an offset index: the read returns every row in a heap that cannot hold
+    /// the eight pages' buffers at once.
     @ParameterizedTest
-    @ValueSource(ints = { 8, 0 })
-    void largePagesOfEveryColumnReadInAHeapSmallerThanTheirSum(int threads) throws IOException {
+    @CsvSource({ "8, false", "0, false", "8, true", "0, true" })
+    void largePagesOfEveryColumnReadInAHeapSmallerThanTheirSum(int threads, boolean indexed) throws IOException {
         assertThat(Runtime.getRuntime().maxMemory()).isLessThan((long) COLUMNS * PAGE_BYTES);
         System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
-        byte[] file = RleExpansionFile.buildWide(COLUMNS, 1, Long.BYTES, PAGE_VALUES, false, PAGE_BYTES);
+        byte[] file = RleExpansionFile.buildWide(COLUMNS, 1, Long.BYTES, PAGE_VALUES, indexed, PAGE_BYTES);
 
         try (HardwoodContext context = HardwoodContext.create(threads);
                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
@@ -81,6 +84,72 @@ class LargeDecodeTaskTest {
                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
                 RowReader rows = reader.buildRowReader().filter(FilterPredicate.eq("c0", 1L)).build()) {
             assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    /// Six columns whose dictionary decompresses to 128 MiB of zeros, a few KiB on disk, listed by
+    /// an offset index and read without a filter from a file that holds every byte but slices none,
+    /// as a file mapped by region does, with no read-ahead buffer on a pool of eight threads: each
+    /// dictionary page's parse is charged from its header once its range has arrived, and the read
+    /// returns every row in a heap that cannot hold the six parses at once.
+    @ParameterizedTest
+    @ValueSource(ints = { 8, 0 })
+    void largeDictionariesOfAFileMappedByRegionReadInAHeapSmallerThanTheirSum(int threads) throws IOException {
+        int columns = 6;
+        assertThat(Runtime.getRuntime().maxMemory()).isLessThan(columns * 2L * DICTIONARY_BYTES);
+        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, "0");
+        byte[] file = RleExpansionFile.buildWide(columns, 1, DICTIONARY_BYTES, PAGE_VALUES, true);
+
+        try (HardwoodContext context = HardwoodContext.create(threads);
+                ParquetFileReader reader = ParquetFileReader.open(new MappedByRegion(file), context);
+                RowReader rows = reader.buildRowReader().build()) {
+            long count = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                count++;
+            }
+            assertThat(count).isEqualTo(PAGE_VALUES);
+        }
+    }
+
+    /// A file in memory that holds every byte but slices none, as a file mapped by region does:
+    /// each range is read as a request.
+    private static final class MappedByRegion implements InputFile, HeldBytes {
+
+        private final InputFile delegate;
+
+        MappedByRegion(byte[] bytes) {
+            this.delegate = InputFile.of(ByteBuffer.wrap(bytes));
+        }
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() throws IOException {
+            return delegate.length();
+        }
+
+        @Override
+        public String name() {
+            return "mapped-by-region";
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+
+        @Override
+        public ByteBuffer sliceHeld(long offset, int length) {
+            return null;
         }
     }
 }
