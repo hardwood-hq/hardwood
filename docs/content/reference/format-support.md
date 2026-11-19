@@ -20,12 +20,10 @@ Entries marked *legacy* are deprecated by the Parquet specification or kept in i
 |---|---|---|
 | `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | Yes | Yes |
 | `INT96` (legacy) | Yes | No |
-| `STRING`, `ENUM`, `JSON`, `BSON`, `UUID`, `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `INTERVAL`, `FLOAT16`, `UNKNOWN`, signed and unsigned `INT` | Yes | Yes |
-| `GEOMETRY`, `GEOGRAPHY` | Yes | Yes |
-| `FILE` | Yes | Yes |
+| `STRING`, `ENUM`, `JSON`, `BSON`, `UUID`, `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `INTERVAL`, `FLOAT16`, `UNKNOWN`, signed and unsigned `INT`, `GEOMETRY`, `GEOGRAPHY` | Yes | Yes |
 | `VARIANT`, unshredded and shredded | Yes | As binary fields, when the schema is read from a file ([#1487](https://github.com/hardwood-hq/hardwood/issues/1487)) |
 | `FINITE_VECTOR` | As a `LIST`, without its declared length ([#1804](https://github.com/hardwood-hq/hardwood/issues/1804)) | No ([#1837](https://github.com/hardwood-hq/hardwood/issues/1837)) |
-| `LIST`, `MAP` and structs, nested | Yes | Yes |
+| `LIST`, `MAP`, `FILE` and structs, nested | Yes | Yes |
 | Two-level lists (legacy) | Yes | Yes, through `ColumnWriter` when the schema is read from a file |
 
 The Java types each annotation reads as and writes from are in [Typed Accessors](accessors.md) and [Logical Types and Row Setters](writer.md#logical-types-and-row-setters).
@@ -40,7 +38,9 @@ The Java types each annotation reads as and writes from are in [Typed Accessors]
 | `RLE` for levels | Yes | Yes |
 | `RLE` for `BOOLEAN` values | Yes | No ([#1821](https://github.com/hardwood-hq/hardwood/issues/1821)) |
 | `BIT_PACKED` levels (legacy) | Yes | No |
-| `DELTA_BINARY_PACKED`, `DELTA_LENGTH_BYTE_ARRAY`, `DELTA_BYTE_ARRAY` | Yes | Yes |
+| `DELTA_BINARY_PACKED` | Yes | Yes |
+| `DELTA_LENGTH_BYTE_ARRAY` | Yes | Yes |
+| `DELTA_BYTE_ARRAY` | Yes | Yes |
 | `BYTE_STREAM_SPLIT` | Yes | Yes |
 | `ALP` | Yes | Yes |
 
@@ -50,7 +50,12 @@ See [Encodings](writer.md#encodings) for the writer's choice of encoding and the
 
 | Codec | Read | Write |
 |---|---|---|
-| `UNCOMPRESSED`, `GZIP`, `SNAPPY`, `ZSTD`, `LZ4_RAW`, `BROTLI` | Yes | Yes |
+| `UNCOMPRESSED` | Yes | Yes |
+| `GZIP` | Yes | Yes |
+| `SNAPPY` | Yes | Yes |
+| `ZSTD` | Yes | Yes |
+| `LZ4_RAW` | Yes | Yes |
+| `BROTLI` | Yes | Yes |
 | `LZ4`, with Hadoop framing (legacy) | Yes | No |
 | `LZO` | No | No |
 
@@ -60,7 +65,8 @@ Codecs other than `UNCOMPRESSED` and `GZIP` need their library on the classpath;
 
 | Page | Read | Write |
 |---|---|---|
-| Data pages V1 and V2 | Yes | Yes |
+| Data pages V1 | Yes | Yes |
+| Data pages V2 | Yes | Yes |
 | Dictionary pages | Yes | Yes |
 | Page CRC | Yes | Yes |
 | Index pages (unused by writers) | No | No |
