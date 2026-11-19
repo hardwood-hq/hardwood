@@ -83,7 +83,7 @@ class FileSchemaFlattenTest {
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("FIXED_LEN_BYTE_ARRAY column key requires a positive type length");
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column m.key_value.key requires a positive type length");
     }
 
     @Test

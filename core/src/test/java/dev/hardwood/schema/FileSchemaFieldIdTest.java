@@ -175,16 +175,6 @@ class FileSchemaFieldIdTest {
                 .hasMessage("The type length of 'md5' is already set to 16");
     }
 
-    /// A `null` annotation counts as set, so a second annotation is refused.
-    @Test
-    void nullLogicalTypeCannotBeOverwritten() {
-        assertThatThrownBy(() -> FileSchema.builder("schema")
-                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        col -> col.logicalType(null).logicalType(LogicalType.string())))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("The logical type of 'name' is already set to null");
-    }
-
     @Test
     void groupFieldIdCannotBeSetTwice() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
@@ -254,16 +244,6 @@ class FileSchemaFieldIdTest {
         assertThat(fieldIds(schema.toSchemaElements())).isEqualTo(expected);
         assertThat(fieldIds(footerSchema(write(schema)))).isEqualTo(expected);
         assertThat(schema.getField("top").fieldId()).isEqualTo(1);
-    }
-
-    @Test
-    void nullLogicalTypeLeavesTheColumnUnannotated() {
-        FileSchema schema = FileSchema.builder("schema")
-                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.logicalType(null).fieldId(1))
-                .build();
-
-        assertThat(schema.getColumn("id").logicalType()).isNull();
-        assertThat(schema.getColumn("id").fieldId()).isEqualTo(1);
     }
 
     private static InputFile write(FileSchema schema) throws Exception {

@@ -230,13 +230,13 @@ class FileSchemaLogicalTypeTest {
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("STRING annotates a BYTE_ARRAY column, not INT32 (column key)");
+                .hasMessage("STRING annotates a BYTE_ARRAY column, not INT32 (column counts.key_value.key)");
         assertThatThrownBy(() -> FileSchema.builder("schema")
                 .map("byId", RepetitionType.OPTIONAL, PhysicalType.FIXED_LEN_BYTE_ARRAY,
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("FIXED_LEN_BYTE_ARRAY column key requires a positive type length");
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column byId.key_value.key requires a positive type length");
     }
 
     @Test

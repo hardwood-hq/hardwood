@@ -531,7 +531,11 @@ class WriterSortingColumnsTest {
     private static FileSchema oneColumn(PhysicalType type, Integer typeLength, LogicalType logicalType) {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (typeLength == null) {
-            builder.primitive("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType));
+            builder.primitive("v", type, RepetitionType.REQUIRED, col -> {
+                if (logicalType != null) {
+                    col.logicalType(logicalType);
+                }
+            });
         }
         else {
             builder.primitive("v", type, RepetitionType.REQUIRED,
