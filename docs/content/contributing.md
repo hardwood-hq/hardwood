@@ -32,7 +32,7 @@ For open-ended questions, design discussions, or show-and-tell, use [GitHub Disc
 
 ## What's planned
 
-The [roadmap](https://github.com/hardwood-hq/hardwood/blob/main/ROADMAP.md) lists the larger features in flight and on the horizon. Before starting a sizable contribution, check there and open an issue to align on the approach.
+The [roadmap](index.md#roadmap) lists the larger features planned, and the [milestones](https://github.com/hardwood-hq/hardwood/milestones) the issues of each release. Before starting a sizable contribution, check there and open an issue to align on the approach.
 
 ## License
 
