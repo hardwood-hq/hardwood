@@ -7,10 +7,12 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
@@ -101,6 +103,8 @@ final class FooterReader {
     private final ReadFailure readFailure;
     private final SchemaCompatibility compatibility;
     private final ResolvedPredicate filter;
+    /// prunes a later file's row groups by their statistics as it is listed
+    private final RowGroupPruning pruning;
     /// applies a result under the read's lock: the end of another read's load of a footer
     private final Consumer<Runnable> results;
     private final int count;
@@ -113,8 +117,9 @@ final class FooterReader {
     private boolean closed;
 
     FooterReader(FileMetadataCache files, JobScheduler scheduler, RowGroupPlanner planner, ReadFailure readFailure,
-                 SchemaCompatibility compatibility, ResolvedPredicate filter, boolean limited,
+                 SchemaCompatibility compatibility, ResolvedPredicate filter, RowGroupPruning pruning, boolean limited,
                  Consumer<Runnable> results) {
+        this.pruning = pruning;
         this.files = files;
         this.scheduler = scheduler;
         this.planner = planner;
@@ -139,9 +144,18 @@ final class FooterReader {
     }
 
     /// Lists the first file, `file` as its footer's load left it, with `schema`, the row groups its
-    /// statistics keep, `kept`, and `ordinals`, and starts the footers ahead of it.
-    void start(InputFile file, FileSchema schema, RowGroupPruning.FilteredRowGroups kept, FileColumnOrdinals ordinals) {
-        planner.addFile(0, file, schema, kept, ordinals);
+    /// statistics keep, `kept`, and `ordinals`, and starts the footers ahead of it. The first file's
+    /// metadata is there as the read starts, so a listing that fails fails the start.
+    ///
+    /// @throws IOException if the file cannot be read as it is listed
+    void start(InputFile file, FileSchema schema, RowGroupPruning.FilteredRowGroups kept, FileColumnOrdinals ordinals)
+            throws IOException {
+        try {
+            planner.addFile(0, file, schema, kept, ordinals);
+        }
+        catch (IOException e) {
+            throw listingFailure(file, e);
+        }
         footers[0] = new Listed(null);
         nextList = 1;
         if (count == 1 || !planner.budgetLeft()) {
@@ -264,7 +278,8 @@ final class FooterReader {
         }
     }
 
-    /// Lists file `nextList`, loaded as `l`: [Listed], or [Failed] where it does not match the
+    /// Lists file `nextList`, loaded as `l`, pruning its row groups by their statistics: [Listed], or
+    /// [Failed] where its length cannot be read or it does not match the
     /// first file's schema.
     private FooterLoad listed(Loaded l) {
         try {
@@ -274,12 +289,21 @@ final class FooterReader {
             for (int rg = 0; rg < file.rowGroups().size(); rg++) {
                 paths.verify(file.rowGroups().get(rg), rg, file.inputFile());
             }
-            planner.addFile(nextList, file.inputFile(), file.schema(), file.rowGroups(), ordinals);
+            planner.addFile(nextList, file.inputFile(), file.schema(),
+                    pruning.filterRowGroups(file.rowGroups(), file.inputFile(), ordinals), ordinals);
             return new Listed(l.charge());
+        }
+        catch (IOException e) {
+            return new Failed(listingFailure(l.file().inputFile(), e), l.charge());
         }
         catch (RuntimeException e) {
             return new Failed(e, l.charge());
         }
+    }
+
+    /// `file` could not be read as it was listed: the failure, naming the file.
+    private static IOException listingFailure(InputFile file, IOException e) {
+        return new IOException(ExceptionContext.filePrefix(file.name()) + "Failed to list the file's row groups", e);
     }
 
     /// The ordinals of a file after the first, checked against the first file's schema, with the

@@ -8,10 +8,13 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.io.Closeable;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.PageDropPredicates;
@@ -82,7 +85,8 @@ public final class ReadEngine implements Closeable {
     /// first file's listing fails, before the failure propagates.
     ReadEngine(PreparedRead read, ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
                NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize, long budgetRows,
-               List<BatchExchange<?>> exchanges, ColumnBatchMatcher[] filters, Runnable closeListener) {
+               List<BatchExchange<?>> exchanges, ColumnBatchMatcher[] filters, Runnable closeListener)
+            throws IOException {
         this.closeListener = closeListener;
         HardwoodContextImpl context = read.context();
         FileSchema schema = read.schema();
@@ -119,7 +123,7 @@ public final class ReadEngine implements Closeable {
                         filter != null, limit == 0 ? 0 : limit + read.leadingRows()), schemas, filterOnly,
                 read.pruning(), limit > 0 ? limit : Long.MAX_VALUE, filter != null, read.skip(), read.maskedRows());
         footers = new FooterReader(read.files(), scheduler, planner, readFailure, read.compatibility(), filter,
-                limit > 0, driver::submitOrAbandon);
+                read.pruning(), limit > 0, driver::submitOrAbandon);
         for (int c = 0; c < n; c++) {
             int column = c;
             if (readQueue != null) {
@@ -128,7 +132,19 @@ public final class ReadEngine implements Closeable {
             started.get(c).setRoomListener(() -> driver.submitOrAbandon(() -> publisher.publishable(column)));
         }
         try {
-            driver.runLocked(() -> footers.start(read.file(), schema, read.firstKept(), read.firstOrdinals()));
+            driver.runLocked(() -> {
+                try {
+                    footers.start(read.file(), schema, read.firstKept(), read.firstOrdinals());
+                }
+                catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        }
+        catch (UncheckedIOException e) {
+            IOException failure = ExceptionContext.unwrap(e);
+            closeAfter(failure);
+            throw failure;
         }
         catch (RuntimeException | Error e) {
             closeAfter(e);

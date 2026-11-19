@@ -85,7 +85,11 @@ naming the variant, rather than a type of its own.
 **A method declares `IOException` only if it can reach a file.** Parsing a buffer and decoding
 a page cannot, so no `catch (IOException)` around them can turn a corrupt file into a failed
 read. Fetching a range declares it (`ReadRanges.read`): a fetch raises the failure of the read it
-makes, which the read places at the first row the fetch served.
+makes, which the read places at the first row the fetch served. Every method between a file and the
+public API declares it too, so an `IOException` reaches the caller as one, unwrapped; it is wrapped
+only where the language forbids the declaration ([Crossing a thread boundary](#crossing-a-thread-boundary)).
+A read's start declares it: the first file's metadata is there as the read starts, so a failure
+listing its row groups fails the start, while a later file's fails the read at its first row.
 
 ## Error messages
 

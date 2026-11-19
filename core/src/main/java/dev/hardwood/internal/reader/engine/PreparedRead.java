@@ -160,9 +160,10 @@ public final class PreparedRead {
     ///        one, in decoded order
     /// @param indexMode what the batches of a column decoded through levels carry for their reader
     /// @throws IllegalStateException if the read has started already
+    /// @throws IOException if the first file cannot be read as its row groups are listed
     public ReadEngine start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
                             NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize,
-                            long budgetRows) {
+                            long budgetRows) throws IOException {
         return start(decoded, layers, indexMode, fixedListFastPathEnabled, batchSize, budgetRows, null, null);
     }
 
@@ -178,9 +179,11 @@ public final class PreparedRead {
     /// @param filters the filter fragment of each flat decoded column, `null` for a column without
     ///        one; `null` for none
     /// @throws IllegalStateException if the read has started already
+    /// @throws IOException if the first file cannot be read as its row groups are listed
     public ReadEngine start(ProjectedSchema decoded, List<NestedLevelComputer.Layers> layers,
                             NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchSize,
-                            long budgetRows, List<BatchExchange<?>> exchanges, ColumnBatchMatcher[] filters) {
+                            long budgetRows, List<BatchExchange<?>> exchanges, ColumnBatchMatcher[] filters)
+            throws IOException {
         if (started) {
             throw new IllegalStateException("The read has started already");
         }
