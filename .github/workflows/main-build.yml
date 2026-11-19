@@ -244,7 +244,7 @@ jobs:
           echo "Background pull of $S3PROXY_IMAGE started"
 
       - name: 'Set up Graal'
-        uses: graalvm/setup-graalvm@f70bc8032f90a104502824a54bcb94b6f01715bc  # v1.6.8 — https://github.com/graalvm/setup-graalvm/releases/tag/v1.6.8
+        uses: graalvm/setup-graalvm@d6eca2595046623d69d636041513c80abf745406  # v1.6.9 — https://github.com/graalvm/setup-graalvm/releases/tag/v1.6.9
         with:
           version: '25i-latest'
           distribution: 'graalvm-community'
