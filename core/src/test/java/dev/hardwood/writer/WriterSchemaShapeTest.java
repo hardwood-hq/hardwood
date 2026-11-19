@@ -249,6 +249,26 @@ class WriterSchemaShapeTest {
                 .hasMessage("Output for an in-memory file is not open; it has not been created");
     }
 
+    /// An entry group with no fields has no key, and no column to carry the map's entries or
+    /// its nulls: whatever a batch handed over for the map would be dropped.
+    @Test
+    void rejectsAMapWhoseEntryHasNoFieldsBeforeOpeningTheDestination() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("schema", 2),
+                SchemaElement.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
+                SchemaElement.group("entries", RepetitionType.REPEATED, 0)));
+        InMemoryOutputFile out = OutputFile.inMemory();
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("MAP entry props.entries has no fields; a map key must always be present");
+
+        assertThatThrownBy(out::position)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Output for an in-memory file is not open; it has not been created");
+    }
+
     /// The annotation accounts for the repetition of the group's entry, not for the group's
     /// own: a `REPEATED` `LIST` group declares two repetition levels where the shredder derives
     /// one layer, and nothing addresses the outer one. PyArrow refuses such a file outright —

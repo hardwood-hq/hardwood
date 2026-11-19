@@ -35,7 +35,7 @@ import dev.hardwood.schema.SchemaNode;
 /// admits deeper nesting; the writer declines to produce it. [ColumnChunkBuffer] repeats the
 /// check as a guard, unreachable through the public API once this has run.
 ///
-/// The two rules that follow are about repetition.
+/// The three rules that follow are about repetition.
 ///
 /// **A `REPEATED` field is producible only as the entry of a `LIST` or `MAP` group.** The
 /// shredder derives a repetition layer from the annotated group, and [ColumnBatch] addresses
@@ -55,8 +55,11 @@ import dev.hardwood.schema.SchemaNode;
 /// schema disagree — a second repetition with no layer behind it, or a layer over a field
 /// that repeats not at all.
 ///
-/// A `MAP` key must be `REQUIRED`: the format requires it to be present for every entry,
-/// even in a schema read from an existing file rather than declared through the builder.
+/// **A `MAP` entry holds a `REQUIRED` key.** The format requires a key in every entry, so an
+/// entry group whose key is `OPTIONAL` describes a map that may hold null keys, which readers
+/// reject, and one with no fields at all has no column to carry the map's entries or nulls.
+/// [FileSchema.Builder] always declares a required key; a schema read through
+/// [FileSchema#fromSchemaElements] need not have one.
 ///
 /// A nullable struct enclosing a `LIST` or `MAP` is producible, so it is not a rule here. A
 /// `STRUCT` layer never remaps its item scope, so [RecordShredder]'s leaf-to-root walk levels
@@ -168,8 +171,8 @@ public final class WriterSchemaShape {
 
     /// Rejects a `LIST` or `MAP` group whose repetition the annotation does not account for: the
     /// annotated group repeating on its own behalf, or holding anything other than the single
-    /// `REPEATED` entry the shredder derives its one layer from. A `MAP` additionally requires
-    /// its key to be `REQUIRED`.
+    /// `REPEATED` entry the shredder derives its one layer from, or a `MAP` whose entry has no
+    /// `REQUIRED` key.
     private static void requireWritableAnnotation(SchemaNode.GroupNode group, String path) {
         String annotation = group.isMap() ? "MAP" : "LIST";
         if (group.repetitionType() == RepetitionType.REPEATED) {
@@ -191,9 +194,23 @@ public final class WriterSchemaShape {
             throw new UnsupportedOperationException("Group " + path + " is annotated MAP but its entry "
                     + entry.name() + " is a leaf where the layout requires a repeated group of key and value");
         }
-        SchemaNode key = group.getMapKey();
-        if (key != null && key.repetitionType() != RepetitionType.REQUIRED) {
-            throw new UnsupportedOperationException("MAP key " + childPath(childPath(path, entry.name()), key.name())
+        if (group.isMap()) {
+            requireRequiredMapKey(group, childPath(path, entry.name()));
+        }
+    }
+
+    /// Rejects a `MAP` whose entry group has no key, or a key that is not `REQUIRED`.
+    ///
+    /// @param map the `MAP` group, whose entry is known to be a `REPEATED` group
+    /// @param entryPath the entry group's dotted path
+    private static void requireRequiredMapKey(SchemaNode.GroupNode map, String entryPath) {
+        SchemaNode key = map.getMapKey();
+        if (key == null) {
+            throw new UnsupportedOperationException("MAP entry " + entryPath
+                    + " has no fields; a map key must always be present");
+        }
+        if (key.repetitionType() != RepetitionType.REQUIRED) {
+            throw new UnsupportedOperationException("MAP key " + childPath(entryPath, key.name())
                     + " is " + key.repetitionType() + " rather than REQUIRED; a map key must always be present");
         }
     }

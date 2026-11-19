@@ -40,7 +40,7 @@ A schema the caller did not build, one read from an existing file through `FileS
 
 - **At least one column.** A schema with no leaf has no column chunk to write. Hardwood reads such a file (as a relation of no rows) and declines to produce one.
 - **No `INT96`.** The type is deprecated and is not written.
-- **A `MAP` key is `REQUIRED`.** This applies to key-only maps too. The builder already declares required keys; an imported schema with an `OPTIONAL` key is refused even if no later batch would contain a null key. Readers rely on every key being present.
+- **A `MAP` entry holds a `REQUIRED` key.** The builder declares every key `REQUIRED`. A schema not built through it is refused when its key is `OPTIONAL`, even if no batch would contain a null key, or when its entry group has no fields, which leaves no column to carry the map's entries. Readers rely on every key being present.
 - **A `FILE` group has a child.** One with none has no column to carry its definition levels, so a null instance cannot be stored and a present one has no field set, which is invalid ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#file-references)).
 - **Repetition is producible exactly where a `LIST` or `MAP` annotation accounts for it.** The annotated group is what gives the shredder a repetition layer and `ColumnBatch` a path to address its entry offsets under. An annotated group is `REQUIRED` or `OPTIONAL` and holds exactly one `REPEATED` field, which for a `MAP` is a group of `key` and `value`. Both legacy two-level lists satisfy that and are written: `LIST { repeated element }`, whose entry is the element, and `LIST { repeated group element { … } }`, whose entry is an element struct.
 

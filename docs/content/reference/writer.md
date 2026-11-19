@@ -473,9 +473,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: a 
 
 Repetition is writable wherever a `LIST` or `MAP` annotation accounts for it. An annotated group is `REQUIRED` or `OPTIONAL` and holds exactly one `REPEATED` entry, which for a `MAP` is a group of `key` and `value`. That admits the canonical three-level `LIST` and two-level `MAP` layouts `FileSchema.builder` declares, and the legacy two-level lists a schema read from an existing file may carry: `LIST { repeated element }`, whose entry is the element, and `LIST { repeated group element { … } }`, whose entry is an element struct.
 
-Any other repetition is rejected with `UnsupportedOperationException` when the writer is created, as is a `FILE` group with no children.
-
-A `MAP` key must be `REQUIRED`, including in a key-only map. `ParquetFileWriter.create` rejects a schema with an `OPTIONAL` key with `UnsupportedOperationException` before opening the destination, even if all key values would be present. This also applies to schemas read from existing files.
+Any other repetition is rejected with `UnsupportedOperationException` when the writer is created, as are a `FILE` group with no children and a `MAP` whose entry group has no fields or whose key is not `REQUIRED`. A key-only map needs a `REQUIRED` key too, and an `OPTIONAL` key is rejected even if every key value would be present. These rules apply to schemas read from existing files as well as built ones.
 
 The row API reaches a list's values through an element node below the entry, which the legacy two-level lists do not have, so `rowWriter()` refuses those two shapes and `columnWriter()` writes them. `rowWriter()` also requires sibling field names to be unique, which the `ColumnBatch` indices and dotted paths do not.
 
