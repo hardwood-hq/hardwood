@@ -102,8 +102,9 @@ public interface StructBuilder {
     /// @see #setInt(String, int)
     StructBuilder setBoolean(String name, boolean value);
 
-    /// Sets a `BYTE_ARRAY` field annotated `STRING`, `ENUM` or `JSON`, or unannotated, from
-    /// the value's UTF-8 bytes. A `null` value sets the field null.
+    /// Sets a `BYTE_ARRAY` field annotated `STRING`, `ENUM` or `JSON` from the value's UTF-8
+    /// bytes. A `null` value sets the field null. An unannotated `BYTE_ARRAY` field takes
+    /// [#setBinary(String, byte[])].
     ///
     /// @see #setInt(String, int)
     StructBuilder setString(String name, String value);

@@ -235,8 +235,8 @@ final class RowLeafNode extends RowNode {
     }
 
     void setString(String value) {
-        require(TextColumns.holdsText(physicalType, logicalType),
-                "setString", "a BYTE_ARRAY column annotated STRING, ENUM or JSON, or unannotated");
+        require(TextColumns.isAnnotatedText(physicalType, logicalType),
+                "setString", "a BYTE_ARRAY column annotated STRING, ENUM or JSON; an unannotated column takes setBinary");
         if (value == null) {
             setNull();
             return;

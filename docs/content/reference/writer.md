@@ -317,7 +317,7 @@ The row-oriented layer takes physical values through the setter named for the ty
 | any | `INT64` | `setLong` | `long` |
 | none | `FLOAT` | `setFloat` | `float` |
 | none | `DOUBLE` | `setDouble` | `double` |
-| `STRING`, `ENUM`, `JSON`, or none | `BYTE_ARRAY` | `setString` | `String` (written as UTF-8) |
+| `STRING`, `ENUM` or `JSON` | `BYTE_ARRAY` | `setString` | `String` (written as UTF-8) |
 | any | `BYTE_ARRAY`<br>`FIXED_LEN_BYTE_ARRAY` | `setBinary` | `byte[]` |
 | `DATE` | `INT32` | `setDate` | `LocalDate` |
 | `TIME` | `INT32`<br>`INT64` | `setTime` | `LocalTime` |
