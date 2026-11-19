@@ -12,6 +12,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.schema.LeafAnnotation;
+import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -61,14 +62,14 @@ class FileSchemaConvertedTypeTest {
 
         SchemaElement legacyOnly = new SchemaElement(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
                 RepetitionType.OPTIONAL, null, ConvertedType.TIMESTAMP_MICROS, null, null, null, null);
-        assertThat(FileSchema.fromSchemaElements(List.of(root, legacyOnly)).getColumn(COLUMN).logicalType())
+        assertThat(FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, legacyOnly))).getColumn(COLUMN).logicalType())
                 .isNull();
         assertThat(LeafAnnotation.dropFault(legacyOnly))
                 .isEqualTo("TIMESTAMP_MICROS is read from INT64, but the column is FIXED_LEN_BYTE_ARRAY");
 
         SchemaElement both = new SchemaElement(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
                 RepetitionType.OPTIONAL, null, ConvertedType.TIMESTAMP_MICROS, null, null, null, timestamp);
-        assertThat(FileSchema.fromSchemaElements(List.of(root, both)).getColumn(COLUMN).logicalType())
+        assertThat(FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, both))).getColumn(COLUMN).logicalType())
                 .isEqualTo(timestamp);
     }
 
@@ -98,7 +99,7 @@ class FileSchemaConvertedTypeTest {
         SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
         SchemaElement leaf = new SchemaElement(
                 COLUMN, type, typeLength, RepetitionType.OPTIONAL, null, convertedType, null, null, null, logicalType);
-        return FileSchema.fromSchemaElements(List.of(root, leaf)).getColumn(COLUMN);
+        return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, leaf))).getColumn(COLUMN);
     }
 
     /// Build a one-column schema whose single leaf carries only the given
@@ -112,7 +113,7 @@ class FileSchemaConvertedTypeTest {
         SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
         SchemaElement leaf = new SchemaElement(
                 COLUMN, type, null, RepetitionType.OPTIONAL, null, convertedType, scale, precision, null, null);
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, leaf));
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, leaf)));
         return schema.getColumn(COLUMN);
     }
 
@@ -251,7 +252,7 @@ class FileSchemaConvertedTypeTest {
         SchemaElement leaf = new SchemaElement(
                 COLUMN, PhysicalType.INT32, null, RepetitionType.OPTIONAL, null,
                 ConvertedType.UTF8, null, null, null, modern);
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, leaf));
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, leaf)));
         assertThat(schema.getColumn(COLUMN).logicalType()).isEqualTo(modern);
     }
 }

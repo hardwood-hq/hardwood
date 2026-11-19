@@ -53,8 +53,8 @@ public final class LogicalTypeConverter {
     /// `null` when it can.
     ///
     /// A property of the column, not of any value in it, so it is asked once — where the
-    /// schema is built, by [dev.hardwood.schema.FileSchema], which drops an annotation this
-    /// answers for. Nothing consults it per value, and by the time a conversion below runs
+    /// schema is built, by [dev.hardwood.internal.schema.UnreadableAnnotations], which drops an
+    /// annotation this answers for. Nothing consults it per value, and by the time a conversion below runs
     /// the column has either a sound annotation or none.
     ///
     /// An annotation is faulted where the format rules it out for the column's physical type

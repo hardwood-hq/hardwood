@@ -31,6 +31,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.MetadataSource;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.internal.thrift.FooterRewriter;
@@ -153,10 +154,10 @@ class UnreadableSortOrderTest {
     /// order is defined — a `GEOMETRY` over an `INT64` reads as a plain `INT64` (#1406).
     @Test
     void theBoundsOfADroppedAnnotationAreNotRead() {
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
                 SchemaElement.group("root", RepetitionType.REQUIRED, 1),
                 new SchemaElement("g", PhysicalType.INT64, null, RepetitionType.OPTIONAL,
-                        null, null, null, null, null, LogicalType.geometry(null))));
+                        null, null, null, null, null, LogicalType.geometry(null)))));
 
         assertThat(BoundsReadability.of(schema, List.of(), ordinal -> true).readable(0)).isFalse();
         assertThat(BoundsReadability.of(schema, List.of(), ordinal -> false).readable(0)).isTrue();
@@ -462,7 +463,7 @@ class UnreadableSortOrderTest {
                 .stop().build();
 
         ReadFooter footer = readFooter(unknown, plain);
-        FileSchema schema = FileSchema.fromSchemaElements(footer.metaData().schema());
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(footer.metaData().schema()));
         BoundsReadability readability = BoundsReadability.of(schema, footer);
 
         assertThat(schema.getColumn("ts").logicalType()).isNull();
@@ -490,7 +491,7 @@ class UnreadableSortOrderTest {
                 .stop().build();
 
         ReadFooter footer = readFooter(timestamp, mapKeyValue);
-        FileSchema schema = FileSchema.fromSchemaElements(footer.metaData().schema());
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(footer.metaData().schema()));
         BoundsReadability readability = BoundsReadability.of(schema, footer);
 
         assertThat(schema.getColumn("ts").logicalType()).isNull();

@@ -11,6 +11,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -19,6 +20,7 @@ import static dev.hardwood.metadata.SchemaElement.group;
 import static dev.hardwood.metadata.SchemaElement.primitive;
 import static dev.hardwood.metadata.SchemaElement.root;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Characterization test for [FileSchema#fromSchemaElements]: pins the exact
 /// leaf ordering, column indices, and Dremel levels produced when walking the
@@ -156,5 +158,63 @@ class FileSchemaBuildTest {
         assertThat(city.name()).isSameAs("city");
         assertThat(city.fieldPath().elements().get(0)).isSameAs("address");
         assertThat(city.fieldPath().elements().get(1)).isSameAs("city");
+    }
+
+    // ==================== elements the model refuses ====================
+
+    @Test
+    void elementsPastTheRootsLastDescendantAreRejected() {
+        assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(
+                root("schema", 1),
+                primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
+                primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The schema elements hold 1 element(s) past the root's last descendant, from 'b' on");
+    }
+
+    @Test
+    void elementsEndingInsideAGroupAreRejected() {
+        assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(
+                root("schema", 1),
+                group("g", RepetitionType.OPTIONAL, 3),
+                primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Group 'g' declares 3 children, but the schema elements end after 1");
+    }
+
+    @Test
+    void aPrimitiveDeclaringChildrenIsRejected() {
+        assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(
+                root("schema", 1),
+                new SchemaElement("a", PhysicalType.INT32, null, RepetitionType.REQUIRED, 1, null, null, null, null,
+                        null))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Primitive element 'a' declares 1 children");
+    }
+
+    /// A group refuses an annotation only a primitive carries, as a leaf refuses one its type
+    /// cannot carry.
+    @Test
+    void aPrimitiveAnnotationOnAGroupIsRejected() {
+        assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(
+                root("schema", 1),
+                group("g", RepetitionType.OPTIONAL, 1, LogicalType.string()),
+                primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Schema element 'g': STRING annotates a primitive, but the field is a group; a schema "
+                        + "carries no annotation its field cannot carry");
+    }
+
+    /// The reader drops such an annotation from a footer before building the model; elements
+    /// handed to the model directly keep every annotation they are given, or are refused.
+    @Test
+    void anAnnotationTheFieldCannotCarryIsRejected() {
+        assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(
+                root("schema", 1),
+                group("g", RepetitionType.OPTIONAL, 1),
+                primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.string()))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Schema element 'g.a': STRING is read from BYTE_ARRAY, but the column is INT32; a schema carries "
+                        + "no annotation its field cannot carry");
     }
 }

@@ -219,6 +219,10 @@ public class FileMetaDataReader {
             SchemaElement element = schema.get(i);
             long length = (depth == 0 ? 0 : pathLength[depth] + 1) + element.name().length();
             pathChars += length;
+            if (element.isPrimitive() && childCount(element) > 0) {
+                throw reader.malformed("primitive '" + element.name() + "' declares " + childCount(element)
+                        + " children");
+            }
             if (!element.isPrimitive()) {
                 if (depth == MAX_SCHEMA_DEPTH) {
                     throw reader.malformed("groups must not nest deeper than " + MAX_SCHEMA_DEPTH

@@ -338,6 +338,18 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void primitiveDeclaringChildrenRejected() {
+        byte[] footer = footerOfSchema(
+                SchemaElement.root("root", 1),
+                new SchemaElement("a", PhysicalType.INT32, null, RepetitionType.REQUIRED, 2, null, null, null, null,
+                        null));
+
+        assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("FileMetaData.schema \u2014 primitive 'a' declares 2 children");
+    }
+
+    @Test
     void optionalListOfWrongElementTypeIsSkipped() {
         // SizeStatistics: field2 repetition_level_histogram declared as list<i32>. The field is
         // optional, so it is reported absent — and field3 behind it still parses, which is what

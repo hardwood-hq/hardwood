@@ -15,13 +15,12 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import dev.hardwood.internal.schema.AnnotationKind;
-import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
+import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.internal.schema.VariantSpecVersions;
-import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.FieldPath;
@@ -36,8 +35,6 @@ import dev.hardwood.metadata.SchemaElement;
 /// @see <a href="https://parquet.apache.org/docs/file-format/">File Format</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public class FileSchema {
-
-    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(FileSchema.class.getName()));
 
     /// Marks a dot-separated path in `columnPathToIndex` that more than one column joins to.
     private static final int AMBIGUOUS_PATH = -2;
@@ -273,7 +270,14 @@ public class FileSchema {
         }
     }
 
-    /// Reconstruct schema from Thrift SchemaElement list.
+    /// Reconstructs a schema from the depth-first [SchemaElement] list a footer carries: the root,
+    /// then each group followed by as many descendants as its `numChildren` counts.
+    ///
+    /// @throws IllegalArgumentException if the list is empty, its root is not a group, its child
+    ///         counts do not describe exactly the elements it holds, a primitive declares
+    ///         children, or an element carries an annotation its field cannot carry, such as
+    ///         `STRING` on an `INT32` or `UUID` on a `FIXED_LEN_BYTE_ARRAY` of other than 16
+    ///         bytes
     public static FileSchema fromSchemaElements(List<SchemaElement> elements) {
         if (elements.isEmpty()) {
             throw new IllegalArgumentException("Schema elements list is empty");
@@ -290,15 +294,11 @@ public class FileSchema {
 
         // Shared read position into the flat element list; start past the root at index 0.
         int[] cursor = { 1 };
-        // One line per file rather than one per column: a file written against a newer
-        // format version can carry many, and they say the same thing about all of them.
-        List<String> dropped = new ArrayList<>();
-        List<SchemaNode> rootChildren = buildChildren(elements, cursor, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex, dropped);
-        if (!dropped.isEmpty()) {
-            LOG.get().log(System.Logger.Level.WARNING,
-                    "Ignoring {0} annotation(s) their field cannot carry; each such field is read"
-                    + " as though unannotated: {1}",
-                    dropped.size(), String.join("; ", dropped));
+        List<SchemaNode> rootChildren = buildChildren(elements, cursor, root.numChildren() != null ? root.numChildren() : 0,
+                0, 0, root.name(), List.of(), columns, columnIndex);
+        if (cursor[0] != elements.size()) {
+            throw new IllegalArgumentException("The schema elements hold " + (elements.size() - cursor[0])
+                    + " element(s) past the root's last descendant, from '" + elements.get(cursor[0]).name() + "' on");
         }
 
         String rootName = root.name().intern();
@@ -316,20 +316,26 @@ public class FileSchema {
     }
 
     /// Build children nodes from schema elements.
+    ///
+    /// @param groupName the dotted path of the group whose children these are, or the root's name
     private static List<SchemaNode> buildChildren(
                                                   List<SchemaElement> elements,
                                                   int[] cursor,
                                                   int numChildren,
                                                   int parentDefLevel,
                                                   int parentRepLevel,
+                                                  String groupName,
                                                   List<String> parentPath,
                                                   List<ColumnSchema> columns,
-                                                  int[] columnIndex,
-                                                  List<String> dropped) {
+                                                  int[] columnIndex) {
 
         List<SchemaNode> children = new ArrayList<>();
 
         for (int i = 0; i < numChildren; i++) {
+            if (cursor[0] == elements.size()) {
+                throw new IllegalArgumentException("Group '" + groupName + "' declares " + numChildren
+                        + " children, but the schema elements end after " + i);
+            }
             SchemaElement element = elements.get(cursor[0]);
             // Interned, as every name of the schema is: a reader resolves a name per row through
             // a map of interned names, which a name taken from the schema then hits by reference.
@@ -345,10 +351,19 @@ public class FileSchema {
             currentPath.addAll(parentPath);
             currentPath.add(name);
 
+            String fault = UnreadableAnnotations.fault(element);
+            if (fault != null) {
+                throw new IllegalArgumentException("Schema element '" + String.join(".", currentPath) + "': " + fault
+                        + "; a schema carries no annotation its field cannot carry");
+            }
             if (element.isPrimitive()) {
+                if (element.numChildren() != null && element.numChildren() > 0) {
+                    throw new IllegalArgumentException("Primitive element '" + String.join(".", currentPath)
+                            + "' declares " + element.numChildren() + " children");
+                }
                 // Primitive node - represents an actual column
                 int colIdx = columnIndex[0]++;
-                LogicalType effectiveLogicalType = readableLogicalType(element, currentPath, dropped);
+                LogicalType effectiveLogicalType = LeafAnnotation.effective(element);
                 columns.add(new ColumnSchema(
                         new FieldPath(List.copyOf(currentPath)),
                         element.type(),
@@ -383,17 +398,16 @@ public class FileSchema {
                         groupNumChildren,
                         defLevel,
                         repLevel,
+                        String.join(".", currentPath),
                         currentPath,
                         columns,
-                        columnIndex,
-                        dropped);
+                        columnIndex);
 
-                LogicalType groupAnnotation = readableGroupAnnotation(element, currentPath, dropped);
                 SchemaNode.GroupNode groupNode = new SchemaNode.GroupNode(
                         name,
                         repType,
-                        readableGroupConvertedType(element, groupAnnotation, currentPath, dropped),
-                        effectiveGroupLogicalType(groupAnnotation, groupChildren),
+                        element.convertedType(),
+                        effectiveGroupLogicalType(element.logicalType(), groupChildren),
                         groupChildren,
                         defLevel,
                         repLevel,
@@ -415,49 +429,12 @@ public class FileSchema {
         return children;
     }
 
-    /// The column's annotation, or `null` where its physical type cannot carry it.
-    ///
-    /// `FLOAT16` is defined as a two-byte payload, so a column annotated `FLOAT16` that
-    /// declares twelve bytes is invalid, and no reading of it produces the value the
-    /// annotation promises. The format says to read past the annotation rather than refuse
-    /// the file: see the "Unsupported Logical Types" section of `LogicalTypes.md`, adopted in
-    /// parquet-format PR 606, which has readers "ignore both the logical type annotation and
-    /// column order for that column. Only the physical type information should be used to
-    /// process the column's data."
-    ///
-    /// So the column is reported and read as though the footer had not annotated it. The
-    /// physical accessors work, `getValue` yields the physical value, and a logical accessor
-    /// fails exactly as it would on any unannotated column of that type.
-    ///
-    /// The column's statistics are the one consequence that does not follow from the
-    /// annotation's absence. The writer recorded them in the order of the annotation, which
-    /// the physical type's order need not agree with, so `BoundsReadability` reads no bounds
-    /// for such a column. It asks [LeafAnnotation#dropFault] of the footer's schema element,
-    /// as this method does.
-    ///
-    /// The sibling case — an annotation this version does not recognize at all — is dropped
-    /// where it is parsed, in `LogicalTypeReader`, and `FileMetaDataReader.ReadFooter` records
-    /// the column for `BoundsReadability`. The two differ only in what the warning can tell
-    /// the reader, because one is a file from a newer writer and the other is a file from a
-    /// broken one.
-    private static LogicalType readableLogicalType(SchemaElement element, List<String> path,
-                                                   List<String> dropped) {
-        String fault = LeafAnnotation.dropFault(element);
-        if (fault == null) {
-            return LeafAnnotation.effective(element);
-        }
-        dropped.add(String.join(".", path) + " (" + fault + ")");
-        return null;
-    }
-
     /// Guards the read-side leniency against a schema the caller declared.
     ///
-    /// [#readableLogicalType] drops an annotation the column's physical type cannot carry,
-    /// which is right for a file already on disk and wrong for a schema being declared here:
-    /// the caller would get a file written without the annotation they asked for, and only a
-    /// warning to say so. [LogicalTypeValidator] already refuses every such pairing when the
-    /// leaf is declared, so reaching this means the writer's rule and the reader's have
-    /// drifted apart rather than that the caller did anything wrong.
+    /// [#fromSchemaElements] refuses an annotation the column's physical type cannot carry,
+    /// and [LogicalTypeValidator] already refuses every such pairing when the leaf is declared,
+    /// so reaching this means the writer's rule and the reader's have drifted apart rather than
+    /// that the caller did anything wrong. Checked first, so the drift reads as such.
     private static void requireNoAnnotationDropped(List<SchemaElement> elements) {
         for (SchemaElement element : elements) {
             if (!element.isPrimitive()) {
@@ -469,32 +446,6 @@ public class FileSchema {
                         + ". A declared schema must not carry an annotation the reader drops.");
             }
         }
-    }
-
-    /// The group's annotation, or `null` where it is one only a primitive carries, which the
-    /// reader drops as it drops an annotation a primitive's physical type cannot carry.
-    private static LogicalType readableGroupAnnotation(SchemaElement element, List<String> path,
-                                                       List<String> dropped) {
-        LogicalType annotation = element.logicalType();
-        if (AnnotationPairings.readableGroupAnnotation(annotation) == annotation) {
-            return annotation;
-        }
-        dropped.add(String.join(".", path) + " (" + annotation + " annotates a primitive, but the field is a group)");
-        return null;
-    }
-
-    /// The group's legacy converted type, or `null` where it is one only a primitive carries, or
-    /// names another structure than the group's readable `annotation`, which decides.
-    private static ConvertedType readableGroupConvertedType(SchemaElement element, LogicalType annotation,
-                                                            List<String> path, List<String> dropped) {
-        ConvertedType converted = element.convertedType();
-        if (AnnotationPairings.readableGroupConvertedType(annotation, converted) == converted) {
-            return converted;
-        }
-        dropped.add(String.join(".", path) + " (" + converted + (AnnotationPairings.annotatesGroup(converted)
-                ? " contradicts the group's " + annotation + ")"
-                : " annotates a primitive, but the field is a group)"));
-        return null;
     }
 
     /// Resolve the effective logical type of a group element. The modern

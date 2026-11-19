@@ -28,6 +28,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -947,7 +948,7 @@ class FilterPredicateResolverTest {
                 null, null, null, null, null);
         SchemaElement tags = new SchemaElement("tags", PhysicalType.INT32, null, RepetitionType.REPEATED,
                 null, null, null, null, null, null);
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, address, tags));
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, address, tags)));
 
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("address", 1), schema))
@@ -979,7 +980,7 @@ class FilterPredicateResolverTest {
     @MethodSource
     void nullPredicateOnACollectionIsAnsweredAsAGroup(String shape, List<SchemaElement> elements,
             int definitionLevel, int leafDefinitionLevel) {
-        FileSchema schema = FileSchema.fromSchemaElements(elements);
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(elements));
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("c"), schema))
                 .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, definitionLevel, leafDefinitionLevel));
@@ -1038,10 +1039,10 @@ class FilterPredicateResolverTest {
         // `optional group c { required int32 a; }`: nothing between `c` and `a` adds a definition
         // level, so the two share one and the predicate takes the leaf's path. It may: `a` is not
         // repeated, writes one entry per row, and is null exactly where `c` is absent.
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
                 SchemaElement.root("root", 1),
                 SchemaElement.group("c", RepetitionType.OPTIONAL, 1),
-                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))));
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("c"), schema))
                 .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 1, 1));
@@ -1082,7 +1083,7 @@ class FilterPredicateResolverTest {
                 null, null, null, null, null);
         SchemaElement city = new SchemaElement("city", PhysicalType.BYTE_ARRAY, null,
                 RepetitionType.OPTIONAL, null, null, null, null, null, null);
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, addresses, city));
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, addresses, city)));
 
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.isNull("addresses"), schema))
@@ -1176,10 +1177,10 @@ class FilterPredicateResolverTest {
     /// `intersects` on it is refused like any other non-geospatial column.
     @Test
     void resolveIntersectsOnAColumnWhoseGeospatialAnnotationWasDroppedThrows() {
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
                 SchemaElement.root("root", 1),
                 new SchemaElement("loc", PhysicalType.INT64, null, RepetitionType.OPTIONAL,
-                        null, null, null, null, null, LogicalType.geometry(null))));
+                        null, null, null, null, null, LogicalType.geometry(null)))));
 
         assertThat(schema.getColumn("loc").logicalType()).isNull();
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
@@ -1205,12 +1206,12 @@ class FilterPredicateResolverTest {
     /// subtree is the one that has no inverse.
     @Test
     void resolveNotOverACompoundHoldingIntersectsThrows() {
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+        FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
                 SchemaElement.root("root", 2),
                 new SchemaElement("loc", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL,
                         null, null, null, null, null, LogicalType.geometry("OGC:CRS84")),
                 new SchemaElement("id", PhysicalType.INT32, null, RepetitionType.OPTIONAL,
-                        null, null, null, null, null, null)));
+                        null, null, null, null, null, null))));
 
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.not(FilterPredicate.and(
@@ -1428,20 +1429,20 @@ class FilterPredicateResolverTest {
 
     /// `optional group v (VARIANT) { required binary metadata; optional binary value; }`
     private static FileSchema variantSchema() {
-        return FileSchema.fromSchemaElements(List.of(
+        return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
                 SchemaElement.root("root", 1),
                 new SchemaElement("v", null, null, RepetitionType.OPTIONAL, 2, null, null, null,
                         null, LogicalType.variant(1)),
                 new SchemaElement("metadata", PhysicalType.BYTE_ARRAY, null, RepetitionType.REQUIRED,
                         null, null, null, null, null, null),
                 new SchemaElement("value", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL,
-                        null, null, null, null, null, null)));
+                        null, null, null, null, null, null))));
     }
 
     /// `optional group v (VARIANT) { required binary metadata; optional binary value;
     /// optional group typed_value { optional int32 age; } }`
     private static FileSchema shreddedVariantSchema() {
-        return FileSchema.fromSchemaElements(List.of(
+        return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
                 SchemaElement.root("root", 1),
                 new SchemaElement("v", null, null, RepetitionType.OPTIONAL, 3, null, null, null,
                         null, LogicalType.variant(1)),
@@ -1452,7 +1453,7 @@ class FilterPredicateResolverTest {
                 new SchemaElement("typed_value", null, null, RepetitionType.OPTIONAL, 1, null, null,
                         null, null, null),
                 new SchemaElement("age", PhysicalType.INT32, null, RepetitionType.OPTIONAL,
-                        null, null, null, null, null, null)));
+                        null, null, null, null, null, null))));
     }
 
     // ==================== Set forms ====================
@@ -1952,7 +1953,7 @@ class FilterPredicateResolverTest {
         SchemaElement root = SchemaElement.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, typeLength, RepetitionType.REQUIRED,
                 null, null, null, null, null, logicalType);
-        return FileSchema.fromSchemaElements(List.of(root, col));
+        return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, col)));
     }
 
     private static FileSchema schemaWithConvertedType(String columnName, PhysicalType type,
@@ -1960,7 +1961,7 @@ class FilterPredicateResolverTest {
         SchemaElement root = SchemaElement.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, null, RepetitionType.REQUIRED,
                 null, convertedType, null, null, null, null);
-        return FileSchema.fromSchemaElements(List.of(root, col));
+        return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, col)));
     }
 
     private static FileSchema schemaWithRepeatedColumn(String columnName, PhysicalType type,
@@ -1968,6 +1969,6 @@ class FilterPredicateResolverTest {
         SchemaElement root = SchemaElement.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, typeLength, RepetitionType.REPEATED,
                 null, null, null, null, null, logicalType);
-        return FileSchema.fromSchemaElements(List.of(root, col));
+        return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, col)));
     }
 }

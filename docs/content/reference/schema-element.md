@@ -13,7 +13,7 @@
 
 `dev.hardwood.metadata.SchemaElement` represents one element in the flat schema list in a Parquet footer. The list uses depth-first order.
 
-`FileSchema.fromSchemaElements(List<SchemaElement>)` builds a schema tree from this list. `FileSchema.toSchemaElements()` creates the list again.
+`FileSchema.fromSchemaElements(List<SchemaElement>)` builds a schema tree from this list. `FileSchema.toSchemaElements()` creates the list again. `fromSchemaElements` throws `IllegalArgumentException` when the groups' child counts do not describe exactly the elements in the list, when a primitive element declares children, or when an element carries an annotation its field cannot carry, such as `STRING` on an `INT32` or `UUID` on a `FIXED_LEN_BYTE_ARRAY` of other than 16 bytes.
 
 !!! note
 
