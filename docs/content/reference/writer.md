@@ -375,7 +375,7 @@ Some annotations narrow what their physical type may hold. Where one does, both 
 | `INT(n)` unsigned, `n` < physical width | `[0, 2^n)` |
 | `TIME(unit, _)` | `[0, one day in unit)` — the annotation defines the value as elapsed time after midnight |
 | `DECIMAL(p, s)` | an unscaled value of at most `p` digits |
-| `UNKNOWN` | no value at all; every row must be null, so the column is set through a setter taking a null mask |
+| `UNKNOWN` | no value at all; every row must be null, so a column given values is set through a setter taking a null mask |
 
 Every other annotation, `DATE`, `TIMESTAMP`, `INT(32)` and `INT(64)` included, admits every value of its physical type, and its column is not scanned per value. A large unsigned value is spelled as a negative, which is also how the reader returns it.
 

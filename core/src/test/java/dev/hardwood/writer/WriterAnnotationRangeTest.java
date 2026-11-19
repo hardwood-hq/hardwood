@@ -7,6 +7,7 @@
  */
 package dev.hardwood.writer;
 
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -445,6 +446,36 @@ class WriterAnnotationRangeTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Field v.list.element is annotated UNKNOWN, which holds only nulls; setInt "
                          + "cannot set a value on it");
+    }
+
+    /// A row group whose lists of `UNKNOWN` elements are all empty or null hands the leaf no
+    /// value at all. Zero values are all null, so neither API needs a null mask for them.
+    @Test
+    void anUnknownListElementWithNoEntriesIsWritable() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.OPTIONAL, element -> element.primitive(
+                        PhysicalType.INT32, RepetitionType.OPTIONAL, col -> col.logicalType(LogicalType.unknown())))
+                .build();
+
+        InMemoryOutputFile rowWritten = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(rowWritten, schema)) {
+            RowWriter rows = writer.rowWriter();
+            rows.writeRow(row -> row.setList("v", v -> { }));
+            rows.writeRow(row -> row.setNull("v"));
+        }
+        InMemoryOutputFile batchWritten = writeBatch(schema, batch -> batch
+                .list("v", new int[] { 0, 0, 0 }, Validity.ofNulls(new boolean[] { false, true }))
+                .ints(0, new int[0]));
+
+        for (InMemoryOutputFile out : List.of(rowWritten, batchWritten)) {
+            try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
+                rows.next();
+                assertThat(rows.getList("v").isEmpty()).isTrue();
+                rows.next();
+                assertThat(rows.isNull("v")).isTrue();
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
     }
 
     /// A bounded annotation on a leaf whose ancestor can be absent: the row layer writes the

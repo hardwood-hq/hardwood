@@ -831,9 +831,10 @@ public final class ColumnBatch {
     /// Checks that a column annotated `UNKNOWN` carries nothing but nulls. The annotation says
     /// the column holds no values at all, so a value written under it is one the reader refuses
     /// to materialize — the same defect a value outside a declared range produces, at the one
-    /// annotation whose declared range is empty.
+    /// annotation whose declared range is empty. A column given no values is all null without a
+    /// mask: a repeated leaf whose lists are all empty or null has none.
     private void requireAllNull(int columnIndex, int valueCount, Validity validity) {
-        if (!ranges[columnIndex].holdsNoValue()) {
+        if (!ranges[columnIndex].holdsNoValue() || valueCount == 0) {
             return;
         }
         if (validity == null) {
