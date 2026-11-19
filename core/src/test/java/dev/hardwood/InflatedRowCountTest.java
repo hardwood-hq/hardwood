@@ -11,9 +11,11 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -155,6 +157,46 @@ class InflatedRowCountTest {
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("[<memory>: row group 0] Malformed Parquet metadata: the read takes 100000000000000000 rows from the row group, more than"
                         + " 2147483647 batches of 64 rows");
+    }
+
+    /// A last row group whose pages end on a batch boundary, short of its count, fails the read
+    /// at the batch it holds no page of, rather than leaving the consumer waiting for that batch.
+    @ParameterizedTest(name = "threads: {0}")
+    @ValueSource(ints = { 0, 4 })
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aLastRowGroupShortOfItsCountAtABatchBoundaryFails(int threads) throws IOException {
+        FileSchema schema = FileSchema.builder("schema")
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            for (int g = 0; g < 2; g++) {
+                for (int i = 0; i < ROWS; i++) {
+                    long value = (long) g * ROWS + i;
+                    writer.rowWriter().writeRow(row -> row.setLong("id", value));
+                }
+                writer.endRowGroup();
+            }
+        }
+        // the second row group declares two batches of ROWS rows, and its pages hold the first
+        byte[] shortLast = FooterRewriter.withoutPageIndex(FooterRewriter.rewrite(InMemoryFiles.toByteArray(out), metaData -> {
+            RowGroup second = metaData.rowGroups().get(1);
+            return new FileMetaData(metaData.version(), metaData.schema(), 3L * ROWS,
+                    List.of(metaData.rowGroups().get(0), new RowGroup(second.columns(), second.totalByteSize(), 2L * ROWS)),
+                    metaData.keyValueMetadata(), metaData.createdBy(), metaData.columnOrders());
+        }));
+        assertThatThrownBy(() -> {
+            try (HardwoodContext context = HardwoodContext.create(threads);
+                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(shortLast)), context);
+                 ColumnReader column = reader.buildColumnReader("id").batchSize(ROWS).build()) {
+                while (column.nextBatch()) {
+                    // read to the end
+                }
+            }
+        })
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>: row group 1, column 'id', page 0] Invalid column chunk: the column holds 100 of the 200 rows "
+                        + "the read takes from its row group");
     }
 
     @Test
