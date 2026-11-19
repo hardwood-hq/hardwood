@@ -93,9 +93,11 @@ final class ColumnScan implements Closeable {
     /// filter-only columns past the payload carry the predicate and are decoded to evaluate it; the
     /// payload columns are compacted to the matching records. `layers` holds the layers of every
     /// column of `schema`, indexed by column index.
+    ///
+    /// @throws IOException if the first file cannot be read as its row groups are listed
     static ColumnScan open(PreparedRead read, boolean fixedListFastPathEnabled, FileSchema schema,
                                  NestedLevelComputer.Layers[] layers, ReadProjection projection,
-                                 ResolvedPredicate filter, int batchSize, long budgetRows) {
+                                 ResolvedPredicate filter, int batchSize, long budgetRows) throws IOException {
         NestedIndexMode indexMode = filter == null
                 ? NestedIndexMode.REAL_VIEW
                 : NestedIndexMode.REAL_VIEW_KEEP_LEVELS;

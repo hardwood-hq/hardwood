@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -143,112 +142,111 @@ final class RowGroupPlanner {
         this.schemas = schemas;
     }
 
-    /// Lists the row groups of a file, `file` with `rowGroups`, that its statistics keep, as
-    /// [#addFile(int, InputFile, FileSchema, RowGroupPruning.FilteredRowGroups, FileColumnOrdinals)].
+    /// Lists `filtered`, the row groups of a file, `file`, that its statistics keep, as units
+    /// behind those listed, each column's chunk at its ordinal in the file, and starts reading
+    /// their Bloom filters and page indexes, a window of units at a time ([IndexWindow]). What
+    /// reads the file's length runs before anything is listed, so a file that fails lists nothing.
     ///
-    /// @throws UncheckedIOException if the file's length cannot be read
-    void addFile(int fileIndex, InputFile file, FileSchema fileSchema, List<RowGroup> rowGroups,
-                 FileColumnOrdinals ordinals) {
-        try {
-            addFile(fileIndex, file, fileSchema, pruning.filterRowGroups(rowGroups, file, ordinals), ordinals);
+    /// @throws IOException if the file's length cannot be read
+    void addFile(int fileIndex, InputFile file, FileSchema fileSchema, RowGroupPruning.FilteredRowGroups filtered,
+                 FileColumnOrdinals ordinals) throws IOException {
+        int from = units.size();
+        List<UnitListing> listings = new ArrayList<>();
+        List<IndexWindow.Member> members = new ArrayList<>();
+        long budget = this.budget;
+        long skip = this.skip;
+        long key = endKey;
+        for (RowGroupPruning.FilteredRowGroup kept : filtered.rowGroups()) {
+            RowGroup rg = kept.rowGroup();
+            if (budget <= 0) {
+                break;
+            }
+            if (filteredRead && !kept.alwaysMatches()) {
+                budget = Long.MAX_VALUE;
+            }
+            if (skip >= rg.numRows()) {
+                skip -= rg.numRows();
+                continue;
+            }
+            long leading = skip;
+            skip = 0;
+            ColumnChunk[] chunks = new ColumnChunk[schemas.length];
+            for (int c = 0; c < schemas.length; c++) {
+                chunks[c] = rg.columns().get(ordinals.fileOrdinal(schemas[c].columnIndex()));
+            }
+            // the leading rows of a physical skip are read and the reader drops them
+            UnitListing u = new UnitListing(file, fileIndex, fileSchema, ordinals, rg, kept.fileRowGroupIndex(),
+                    from + listings.size(), key, kept.alwaysMatches(), kept.leafDecisions(), kept.bloomFilterColumns(),
+                    chunks, leading + Math.min(rg.numRows() - leading, budget));
+            budget -= u.limit() - leading;
+            key += rg.numRows();
+            listings.add(u);
+            members.add(member(u, kept));
         }
-        catch (IOException e) {
-            throw new UncheckedIOException(e);
+        List<IndexWindow> windows = members.isEmpty() ? List.of()
+                : IndexWindow.plan(IndexWindow.budgetBytes(), file, members);
+        // dictionary pruning's pages, requested with the window's Bloom filters whatever those
+        // decide, each on its own and held by its unit alone (FETCH_PLANNING.md, Pruning reads)
+        List<List<FileRange>> dictionaries = new ArrayList<>(listings.size());
+        for (UnitListing u : listings) {
+            dictionaries.add(u.storedInThisFile() ? RowGroupPruning.dictionaryRanges(u) : List.of());
         }
+        if (filtered.event() != null) {
+            fileReports.add(new FileReport(filtered.event(), endKey));
+        }
+        this.budget = budget;
+        this.skip = skip;
+        endKey = key;
+        startWindows(file, from, listings, members, windows, dictionaries);
     }
 
-    /// Lists `filtered`, the row groups of a file, `file`, that its statistics keep, as units
-    /// behind those listed, each column's chunk at its ordinal in the file, and reads their bloom
-    /// filters and page indexes, a window of units at a time ([IndexWindow]).
-    ///
-    /// @throws UncheckedIOException if the file's length cannot be read
-    void addFile(int fileIndex, InputFile file, FileSchema fileSchema, RowGroupPruning.FilteredRowGroups filtered,
-                 FileColumnOrdinals ordinals) {
-        try {
-            int from = units.size();
-            List<UnitListing> listings = new ArrayList<>();
-            List<IndexWindow.Member> members = new ArrayList<>();
-            if (filtered.event() != null) {
-                fileReports.add(new FileReport(filtered.event(), endKey));
-            }
-            for (RowGroupPruning.FilteredRowGroup kept : filtered.rowGroups()) {
-                RowGroup rg = kept.rowGroup();
-                if (budget <= 0) {
-                    break;
-                }
-                if (filteredRead && !kept.alwaysMatches()) {
-                    budget = Long.MAX_VALUE;
-                }
-                if (skip >= rg.numRows()) {
-                    skip -= rg.numRows();
-                    continue;
-                }
-                long leading = skip;
-                skip = 0;
-                ColumnChunk[] chunks = new ColumnChunk[schemas.length];
-                for (int c = 0; c < schemas.length; c++) {
-                    chunks[c] = rg.columns().get(ordinals.fileOrdinal(schemas[c].columnIndex()));
-                }
-                // the leading rows of a physical skip are read and the reader drops them
-                UnitListing u = new UnitListing(file, fileIndex, fileSchema, ordinals, rg, kept.fileRowGroupIndex(),
-                        from + listings.size(),
-                        endKey, kept.alwaysMatches(), kept.leafDecisions(), kept.bloomFilterColumns(), chunks,
-                        leading + Math.min(rg.numRows() - leading, budget));
-                BitSet columnIndexes = RowGroupPruning.columnIndexColumns(u, pruning.pageFiltering(u));
-                BitSet offsetIndexes = (BitSet) columnIndexes.clone();
-                for (int c = 0; c < schemas.length; c++) {
-                    if (!pages.filterOnly(c) || !kept.alwaysMatches()) {
-                        offsetIndexes.set(ordinals.fileOrdinal(schemas[c].columnIndex()));
-                    }
-                }
-                for (int o = offsetIndexes.nextSetBit(0); o >= 0; o = offsetIndexes.nextSetBit(o + 1)) {
-                    if (rg.columns().get(o).offsetIndexOffset() == null) {
-                        offsetIndexes.clear(o);
-                    }
-                }
-                budget -= u.limit() - leading;
-                listings.add(u);
-                endKey += rg.numRows();
-                // a row group with a chunk in another file fails before any of its indexes is read
-                members.add(u.storedInThisFile() ? new IndexWindow.Member(rg, kept.fileRowGroupIndex(),
-                        offsetIndexes, columnIndexes, u.bloomFilterColumns())
-                        : new IndexWindow.Member(rg, kept.fileRowGroupIndex(), new BitSet(), new BitSet(), new BitSet()));
-            }
-            if (members.isEmpty()) {
-                return;
-            }
-            int first = from;
-            for (IndexWindow window : IndexWindow.plan(IndexWindow.budgetBytes(), file, members)) {
-                int count = window.memberCount();
-                WindowFetch w = new WindowFetch(first, count, ranges(file, window.bloomFilterRanges(), count),
-                        ranges(file, window.indexRanges(), count));
-                for (int i = first; i < first + count; i++) {
-                    // a row group with a chunk in another file reads no index: it fails first
-                    IndexWindow.Member m = members.get(i - from);
-                    // dictionary pruning's pages are requested with the window's bloom filters,
-                    // whatever those decide, each on its own and held by its unit alone
-                    // (FETCH_PLANNING.md, Pruning reads)
-                    UnitListing listed = listings.get(i - from);
-                    List<RangeFetch> dictionaries = listed.storedInThisFile()
-                            ? ranges(file, RowGroupPruning.dictionaryRanges(listed), 1) : List.of();
-                    for (RangeFetch r : dictionaries) {
-                        if (!r.output().hasValue()) {
-                            fetcher.fetch(file, r, listed.base());
-                        }
-                    }
-                    Unit.Listed l = new Unit.Listed(listed, m.offsetIndexColumns(), m.columnIndexColumns(), w, dictionaries);
-                    // one its Bloom filters and dictionaries cannot drop waits for its page index at once
-                    units.add(RowGroupPruning.droppableOnArrival(listed) ? l : new Unit.AwaitingIndex(l, null, List.of()));
-                }
-                first += count;
-                request(units.get(w.first()).listing(), w.bloomFilters());
-                for (int i = w.first(); i < w.end(); i++) {
-                    start(units.get(i));
-                }
+    /// What `u`'s plan reads of its window: the OffsetIndex of each decoded column but a
+    /// filter-only one in a unit statistics prove to match in full, the ColumnIndex of each column
+    /// page filtering reads, and its Bloom filters; nothing where a chunk lies in another file,
+    /// which fails the unit before any of them is read.
+    private IndexWindow.Member member(UnitListing u, RowGroupPruning.FilteredRowGroup kept) {
+        RowGroup rg = kept.rowGroup();
+        if (!u.storedInThisFile()) {
+            return new IndexWindow.Member(rg, kept.fileRowGroupIndex(), new BitSet(), new BitSet(), new BitSet());
+        }
+        BitSet columnIndexes = RowGroupPruning.columnIndexColumns(u, pruning.pageFiltering(u));
+        BitSet offsetIndexes = (BitSet) columnIndexes.clone();
+        for (int c = 0; c < schemas.length; c++) {
+            if (!pages.filterOnly(c) || !kept.alwaysMatches()) {
+                offsetIndexes.set(u.columnOrdinals().fileOrdinal(schemas[c].columnIndex()));
             }
         }
-        catch (IOException e) {
-            throw new UncheckedIOException(e);
+        for (int o = offsetIndexes.nextSetBit(0); o >= 0; o = offsetIndexes.nextSetBit(o + 1)) {
+            if (rg.columns().get(o).offsetIndexOffset() == null) {
+                offsetIndexes.clear(o);
+            }
+        }
+        return new IndexWindow.Member(rg, kept.fileRowGroupIndex(), offsetIndexes, columnIndexes, u.bloomFilterColumns());
+    }
+
+    /// Adds the units of `listings`, the first at `from`, a window at a time: fetches the
+    /// dictionary pages each one's pruning reads and the window's Bloom filters, and starts each.
+    private void startWindows(InputFile file, int from, List<UnitListing> listings, List<IndexWindow.Member> members,
+                              List<IndexWindow> windows, List<List<FileRange>> dictionaries) {
+        int first = from;
+        for (IndexWindow window : windows) {
+            int count = window.memberCount();
+            WindowFetch w = new WindowFetch(first, count, ranges(file, window.bloomFilterRanges(), count),
+                    ranges(file, window.indexRanges(), count));
+            for (int i = first; i < first + count; i++) {
+                UnitListing u = listings.get(i - from);
+                IndexWindow.Member m = members.get(i - from);
+                List<RangeFetch> pruningPages = ranges(file, dictionaries.get(i - from), 1);
+                request(u, pruningPages);
+                Unit.Listed l = new Unit.Listed(u, m.offsetIndexColumns(), m.columnIndexColumns(), w, pruningPages);
+                // one its Bloom filters and dictionaries cannot drop waits for its page index at once
+                units.add(RowGroupPruning.droppableOnArrival(u) ? l : new Unit.AwaitingIndex(l, null, List.of()));
+            }
+            first += count;
+            request(units.get(w.first()).listing(), w.bloomFilters());
+            for (int i = w.first(); i < w.end(); i++) {
+                start(units.get(i));
+            }
         }
     }
 
