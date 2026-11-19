@@ -56,6 +56,7 @@ nav:
     - Configuration: reference/configuration.md
     - Reader: reference/reader.md
     - Writer: reference/writer.md
+    - Format Support: reference/format-support.md
     - Typed Accessors: reference/accessors.md
     - Query Controls: reference/query-controls.md
     - S3: reference/s3.md
