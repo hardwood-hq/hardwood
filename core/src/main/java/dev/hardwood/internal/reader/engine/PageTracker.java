@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -80,8 +81,8 @@ final class PageTracker {
     /// serve, or, read by a scan, at the row as far into the chunk as it lies. Each planned page
     /// in a range is one of its readers from here, before the page is tracked; tracking holds each
     /// range as one more reader, so that one its pages are done with stays until the scans hold
-    /// it too ([#handedToScans]).
-    ScanInput track(Unit.Batched u) {
+    /// it too ([#handedToScans]). A column in `skipped` is not read in `u`: its chunk has no pages.
+    ScanInput track(Unit.Batched u, BitSet skipped) {
         List<RangeFetch> ranges = new ArrayList<>();
         int n = u.plan().pages().length;
         CellWriter.ChunkPlacement[] placements = new CellWriter.ChunkPlacement[n];
@@ -99,7 +100,7 @@ final class PageTracker {
         long first = Long.MAX_VALUE;
         for (int c = 0; c < n; c++) {
             List<NeededPage> needed = u.plan().pages()[c];
-            CellWriter.ChunkPlacement placement = cells.placement(c, u);
+            CellWriter.ChunkPlacement placement = cells.placement(c, u, skipped.get(c));
             placements[c] = placement;
             if (needed == null) {
                 continue;

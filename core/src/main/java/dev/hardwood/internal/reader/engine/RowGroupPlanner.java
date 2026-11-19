@@ -571,7 +571,7 @@ final class RowGroupPlanner {
                 chargePreloaded(p, c);
             }
         }
-        PageTracker.ScanInput scans = tracker.track(p);
+        PageTracker.ScanInput scans = tracker.track(p, skipped);
         for (int c = 0; c < schemas.length; c++) {
             if (p.plan().pages()[c] == null) {
                 scanner.scan(p, c, scans.placements()[c], scans.ranges());

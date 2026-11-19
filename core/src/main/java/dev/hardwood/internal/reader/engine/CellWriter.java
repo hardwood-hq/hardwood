@@ -65,9 +65,11 @@ final class CellWriter {
     /// The placement of one column chunk: its pages not yet placed, in page order as they are
     /// known, how many are placed, whether the chunk has ended, and a scan's failure past its
     /// pages. A placed page is let go of, so that it lives until its decode, not until its chunk's
-    /// last page is placed.
+    /// last page is placed. The chunk of a unit the column is not read in has no pages, and is
+    /// passed to the column's placer in its place in unit order.
     static final class ChunkPlacement {
         private final Unit.Batched unit;
+        private final boolean skipped;
         private final ArrayDeque<TrackedPage> pages = new ArrayDeque<>();
         private PageDecoder decoder;
         private int placed;
@@ -75,8 +77,10 @@ final class CellWriter {
         /// the scan's failure, past its pages: the column places nothing after them
         private Throwable failure;
 
-        ChunkPlacement(Unit.Batched unit) {
+        ChunkPlacement(Unit.Batched unit, boolean skipped) {
             this.unit = unit;
+            this.skipped = skipped;
+            this.ended = skipped;
         }
 
         Unit.Batched unit() {
@@ -172,8 +176,10 @@ final class CellWriter {
     }
 
     /// The column's chunk of `u`, behind the chunks of the units before it.
-    ChunkPlacement placement(int column, Unit.Batched u) {
-        ChunkPlacement placement = new ChunkPlacement(u);
+    ///
+    /// @param skipped whether the column is not read in `u`: the chunk has no pages, and has ended
+    ChunkPlacement placement(int column, Unit.Batched u, boolean skipped) {
+        ChunkPlacement placement = new ChunkPlacement(u, skipped);
         placements.get(column).addLast(placement);
         return placement;
     }
@@ -253,6 +259,9 @@ final class CellWriter {
             if (placement.failure() != null && !placers.get(column).stopped()) {
                 stop(column, placement.failure());
             }
+            if (placement.skipped && !placers.get(column).stopped()) {
+                pass(column, placement.unit());
+            }
             q.pollFirst();
         }
         return placed;
@@ -278,6 +287,28 @@ final class CellWriter {
         if (task instanceof NestedPageTask n && n.allSegmentsFilled()) {
             n.releaseScratch(scratch.get(column));
         }
+    }
+
+    /// Passes `u`, a unit `column` is not read in, to the column's placer, which ends the batch
+    /// the column reads before it where the plan closes that batch there; a column short of the
+    /// plan in the row group before `u` fails ([#failShort]).
+    private void pass(int column, Unit.Batched u) {
+        try {
+            placers.get(column).pass(u.batches(), u.listing().rowGroup());
+        }
+        catch (RuntimeException e) {
+            failShort(column, e);
+        }
+    }
+
+    /// Fails `column`, which its placer found short of the plan as it ended a row group, with `e`:
+    /// at its open cell, which is abandoned, or where it has none at the row it falls short at, so
+    /// that the failure reaches the batch it holds no cell of.
+    private void failShort(int column, RuntimeException e) {
+        long shortAt = placers.get(column).nextRow();
+        BatchCell<?> abandoned = placers.get(column).abandonOpenCell();
+        readFailure.failAt(abandoned != null ? abandoned.firstRow() : shortAt, column,
+                last[column] == null ? e : columns.withContext(column, e, last[column]));
     }
 
     /// Ends every column's placement at the read's end, once each has placed every page it was

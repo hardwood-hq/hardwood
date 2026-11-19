@@ -11,15 +11,19 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.internal.io.CountingInputFile;
@@ -680,6 +684,104 @@ class FilterOnlyColumnSkipTest {
         }
         assertThat(amounts).isEqualTo(expectedAmounts(LOWER, UPPER, id -> false));
         assertSkippedBetween(nestedFile, "code", "amount");
+    }
+
+    // ==================== Read longer than the look-ahead ====================
+
+    private static final int LONG_ROW_GROUPS = 60;
+    private static final int LONG_ROWS_PER_GROUP = 100_000;
+    private static final long LONG_ROWS = (long) LONG_ROW_GROUPS * LONG_ROWS_PER_GROUP;
+    private static final long PARTIAL = 50_000;
+
+    /// `LONG_ROW_GROUPS` row groups of `LONG_ROWS_PER_GROUP` rows of two required `INT64` columns,
+    /// `key` running `0..LONG_ROWS - 1` and `value` derived from it ([#value]): a read of it is
+    /// longer than the look-ahead, so a batch left open past a fully matching row group does not
+    /// close only at the read's end.
+    private static Path longFixture;
+
+    private static long value(long key) {
+        return key * 3 + 1;
+    }
+
+    static Stream<Arguments> partialRowGroupFilters() {
+        return Stream.of(
+                // part of the first row group, then fully matching ones
+                Arguments.of(FilterPredicate.gtEq("key", PARTIAL), PARTIAL, LONG_ROWS),
+                // fully matching row groups, then part of the last
+                Arguments.of(FilterPredicate.lt("key", LONG_ROWS - PARTIAL), 0L, LONG_ROWS - PARTIAL),
+                // part of the first and of the last, fully matching ones between
+                Arguments.of(FilterPredicate.and(FilterPredicate.gtEq("key", PARTIAL),
+                        FilterPredicate.lt("key", LONG_ROWS - PARTIAL)), PARTIAL, LONG_ROWS - PARTIAL));
+    }
+
+    @ParameterizedTest
+    @MethodSource("partialRowGroupFilters")
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void columnReadersReadPastAFullyMatchingRowGroupAfterAPartialOne(FilterPredicate filter, long from, long to)
+            throws Exception {
+        long next = from;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(longFixture()));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("value"))
+                     .filter(filter)
+                     .build()) {
+            while (columns.nextBatch()) {
+                long[] values = columns.getColumnReader("value").getLongs();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    assertThat(values[i]).as("row " + next).isEqualTo(value(next));
+                    next++;
+                }
+            }
+        }
+        assertThat(next).isEqualTo(to);
+    }
+
+    @ParameterizedTest
+    @MethodSource("partialRowGroupFilters")
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void rowReaderReadsPastAFullyMatchingRowGroupAfterAPartialOne(FilterPredicate filter, long from, long to)
+            throws Exception {
+        long next = from;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(longFixture()));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("value"))
+                     .filter(filter)
+                     .build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                assertThat(rows.getLong("value")).as("row " + next).isEqualTo(value(next));
+                next++;
+            }
+        }
+        assertThat(next).isEqualTo(to);
+    }
+
+    /// Writes [#longFixture] on first use, so that the tests not reading it do not pay for it.
+    private static synchronized Path longFixture() throws IOException {
+        if (longFixture == null) {
+            FileSchema schema = FileSchema.builder("schema")
+                    .primitive("key", PhysicalType.INT64, RepetitionType.REQUIRED)
+                    .primitive("value", PhysicalType.INT64, RepetitionType.REQUIRED)
+                    .build();
+            long[] keys = new long[LONG_ROWS_PER_GROUP];
+            long[] values = new long[LONG_ROWS_PER_GROUP];
+            Path path = dir.resolve("filter_only_long.parquet");
+            try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), schema)) {
+                for (int rg = 0; rg < LONG_ROW_GROUPS; rg++) {
+                    for (int i = 0; i < LONG_ROWS_PER_GROUP; i++) {
+                        long key = (long) rg * LONG_ROWS_PER_GROUP + i;
+                        keys[i] = key;
+                        values[i] = value(key);
+                    }
+                    writer.columnWriter().writeBatch(batch -> {
+                        batch.longs("key", keys);
+                        batch.longs("value", values);
+                    });
+                    writer.endRowGroup();
+                }
+            }
+            longFixture = path;
+        }
+        return longFixture;
     }
 
     // ==================== Helpers ====================
