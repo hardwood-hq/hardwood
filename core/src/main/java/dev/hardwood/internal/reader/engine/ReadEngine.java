@@ -176,7 +176,7 @@ public final class ReadEngine implements Closeable {
     private JobScheduler.Position reconcile() {
         long batchedTo = planner.batchedKey();
         if (planner.allBatched() && !readFailure.failed()) {
-            cells.end(planner.endKey());
+            cells.end();
         }
         // the failure stands once no work at or before its row is left; only then do the columns
         // seal or abandon their open cells at it, which can move it to a lower row

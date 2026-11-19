@@ -312,9 +312,8 @@ final class CellWriter {
     }
 
     /// Ends every column's placement at the read's end, once each has placed every page it was
-    /// given, in column order; a column short of the plan fails at its open cell, or past
-    /// `endKey`, the end of the read, where it has none.
-    void end(long endKey) {
+    /// given, in column order; a column short of the plan fails ([#failShort]).
+    void end() {
         for (int c = 0; c < columns.count(); c++) {
             if (!placers.get(c).stopped() && !placements.get(c).isEmpty()) {
                 return;
@@ -326,9 +325,7 @@ final class CellWriter {
                     placers.get(c).end();
                 }
                 catch (RuntimeException e) {
-                    BatchCell<?> abandoned = placers.get(c).abandonOpenCell();
-                    readFailure.failAt(abandoned != null ? abandoned.firstRow() : endKey, c,
-                            last[c] == null ? e : columns.withContext(c, e, last[c]));
+                    failShort(c, e);
                 }
             }
         }
