@@ -92,6 +92,8 @@ In per-region mode there are no fixed regions. Each read is its own mapping at a
 
 Nothing unmaps explicitly. Mapped address space and, on Windows, the lock on the file persist after `close()` until the GC collects the buffers.
 
+**Cold page cache.** A mapped file counts as in memory: its ranges are sliced on whichever thread asks, so scans and decodes read its pages directly on the context's pool. Where a page is not in the page cache, the first touch faults on the thread making it, a pool thread or, on a context of zero threads, the thread driving the read. The read gives the kernel no read-ahead hint and copies no range of a mapped file. A fault costs the kernel's work of loading the page, CPU time that lands on the faulting thread wherever the load happens, and the disk transfer, which the pool's other threads overlap with their decodes. The read's lock parses no page header of a mapped file, so a page's first touch stalls one thread, not the read ([VALUE_DECODE.md](VALUE_DECODE.md#page-headers)).
+
 Tests: `MappedInputFileLargeFileTest`, `JfrEventTest`, `LargeFileReadTest` (parquet-testing-runner; opt-in via `hardwood.largeFileTests`).
 
 ## In-memory input
