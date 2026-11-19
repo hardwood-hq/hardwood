@@ -59,7 +59,7 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | Method | Declares |
 |---|---|
 | `primitive(name, type, repetition)` | a primitive column |
-| `primitive(name, type, repetition, column)` | a primitive column whose optional attributes `column` sets on a `FileSchema.ColumnBuilder` |
+| `primitive(name, type, repetition, column)` | a primitive column whose optional attributes `column` sets on a `FileSchema.PrimitiveBuilder` |
 | `struct(name, repetition, filler)` | a `struct` group whose fields `filler` declares |
 | `file(name, repetition)` | a `FILE` group with all six children, each `OPTIONAL`, in the order `uri`, `offset`, `size`, `content_type`, `checksum`, `inline` (see [FILE groups](accessors.md#file-groups)) |
 | `file(name, repetition, group)` | the same `FILE` group, whose own attributes `group` sets on a `FileSchema.GroupBuilder` |
@@ -68,7 +68,7 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | `map(name, repetition, group, keyType, key, value)` | the same `MAP` group, whose own attributes `group` sets |
 | `build()` | the `FileSchema` |
 
-A `FileSchema.ColumnBuilder` sets the optional attributes of one primitive leaf. Each attribute can be set one time; a second call throws `IllegalArgumentException`.
+A `FileSchema.PrimitiveBuilder` sets the optional attributes of one primitive leaf. Each attribute can be set one time; a second call throws `IllegalArgumentException`.
 
 | Method | Sets |
 |---|---|
@@ -110,7 +110,7 @@ A field id identifies a field independently of its name. Table formats such as I
 
 | Field | Set with |
 |---|---|
-| a primitive column, list element, map key or map value | `ColumnBuilder.fieldId(int)` |
+| a primitive column, list element, map key or map value | `PrimitiveBuilder.fieldId(int)` |
 | a `struct` group, also as a list element or map value | `StructBuilder.fieldId(int)` in its filler |
 | a `LIST`, `MAP` or `FILE` group | `GroupBuilder.fieldId(int)` in its `group` lambda |
 
