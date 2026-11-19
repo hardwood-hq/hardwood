@@ -181,8 +181,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ## Phase 6: Writer Implementation
 
-> The writer's design is in [_designs/WRITER.md](_designs/WRITER.md) and its siblings; the
-> open stages are sequenced in [_plans/WRITER_SUPPORT.md](_plans/WRITER_SUPPORT.md) (#1291).
+> The writer's design is in [_designs/WRITER.md](_designs/WRITER.md) and its siblings; its
+> remaining work is tracked in #1291.
 > The boxes below are the fine-grained inventory ticked as stages land.
 
 ### 6.1 Writer Architecture
@@ -421,18 +421,11 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ## Phase 10: Public API Design
 
 ### 10.1 Schema Builder API
-> Superseded by `FileSchema.Builder` (#9); the items below describe the fuller
-> fluent/nested builder that would land with the nested-write increments.
-- [ ] Implement fluent `Types.buildMessage()` API
-- [ ] Primitive type builders with logical type support (see Phase 6.4)
-- [ ] Group builders for nested structures
-- [ ] List and Map convenience builders
+- [x] `FileSchema.Builder`: primitive, struct, list and map declarations with logical types (#9)
 
 ### 10.2 Writer API
-- [ ] Implement `ParquetWriter.builder(path)` fluent API
-- [ ] Configuration methods (schema, codec, sizes, etc.)
-- [ ] GenericRecord support (Avro write adapter; later milestone)
-- [ ] Custom record materializer support (non-goal for now)
+- [x] `ParquetFileWriter.create(…)` with `WriterConfig` (#9)
+- [ ] Avro `GenericRecord` write adapter (separate milestone, no issue yet)
 
 ### 10.3 Reader API
 - [x] `ParquetFileReader` with static `open()` factory methods
@@ -606,7 +599,7 @@ Remaining Failures by Category (7 total):
 - Java array size limit: 1 file (large_string_map.brotli - column chunk exceeds 2GB, parquet-java has same limitation)
 
 ### Test Categories
-- [ ] Round-trip tests (write → read → compare)
+- [x] Round-trip tests (write → read → compare)
 - [x] Compatibility tests (read files from other implementations)
 - [x] Logical type tests (comprehensive coverage for all implemented types)
   - [x] STRING, DATE, TIMESTAMP, TIME, DECIMAL, UUID conversions
@@ -624,7 +617,7 @@ Remaining Failures by Category (7 total):
   - [x] Nested maps (map<string, map<string, int>>)
   - [x] Map with struct values (map<string, struct>)
   - [x] List of maps (list<map<string, int>>)
-- [ ] Cross-compatibility tests (write files, read with other implementations)
+- [x] Cross-compatibility tests (write files, read with other implementations: the write-path interop gate, `_designs/WRITER_VALIDATION.md`)
 - [x] Fuzz testing: Jazzer targets over the footer, page headers, page index, bloom filters, a column chunk's pages, the decompressors and whole files, replayed in every build (`TESTING.md` § Fuzzing)
 - [ ] Edge cases (empty files, single values, max nesting)
 - [x] Performance benchmarks vs parquet-java (JMH micro-benchmarks + end-to-end performance tests)

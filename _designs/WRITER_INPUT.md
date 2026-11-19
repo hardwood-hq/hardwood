@@ -372,4 +372,4 @@ Tests: `RowWriterSetValueTest`.
 - **`INT96`** is not writable through either API.
 - **`VARIANT`** annotations are rejected on a declared leaf, and the builder cannot declare a Variant group; a Variant group read from a file is written field by field through the binary setters, since the writer has no Variant encoder.
 - **Typed binding** (writing a POJO or record directly) is the write side of the typed view epic (#940), not part of this layer.
-- **Open input-vocabulary gaps**, tracked in #1291: `setVariant` (the reader accessor with no setter), and group-oriented nesting for columnar copies, including a `REQUIRED` leaf under an `OPTIONAL` struct, whose reader-side leaf validity reports nulls the writer's leaf setter refuses on a `REQUIRED` column.
+- **Open input-vocabulary gaps**, tracked in #1487 and #1835: `setVariant` (the reader accessor with no setter), and group-oriented nesting for columnar copies, including a `REQUIRED` leaf under an `OPTIONAL` struct, whose reader-side leaf validity reports nulls the writer's leaf setter refuses on a `REQUIRED` column.
