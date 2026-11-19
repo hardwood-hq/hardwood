@@ -176,7 +176,7 @@ class PrintCommandTest implements PrintCommandContract {
 
     private static Path writeFileReferencesFile(Path tempDir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .file("photo", RepetitionType.OPTIONAL)
                 .build();
         Path file = tempDir.resolve("file_references.parquet");
@@ -195,8 +195,8 @@ class PrintCommandTest implements PrintCommandContract {
     /// reach a table cell raw (#865).
     private static Path writeControlCharactersFile(Path tempDir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
         Path file = tempDir.resolve("control_characters.parquet");

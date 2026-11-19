@@ -358,8 +358,8 @@ class FilesAheadTest {
 
     private static byte[] write(long[] ids, double[] values, WriterConfig config) throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {

@@ -165,9 +165,9 @@ class CrossColumnCoalesceTest {
     /// `c`, in one row group without a page index.
     private static byte[] writeOuterAndInnerColumns(int rows) throws Exception {
         FileSchema schema = FileSchema.builder("gap")
-                .addColumn("a", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("c", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("c", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

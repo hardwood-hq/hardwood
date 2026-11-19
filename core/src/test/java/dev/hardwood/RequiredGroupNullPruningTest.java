@@ -44,9 +44,9 @@ class RequiredGroupNullPruningTest {
     @BeforeAll
     static void writeFile() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.REQUIRED, s -> s
-                        .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string())))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

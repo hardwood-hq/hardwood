@@ -53,7 +53,7 @@ class RowWriterTryWriteRowTest {
     void rangeRejectionIsReturnedAndTheWriterStaysWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(8, true)))
                 .build();
 
@@ -101,7 +101,7 @@ class RowWriterTryWriteRowTest {
     void fixedLengthRejectionIsReturnedAndTheWriterStaysWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
                 .build();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -125,7 +125,7 @@ class RowWriterTryWriteRowTest {
     void dateRangeRejectionIsReturnedAndTheWriterStaysWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
                 .build();
         LocalDate tooFar = LocalDate.ofEpochDay((long) Integer.MAX_VALUE + 1);
 
@@ -150,7 +150,7 @@ class RowWriterTryWriteRowTest {
     void timestampOverflowRejectionIsReturnedAndTheWriterStaysWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS)))
                 .build();
         Instant beyondNanos = LocalDateTime.of(2263, 1, 1, 0, 0).toInstant(ZoneOffset.UTC);
@@ -177,7 +177,7 @@ class RowWriterTryWriteRowTest {
     void precisionLossRejectionIsReturnedAndTheWriterStaysWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS)))
                 .build();
 
@@ -205,7 +205,7 @@ class RowWriterTryWriteRowTest {
     void decimalPrecisionRejectionIsReturnedAndTheWriterStaysWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(5, 2)))
                 .build();
 
@@ -230,7 +230,7 @@ class RowWriterTryWriteRowTest {
     void intervalRangeRejectionIsReturnedAndTheWriterStaysWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(12).logicalType(LogicalType.interval()))
                 .build();
 
@@ -258,7 +258,7 @@ class RowWriterTryWriteRowTest {
     void rejectionInsideAListLeavesTheListWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .list("scores", RepetitionType.OPTIONAL, element -> element.primitive(
                         PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(8, true))))
@@ -289,7 +289,7 @@ class RowWriterTryWriteRowTest {
     void nullMapKeyLeavesTheMapWritable() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
@@ -346,7 +346,7 @@ class RowWriterTryWriteRowTest {
     void binaryDecimalOutsideItsPrecisionIsReturned() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(5, 2)))
                 .build();
 
@@ -370,7 +370,7 @@ class RowWriterTryWriteRowTest {
     void decimalRescaleThatDropsDigitsIsReturned() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(5, 2)))
                 .build();
 
@@ -398,7 +398,7 @@ class RowWriterTryWriteRowTest {
     void valueOnAnUnknownColumnFailsTheWriter() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.nullType()))
                 .build();
 
@@ -420,7 +420,7 @@ class RowWriterTryWriteRowTest {
     void writeRowStillFailsTheWriterOnADataRejection() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(8, true)))
                 .build();
 
@@ -538,7 +538,7 @@ class RowWriterTryWriteRowTest {
     void everyRecordRejectedPublishesAZeroRowFile() throws Exception {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(8, true)))
                 .build();
 

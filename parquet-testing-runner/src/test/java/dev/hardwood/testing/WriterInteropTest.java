@@ -238,7 +238,7 @@ class WriterInteropTest {
         byte[][] values = testCase.values();
 
         FileSchema schema = FileSchema.builder("interop")
-                .addColumn(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(testCase.typeLength()))
                 .build();
         WriterConfig config = WriterConfig.builder().encoding(testCase.policy()).build();
@@ -304,7 +304,7 @@ class WriterInteropTest {
 
         Path file = dir.resolve("leading-run.parquet");
         FileSchema schema = FileSchema.builder("interop")
-                .addColumn(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         // A small page target cuts several pages inside the leading run, so the file carries pages
         // whose largest index is 0 ahead of pages that need the full width.
@@ -347,7 +347,7 @@ class WriterInteropTest {
 
         Path file = dir.resolve("recovered.parquet");
         FileSchema schema = FileSchema.builder("interop")
-                .addColumn(COLUMN, PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive(COLUMN, PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(rows).build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {

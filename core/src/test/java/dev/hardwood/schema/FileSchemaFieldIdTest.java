@@ -91,13 +91,13 @@ class FileSchemaFieldIdTest {
     @Test
     void builderDeclaresAFieldIdInEveryScope() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()).fieldId(2))
                 .struct("location", RepetitionType.OPTIONAL, location -> location
                         .fieldId(3)
-                        .addColumn("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(4))
-                        .addColumn("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(5)))
+                        .primitive("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(4))
+                        .primitive("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(5)))
                 .list("tags", RepetitionType.OPTIONAL, group -> group.fieldId(6),
                         element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string()).fieldId(7)))
@@ -118,7 +118,7 @@ class FileSchemaFieldIdTest {
                         .list(RepetitionType.OPTIONAL, group -> group.fieldId(2), inner -> inner
                                 .struct(RepetitionType.OPTIONAL, cell -> cell
                                         .fieldId(3)
-                                        .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                                        .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                                                 col -> col.fieldId(4)))))
                 .build();
 
@@ -129,7 +129,7 @@ class FileSchemaFieldIdTest {
     @Test
     void schemaWithoutFieldIdsHasNone() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
 
         assertThat(schema.getColumn("id").fieldId()).isNull();
@@ -140,10 +140,10 @@ class FileSchemaFieldIdTest {
     @Test
     void toStringShowsTheFieldIds() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .fieldId(2)
-                        .addColumn("x", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("x", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()).fieldId(3)))
                 .build();
 
@@ -160,16 +160,16 @@ class FileSchemaFieldIdTest {
     @Test
     void columnAttributeCannotBeSetTwice() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1).fieldId(2)))
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1).fieldId(2)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The field id of 'id' is already set to 1");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()).logicalType(LogicalType.json())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The logical type of 'name' is already set to STRING");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(16).typeLength(8)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The type length of 'md5' is already set to 16");
@@ -179,7 +179,7 @@ class FileSchemaFieldIdTest {
     @Test
     void nullLogicalTypeCannotBeOverwritten() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(null).logicalType(LogicalType.string())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The logical type of 'name' is already set to null");
@@ -191,7 +191,7 @@ class FileSchemaFieldIdTest {
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .fieldId(1)
                         .fieldId(2)
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The field id of 's' is already set to 1");
         assertThatThrownBy(() -> FileSchema.builder("schema")
@@ -259,7 +259,7 @@ class FileSchemaFieldIdTest {
     @Test
     void nullLogicalTypeLeavesTheColumnUnannotated() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.logicalType(null).fieldId(1))
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.logicalType(null).fieldId(1))
                 .build();
 
         assertThat(schema.getColumn("id").logicalType()).isNull();

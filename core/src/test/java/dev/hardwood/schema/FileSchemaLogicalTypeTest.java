@@ -44,7 +44,7 @@ class FileSchemaLogicalTypeTest {
 
     private static FileSchema withColumn(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("annotated", type, RepetitionType.OPTIONAL, col -> col.logicalType(logicalType))
+                .primitive("annotated", type, RepetitionType.OPTIONAL, col -> col.logicalType(logicalType))
                 .build();
     }
 
@@ -86,7 +86,7 @@ class FileSchemaLogicalTypeTest {
     @Test
     void aGeographyOfAnUnknownAlgorithmIsRefused() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("area", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("area", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.geography(null, EdgeInterpolationAlgorithm.UNKNOWN))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("GEOGRAPHY's edge interpolation algorithm is one this release does not know, "
@@ -115,7 +115,7 @@ class FileSchemaLogicalTypeTest {
     @Test
     void typesWithoutALegacyEquivalentAreUnionOnly() {
         SchemaElement uuid = element(FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(16).logicalType(LogicalType.uuid()))
                 .build(), "id");
 
@@ -129,7 +129,7 @@ class FileSchemaLogicalTypeTest {
     @Test
     void intervalIsLegacyOnly() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("duration", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("duration", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(12).logicalType(LogicalType.interval()))
                 .build();
         SchemaElement interval = element(schema, "duration");
@@ -243,9 +243,9 @@ class FileSchemaLogicalTypeTest {
     void nestedFieldsCarryTheirAnnotation() {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("person", RepetitionType.OPTIONAL, person -> person
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("born", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                        .primitive("born", PhysicalType.INT32, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.date())))
                 .build();
 
@@ -311,13 +311,13 @@ class FileSchemaLogicalTypeTest {
     @Test
     void fixedWidthAnnotationsRequireTheirExactLength() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(8).logicalType(LogicalType.uuid()))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("UUID annotates a FIXED_LEN_BYTE_ARRAY of length 16, not 8 (column id)");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("half", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("half", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(4).logicalType(LogicalType.float16()))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
@@ -359,7 +359,7 @@ class FileSchemaLogicalTypeTest {
     void nestedDeclarationsImplyTheLength() {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("order", RepetitionType.OPTIONAL, order -> order
-                        .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.uuid())))
                 .list("prices", RepetitionType.OPTIONAL, element -> element
                         .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
@@ -381,7 +381,7 @@ class FileSchemaLogicalTypeTest {
     @Test
     void anExplicitLengthIsKept() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(16).logicalType(LogicalType.decimal(9, 2)))
                 .build();
 
@@ -397,7 +397,7 @@ class FileSchemaLogicalTypeTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("FIXED_LEN_BYTE_ARRAY column annotated requires a positive type length");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("raw", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("raw", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("FIXED_LEN_BYTE_ARRAY column raw requires a positive type length");
@@ -415,7 +415,7 @@ class FileSchemaLogicalTypeTest {
                          + "annotated");
         // Four bytes of two's complement span 9 digits, the same as an INT32.
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(4).logicalType(LogicalType.decimal(10, 0)))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
@@ -455,7 +455,7 @@ class FileSchemaLogicalTypeTest {
     @Test
     void unknownIsRejectedOnARequiredColumn() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.nullType()))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)

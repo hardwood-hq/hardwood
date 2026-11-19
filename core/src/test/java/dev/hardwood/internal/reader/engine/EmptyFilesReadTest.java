@@ -75,7 +75,7 @@ class EmptyFilesReadTest {
     private static byte[] noRowGroups() throws Exception {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out,
-                FileSchema.builder("empty").addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED).build(),
+                FileSchema.builder("empty").primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED).build(),
                 WriterConfig.builder().build())) {
             // no row
         }

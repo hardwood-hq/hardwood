@@ -56,7 +56,7 @@ class RowGroupBufferStoreCapacityTest {
     @Test
     void rowGroupIsCutBeforeByteArrayContentOverflowsItsStore() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         byte[][] values = distinctValues(1000, 100);
 
@@ -71,7 +71,7 @@ class RowGroupBufferStoreCapacityTest {
     @Test
     void rowGroupIsCutBeforeFixedLengthContentOverflowsItsStore() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(16))
+                .primitive("f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(16))
                 .build();
         byte[][] values = distinctValues(400, 16);
 
@@ -115,7 +115,7 @@ class RowGroupBufferStoreCapacityTest {
     @Test
     void flatColumnIsCutAtTheRowCeilingItsEntryCapMeets() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         int[] values = new int[2500];
         for (int i = 0; i < values.length; i++) {
@@ -139,7 +139,7 @@ class RowGroupBufferStoreCapacityTest {
     @Test
     void dictionaryTooLargeForAPageIsNotChosen() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         // 300 distinct values, each three times: a dictionary would win on size, but its body is
         // 2,400 bytes, past a store capacity of 1,000.
@@ -181,7 +181,7 @@ class RowGroupBufferStoreCapacityTest {
     @Test
     void flushThatLeavesRecordsBufferedFailsTheAppend() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
 
         Buffered buffered = new Buffered(schema, 10, 1000);

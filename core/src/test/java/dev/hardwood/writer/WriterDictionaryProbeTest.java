@@ -268,13 +268,13 @@ class WriterDictionaryProbeTest {
 
     private static FileSchema oneLongColumn() {
         return FileSchema.builder("m")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
     }
 
     private static FileSchema oneIntColumn() {
         return FileSchema.builder("m")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
     }
 

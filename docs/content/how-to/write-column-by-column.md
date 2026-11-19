@@ -29,9 +29,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 FileSchema schema = FileSchema.builder("measurement")
-        .addColumn("station", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+        .primitive("station", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                 col -> col.logicalType(LogicalType.string()))
-        .addColumn("temperature", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+        .primitive("temperature", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
         .build();
 
 byte[][] stations = { "Hamburg".getBytes(StandardCharsets.UTF_8), "Aarhus".getBytes(StandardCharsets.UTF_8) };

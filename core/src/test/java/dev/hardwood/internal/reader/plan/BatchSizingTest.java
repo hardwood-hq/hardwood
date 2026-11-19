@@ -107,7 +107,7 @@ class BatchSizingTest {
     void batchSizeShrinksAsProjectionWidens() {
         FileSchema.Builder builder = FileSchema.builder("doubles");
         for (int i = 0; i < 20; i++) {
-            builder.addColumn("d" + i, PhysicalType.DOUBLE, RepetitionType.REQUIRED);
+            builder.primitive("d" + i, PhysicalType.DOUBLE, RepetitionType.REQUIRED);
         }
         FileSchema schema = builder.build();
         ProjectedSchema single = ProjectedSchema.create(schema, ColumnProjection.columns("d0"));
@@ -226,7 +226,7 @@ class BatchSizingTest {
     /// uncompressed, in the given encoding.
     private static byte[] writeStrings(ColumnEncoding encoding) throws Exception {
         FileSchema schema = FileSchema.builder("strings")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         byte[][] values = new byte[10_000][];
         for (int i = 0; i < values.length; i++) {

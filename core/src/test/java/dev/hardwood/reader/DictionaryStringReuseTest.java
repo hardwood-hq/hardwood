@@ -293,8 +293,8 @@ class DictionaryStringReuseTest {
     void aFilterOnlyStringColumnMakesTheRowReadCutAtRowGroups() throws Exception {
         String[] pool = { "alpha", "bravo", "charlie" };
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

@@ -79,7 +79,7 @@ class ConvertCommandTest implements ConvertCommandContract {
     @Test
     void convertsAFileGroupAsItsStoredFields(@TempDir Path tempDir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .file("photo", RepetitionType.OPTIONAL)
                 .build();
         Path file = tempDir.resolve("file_references.parquet");
@@ -482,8 +482,8 @@ class ConvertCommandTest implements ConvertCommandContract {
     void exportsKeepControlCharactersVerbatim(@TempDir Path tempDir) throws Exception {
         Path file = tempDir.resolve("controls.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {

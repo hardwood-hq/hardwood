@@ -214,7 +214,7 @@ class UnitStatsTest {
         RowGroup rowGroup = new RowGroup(List.of(chunkWith(0L, null)), 1000, ROWS);
         // An INT32 column under a column order this build does not recognize.
         BoundsReadability readability = BoundsReadability.of(
-                FileSchema.builder("s").addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED).build(),
+                FileSchema.builder("s").primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED).build(),
                 List.of(ColumnOrder.UNKNOWN), ordinal -> false);
         UnitStats unreadable = UnitStats.ChunkStats.of(rowGroup, 0, readability);
 

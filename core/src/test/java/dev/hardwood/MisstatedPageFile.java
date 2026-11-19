@@ -39,7 +39,7 @@ public final class MisstatedPageFile {
     /// A file of `codec` whose data page header declares `declared` uncompressed bytes.
     public static byte[] build(CompressionCodec codec, int declared) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         long[] values = new long[VALUES];
         for (int i = 0; i < VALUES; i++) {

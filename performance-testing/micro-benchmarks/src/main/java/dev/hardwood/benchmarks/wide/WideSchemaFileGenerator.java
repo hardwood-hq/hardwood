@@ -115,7 +115,7 @@ public final class WideSchemaFileGenerator {
     private static FileSchema schema(int columns) {
         FileSchema.Builder builder = FileSchema.builder("wide");
         for (int c = 0; c < columns; c++) {
-            builder.addColumn(columnName(c), PhysicalType.DOUBLE, RepetitionType.REQUIRED);
+            builder.primitive(columnName(c), PhysicalType.DOUBLE, RepetitionType.REQUIRED);
         }
         return builder.build();
     }

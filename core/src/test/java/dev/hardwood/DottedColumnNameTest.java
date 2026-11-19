@@ -49,10 +49,10 @@ class DottedColumnNameTest {
     @BeforeAll
     static void writeFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("sepal.length", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("sepal.length", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .struct("acme.info", RepetitionType.REQUIRED, info -> info
-                        .addColumn("x.y", PhysicalType.INT64, RepetitionType.REQUIRED))
+                        .primitive("x.y", PhysicalType.INT64, RepetitionType.REQUIRED))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -98,8 +98,8 @@ class DottedColumnNameTest {
     @Test
     void projectsADottedColumnBesideAPrimitiveOfItsPrefix() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -311,10 +311,10 @@ class DottedColumnNameTest {
     /// join to `a.b`.
     private static FileSchema ambiguousSchema() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("a", RepetitionType.OPTIONAL, a -> a
-                        .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED))
+                        .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED))
                 .build();
     }
 }

@@ -84,7 +84,7 @@ class ReaderEndOfStreamTest {
     private static byte[] writeSyntheticFile() throws Exception {
         FileSchema.Builder schema = FileSchema.builder("end_of_stream");
         for (String name : columnNames()) {
-            schema.addColumn(name, PhysicalType.INT64, RepetitionType.REQUIRED);
+            schema.primitive(name, PhysicalType.INT64, RepetitionType.REQUIRED);
         }
 
         long[] values = new long[ROWS];

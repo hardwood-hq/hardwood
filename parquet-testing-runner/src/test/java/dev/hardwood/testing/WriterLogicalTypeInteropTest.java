@@ -194,9 +194,9 @@ class WriterLogicalTypeInteropTest {
     @Test
     void unsignedIntegerBoundsUseUnsignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("i", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(32, false)))
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("l", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(64, false)))
                 .build();
 
@@ -219,7 +219,7 @@ class WriterLogicalTypeInteropTest {
     @Test
     void binaryDecimalBoundsUseSignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
-                .addColumn(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(2).logicalType(LogicalType.decimal(4, 0)))
                 .build();
 
@@ -246,7 +246,7 @@ class WriterLogicalTypeInteropTest {
     @Test
     void stringBoundsUseUnsignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
-                .addColumn(COLUMN, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive(COLUMN, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
 
@@ -265,11 +265,11 @@ class WriterLogicalTypeInteropTest {
     private Path write(Path dir, Annotated annotated) throws IOException {
         FileSchema schema = annotated.typeLength() == null
                 ? FileSchema.builder("annotated")
-                        .addColumn(COLUMN, annotated.physicalType(), annotated.repetition(),
+                        .primitive(COLUMN, annotated.physicalType(), annotated.repetition(),
                                 col -> col.logicalType(annotated.hardwood()))
                         .build()
                 : FileSchema.builder("annotated")
-                        .addColumn(COLUMN, annotated.physicalType(), annotated.repetition(),
+                        .primitive(COLUMN, annotated.physicalType(), annotated.repetition(),
                                 col -> col.typeLength(annotated.typeLength()).logicalType(annotated.hardwood()))
                         .build();
 

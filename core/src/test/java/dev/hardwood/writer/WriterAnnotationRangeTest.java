@@ -188,7 +188,7 @@ class WriterAnnotationRangeTest {
     @Test
     void theValueAtANullRowIsNotChecked() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.intType(8, false)))
                 .build();
 
@@ -209,7 +209,7 @@ class WriterAnnotationRangeTest {
     void aBinaryDecimalRejectsAnUnscaledValueBeyondItsPrecision() {
         FileSchema variable = single(PhysicalType.BYTE_ARRAY, LogicalType.decimal(4, 0));
         FileSchema fixed = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(2).logicalType(LogicalType.decimal(4, 0)))
                 .build();
         byte[] tooLarge = { 0x30, 0x39 };      // 12345, five digits against a declared four
@@ -279,7 +279,7 @@ class WriterAnnotationRangeTest {
     void thePlaceholderOfAnAbsentAncestorIsAValueTheColumnHolds() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.decimal(1, 0))))
                 .build();
 
@@ -321,7 +321,7 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownColumnHoldsOnlyNulls() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.nullType()))
                 .build();
 
@@ -344,7 +344,7 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownColumnTakesItsNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.nullType()))
                 .build();
 
@@ -366,9 +366,9 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownLeafUnderAnAbsentStructIsWritable() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                        .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.nullType())))
                 .build();
 
@@ -392,9 +392,9 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownLeafUnderAStructAbsentFromEveryRecordIsWritable() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                        .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.nullType())))
                 .build();
 
@@ -505,11 +505,11 @@ class WriterAnnotationRangeTest {
 
     private static FileSchema nestedUnsignedByte() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("req", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        .primitive("req", PhysicalType.INT32, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.intType(8, false)))
-                        .addColumn("opt", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                        .primitive("opt", PhysicalType.INT32, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.intType(8, false))))
                 .build();
     }
@@ -564,7 +564,7 @@ class WriterAnnotationRangeTest {
 
     private static FileSchema single(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType))
+                .primitive("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType))
                 .build();
     }
 

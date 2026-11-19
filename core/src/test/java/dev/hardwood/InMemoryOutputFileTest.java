@@ -33,7 +33,7 @@ class InMemoryOutputFileTest {
 
     private static FileSchema schema() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
     }
 

@@ -23,9 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SchemaPathResolverTest {
 
     private static final FileSchema SCHEMA = FileSchema.builder("root")
-            .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+            .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
             .struct("address", RepetitionType.OPTIONAL, address -> address
-                    .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
+                    .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
             .list("scores", RepetitionType.OPTIONAL,
                     element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
             .build();

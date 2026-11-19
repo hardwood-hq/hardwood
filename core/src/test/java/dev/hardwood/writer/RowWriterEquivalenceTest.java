@@ -37,10 +37,10 @@ class RowWriterEquivalenceTest {
     @Test
     void flatColumnsWithNullsMatchTheColumnarPath() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("score", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
+                .primitive("score", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
 
         int records = 500;
@@ -123,8 +123,8 @@ class RowWriterEquivalenceTest {
     @Test
     void manyRecordsAcrossSeveralStagedBatchesMatchTheColumnarPath() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
 
@@ -162,9 +162,9 @@ class RowWriterEquivalenceTest {
 
     private static FileSchema nestedSchema() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string())))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
                         PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, col -> col.logicalType(LogicalType.string())))

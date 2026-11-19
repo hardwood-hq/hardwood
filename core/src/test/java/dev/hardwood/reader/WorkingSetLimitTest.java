@@ -419,7 +419,7 @@ class WorkingSetLimitTest {
     /// One required binary column `blob` holding `values`, uncompressed, in `encoding`.
     private static ByteBuffer writeValues(byte[][] values, ColumnEncoding encoding) throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("blob", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("blob", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

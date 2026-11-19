@@ -335,7 +335,7 @@ class RecordFilterCompilerTest {
         FileSchema schema = FileSchema.builder("root")
                 .struct("company", RepetitionType.OPTIONAL, company -> company
                         .struct("address", RepetitionType.OPTIONAL, address -> address
-                                .addColumn(
+                                .primitive(
                                         "street",
                                         PhysicalType.BYTE_ARRAY,
                                         RepetitionType.OPTIONAL)))
@@ -383,7 +383,7 @@ class RecordFilterCompilerTest {
         FileSchema schema = FileSchema.builder("root")
                 .struct("company", RepetitionType.OPTIONAL, company -> company
                         .struct("address", RepetitionType.OPTIONAL, address -> address
-                                .addColumn(
+                                .primitive(
                                         "street",
                                         PhysicalType.BYTE_ARRAY,
                                         RepetitionType.OPTIONAL)))

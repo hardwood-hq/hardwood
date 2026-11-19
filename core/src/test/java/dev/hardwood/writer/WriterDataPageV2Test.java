@@ -148,7 +148,7 @@ class WriterDataPageV2Test {
     @Test
     void storesValuesThatDoNotCompressAsTheyAre() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.OPTIONAL)
+                .primitive("v", PhysicalType.INT64, RepetitionType.OPTIONAL)
                 .build();
         long[] values = new long[ROWS];
         boolean[] nulls = new boolean[ROWS];
@@ -308,7 +308,7 @@ class WriterDataPageV2Test {
     @ParameterizedTest
     @EnumSource(value = PhysicalType.class, names = { "FLOAT", "DOUBLE" })
     void alpValuesReadBackFromV2Pages(PhysicalType type) throws Exception {
-        FileSchema schema = FileSchema.builder("schema").addColumn("v", type, RepetitionType.OPTIONAL).build();
+        FileSchema schema = FileSchema.builder("schema").primitive("v", type, RepetitionType.OPTIONAL).build();
         double[] doubles = new double[ROWS];
         float[] floats = new float[ROWS];
         boolean[] nulls = new boolean[ROWS];

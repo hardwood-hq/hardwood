@@ -260,7 +260,7 @@ class PageFilterEvaluatorTest {
     @Test
     void unreadableSortOrderKeepsOrderedIndexOnLinearFallback() {
         FileSchema schema = FileSchema.builder("t")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         BoundsReadability unreadable = BoundsReadability.of(schema, List.of(), ordinal -> true);
         ColumnIndex index = intColumnIndex(

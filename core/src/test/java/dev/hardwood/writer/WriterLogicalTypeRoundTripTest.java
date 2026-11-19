@@ -89,9 +89,9 @@ class WriterLogicalTypeRoundTripTest {
     void nestedAndNullableColumnsCarryTheirAnnotation() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("person", RepetitionType.OPTIONAL, person -> person
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("born", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        .primitive("born", PhysicalType.INT32, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.date())))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
                         PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, col -> col.logicalType(LogicalType.string())))
@@ -122,7 +122,7 @@ class WriterLogicalTypeRoundTripTest {
     @Test
     void signedOrderAnnotationsKeepTheirBounds() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -166,7 +166,7 @@ class WriterLogicalTypeRoundTripTest {
     @Test
     void unknownColumnWritesOnlyItsNullCount() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.nullType()))
                 .build();
 
@@ -190,7 +190,7 @@ class WriterLogicalTypeRoundTripTest {
     @Test
     void integerBackedDecimalKeepsItsBounds() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(9, 2)))
                 .build();
 
@@ -211,11 +211,11 @@ class WriterLogicalTypeRoundTripTest {
     private static InMemoryOutputFile writeOneRow(Annotated annotated) throws Exception {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (annotated.typeLength() == null) {
-            builder.addColumn("v", annotated.type(), RepetitionType.REQUIRED,
+            builder.primitive("v", annotated.type(), RepetitionType.REQUIRED,
                     col -> col.logicalType(annotated.logicalType()));
         }
         else {
-            builder.addColumn("v", annotated.type(), RepetitionType.REQUIRED,
+            builder.primitive("v", annotated.type(), RepetitionType.REQUIRED,
                     col -> col.typeLength(annotated.typeLength()).logicalType(annotated.logicalType()));
         }
 

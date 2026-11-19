@@ -63,8 +63,8 @@ class ColumnFailureTest {
     private static final long ROWS_OVERLONG = 224;
     private static final long ROWS_SHORT = 224;
     private static final FileSchema SCHEMA = FileSchema.builder("longs")
-            .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
-            .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+            .primitive("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+            .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED)
             .build();
 
     enum Corruption {

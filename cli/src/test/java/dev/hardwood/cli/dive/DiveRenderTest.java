@@ -348,7 +348,7 @@ class DiveRenderTest {
     void dataPreviewTitleNamesNoRowsForAFileWithoutRows(@TempDir Path tempDir) throws Exception {
         Path file = tempDir.resolve("no_rows.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter ignored = ParquetFileWriter.create(OutputFile.of(file), schema)) {
         }
@@ -1426,8 +1426,8 @@ class DiveRenderTest {
     void schemaShowsFieldIdsWhenTheFileCarriesThem(@TempDir Path tempDir) throws Exception {
         Path file = tempDir.resolve("field_ids.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(17))
-                .addColumn("note", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(17))
+                .primitive("note", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
         try (ParquetFileWriter ignored = ParquetFileWriter.create(OutputFile.of(file), schema)) {
         }

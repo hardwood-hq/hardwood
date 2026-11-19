@@ -79,14 +79,14 @@ class WriterBloomFilterInteropTest {
             nulls[r] = r % 7 == 0;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("l", PhysicalType.INT64, RepetitionType.OPTIONAL)
-                .addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
-                .addColumn("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("i", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("l", PhysicalType.INT64, RepetitionType.OPTIONAL)
+                .primitive("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(8))
-                .addColumn("delta", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(8))
+                .primitive("delta", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())
@@ -144,8 +144,8 @@ class WriterBloomFilterInteropTest {
             strings[r] = ("key-" + v).getBytes(StandardCharsets.UTF_8);
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("i", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
         WriterConfig config = WriterConfig.builder()

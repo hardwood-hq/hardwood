@@ -46,8 +46,8 @@ class WriterNestedRoundTripTest {
         // record 0: address null (street/zip absent); 1: present, zip null; 2,3: fully present.
         FileSchema schema = FileSchema.builder("schema")
                 .struct("address", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("street", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                        .primitive("street", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
         Validity addressNulls = Validity.ofNulls(new boolean[] { true, false, false, false });
@@ -90,7 +90,7 @@ class WriterNestedRoundTripTest {
         // record 0: a null (def 0); 1: a present, b null (def 1); 2: fully present (def 2).
         FileSchema schema = FileSchema.builder("schema")
                 .struct("a", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("b", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                        .primitive("b", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
         Validity aNulls = Validity.ofNulls(new boolean[] { true, false, false });
@@ -123,7 +123,7 @@ class WriterNestedRoundTripTest {
         // optional column, but the group nesting must still round-trip through the footer.
         FileSchema schema = FileSchema.builder("schema")
                 .struct("g", RepetitionType.REQUIRED, s -> s
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
         int[] x = { 1, 0, 3 };
@@ -236,8 +236,8 @@ class WriterNestedRoundTripTest {
         // optional [ { required int32 x; optional int32 y } ]
         FileSchema schema = FileSchema.builder("schema")
                 .list("people", RepetitionType.OPTIONAL, el -> el.struct(RepetitionType.OPTIONAL, s -> s
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("y", PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("y", PhysicalType.INT32, RepetitionType.OPTIONAL)))
                 .build();
 
         // record 0: [{1,10},{2,null}]; 1: [{3,30}].
@@ -299,7 +299,7 @@ class WriterNestedRoundTripTest {
         // element is a null struct — distinct from an absent list and from a null leaf.
         FileSchema schema = FileSchema.builder("schema")
                 .list("people", RepetitionType.OPTIONAL, el -> el.struct(RepetitionType.OPTIONAL, s -> s
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
 
         int[] offsets = { 0, 3 };
@@ -718,8 +718,8 @@ class WriterNestedRoundTripTest {
         FileSchema schema = FileSchema.builder("schema")
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
                         v -> v.struct(RepetitionType.OPTIONAL, s -> s
-                                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                                .addColumn("b", PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                                .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                                .primitive("b", PhysicalType.INT32, RepetitionType.OPTIONAL)))
                 .build();
 
         // record 0: {1:{a:10,b:20}, 2:null}; 1: {} (empty); 2: null (absent map); 3: {3:{a:30,b:null}}.
