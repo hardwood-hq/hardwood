@@ -62,9 +62,10 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | `addColumn(name, type, repetition, column)` | a primitive column whose optional attributes `column` sets on a `FileSchema.ColumnBuilder` |
 | `struct(name, repetition, filler)` | a `struct` group whose fields `filler` declares |
 | `file(name, repetition)` | a `FILE` group with all six children, each `OPTIONAL`, in the order `uri`, `offset`, `size`, `content_type`, `checksum`, `inline` (see [FILE groups](accessors.md#file-groups)) |
-| `file(name, repetition, fieldId)` | the same `FILE` group, with a field id (see [Field ids](#field-ids)) |
-| `list(name, repetition, element)` | a `LIST` group whose element `element` declares |
+| `file(name, repetition, group)` | the same `FILE` group, whose own attributes `group` sets on a `FileSchema.GroupBuilder` |
+| `list(name, repetition[, group], element)` | a `LIST` group whose own attributes `group` sets, and whose element `element` declares |
 | `map(name, repetition, keyType[, key], value)` | a `MAP` group with a `REQUIRED` key of `keyType`, whose optional attributes `key` sets, and a value `value` declares |
+| `map(name, repetition, group, keyType, key, value)` | the same `MAP` group, whose own attributes `group` sets |
 | `build()` | the `FileSchema` |
 
 A `FileSchema.ColumnBuilder` sets the optional attributes of one primitive leaf. Each attribute can be set one time; a second call throws `IllegalArgumentException`.
@@ -74,6 +75,8 @@ A `FileSchema.ColumnBuilder` sets the optional attributes of one primitive leaf.
 | `logicalType(logicalType)` | the annotation, which must be legal for the physical type; `null` leaves the leaf unannotated |
 | `typeLength(typeLength)` | the byte length of a `FIXED_LEN_BYTE_ARRAY` leaf |
 | `fieldId(fieldId)` | the field id (`field_id` in the footer) |
+
+A `FileSchema.GroupBuilder` sets the optional attributes of a `LIST`, `MAP` or `FILE` group itself, with the same one-time rule. Its only method is `fieldId(fieldId)`.
 
 The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as.
 
@@ -109,8 +112,7 @@ A field id identifies a field independently of its name. Table formats such as I
 |---|---|
 | a primitive column, list element, map key or map value | `ColumnBuilder.fieldId(int)` |
 | a `struct` group, also as a list element or map value | `StructBuilder.fieldId(int)` in its filler |
-| a `LIST` or `MAP` group | `ElementBuilder.groupFieldId(int)` in its `element` or `value` filler |
-| a `FILE` group | the `fieldId` argument of `file(name, repetition, fieldId)` |
+| a `LIST`, `MAP` or `FILE` group | `GroupBuilder.fieldId(int)` in its `group` lambda |
 
 The synthetic `list` and `key_value` groups, the root and the children of a `FILE` group carry no field id. The builder does not check that field ids are unique.
 
@@ -121,15 +123,13 @@ FileSchema schema = FileSchema.builder("event")
                 .fieldId(2)
                 .addColumn("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(3))
                 .addColumn("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(4)))
-        .list("tags", RepetitionType.OPTIONAL, element -> element
-                .groupFieldId(5)
-                .primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+        .list("tags", RepetitionType.OPTIONAL, group -> group.fieldId(5),
+                element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()).fieldId(6)))
-        .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+        .map("props", RepetitionType.OPTIONAL, group -> group.fieldId(7), PhysicalType.BYTE_ARRAY,
                 key -> key.logicalType(LogicalType.string()).fieldId(8),
-                value -> value
-                        .groupFieldId(7)
-                        .primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(9)))
+                value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(9)))
+        .file("photo", RepetitionType.OPTIONAL, group -> group.fieldId(10))
         .build();
 ```
 

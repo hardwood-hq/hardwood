@@ -664,15 +664,15 @@ public class FileSchema {
             return this;
         }
 
-        /// Append a `FILE` group with a field id, as [#file(String, RepetitionType)] describes.
-        /// The children of the group have no field id.
+        /// Append a `FILE` group whose own attributes are set by `group`, as
+        /// [#file(String, RepetitionType)] describes. The children of the group have no field id.
         ///
         /// @param fileName the group name
         /// @param repetition `REQUIRED` or `OPTIONAL`
-        /// @param fieldId the field id of the group
+        /// @param group sets the group's field id
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`
-        public Builder file(String fileName, RepetitionType repetition, int fieldId) {
-            content.file(fileName, repetition, fieldId);
+        public Builder file(String fileName, RepetitionType repetition, Consumer<GroupBuilder> group) {
+            content.file(fileName, repetition, group);
             return this;
         }
 
@@ -680,10 +680,24 @@ public class FileSchema {
         ///
         /// @param listName the list group name
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the list itself may be null)
-        /// @param element declares the list's element, and optionally the list's field id
+        /// @param element declares the list's element
         /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
         public Builder list(String listName, RepetitionType repetition, Consumer<ElementBuilder> element) {
             content.list(listName, repetition, element);
+            return this;
+        }
+
+        /// Append a `LIST` group whose own attributes are set by `group` and whose element is
+        /// declared by `element`.
+        ///
+        /// @param listName the list group name
+        /// @param repetition `REQUIRED` or `OPTIONAL` (whether the list itself may be null)
+        /// @param group sets the list group's field id
+        /// @param element declares the list's element
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
+        public Builder list(String listName, RepetitionType repetition, Consumer<GroupBuilder> group,
+                            Consumer<ElementBuilder> element) {
+            content.list(listName, repetition, group, element);
             return this;
         }
 
@@ -693,8 +707,7 @@ public class FileSchema {
         /// @param mapName the map group name
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
         /// @param keyType the physical type of the required `key`
-        /// @param value declares the map's value like a list element, and optionally the map's
-        ///        field id
+        /// @param value declares the map's value like a list element
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
         ///         or `keyType` is `FIXED_LEN_BYTE_ARRAY`
         public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType,
@@ -711,13 +724,30 @@ public class FileSchema {
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
         /// @param keyType the physical type of the required `key`
         /// @param key sets the key's logical type, type length and field id
-        /// @param value declares the map's value like a list element, and optionally the map's
-        ///        field id
+        /// @param value declares the map's value like a list element
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
         ///         or the key's attributes do not match `keyType`
         public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType,
                            Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
             content.map(mapName, repetition, keyType, key, value);
+            return this;
+        }
+
+        /// Append a `MAP` group whose own attributes are set by `group` and whose key has
+        /// optional attributes, set by `key`, as
+        /// [#map(String, RepetitionType, PhysicalType, Consumer, Consumer)] describes.
+        ///
+        /// @param mapName the map group name
+        /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
+        /// @param group sets the map group's field id
+        /// @param keyType the physical type of the required `key`
+        /// @param key sets the key's logical type, type length and field id
+        /// @param value declares the map's value like a list element
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
+        ///         or the key's attributes do not match `keyType`
+        public Builder map(String mapName, RepetitionType repetition, Consumer<GroupBuilder> group,
+                           PhysicalType keyType, Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+            content.map(mapName, repetition, group, keyType, key, value);
             return this;
         }
 
@@ -780,6 +810,28 @@ public class FileSchema {
         /// @throws IllegalArgumentException if the field id is already set
         public ColumnBuilder fieldId(int fieldId) {
             requireUnset(this.fieldId, "field id", columnName);
+            this.fieldId = fieldId;
+            return this;
+        }
+    }
+
+    /// Sets the optional attributes of a `LIST`, `MAP` or `FILE` group itself, as opposed to
+    /// its element, value or children. Each attribute can be set one time. A `struct` group sets
+    /// its own attributes on the [StructBuilder] its filler receives.
+    public static final class GroupBuilder {
+
+        private final String groupName;
+        private Integer fieldId;
+
+        private GroupBuilder(String groupName) {
+            this.groupName = groupName;
+        }
+
+        /// Set the field id (`field_id` in `parquet.thrift`).
+        ///
+        /// @throws IllegalArgumentException if the field id is already set
+        public GroupBuilder fieldId(int fieldId) {
+            requireUnset(this.fieldId, "field id", groupName);
             this.fieldId = fieldId;
             return this;
         }
@@ -850,23 +902,19 @@ public class FileSchema {
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`
         public StructBuilder file(String fileName, RepetitionType repetition) {
-            return file(fileName, repetition, (Integer) null);
+            return file(fileName, repetition, NO_GROUP_ATTRIBUTES);
         }
 
-        /// Append a nested `FILE` field with a field id, as
-        /// [Builder#file(String, RepetitionType, int)] describes.
+        /// Append a nested `FILE` field whose own attributes are set by `group`, as
+        /// [Builder#file(String, RepetitionType, Consumer)] describes.
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`
-        public StructBuilder file(String fileName, RepetitionType repetition, int fieldId) {
-            return file(fileName, repetition, (Integer) fieldId);
-        }
-
-        private StructBuilder file(String fileName, RepetitionType repetition, Integer fieldId) {
+        public StructBuilder file(String fileName, RepetitionType repetition, Consumer<GroupBuilder> group) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
                         "Repeated groups are not yet supported by the writer: " + fileName);
             }
-            children.add(new BuilderFile(fileName, repetition, fieldId));
+            children.add(new BuilderFile(fileName, repetition, groupFieldId(fileName, group)));
             return this;
         }
 
@@ -874,11 +922,20 @@ public class FileSchema {
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
         public StructBuilder list(String listName, RepetitionType repetition, Consumer<ElementBuilder> element) {
+            return list(listName, repetition, NO_GROUP_ATTRIBUTES, element);
+        }
+
+        /// Append a nested `LIST` field whose own attributes are set by `group`, as
+        /// [Builder#list(String, RepetitionType, Consumer, Consumer)] describes.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
+        public StructBuilder list(String listName, RepetitionType repetition, Consumer<GroupBuilder> group,
+                                  Consumer<ElementBuilder> element) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
                         "Repeated groups are not yet supported by the writer: " + listName);
             }
-            children.add(buildList(listName, repetition, element));
+            children.add(buildList(listName, repetition, group, element));
             return this;
         }
 
@@ -898,11 +955,22 @@ public class FileSchema {
         ///         or the key's attributes do not match `keyType`
         public StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
                                  Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+            return map(mapName, repetition, NO_GROUP_ATTRIBUTES, keyType, key, value);
+        }
+
+        /// Append a nested `MAP` field whose own attributes are set by `group`, as
+        /// [Builder#map(String, RepetitionType, Consumer, PhysicalType, Consumer, Consumer)]
+        /// describes.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
+        ///         or the key's attributes do not match `keyType`
+        public StructBuilder map(String mapName, RepetitionType repetition, Consumer<GroupBuilder> group,
+                                 PhysicalType keyType, Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
                         "Repeated groups are not yet supported by the writer: " + mapName);
             }
-            children.add(buildMap(mapName, repetition, keyType, key, value));
+            children.add(buildMap(mapName, repetition, group, keyType, key, value));
             return this;
         }
     }
@@ -911,30 +979,17 @@ public class FileSchema {
     /// `struct`, a nested `LIST`, or a nested `MAP`. The declared node is named `element`
     /// inside a list and `value` inside a map.
     ///
-    /// [#groupFieldId(int)] sets the field id of the enclosing `LIST` or `MAP` group. The field
-    /// id of the element or value itself is set where it is declared: in the [ColumnBuilder] of
-    /// a primitive, with [StructBuilder#fieldId(int)] for a `struct`, with
-    /// [#file(RepetitionType, int)] for a `FILE`, and with this method on the nested builder for
-    /// a `LIST` or `MAP`.
+    /// The field id of the element or value is set where it is declared: in the [ColumnBuilder]
+    /// of a primitive, with [StructBuilder#fieldId(int)] for a `struct`, and in the
+    /// [GroupBuilder] of a `FILE`, `LIST` or `MAP`. The field id of the enclosing `LIST` or `MAP`
+    /// is set in its own [GroupBuilder].
     public static final class ElementBuilder {
 
         private final String childName;
-        private final String groupName;
         private BuilderNode element;
-        private Integer groupFieldId;
 
-        private ElementBuilder(String childName, String groupName) {
+        private ElementBuilder(String childName) {
             this.childName = childName;
-            this.groupName = groupName;
-        }
-
-        /// Set the field id of the enclosing `LIST` or `MAP` group.
-        ///
-        /// @throws IllegalArgumentException if the field id is already set
-        public ElementBuilder groupFieldId(int fieldId) {
-            requireUnset(this.groupFieldId, "field id", groupName);
-            this.groupFieldId = fieldId;
-            return this;
         }
 
         /// Declare a primitive element without optional attributes.
@@ -966,18 +1021,23 @@ public class FileSchema {
 
         /// Declare a `FILE` element, as [Builder#file(String, RepetitionType)] describes.
         public void file(RepetitionType repetition) {
-            set(new BuilderFile(childName, repetition, null));
+            file(repetition, NO_GROUP_ATTRIBUTES);
         }
 
-        /// Declare a `FILE` element with a field id, as
-        /// [Builder#file(String, RepetitionType, int)] describes.
-        public void file(RepetitionType repetition, int fieldId) {
-            set(new BuilderFile(childName, repetition, fieldId));
+        /// Declare a `FILE` element whose own attributes are set by `group`, as
+        /// [Builder#file(String, RepetitionType, Consumer)] describes.
+        public void file(RepetitionType repetition, Consumer<GroupBuilder> group) {
+            set(new BuilderFile(childName, repetition, groupFieldId(childName, group)));
         }
 
         /// Declare a nested `LIST` element.
         public void list(RepetitionType repetition, Consumer<ElementBuilder> element) {
-            set(buildList(childName, repetition, element));
+            list(repetition, NO_GROUP_ATTRIBUTES, element);
+        }
+
+        /// Declare a nested `LIST` element whose own attributes are set by `group`.
+        public void list(RepetitionType repetition, Consumer<GroupBuilder> group, Consumer<ElementBuilder> element) {
+            set(buildList(childName, repetition, group, element));
         }
 
         /// Declare a nested `MAP` element.
@@ -995,7 +1055,18 @@ public class FileSchema {
         ///         not match `keyType`
         public void map(RepetitionType repetition, PhysicalType keyType, Consumer<ColumnBuilder> key,
                         Consumer<ElementBuilder> value) {
-            set(buildMap(childName, repetition, keyType, key, value));
+            map(repetition, NO_GROUP_ATTRIBUTES, keyType, key, value);
+        }
+
+        /// Declare a nested `MAP` element whose own attributes are set by `group`, as
+        /// [Builder#map(String, RepetitionType, Consumer, PhysicalType, Consumer, Consumer)]
+        /// describes.
+        ///
+        /// @throws IllegalArgumentException if no value is declared, or the key's attributes do
+        ///         not match `keyType`
+        public void map(RepetitionType repetition, Consumer<GroupBuilder> group, PhysicalType keyType,
+                        Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+            set(buildMap(childName, repetition, group, keyType, key, value));
         }
 
         private void set(BuilderNode node) {
@@ -1016,6 +1087,17 @@ public class FileSchema {
     private static final Consumer<ColumnBuilder> NO_ATTRIBUTES = column -> {
     };
 
+    private static final Consumer<GroupBuilder> NO_GROUP_ATTRIBUTES = group -> {
+    };
+
+    /// Runs `group` against a fresh [GroupBuilder] for the group `name` and returns the field id
+    /// it set, or `null` if it set none.
+    private static Integer groupFieldId(String name, Consumer<GroupBuilder> group) {
+        GroupBuilder builder = new GroupBuilder(name);
+        group.accept(builder);
+        return builder.fieldId;
+    }
+
     private static void requireUnset(Object current, String attribute, String name) {
         if (current != null) {
             throw alreadySet(attribute, name, current);
@@ -1026,12 +1108,14 @@ public class FileSchema {
         return new IllegalArgumentException("The " + attribute + " of '" + name + "' is already set to " + current);
     }
 
-    /// Builds a `LIST` node named `name` whose element, and optionally field id, `element`
-    /// declares. Shared by every `list` verb.
-    private static BuilderList buildList(String name, RepetitionType repetition, Consumer<ElementBuilder> element) {
-        ElementBuilder builder = new ElementBuilder("element", name);
+    /// Builds a `LIST` node named `name` whose own attributes `group` sets and whose element
+    /// `element` declares. Shared by every `list` verb.
+    private static BuilderList buildList(String name, RepetitionType repetition, Consumer<GroupBuilder> group,
+                                         Consumer<ElementBuilder> element) {
+        Integer fieldId = groupFieldId(name, group);
+        ElementBuilder builder = new ElementBuilder("element");
         element.accept(builder);
-        return new BuilderList(name, repetition, builder.groupFieldId, builder.require(name));
+        return new BuilderList(name, repetition, fieldId, builder.require(name));
     }
 
     /// Builds a `MAP` node named `name` with a required `key` primitive of `keyType` and a
@@ -1039,12 +1123,14 @@ public class FileSchema {
     ///
     /// The key goes through [#leaf] like any other primitive, so its type length and annotation
     /// are validated where the map is declared.
-    private static BuilderMap buildMap(String name, RepetitionType repetition, PhysicalType keyType,
-                                       Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
-        ElementBuilder builder = new ElementBuilder("value", name);
+    private static BuilderMap buildMap(String name, RepetitionType repetition, Consumer<GroupBuilder> group,
+                                       PhysicalType keyType, Consumer<ColumnBuilder> key,
+                                       Consumer<ElementBuilder> value) {
+        Integer fieldId = groupFieldId(name, group);
+        ElementBuilder builder = new ElementBuilder("value");
         value.accept(builder);
         BuilderLeaf keyLeaf = leaf("key", keyType, RepetitionType.REQUIRED, key);
-        return new BuilderMap(name, repetition, builder.groupFieldId, keyLeaf, builder.require(name));
+        return new BuilderMap(name, repetition, fieldId, keyLeaf, builder.require(name));
     }
 
     private sealed interface BuilderNode {}

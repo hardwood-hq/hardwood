@@ -98,29 +98,24 @@ class FileSchemaFieldIdTest {
                         .fieldId(3)
                         .addColumn("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(4))
                         .addColumn("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(5)))
-                .list("tags", RepetitionType.OPTIONAL, element -> element
-                        .groupFieldId(6)
-                        .primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .list("tags", RepetitionType.OPTIONAL, group -> group.fieldId(6),
+                        element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string()).fieldId(7)))
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                .map("props", RepetitionType.OPTIONAL, group -> group.fieldId(8), PhysicalType.BYTE_ARRAY,
                         key -> key.logicalType(LogicalType.string()).fieldId(9),
-                        value -> value
-                                .groupFieldId(8)
-                                .primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(10)))
+                        value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(10)))
                 .build();
 
         assertThat(fieldIds(schema.toSchemaElements())).isEqualTo(FIXTURE_FIELD_IDS);
         assertThat(fieldIds(footerSchema(write(schema)))).isEqualTo(FIXTURE_FIELD_IDS);
     }
 
-    /// The field id of a nested group is set in the scope that declares the group's content.
+    /// The field id of a nested group is set in the scope of the group itself.
     @Test
     void builderDeclaresFieldIdsOfNestedGroups() {
         FileSchema schema = FileSchema.builder("schema")
-                .list("matrix", RepetitionType.OPTIONAL, outer -> outer
-                        .groupFieldId(1)
-                        .list(RepetitionType.OPTIONAL, inner -> inner
-                                .groupFieldId(2)
+                .list("matrix", RepetitionType.OPTIONAL, group -> group.fieldId(1), outer -> outer
+                        .list(RepetitionType.OPTIONAL, group -> group.fieldId(2), inner -> inner
                                 .struct(RepetitionType.OPTIONAL, cell -> cell
                                         .fieldId(3)
                                         .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
@@ -200,19 +195,20 @@ class FileSchemaFieldIdTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The field id of 's' is already set to 1");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .list("tags", RepetitionType.OPTIONAL, element -> element
-                        .groupFieldId(1)
-                        .groupFieldId(2)
-                        .primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
+                .list("tags", RepetitionType.OPTIONAL, group -> group.fieldId(1).fieldId(2),
+                        element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The field id of 'tags' is already set to 1");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32, value -> value
-                        .groupFieldId(1)
-                        .groupFieldId(2)
-                        .primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
+                .map("props", RepetitionType.OPTIONAL, group -> group.fieldId(1).fieldId(2), PhysicalType.INT32,
+                        key -> { },
+                        value -> value.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The field id of 'props' is already set to 1");
+        assertThatThrownBy(() -> FileSchema.builder("schema")
+                .file("photo", RepetitionType.OPTIONAL, group -> group.fieldId(1).fieldId(2)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The field id of 'photo' is already set to 1");
     }
 
     /// The nested `map` and `list` verbs of [FileSchema.StructBuilder] and
@@ -222,19 +218,15 @@ class FileSchemaFieldIdTest {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .fieldId(1)
-                        .map("m", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        .map("m", RepetitionType.OPTIONAL, group -> group.fieldId(2), PhysicalType.BYTE_ARRAY,
                                 key -> key.logicalType(LogicalType.string()).fieldId(3),
-                                value -> value
-                                        .groupFieldId(2)
-                                        .primitive(PhysicalType.INT32, RepetitionType.OPTIONAL,
-                                                col -> col.fieldId(4)))
-                        .list("l", RepetitionType.OPTIONAL, element -> element
-                                .groupFieldId(5)
-                                .map(RepetitionType.OPTIONAL, PhysicalType.INT64, key -> key.fieldId(7),
-                                        value -> value
-                                                .groupFieldId(6)
-                                                .primitive(PhysicalType.INT32, RepetitionType.OPTIONAL,
-                                                        col -> col.fieldId(8)))))
+                                value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL,
+                                        col -> col.fieldId(4)))
+                        .list("l", RepetitionType.OPTIONAL, group -> group.fieldId(5), element -> element
+                                .map(RepetitionType.OPTIONAL, group -> group.fieldId(6), PhysicalType.INT64,
+                                        key -> key.fieldId(7),
+                                        value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL,
+                                                col -> col.fieldId(8)))))
                 .build();
 
         // root, s, m, key_value, key, value, l, list, element (map), key_value, key, value
@@ -246,11 +238,11 @@ class FileSchemaFieldIdTest {
     @Test
     void builderDeclaresTheFieldIdOfAFileGroup() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .file("top", RepetitionType.OPTIONAL, 1)
+                .file("top", RepetitionType.OPTIONAL, group -> group.fieldId(1))
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .file("nested", RepetitionType.OPTIONAL, 2))
+                        .file("nested", RepetitionType.OPTIONAL, group -> group.fieldId(2)))
                 .list("files", RepetitionType.OPTIONAL, element -> element
-                        .file(RepetitionType.OPTIONAL, 3))
+                        .file(RepetitionType.OPTIONAL, group -> group.fieldId(3)))
                 .build();
 
         // root; top and its children; s, nested and its children; files, list, element and its children
