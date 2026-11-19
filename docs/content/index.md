@@ -62,13 +62,29 @@ The interactive `dive` TUI currently caps S3 files at 2 GB.
 
 ## Roadmap
 
-Forward-looking items tracked for post-1.0. None are committed to a specific release.
+1.1, in its release candidate phase:
 
-- **Finalize `ColumnReader` API** — stabilize the API for columnar access and move it out of "Experimental" state. ([#522](https://github.com/hardwood-hq/hardwood/issues/522))
-- **Writer support** — write Parquet files in addition to reading; today Hardwood is reader-only. ([#9](https://github.com/hardwood-hq/hardwood/issues/9))
-- **Bloom filter predicate pushdown** — use per-chunk bloom filters for equality-predicate skipping on high-cardinality columns, where min/max statistics can't help. ([#105](https://github.com/hardwood-hq/hardwood/issues/105))
-- **Parquet Modular Encryption** — read files encrypted under the Parquet [Modular Encryption spec](https://github.com/apache/parquet-format/blob/master/Encryption.md): encrypted footer, per-column keys, AES-GCM and AES-GCM-CTR. ([#128](https://github.com/hardwood-hq/hardwood/issues/128))
-- **Apache Arrow interop** — `ColumnReader` output as Arrow `FieldVector` / `VectorSchemaRoot` for zero-copy handoff to DuckDB, DataFusion, Pandas-via-JNI, and other Arrow-native consumers. ([#153](https://github.com/hardwood-hq/hardwood/issues/153))
+- **Write support**: `RowWriter` and `ColumnWriter` over nested structs, lists and maps, statistics, page indexes and Bloom filters, written to local files, memory or S3, with column chunks encoded in parallel. ([#9](https://github.com/hardwood-hq/hardwood/issues/9))
+- **Substantially improved read performance**: a rebuilt read engine that decodes every column on the context's pool, structs read without nested record assembly, and dictionary-encoded batches on `ColumnReader`.
+- **Remote reads with fewer requests**: a file's footer and page index fetched with the request that opens it, later files of a multi-file read opened ahead, and parsed footers reused across readers through a `MetadataSource`.
+- **More predicate pushdown**: row groups skipped by Bloom filters and dictionary pages, predicates on dictionary-encoded columns evaluated once per dictionary entry, and null tests on struct, `LIST` and `MAP` groups.
+- **A reworked exception model**: a corrupt file raises `ParquetReadException`, and a read failure names the file and, where it has them, the row group and column it occurred in.
+- **Hardened reads of untrusted files**: a size, count or length a file's bytes cannot back fails the read before anything is allocated from it. ([#610](https://github.com/hardwood-hq/hardwood/issues/610))
+- **New format features**: the `ALP` encoding, read and written, `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, and the `FILE` logical type.
+
+Planned for 1.2:
+
+- **Parquet Modular Encryption**: read files encrypted under the [Modular Encryption spec](https://github.com/apache/parquet-format/blob/master/Encryption.md). ([#128](https://github.com/hardwood-hq/hardwood/issues/128))
+- **Bounded read memory**: a heap quota per `HardwoodContext`, shared by the reads using it. ([#1859](https://github.com/hardwood-hq/hardwood/issues/1859))
+- **Copying and rewriting files**: copy a file through the column and row APIs without a hand-written bridge, and rewrite or merge files by copying unchanged row groups. ([#1291](https://github.com/hardwood-hq/hardwood/issues/1291))
+- **Complete Variant support**: writing Variant columns, and predicate pushdown and projection on shredded Variant paths. ([#1488](https://github.com/hardwood-hq/hardwood/issues/1488))
+- **Stable `ColumnReader` API**: move columnar access out of `@Experimental`. ([#522](https://github.com/hardwood-hq/hardwood/issues/522))
+
+Planned for a later release:
+
+- **Apache Arrow interop**: `ColumnReader` output as Arrow `FieldVector` / `VectorSchemaRoot`. ([#153](https://github.com/hardwood-hq/hardwood/issues/153))
+
+See the [GitHub milestones](https://github.com/hardwood-hq/hardwood/milestones) for the issues of past and upcoming releases, and [Format Support](reference/format-support.md) for the parts of the Parquet format Hardwood 1.0 reads.
 
 ## Getting help
 
