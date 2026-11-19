@@ -587,7 +587,7 @@ public class FileSchema {
     /// and `MAP` groups emit the canonical 3-level and 2-level physical layouts.
     ///
     /// The name, physical type and repetition of a primitive leaf are positional. Its optional
-    /// attributes (logical type, type length, field id) are set in a [ColumnBuilder] lambda:
+    /// attributes (logical type, type length, field id) are set in a [PrimitiveBuilder] lambda:
     ///
     /// ```java
     /// FileSchema schema = FileSchema.builder("schema")
@@ -622,7 +622,7 @@ public class FileSchema {
 
         /// Append a primitive column whose optional attributes are set by `column`.
         ///
-        /// A `FIXED_LEN_BYTE_ARRAY` column without a [ColumnBuilder#typeLength] takes the length
+        /// A `FIXED_LEN_BYTE_ARRAY` column without a [PrimitiveBuilder#typeLength] takes the length
         /// its annotation implies: 16 bytes for `UUID`, 12 for `INTERVAL`, 2 for `FLOAT16`, and
         /// for `DECIMAL` the fewest bytes that hold its precision.
         ///
@@ -634,7 +634,7 @@ public class FileSchema {
         ///         not match the type, the annotation does not apply to the type, or `type` is
         ///         `FIXED_LEN_BYTE_ARRAY` with no type length and no annotation that implies one
         public Builder primitive(String columnName, PhysicalType type, RepetitionType repetition,
-                                 Consumer<ColumnBuilder> column) {
+                                 Consumer<PrimitiveBuilder> column) {
             content.primitive(columnName, type, repetition, column);
             return this;
         }
@@ -728,7 +728,7 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
         ///         or the key's attributes do not match `keyType`
         public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType,
-                           Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+                           Consumer<PrimitiveBuilder> key, Consumer<ElementBuilder> value) {
             content.map(mapName, repetition, keyType, key, value);
             return this;
         }
@@ -746,7 +746,7 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
         ///         or the key's attributes do not match `keyType`
         public Builder map(String mapName, RepetitionType repetition, Consumer<GroupBuilder> group,
-                           PhysicalType keyType, Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+                           PhysicalType keyType, Consumer<PrimitiveBuilder> key, Consumer<ElementBuilder> value) {
             content.map(mapName, repetition, group, keyType, key, value);
             return this;
         }
@@ -769,7 +769,7 @@ public class FileSchema {
 
     /// Sets the optional attributes of a primitive leaf: a column, a list element, a map key or
     /// a map value. Each attribute can be set one time.
-    public static final class ColumnBuilder {
+    public static final class PrimitiveBuilder {
 
         private final String columnName;
         private Integer typeLength;
@@ -777,7 +777,7 @@ public class FileSchema {
         private boolean logicalTypeSet;
         private Integer fieldId;
 
-        private ColumnBuilder(String columnName) {
+        private PrimitiveBuilder(String columnName) {
             this.columnName = columnName;
         }
 
@@ -785,7 +785,7 @@ public class FileSchema {
         /// `null` annotation leaves the leaf unannotated, and counts as set.
         ///
         /// @throws IllegalArgumentException if the logical type is already set
-        public ColumnBuilder logicalType(LogicalType logicalType) {
+        public PrimitiveBuilder logicalType(LogicalType logicalType) {
             if (logicalTypeSet) {
                 throw alreadySet("logical type", columnName, this.logicalType);
             }
@@ -800,7 +800,7 @@ public class FileSchema {
         /// @throws IllegalArgumentException if the type length is already set. The leaf
         ///         declaration rejects a length that is not positive, or a length on a leaf
         ///         that is not `FIXED_LEN_BYTE_ARRAY`.
-        public ColumnBuilder typeLength(int typeLength) {
+        public PrimitiveBuilder typeLength(int typeLength) {
             requireUnset(this.typeLength, "type length", columnName);
             this.typeLength = typeLength;
             return this;
@@ -809,7 +809,7 @@ public class FileSchema {
         /// Set the field id (`field_id` in `parquet.thrift`).
         ///
         /// @throws IllegalArgumentException if the field id is already set
-        public ColumnBuilder fieldId(int fieldId) {
+        public PrimitiveBuilder fieldId(int fieldId) {
             requireUnset(this.fieldId, "field id", columnName);
             this.fieldId = fieldId;
             return this;
@@ -873,7 +873,7 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or the attributes do
         ///         not match the type
         public StructBuilder primitive(String columnName, PhysicalType type, RepetitionType repetition,
-                                       Consumer<ColumnBuilder> column) {
+                                       Consumer<PrimitiveBuilder> column) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
                         "Repeated columns are not yet supported by the writer: " + columnName);
@@ -955,7 +955,7 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
         ///         or the key's attributes do not match `keyType`
         public StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
-                                 Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+                                 Consumer<PrimitiveBuilder> key, Consumer<ElementBuilder> value) {
             return map(mapName, repetition, NO_GROUP_ATTRIBUTES, keyType, key, value);
         }
 
@@ -966,7 +966,7 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
         ///         or the key's attributes do not match `keyType`
         public StructBuilder map(String mapName, RepetitionType repetition, Consumer<GroupBuilder> group,
-                                 PhysicalType keyType, Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+                                 PhysicalType keyType, Consumer<PrimitiveBuilder> key, Consumer<ElementBuilder> value) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
                         "Repeated groups are not yet supported by the writer: " + mapName);
@@ -980,7 +980,7 @@ public class FileSchema {
     /// `struct`, a nested `LIST`, or a nested `MAP`. The declared node is named `element`
     /// inside a list and `value` inside a map.
     ///
-    /// The field id of the element or value is set where it is declared: in the [ColumnBuilder]
+    /// The field id of the element or value is set where it is declared: in the [PrimitiveBuilder]
     /// of a primitive, with [StructBuilder#fieldId(int)] for a `struct`, and in the
     /// [GroupBuilder] of a `FILE`, `LIST` or `MAP`. The field id of the enclosing `LIST` or `MAP`
     /// is set in its own [GroupBuilder].
@@ -1004,7 +1004,7 @@ public class FileSchema {
         /// [Builder#primitive(String, PhysicalType, RepetitionType, Consumer)] describes.
         ///
         /// @throws IllegalArgumentException if the attributes do not match the type
-        public void primitive(PhysicalType type, RepetitionType repetition, Consumer<ColumnBuilder> column) {
+        public void primitive(PhysicalType type, RepetitionType repetition, Consumer<PrimitiveBuilder> column) {
             set(leaf(childName, type, repetition, column));
         }
 
@@ -1054,7 +1054,7 @@ public class FileSchema {
         ///
         /// @throws IllegalArgumentException if no value is declared, or the key's attributes do
         ///         not match `keyType`
-        public void map(RepetitionType repetition, PhysicalType keyType, Consumer<ColumnBuilder> key,
+        public void map(RepetitionType repetition, PhysicalType keyType, Consumer<PrimitiveBuilder> key,
                         Consumer<ElementBuilder> value) {
             map(repetition, NO_GROUP_ATTRIBUTES, keyType, key, value);
         }
@@ -1066,7 +1066,7 @@ public class FileSchema {
         /// @throws IllegalArgumentException if no value is declared, or the key's attributes do
         ///         not match `keyType`
         public void map(RepetitionType repetition, Consumer<GroupBuilder> group, PhysicalType keyType,
-                        Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+                        Consumer<PrimitiveBuilder> key, Consumer<ElementBuilder> value) {
             set(buildMap(childName, repetition, group, keyType, key, value));
         }
 
@@ -1085,7 +1085,7 @@ public class FileSchema {
         }
     }
 
-    private static final Consumer<ColumnBuilder> NO_ATTRIBUTES = column -> {
+    private static final Consumer<PrimitiveBuilder> NO_ATTRIBUTES = column -> {
     };
 
     private static final Consumer<GroupBuilder> NO_GROUP_ATTRIBUTES = group -> {
@@ -1125,7 +1125,7 @@ public class FileSchema {
     /// The key goes through [#leaf] like any other primitive, so its type length and annotation
     /// are validated where the map is declared.
     private static BuilderMap buildMap(String name, RepetitionType repetition, Consumer<GroupBuilder> group,
-                                       PhysicalType keyType, Consumer<ColumnBuilder> key,
+                                       PhysicalType keyType, Consumer<PrimitiveBuilder> key,
                                        Consumer<ElementBuilder> value) {
         Integer fieldId = groupFieldId(name, group);
         ElementBuilder builder = new ElementBuilder("value");
@@ -1141,8 +1141,8 @@ public class FileSchema {
 
     /// Builds a primitive leaf from the attributes `attributes` sets.
     private static BuilderLeaf leaf(String name, PhysicalType type, RepetitionType repetition,
-                                    Consumer<ColumnBuilder> attributes) {
-        ColumnBuilder column = new ColumnBuilder(name);
+                                    Consumer<PrimitiveBuilder> attributes) {
+        PrimitiveBuilder column = new PrimitiveBuilder(name);
         attributes.accept(column);
         return leaf(name, type, repetition, column.typeLength, column.logicalType, column.fieldId);
     }
