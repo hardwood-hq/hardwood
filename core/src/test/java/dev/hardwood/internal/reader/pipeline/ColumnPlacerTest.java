@@ -276,6 +276,62 @@ class ColumnPlacerTest {
         assertThat(sink.cells.get(1).fileName).isEqualTo(FILE_B);
     }
 
+    /// A row group the column is not read in closes the batch the column left open before it,
+    /// where the plan closes it there, and the column's next cell opens past its rows.
+    @Test
+    void aRowGroupTheColumnIsNotReadInClosesTheOpenBatch() {
+        BatchPlan plan = new BatchPlan(4, false, true, 0);
+        BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, false, 3);
+        BatchPlan.RowGroupBatches proven = plan.plan(1, 0, FILE_A, true, 3);
+        BatchPlan.RowGroupBatches last = plan.plan(2, 0, FILE_A, false, 2);
+        RecordingSink sink = new RecordingSink();
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
+
+        placer.place(flatPage(first, 3));
+        assertThat(sink.sealed).isEmpty();
+
+        assertThat(placer.pass(proven, 1)).isTrue();
+        assertThat(sink.sealed).containsExactly("cell 0: 3 records, 3 values");
+        assertThat(placer.nextRow()).isEqualTo(6);
+
+        placer.place(flatPage(last, 2));
+        placer.end();
+        assertThat(sink.opened).containsExactly("cell 0: planned unknown, from row 0", "cell 1: planned unknown, from row 6");
+        assertThat(sink.sealed).containsExactly("cell 0: 3 records, 3 values", "cell 1: 2 records, 2 values");
+    }
+
+    @Test
+    void theRowCapEndsTheReadInARowGroupTheColumnIsNotReadIn() {
+        BatchPlan plan = new BatchPlan(4, false, true, 5);
+        BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, true, 3);
+        BatchPlan.RowGroupBatches second = plan.plan(1, 0, FILE_A, true, 3);
+        RecordingSink sink = new RecordingSink();
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(sink, 4, "c");
+
+        assertThat(placer.pass(first, 0)).isTrue();
+        assertThat(placer.pass(second, 1)).isFalse();
+
+        assertThat(placer.stopped()).isTrue();
+        assertThat(sink.opened).isEmpty();
+    }
+
+    /// A column short of the plan in the row group before one it is not read in fails as that row
+    /// group is passed, and its next row is where it falls short.
+    @Test
+    void aColumnShortOfThePlanBeforeARowGroupItIsNotReadInFails() {
+        BatchPlan plan = new BatchPlan(4, false, true, 0);
+        BatchPlan.RowGroupBatches first = plan.plan(0, 0, FILE_A, false, 6);
+        BatchPlan.RowGroupBatches proven = plan.plan(1, 0, FILE_A, true, 3);
+        ColumnPlacer<TestCell> placer = new ColumnPlacer<>(new RecordingSink(), 4, "c");
+        placer.place(flatPage(first, 4));
+
+        assertThatThrownBy(() -> placer.pass(proven, 1))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[a.parquet: row group 0, column 'c', page 0] Invalid column chunk: the column holds 4 of the 6 rows "
+                        + "the read takes from its row group");
+        assertThat(placer.nextRow()).isEqualTo(4);
+    }
+
     @Test
     void aColumnHoldingMoreRowsThanPlannedFails() {
         BatchPlan plan = new BatchPlan(4, false, false, 0);

@@ -29,6 +29,10 @@ import dev.hardwood.reader.ParquetReadException;
 /// and so does a page beginning inside a record the previous page's row mask drops or that begins
 /// on a page the read skips.
 ///
+/// A row group the column is not read in is passed in its place in page order ([#pass]): the batch
+/// the column reads before it closes there where the plan closes it, as it would at the column's
+/// first page of the row group, rather than at the next row group the column reads.
+///
 /// Records past the row cap are not placed: once the cell the cap ends is sealed, the placer
 /// stops and reports the end of the read.
 ///
@@ -134,6 +138,32 @@ public final class ColumnPlacer<C> {
         }
         rowGroup = page.rowGroup;
         this.page = page.pageIndex;
+        return true;
+    }
+
+    /// Passes a row group the column is not read in, at its place in the column's page order: ends
+    /// the row group before it and seals a batch the plan closes before it, as entering it would,
+    /// and counts every record the plan takes from it as placed. Ends the read where the row cap
+    /// ends it in the row group.
+    ///
+    /// @param rowGroup the row group of the column chunk the column is not read in, for failures
+    /// @return whether the column goes on
+    public boolean pass(BatchPlan.RowGroupBatches batches, int rowGroup) {
+        if (stopped) {
+            return false;
+        }
+        if (!enterRowGroup(batches)) {
+            return false;
+        }
+        this.rowGroup = rowGroup;
+        this.page = ExceptionContext.UNKNOWN_PAGE;
+        segment = Math.max(0, batches.segmentCount() - 1);
+        segmentRowsLeft = 0;
+        rowsPlaced = batches.plannedRows();
+        if (batches.endsRead()) {
+            endRead();
+            return false;
+        }
         return true;
     }
 
