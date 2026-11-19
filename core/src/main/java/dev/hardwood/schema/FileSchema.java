@@ -734,10 +734,11 @@ public class FileSchema {
 
         /// Build the schema.
         ///
-        /// @throws IllegalArgumentException if no fields were added
+        /// @throws UnsupportedOperationException if no fields were added; the writer does not
+        ///         produce a schema with no columns
         public FileSchema build() {
             if (content.children.isEmpty()) {
-                throw new IllegalArgumentException("Schema must have at least one column");
+                throw new UnsupportedOperationException("Schema must have at least one column");
             }
             List<SchemaElement> elements = new ArrayList<>();
             elements.add(SchemaElement.group(name, RepetitionType.REQUIRED, content.children.size()));

@@ -21,6 +21,10 @@ import dev.hardwood.schema.SchemaNode;
 /// the public API once this has run; [RowPlan]'s remaining guards are reached, and are about
 /// addressing rather than producing — see below.
 ///
+/// A shape the format allows and the writer does not produce raises
+/// `UnsupportedOperationException`; a shape the format does not allow at all raises
+/// `IllegalArgumentException`, since no writer could produce it.
+///
 /// **A schema declares at least one column.** A schema with no leaf has no column chunk to
 /// write: the file would be a header and a footer with nothing in between, and the per-column
 /// decisions below — the encodings, the share of the buffer each chunk gets — would be made for
@@ -81,11 +85,12 @@ public final class WriterSchemaShape {
     /// Rejects a schema the writer cannot produce.
     ///
     /// @param schema the schema to write
-    /// @throws IllegalArgumentException if the schema declares no columns
-    /// @throws UnsupportedOperationException if the schema has a shape the writer cannot produce
+    /// @throws UnsupportedOperationException if the schema declares no columns, or has a shape the
+    ///         format allows and the writer cannot produce
+    /// @throws IllegalArgumentException if the schema has a shape the format does not allow
     public static void validate(FileSchema schema) {
         if (schema.getColumnCount() == 0) {
-            throw new IllegalArgumentException("Schema " + schema.getName()
+            throw new UnsupportedOperationException("Schema " + schema.getName()
                     + " has no columns; the writer requires at least one column");
         }
         for (ColumnSchema column : schema.getColumns()) {
@@ -149,8 +154,10 @@ public final class WriterSchemaShape {
     /// @param path the group's dotted path
     /// @param parentIsAnnotatedGroup whether the group's parent is a `LIST` or `MAP` group, which
     ///        makes this group that annotation's entry scaffolding
-    /// @throws UnsupportedOperationException if the group is `REPEATED` outside a `LIST` or `MAP`,
-    ///         or is a `LIST` or `MAP` whose own repetition or entry the annotation cannot account for
+    /// @throws UnsupportedOperationException if the group is `REPEATED` outside a `LIST` or `MAP`
+    /// @throws IllegalArgumentException if the group is a `LIST` or `MAP` whose own repetition or
+    ///         entry the annotation cannot account for, a `MAP` without a `REQUIRED` key, or a
+    ///         `FILE` group with no children
     public static void requireWritableGroup(SchemaNode.GroupNode group, String path,
                                             boolean parentIsAnnotatedGroup) {
         if (group.isList() || group.isMap()) {
@@ -164,7 +171,7 @@ public final class WriterSchemaShape {
         // Without a child there is no column to carry the group's nulls, so every instance reads
         // back present, and a present FILE value with no field set is invalid.
         if (group.isFile() && group.children().isEmpty()) {
-            throw new UnsupportedOperationException("Group " + path + " is annotated FILE but has no children;"
+            throw new IllegalArgumentException("Group " + path + " is annotated FILE but has no children;"
                     + " none of its values could be read back as written");
         }
     }
@@ -176,22 +183,22 @@ public final class WriterSchemaShape {
     private static void requireWritableAnnotation(SchemaNode.GroupNode group, String path) {
         String annotation = group.isMap() ? "MAP" : "LIST";
         if (group.repetitionType() == RepetitionType.REPEATED) {
-            throw new UnsupportedOperationException("Group " + path + " is annotated " + annotation
+            throw new IllegalArgumentException("Group " + path + " is annotated " + annotation
                     + " and is itself REPEATED; the annotation accounts for the repetition of its entry only, so"
                     + " nothing supplies the group's own entry offsets");
         }
         if (group.children().size() != 1) {
-            throw new UnsupportedOperationException("Group " + path + " is annotated " + annotation + " but holds "
+            throw new IllegalArgumentException("Group " + path + " is annotated " + annotation + " but holds "
                     + group.children().size() + " fields where the layout requires exactly one, its REPEATED entry");
         }
         SchemaNode entry = group.children().get(0);
         if (entry.repetitionType() != RepetitionType.REPEATED) {
-            throw new UnsupportedOperationException("Group " + path + " is annotated " + annotation + " but its entry "
+            throw new IllegalArgumentException("Group " + path + " is annotated " + annotation + " but its entry "
                     + entry.name() + " is " + entry.repetitionType() + " rather than REPEATED; the annotation then"
                     + " carries no repetition and the group's entry offsets have nowhere to go");
         }
         if (group.isMap() && !(entry instanceof SchemaNode.GroupNode)) {
-            throw new UnsupportedOperationException("Group " + path + " is annotated MAP but its entry "
+            throw new IllegalArgumentException("Group " + path + " is annotated MAP but its entry "
                     + entry.name() + " is a leaf where the layout requires a repeated group of key and value");
         }
         if (group.isMap()) {
@@ -206,11 +213,11 @@ public final class WriterSchemaShape {
     private static void requireRequiredMapKey(SchemaNode.GroupNode map, String entryPath) {
         SchemaNode key = map.getMapKey();
         if (key == null) {
-            throw new UnsupportedOperationException("MAP entry " + entryPath
+            throw new IllegalArgumentException("MAP entry " + entryPath
                     + " has no fields; a map key must always be present");
         }
         if (key.repetitionType() != RepetitionType.REQUIRED) {
-            throw new UnsupportedOperationException("MAP key " + childPath(entryPath, key.name())
+            throw new IllegalArgumentException("MAP key " + childPath(entryPath, key.name())
                     + " is " + key.repetitionType() + " rather than REQUIRED; a map key must always be present");
         }
     }

@@ -28,8 +28,8 @@ whether to fix their code or stop trusting the file.
 | `ParquetReadException` | they arrived and are not valid Parquet | no |
 | `SchemaIncompatibleException` | a `ParquetReadException`: a schema that does not fit the read, across files or within one footer | no |
 | `ParquetWriteException` | the writer could not produce the file, and neither the caller nor the destination is at fault | no |
-| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it | no |
-| `IllegalArgumentException`, `NullPointerException`, `IndexOutOfBoundsException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held, or the writer was handed input it does not accept | no |
+| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it, or the writer was handed input the format allows and Hardwood does not write | no |
+| `IllegalArgumentException`, `NullPointerException`, `IndexOutOfBoundsException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held, or the writer was handed input it does not accept, such as a schema or value the format does not allow | no |
 | `VariantTypeException` | unchecked: a Variant `as*` accessor called on a value of another type tag | no |
 
 The caller's side is stated except for one case: asking an accessor for a type the column

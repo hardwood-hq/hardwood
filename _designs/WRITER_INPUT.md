@@ -36,7 +36,7 @@ Because the scaffolding is named canonically (`list` / `element`, `key_value` / 
 
 ### Producible shapes
 
-A schema the caller did not build, one read from an existing file through `FileSchema.fromSchemaElements`, may carry shapes the builder never emits. `ParquetFileWriter.create` settles producibility once, through `WriterSchemaShape`, before the destination is opened and before either write view exists, so an unproducible schema is one rejection at one moment with one wording, and never leaves a file at the destination.
+A schema the caller did not build, one read from an existing file through `FileSchema.fromSchemaElements`, may carry shapes the builder never emits. `ParquetFileWriter.create` settles producibility once, through `WriterSchemaShape`, before the destination is opened and before either write view exists, so an unproducible schema is one rejection at one moment with one wording, and never leaves a file at the destination. A shape the format allows and Hardwood does not write (no columns, `INT96`, an unannotated `repeated` field) raises `UnsupportedOperationException`; a shape the format does not allow (a `MAP` key that is not `REQUIRED`, a `FILE` group with no children, an annotated group whose repetition the annotation does not account for) raises `IllegalArgumentException`.
 
 - **At least one column.** A schema with no leaf has no column chunk to write. Hardwood reads such a file (as a relation of no rows) and declines to produce one.
 - **No `INT96`.** The type is deprecated and is not written.
@@ -44,10 +44,10 @@ A schema the caller did not build, one read from an existing file through `FileS
 - **A `FILE` group has a child.** One with none has no column to carry its definition levels, so a null instance cannot be stored and a present one has no field set, which is invalid ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#file-references)).
 - **Repetition is producible exactly where a `LIST` or `MAP` annotation accounts for it.** The annotated group is what gives the shredder a repetition layer and `ColumnBatch` a path to address its entry offsets under. An annotated group is `REQUIRED` or `OPTIONAL` and holds exactly one `REPEATED` field, which for a `MAP` is a group of `key` and `value`. Both legacy two-level lists satisfy that and are written: `LIST { repeated element }`, whose entry is the element, and `LIST { repeated group element { … } }`, whose entry is an element struct.
 
-Everything else repeated is refused with `UnsupportedOperationException`:
+Everything else repeated is refused:
 
-- a `repeated` leaf or group with no annotated parent, because nothing could supply its entry offsets and shredding it would emit one entry per record, every value its own one-element list;
-- an annotated group that repeats on its own behalf, holds more than its entry, holds an entry that does not repeat, or (for a `MAP`) holds a leaf entry, because the shredder derives one layer from the annotation while the schema declares a different number of repetition levels, and the file's levels and schema then disagree.
+- a `repeated` leaf or group with no annotated parent, with `UnsupportedOperationException`, because nothing could supply its entry offsets and shredding it would emit one entry per record, every value its own one-element list;
+- an annotated group that repeats on its own behalf, holds more than its entry, holds an entry that does not repeat, or (for a `MAP`) holds a leaf entry, with `IllegalArgumentException`, because the format does not allow these shapes: the shredder derives one layer from the annotation while the schema declares a different number of repetition levels, and the file's levels and schema would disagree.
 
 A nullable struct enclosing a `LIST` or `MAP` is producible and is not a schema rule. What that shape adds is a rule about the batch, enforced where the masks that decide it exist (see [Batch validation](#batch-validation)). Rules about *addressing* a shape rather than producing it belong to the row layer alone (see [One API per file, and row-layer shapes](#one-api-per-file-and-row-layer-shapes)).
 
