@@ -143,14 +143,12 @@ class WriterFooterMetadataInteropTest {
                         .fieldId(2)
                         .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()).fieldId(3)))
-                .list("tags", RepetitionType.OPTIONAL, element -> element
-                        .groupFieldId(4)
-                        .primitive(PhysicalType.INT32, RepetitionType.OPTIONAL, col -> col.fieldId(5)))
-                .map("attributes", RepetitionType.OPTIONAL, PhysicalType.INT32, key -> key.fieldId(7),
-                        value -> value
-                                .groupFieldId(6)
-                                .primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(8)))
-                .file("document", RepetitionType.OPTIONAL, 9)
+                .list("tags", RepetitionType.OPTIONAL, group -> group.fieldId(4),
+                        element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL, col -> col.fieldId(5)))
+                .map("attributes", RepetitionType.OPTIONAL, group -> group.fieldId(6), PhysicalType.INT32,
+                        key -> key.fieldId(7),
+                        value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, col -> col.fieldId(8)))
+                .file("document", RepetitionType.OPTIONAL, group -> group.fieldId(9))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
             writer.rowWriter().writeRow(row -> row.setLong("id", 1L));
