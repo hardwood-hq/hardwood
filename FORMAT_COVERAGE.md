@@ -39,6 +39,20 @@ reader.
 | 8 | encryption_algorithm | ❌ | encrypted footers fail fast (#600); full support #128 |
 | 9 | footer_signing_key_metadata | ❌ | #128 |
 
+### SchemaElement
+| id | field | status | notes |
+|----|-------|--------|-------|
+| 1 | type | ✅ | |
+| 2 | type_length | ✅ | |
+| 3 | repetition_type | ✅ | |
+| 4 | name | ✅ | |
+| 5 | num_children | ✅ | |
+| 6 | converted_type | ✅ | |
+| 7 | scale | ✅ | legacy `DECIMAL` |
+| 8 | precision | ✅ | legacy `DECIMAL` |
+| 9 | field_id | ✅ | exposed on `SchemaNode` and `ColumnSchema`, kept across a read-then-rewrite; #957 |
+| 10 | logicalType | ✅ | |
+
 ### FileCryptoMetaData · EncryptionAlgorithm (AesGcmV1, AesGcmCtrV1) · ColumnCryptoMetaData (EncryptionWithFooterKey, EncryptionWithColumnKey)
 All fields ❌ — Parquet Modular Encryption is unsupported; encrypted files fail
 fast. Tracked by **#128** (support), #600 (graceful failure).
