@@ -166,7 +166,7 @@ public class DictionaryPageParseBenchmark {
 
     private static void write(Path path, int dictionaryValues) throws IOException {
         FileSchema schema = FileSchema.builder("dict_page_parse")
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         // Uncompressed so the body the checksum covers is the dictionary itself, not whatever a
         // codec squeezed it down to.

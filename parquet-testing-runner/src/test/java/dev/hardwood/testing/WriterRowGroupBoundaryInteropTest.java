@@ -44,10 +44,10 @@ class WriterRowGroupBoundaryInteropTest {
     }
 
     private static final FileSchema SCHEMA = FileSchema.builder("schema")
-            .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-            .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+            .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+            .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                     col -> col.logicalType(LogicalType.string()))
-            .addColumn("temp", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+            .primitive("temp", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
             .build();
 
     @ParameterizedTest

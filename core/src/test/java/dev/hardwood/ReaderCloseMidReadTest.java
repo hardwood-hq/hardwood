@@ -175,7 +175,7 @@ class ReaderCloseMidReadTest {
     private static byte[] writeSyntheticFile() throws Exception {
         FileSchema.Builder schema = FileSchema.builder("close_scaling");
         for (String name : columnNames()) {
-            schema.addColumn(name, PhysicalType.INT64, RepetitionType.REQUIRED);
+            schema.primitive(name, PhysicalType.INT64, RepetitionType.REQUIRED);
         }
 
         long[] values = new long[ROWS];
@@ -198,7 +198,7 @@ class ReaderCloseMidReadTest {
     private static byte[] writeSyntheticBinaryFile() throws Exception {
         FileSchema.Builder schema = FileSchema.builder("close_scaling_binary");
         for (String name : columnNames()) {
-            schema.addColumn(name, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
+            schema.primitive(name, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
         }
 
         byte[][] values = new byte[ROWS][];
@@ -222,7 +222,7 @@ class ReaderCloseMidReadTest {
         FileSchema schema = FileSchema.builder("close_scaling_struct")
                 .struct(STRUCT, RepetitionType.REQUIRED, struct -> {
                     for (String name : columnNames()) {
-                        struct.addColumn(name, PhysicalType.INT64, RepetitionType.REQUIRED);
+                        struct.primitive(name, PhysicalType.INT64, RepetitionType.REQUIRED);
                     }
                 })
                 .build();

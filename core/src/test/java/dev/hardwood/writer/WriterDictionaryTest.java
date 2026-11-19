@@ -134,7 +134,7 @@ class WriterDictionaryTest {
         // A BOOLEAN column is never dictionary-encoded and still knows its cardinality: at most
         // false and true can occur.
         FileSchema booleans = FileSchema.builder("m")
-                .addColumn("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED).build();
+                .primitive("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED).build();
         boolean[] both = new boolean[n];
         boolean[] onlyFalse = new boolean[n];
         for (int i = 0; i < n; i++) {
@@ -378,7 +378,7 @@ class WriterDictionaryTest {
         // with a STRUCT layer.
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.OPTIONAL, sb -> sb
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                        .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
         // structs: {v:7}, null struct, {v:null}, {v:7}, {v:3} — the null-struct slot is a phantom.

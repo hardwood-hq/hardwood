@@ -60,8 +60,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
 
         Path file = dir.resolve("written.parquet");
@@ -103,7 +103,7 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("multipage.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -133,8 +133,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
 
         Path file = dir.resolve("nullable.parquet");
@@ -171,8 +171,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
 
         Path file = dir.resolve("allnull.parquet");
@@ -197,10 +197,10 @@ class WriterDifferentialTest {
         // DuckDB resolves address.street / address.zip and must see the field absent wherever
         // the struct is null, and zip absent where zip itself is null.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("street", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                        .primitive("street", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
         int[] r = { 0, 1, 2, 3 };
@@ -243,7 +243,7 @@ class WriterDifferentialTest {
         // required int32 r; optional list<optional int32> phones. Absent list, empty list,
         // and a null element must all survive to DuckDB distinctly.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .list("phones", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
@@ -298,8 +298,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
 
         Path file = dir.resolve("dict.parquet");
@@ -337,8 +337,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
 
         Path file = dir.resolve("recovered.parquet");
@@ -375,7 +375,7 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.defaults();
         Path file = dir.resolve("fallback.parquet");
@@ -405,7 +405,7 @@ class WriterDifferentialTest {
         // A dictionary-encoded LIST<INT32> element column: the index section behind the rep/def
         // levels must resolve through the dictionary for DuckDB to reassemble the lists.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .list("v", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
@@ -450,7 +450,7 @@ class WriterDifferentialTest {
         // required int32 r; optional map<int32, optional int32> props. An absent map, an
         // empty map, and a null value must all survive to DuckDB distinctly.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
                         v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
@@ -497,7 +497,7 @@ class WriterDifferentialTest {
     @Test
     void duckDbReadsWrittenMapWithAnAnnotatedKey(@TempDir Path dir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
                         key -> key.logicalType(LogicalType.string()),
                         v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
@@ -555,8 +555,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("v", encoding)
@@ -604,10 +604,10 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("i32", ColumnEncoding.BYTE_STREAM_SPLIT)
@@ -662,8 +662,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
         WriterConfig config = WriterConfig.builder()
@@ -729,9 +729,9 @@ class WriterDifferentialTest {
             }
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
-                .addColumn("e", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("e", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.PLAIN)
@@ -784,8 +784,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("compressed.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
@@ -819,7 +819,7 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         // A tiny row-group target forces the single batch to be split across many row
         // groups; DuckDB must read across all of them transparently.
@@ -850,7 +850,7 @@ class WriterDifferentialTest {
         int[] v = { 42, -100_000, 7, Integer.MAX_VALUE, Integer.MIN_VALUE, 0 };
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("meta.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -925,7 +925,7 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(4096).build();
         Path file = dir.resolve("stats.parquet");
@@ -960,8 +960,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("longs.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -994,8 +994,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("doubles.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -1034,8 +1034,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.FLOAT, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("floats.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -1074,8 +1074,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("booleans.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -1110,8 +1110,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         Path file = dir.resolve("byte_arrays.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -1143,8 +1143,8 @@ class WriterDifferentialTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
                 .build();
         Path file = dir.resolve("fixed.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
@@ -1183,15 +1183,15 @@ class WriterDifferentialTest {
                 HexFormat.of().parseHex("ffffffffffffffffffffffffffffffff") };
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("d", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
-                .addColumn("ts", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("d", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
+                .primitive("ts", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(false, TimeUnit.MICROS)))
-                .addColumn("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(18, 4)))
-                .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(16).logicalType(LogicalType.uuid()))
                 .build();
 

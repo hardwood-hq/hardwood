@@ -161,7 +161,7 @@ class WriterDictionaryDecisionAuditTest {
                                      List<String> findings, List<String> losing) throws IOException {
         FileSchema.Builder schema = FileSchema.builder("m");
         for (int c = 0; c < names.length; c++) {
-            schema.addColumn("c" + c, types[c], RepetitionType.REQUIRED);
+            schema.primitive("c" + c, types[c], RepetitionType.REQUIRED);
         }
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema.build(), WriterConfig.builder()
@@ -251,9 +251,9 @@ class WriterDictionaryDecisionAuditTest {
         }
         RepetitionType repetition = shape == Shape.OPTIONAL ? RepetitionType.OPTIONAL : RepetitionType.REQUIRED;
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            return schema.addColumn("v", type, repetition, col -> col.typeLength(Long.BYTES)).build();
+            return schema.primitive("v", type, repetition, col -> col.typeLength(Long.BYTES)).build();
         }
-        return schema.addColumn("v", type, repetition).build();
+        return schema.primitive("v", type, repetition).build();
     }
 
     /// The keys as records: one each, one or none (a fifth null), or a list of up to three.

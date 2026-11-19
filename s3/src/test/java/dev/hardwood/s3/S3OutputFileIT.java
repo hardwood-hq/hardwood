@@ -38,7 +38,7 @@ class S3OutputFileIT {
 
     private static final int PART_SIZE = 5 * 1024 * 1024;
     private static final FileSchema SCHEMA = FileSchema.builder("events")
-            .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+            .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
             .build();
     /// Uncompressed `PLAIN` in row groups of 500,000 rows (4 MB), so that 2,000,000 rows span
     /// several parts and the first part is uploaded before the file is closed.

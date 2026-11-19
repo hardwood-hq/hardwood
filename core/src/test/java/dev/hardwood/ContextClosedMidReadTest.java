@@ -84,8 +84,8 @@ class ContextClosedMidReadTest {
     /// Two required `INT64` columns of `ROWS` rows.
     private static byte[] longsFile() throws Exception {
         FileSchema schema = FileSchema.builder("longs")
-                .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         long[] values = new long[ROWS];
         for (int i = 0; i < ROWS; i++) {

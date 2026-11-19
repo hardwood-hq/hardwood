@@ -316,7 +316,7 @@ class ReadFailurePositionTest {
     @Test
     void aDeltaBlockFailureInAFlatCellNamesItsOwnPage() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         long[] values = new long[600];
         for (int i = 0; i < values.length; i++) {
@@ -341,7 +341,7 @@ class ReadFailurePositionTest {
     @Test
     void aRefusedPageNamesItsPlace() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         int[] values = new int[60];
         for (int i = 0; i < values.length; i++) {

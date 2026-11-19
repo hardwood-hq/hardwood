@@ -48,11 +48,11 @@ class WriterSizeStatisticsInteropTest {
     private static final int ROWS = 1_000;
 
     private static final FileSchema HARDWOOD_SCHEMA = FileSchema.builder("schema")
-            .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+            .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
             .struct("address", RepetitionType.OPTIONAL, address -> address
-                    .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                    .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                             col -> col.logicalType(LogicalType.string()))
-                    .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                    .primitive("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                             col -> col.logicalType(LogicalType.string())))
             .list("scores", RepetitionType.OPTIONAL,
                     element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))

@@ -114,14 +114,14 @@ final class FlatWriteFixture {
     /// path is its own name — which is what a per-column encoding policy is keyed by.
     static FileSchema schema() {
         return FileSchema.builder("flat")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("pickup_ts", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("pickup_ts", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS)))
-                .addColumn("passenger_count", PhysicalType.INT32, RepetitionType.OPTIONAL)
-                .addColumn("fare", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("payment_type", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("passenger_count", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("fare", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("payment_type", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("vendor", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("vendor", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
     }

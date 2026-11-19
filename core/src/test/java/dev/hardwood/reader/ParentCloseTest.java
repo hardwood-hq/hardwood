@@ -411,7 +411,7 @@ class ParentCloseTest {
     /// small while a row reader sizes its batches by the column's width.
     private static byte[] fixedWidthFile() throws IOException {
         FileSchema schema = FileSchema.builder("parent_close_fixed")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(FIXED_WIDTH))
                 .build();
         byte[][] values = new byte[FIXED_ROWS][];

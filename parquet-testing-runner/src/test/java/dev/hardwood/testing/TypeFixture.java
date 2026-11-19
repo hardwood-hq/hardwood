@@ -93,8 +93,8 @@ enum TypeFixture {
     /// Adds a column of this type to a schema being built.
     FileSchema.Builder declare(FileSchema.Builder builder, String column, RepetitionType repetition) {
         return typeLength == null
-                ? builder.addColumn(column, physicalType, repetition)
-                : builder.addColumn(column, physicalType, repetition, col -> col.typeLength(typeLength));
+                ? builder.primitive(column, physicalType, repetition)
+                : builder.primitive(column, physicalType, repetition, col -> col.typeLength(typeLength));
     }
 
     /// Fills a batch column with the case's values, through the mask-less setter when no row is

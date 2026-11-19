@@ -54,7 +54,7 @@ class Int96TimestampOrderPruningTest {
     private static final int OCT_7 = OCT_1 + 6;
 
     private static final FileSchema SCHEMA = FileSchema.builder("s")
-            .addColumn("ts", PhysicalType.INT96, RepetitionType.REQUIRED)
+            .primitive("ts", PhysicalType.INT96, RepetitionType.REQUIRED)
             .build();
     private static final BoundsReadability CHRONOLOGICAL =
             BoundsReadability.of(SCHEMA, List.of(ColumnOrder.INT96_TIMESTAMP_ORDER), ordinal -> false);

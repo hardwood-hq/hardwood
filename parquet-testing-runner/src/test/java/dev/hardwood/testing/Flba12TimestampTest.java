@@ -97,7 +97,7 @@ class Flba12TimestampTest {
         FileSchema.Builder schema = FileSchema.builder("flba12_timestamp");
         for (String column : COLUMNS) {
             LogicalType logicalType = fixtureLogicalType(column);
-            schema.addColumn(column, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+            schema.primitive(column, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                     col -> col.typeLength(12).logicalType(logicalType));
         }
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(written), schema.build(),

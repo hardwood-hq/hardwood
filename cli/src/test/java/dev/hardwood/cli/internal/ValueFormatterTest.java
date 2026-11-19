@@ -455,7 +455,7 @@ class ValueFormatterTest {
     void nestedValueIntoScalarSchemaFails() {
         SchemaNode group = FileSchema.builder("m")
                 .struct("s", RepetitionType.OPTIONAL,
-                        b -> b.addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        b -> b.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build()
                 .getField("s");
         assertThatThrownBy(() -> display(42, group))
@@ -1067,7 +1067,7 @@ class ValueFormatterTest {
     void bsonRendersAsItsBytesFromEverySource(@TempDir Path tempDir) throws IOException {
         Path file = tempDir.resolve("bson.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.bson()))
                 .build();
         // The BSON document { "n": "hi\u0080" }, whose last string byte is not UTF-8.
@@ -1105,9 +1105,9 @@ class ValueFormatterTest {
         Path file = tempDir.resolve("nested_unsigned.parquet");
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, struct -> struct
-                        .addColumn("u32", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        .primitive("u32", PhysicalType.INT32, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.intType(32, false)))
-                        .addColumn("u64", PhysicalType.INT64, RepetitionType.REQUIRED,
+                        .primitive("u64", PhysicalType.INT64, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.intType(64, false))))
                 .list("l", RepetitionType.REQUIRED,
                         element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED,

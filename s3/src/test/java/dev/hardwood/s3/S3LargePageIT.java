@@ -55,7 +55,7 @@ class S3LargePageIT {
         byte[] value = new byte[VALUE_BYTES];
         new Random(1).nextBytes(value);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("blob", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("blob", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

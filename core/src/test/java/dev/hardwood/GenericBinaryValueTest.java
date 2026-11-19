@@ -108,9 +108,9 @@ class GenericBinaryValueTest {
         LogicalType decimal = LogicalType.decimal(2500, 2);
         FileSchema schema = nested
                 ? FileSchema.builder("schema").struct("s", RepetitionType.REQUIRED,
-                        s -> s.addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        s -> s.primitive("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(decimal))).build()
-                : FileSchema.builder("schema").addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                : FileSchema.builder("schema").primitive("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(decimal))
                         .build();
         // 1 KB of unscaled value: a copy of it outweighs whatever escape analysis saves either call
@@ -190,28 +190,28 @@ class GenericBinaryValueTest {
 
     private static FileSchema.Builder leaves(FileSchema.Builder schema) {
         return schema
-                .addColumn("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.decimal(30, 4)))
-                .addColumn("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(13).logicalType(LogicalType.decimal(30, 4)))
-                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(16).logicalType(LogicalType.uuid()))
-                .addColumn("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(12).logicalType(LogicalType.interval()))
-                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(2).logicalType(LogicalType.float16()));
     }
 
     private static void leaves(FileSchema.StructBuilder struct) {
-        struct.addColumn("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+        struct.primitive("dec_bin", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                 col -> col.logicalType(LogicalType.decimal(30, 4)))
-                .addColumn("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("dec_fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(13).logicalType(LogicalType.decimal(30, 4)))
-                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(16).logicalType(LogicalType.uuid()))
-                .addColumn("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("interval", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(12).logicalType(LogicalType.interval()))
-                .addColumn("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("f16", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(2).logicalType(LogicalType.float16()));
     }
 

@@ -44,8 +44,8 @@ class ShortNestedColumnChunkTest {
         FileSchema schema = FileSchema.builder("schema")
                 .list("foo", RepetitionType.OPTIONAL, element -> element.struct(RepetitionType.OPTIONAL,
                         struct -> struct
-                                .addColumn("a", PhysicalType.INT32, RepetitionType.OPTIONAL)
-                                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                .primitive("a", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                                .primitive("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                         col -> col.logicalType(LogicalType.string()))))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

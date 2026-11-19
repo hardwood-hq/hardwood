@@ -54,9 +54,9 @@ class WriterReaderSymmetryTest {
     @Test
     void fullWidthUnsignedValuesKeepTheirBitPattern() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("i", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(32, false)))
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("l", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.intType(64, false)))
                 .build();
 
@@ -259,13 +259,13 @@ class WriterReaderSymmetryTest {
 
     private static FileSchema single(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType))
+                .primitive("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType))
                 .build();
     }
 
     private static FileSchema fixed(int typeLength, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(typeLength).logicalType(logicalType))
                 .build();
     }

@@ -38,7 +38,7 @@ final class CorruptFiles {
     static Path withBadLastRowGroup(Path dir) throws IOException {
         Path file = dir.resolve("crc-bad.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
             for (int rowGroup = 0; rowGroup < 3; rowGroup++) {

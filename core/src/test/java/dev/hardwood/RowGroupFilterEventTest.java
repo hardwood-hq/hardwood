@@ -153,9 +153,9 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
         // on odd ones. The leaf's null count is the row count either way, which proves IS NULL on
         // every row.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string())))
                 .build();
         byte[] file = writeRows(schema, rows -> {
@@ -180,9 +180,9 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
         // No definition level separates `c` from `a`, so `a` is null exactly where `c` is absent
         // and its null count answers IS NULL on `c`.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("c", RepetitionType.OPTIONAL, c -> c
-                        .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
         byte[] file = writeRows(schema, rows -> {
             for (int i = 0; i < NULL_ROWS; i++) {

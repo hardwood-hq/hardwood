@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BinaryFillChunksTest {
 
     private static final ColumnSchema COLUMN = FileSchema.builder("binary")
-            .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
+            .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
             .build()
             .getColumn(0);
 

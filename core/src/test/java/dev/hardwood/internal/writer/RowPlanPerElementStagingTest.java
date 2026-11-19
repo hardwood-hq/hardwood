@@ -78,7 +78,7 @@ class RowPlanPerElementStagingTest {
 
     private static FileSchema idAndTags() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .list("tags", RepetitionType.REQUIRED,
                         element -> element.primitive(PhysicalType.INT64, RepetitionType.REQUIRED))
                 .build();

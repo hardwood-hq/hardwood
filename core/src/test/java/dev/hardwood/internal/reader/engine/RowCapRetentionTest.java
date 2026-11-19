@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RowCapRetentionTest {
 
     private static final FileSchema SCHEMA = FileSchema.builder("capped")
-            .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+            .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
             .build();
     private static final int ROWS = 200_000;
     private static final int BATCH_SIZE = 1024;

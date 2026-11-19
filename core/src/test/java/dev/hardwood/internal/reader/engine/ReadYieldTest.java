@@ -306,7 +306,7 @@ class ReadYieldTest {
     /// One required `INT64` column of 100 rows in one row group: its data is one request.
     private static InputFile singleChunkFile() throws IOException {
         FileSchema schema = FileSchema.builder("single_chunk")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         long[] values = new long[100];
         for (int i = 0; i < values.length; i++) {

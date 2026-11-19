@@ -38,8 +38,8 @@ class WriterRowGroupBoundaryTest {
     private static final String FAILED = "A previous write failed; the writer accepts no more data";
 
     private static final FileSchema SCHEMA = FileSchema.builder("schema")
-            .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-            .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+            .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+            .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
             .build();
 
     @Test

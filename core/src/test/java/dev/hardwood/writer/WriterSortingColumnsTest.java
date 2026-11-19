@@ -49,8 +49,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class WriterSortingColumnsTest {
 
     private static final FileSchema TWO_LONGS = FileSchema.builder("schema")
-            .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
-            .addColumn("b", PhysicalType.INT64, RepetitionType.OPTIONAL)
+            .primitive("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+            .primitive("b", PhysicalType.INT64, RepetitionType.OPTIONAL)
             .build();
 
     // ==================== Footer ====================
@@ -86,10 +86,10 @@ class WriterSortingColumnsTest {
     @Test
     void sortingColumnIndexIsTheLeafIndexOfANestedColumn() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, group -> group
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("y", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("y", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
         WriterConfig config = WriterConfig.builder().sortingColumns(ascending("s.y", NULLS_FIRST)).build();
 
@@ -531,10 +531,10 @@ class WriterSortingColumnsTest {
     private static FileSchema oneColumn(PhysicalType type, Integer typeLength, LogicalType logicalType) {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (typeLength == null) {
-            builder.addColumn("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType));
+            builder.primitive("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType));
         }
         else {
-            builder.addColumn("v", type, RepetitionType.REQUIRED,
+            builder.primitive("v", type, RepetitionType.REQUIRED,
                     col -> col.typeLength(typeLength).logicalType(logicalType));
         }
         return builder.build();

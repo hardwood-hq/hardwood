@@ -53,11 +53,11 @@ class WriterSizeStatisticsTest {
     /// (maxRep 1, maxDef 3), over four rows that put every level of each column in play, in two
     /// pages of two rows each.
     private static final FileSchema NESTED = FileSchema.builder("schema")
-            .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+            .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
             .struct("address", RepetitionType.OPTIONAL, address -> address
-                    .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                    .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                             col -> col.logicalType(LogicalType.string()))
-                    .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                    .primitive("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                             col -> col.logicalType(LogicalType.string())))
             .list("scores", RepetitionType.OPTIONAL,
                     element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
@@ -127,8 +127,8 @@ class WriterSizeStatisticsTest {
     @EnumSource(value = ColumnEncoding.class, names = { "AUTO", "PLAIN", "DELTA_BYTE_ARRAY" })
     void countsByteArrayPageBytesUnderEveryEncoding(ColumnEncoding encoding) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
-                .addColumn("f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(3))
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
+                .primitive("f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(3))
                 .build();
         int rows = 1_000;
         byte[][] strings = new byte[rows][];
@@ -159,9 +159,9 @@ class WriterSizeStatisticsTest {
     @Test
     void letsTheReaderSkipRowGroupsAGroupNullPredicateRulesOut() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string())))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

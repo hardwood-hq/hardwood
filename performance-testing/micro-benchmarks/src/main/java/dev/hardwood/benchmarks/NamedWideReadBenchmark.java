@@ -119,7 +119,7 @@ public class NamedWideReadBenchmark {
         System.out.printf("Generating %s (%d columns x %,d rows)...%n", path.getFileName(), names.length, ROWS);
         FileSchema.Builder builder = FileSchema.builder("named_wide");
         for (String name : names) {
-            builder.addColumn(name, PhysicalType.INT64, RepetitionType.REQUIRED);
+            builder.primitive(name, PhysicalType.INT64, RepetitionType.REQUIRED);
         }
         Path partial = path.resolveSibling(path.getFileName() + ".partial");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(partial), builder.build())) {

@@ -199,10 +199,10 @@ class RowWriterLogicalTypeInteropTest {
     private static FileSchema declare(Case testCase) {
         FileSchema.Builder builder = FileSchema.builder("row-logical");
         if (testCase.typeLength() == null) {
-            return builder.addColumn(COLUMN, testCase.physicalType(), RepetitionType.REQUIRED,
+            return builder.primitive(COLUMN, testCase.physicalType(), RepetitionType.REQUIRED,
                     col -> col.logicalType(testCase.annotation())).build();
         }
-        return builder.addColumn(COLUMN, testCase.physicalType(), RepetitionType.REQUIRED,
+        return builder.primitive(COLUMN, testCase.physicalType(), RepetitionType.REQUIRED,
                 col -> col.typeLength(testCase.typeLength()).logicalType(testCase.annotation())).build();
     }
 
