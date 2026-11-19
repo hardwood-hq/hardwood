@@ -417,14 +417,14 @@ class RowWriterRulesTest {
 
     /// Two sibling fields of one name would leave the by-name setters ambiguous and the second
     /// field's index unreachable through them, so the row layer refuses the schema when the
-    /// view is opened. `FileSchema.Builder` permits the shape, and a file carrying it can be
-    /// read, so the rejection has to live here.
+    /// view is opened. `FileSchema.Builder` refuses the shape, but a file carrying it can be
+    /// read and its schema handed to the writer, so the rejection has to live here too.
     @Test
     void twoFieldsOfOneNameAreRejectedUpFront() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL)
-                .build();
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("schema", 2),
+                SchemaElement.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
@@ -436,11 +436,11 @@ class RowWriterRulesTest {
 
     @Test
     void twoFieldsOfOneNameInsideANestedStructAreRejectedUpFront() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
-                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
-                .build();
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("schema", 1),
+                SchemaElement.group("address", RepetitionType.OPTIONAL, 2),
+                SchemaElement.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElement.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)

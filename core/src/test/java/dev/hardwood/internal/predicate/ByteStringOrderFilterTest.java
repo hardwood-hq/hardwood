@@ -171,15 +171,22 @@ class ByteStringOrderFilterTest {
 
     private static FileSchema binary(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .primitive("c", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType))
+                .primitive("c", type, RepetitionType.REQUIRED, col -> annotate(col, logicalType))
                 .build();
     }
 
     private static FileSchema fixed(int length, LogicalType logicalType) {
         return FileSchema.builder("schema")
                 .primitive("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
-                        col -> col.typeLength(length).logicalType(logicalType))
+                        col -> annotate(col.typeLength(length), logicalType))
                 .build();
+    }
+
+    /// Sets `logicalType` on `col`, leaving the leaf unannotated for `null`.
+    private static void annotate(FileSchema.PrimitiveBuilder col, LogicalType logicalType) {
+        if (logicalType != null) {
+            col.logicalType(logicalType);
+        }
     }
 
     private static byte[] writeFloat16(byte[][] values) throws Exception {

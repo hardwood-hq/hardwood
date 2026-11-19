@@ -56,6 +56,8 @@ To write anywhere else, extend `AbstractOutputFile` (`@Experimental`). Its publi
 
 A file's schema is declared with `FileSchema.builder(String)` and built once; the same `FileSchema` is passed to `ParquetFileWriter.create`. Every method appends one field in declaration order, which is also the order the leaf-column indices follow.
 
+`FileSchema.builder(String, Consumer<FileSchema.StructBuilder>)` declares the root's fields on a `StructBuilder`, the type a nested `struct` is declared on, so one method can declare the fields of the root and of every struct. The returned builder takes further fields before `build()`.
+
 | Method | Declares |
 |---|---|
 | `primitive(name, type, repetition)` | a primitive column |
@@ -72,7 +74,7 @@ A `FileSchema.PrimitiveBuilder` sets the optional attributes of one primitive le
 
 | Method | Sets |
 |---|---|
-| `logicalType(logicalType)` | the annotation, which must be legal for the physical type; `null` leaves the leaf unannotated |
+| `logicalType(logicalType)` | the annotation, which must be legal for the physical type; a leaf whose lambda does not call it is unannotated |
 | `typeLength(typeLength)` | the byte length of a `FIXED_LEN_BYTE_ARRAY` leaf |
 | `fieldId(fieldId)` | the field id (`field_id` in the footer) |
 
@@ -80,7 +82,7 @@ A `FileSchema.GroupBuilder` sets the optional attributes of a `LIST`, `MAP` or `
 
 The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as, both with `UnsupportedOperationException`.
 
-`repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. `typeLength` is rejected for every type but `FIXED_LEN_BYTE_ARRAY`, and a `FIXED_LEN_BYTE_ARRAY` column has a positive one. Declared without one, it takes the length its annotation implies:
+Each method throws `IllegalArgumentException` for a `null` argument, and for a field name that is empty or already declared among the same group's fields. `repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. A message names a nested field by its dotted path, a list element as `<list>.list.element` and a map key or value as `<map>.key_value.key` or `<map>.key_value.value`. `typeLength` is rejected for every type but `FIXED_LEN_BYTE_ARRAY`, and a `FIXED_LEN_BYTE_ARRAY` column has a positive one. Declared without one, it takes the length its annotation implies:
 
 | Annotation | Implied `typeLength` |
 |---|---|
@@ -114,7 +116,7 @@ A field id identifies a field independently of its name. Table formats such as I
 | a `struct` group, also as a list element or map value | `StructBuilder.fieldId(int)` in its filler |
 | a `LIST`, `MAP` or `FILE` group | `GroupBuilder.fieldId(int)` in its `group` lambda |
 
-The synthetic `list` and `key_value` groups, the root and the children of a `FILE` group carry no field id. The builder does not check that field ids are unique.
+The synthetic `list` and `key_value` groups, the root and the children of a `FILE` group carry no field id; `fieldId` on the `StructBuilder` that declares the root's fields throws `IllegalArgumentException`. The builder does not check that field ids are unique.
 
 ```java
 FileSchema schema = FileSchema.builder("event")
