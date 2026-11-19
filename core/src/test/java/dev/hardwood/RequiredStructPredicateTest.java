@@ -41,14 +41,14 @@ class RequiredStructPredicateTest {
     @BeforeAll
     static void writeFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("amount", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("key", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("amount", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("key", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("r", RepetitionType.REQUIRED, r -> r
-                        .addColumn("key", PhysicalType.INT64, RepetitionType.REQUIRED)
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("key", PhysicalType.INT64, RepetitionType.REQUIRED)
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(new LogicalType.StringType())))
                 .struct("o", RepetitionType.OPTIONAL, o -> o
-                        .addColumn("v", PhysicalType.INT64, RepetitionType.OPTIONAL))
+                        .primitive("v", PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {

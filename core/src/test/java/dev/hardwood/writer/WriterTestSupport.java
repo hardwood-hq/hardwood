@@ -39,20 +39,20 @@ final class WriterTestSupport {
 
     static FileSchema twoColumns() {
         return FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
     }
 
     static FileSchema oneOptionalColumn() {
         return FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
     }
 
     static FileSchema oneColumn() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
     }
 

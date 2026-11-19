@@ -51,57 +51,57 @@ class RowWriterSetValueTest {
 
     /// One field of every value form `setValue` takes, nested groups included.
     private static final FileSchema EVERY_FORM = FileSchema.builder("schema")
-            .addColumn("bool", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
-            .addColumn("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
-            .addColumn("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
-            .addColumn("f32", PhysicalType.FLOAT, RepetitionType.REQUIRED)
-            .addColumn("f64", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-            .addColumn("i8", PhysicalType.INT32, RepetitionType.REQUIRED,
+            .primitive("bool", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+            .primitive("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
+            .primitive("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
+            .primitive("f32", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+            .primitive("f64", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+            .primitive("i8", PhysicalType.INT32, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.intType(8, true)))
-            .addColumn("i16", PhysicalType.INT32, RepetitionType.REQUIRED,
+            .primitive("i16", PhysicalType.INT32, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.intType(16, true)))
-            .addColumn("u8", PhysicalType.INT32, RepetitionType.REQUIRED,
+            .primitive("u8", PhysicalType.INT32, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.intType(8, false)))
-            .addColumn("u64", PhysicalType.INT64, RepetitionType.REQUIRED,
+            .primitive("u64", PhysicalType.INT64, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.intType(64, false)))
-            .addColumn("text", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+            .primitive("text", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.string()))
-            .addColumn("kind", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+            .primitive("kind", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.enumType()))
-            .addColumn("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+            .primitive("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.json()))
-            .addColumn("bin", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
-            .addColumn("fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(3))
-            .addColumn("day", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
-            .addColumn("clock", PhysicalType.INT32, RepetitionType.REQUIRED,
+            .primitive("bin", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+            .primitive("fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(3))
+            .primitive("day", PhysicalType.INT32, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.date()))
+            .primitive("clock", PhysicalType.INT32, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.time(true, TimeUnit.MILLIS)))
-            .addColumn("moment", PhysicalType.INT64, RepetitionType.REQUIRED,
+            .primitive("moment", PhysicalType.INT64, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.timestamp(true, TimeUnit.MICROS)))
-            .addColumn("wall", PhysicalType.INT64, RepetitionType.REQUIRED,
+            .primitive("wall", PhysicalType.INT64, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.timestamp(false, TimeUnit.NANOS)))
-            .addColumn("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
+            .primitive("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.decimal(18, 2)))
-            .addColumn("big", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+            .primitive("big", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                     col -> col.logicalType(LogicalType.decimal(30, 4)))
-            .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+            .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                     col -> col.typeLength(16).logicalType(LogicalType.uuid()))
-            .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+            .primitive("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                     col -> col.typeLength(12).logicalType(LogicalType.interval()))
-            .addColumn("half", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+            .primitive("half", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                     col -> col.typeLength(2).logicalType(LogicalType.float16()))
-            .addColumn("absent", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+            .primitive("absent", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                     col -> col.logicalType(LogicalType.string()))
             .struct("address", RepetitionType.OPTIONAL, address -> address
-                    .addColumn("street", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                    .primitive("street", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                             col -> col.logicalType(LogicalType.string()))
-                    .addColumn("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                    .primitive("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
             .list("tags", RepetitionType.OPTIONAL,
                     el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                             col -> col.logicalType(LogicalType.string())))
             .list("matrix", RepetitionType.OPTIONAL, el -> el.list(RepetitionType.OPTIONAL,
                     inner -> inner.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
             .list("points", RepetitionType.OPTIONAL, el -> el.struct(RepetitionType.OPTIONAL, point -> point
-                    .addColumn("x", PhysicalType.DOUBLE, RepetitionType.REQUIRED)))
+                    .primitive("x", PhysicalType.DOUBLE, RepetitionType.REQUIRED)))
             .map("counts", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
                     key -> key.logicalType(LogicalType.string()),
                     value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
@@ -184,18 +184,18 @@ class RowWriterSetValueTest {
     void copiesAStructByNameIgnoringFieldsTheTargetDoesNotDeclare() throws Exception {
         FileSchema source = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, s -> s
-                        .addColumn("zip", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("extra", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("extra", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string())))
                 .build();
         FileSchema target = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, s -> s
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("country", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("country", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("zip", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        .primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
         InMemoryOutputFile out = copyStruct(write(source, row -> row.setStruct("s", s -> s
                 .setInt("zip", 10115).setInt("extra", 1).setString("city", "Berlin"))), target);
@@ -214,14 +214,14 @@ class RowWriterSetValueTest {
     void aRequiredFieldTheSourceLacksFailsTheRecord() throws Exception {
         FileSchema source = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, s -> s
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string())))
                 .build();
         FileSchema target = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, s -> s
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("zip", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        .primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
         InMemoryOutputFile file = write(source, row -> row.setStruct("s", s -> s.setString("city", "Berlin")));
 

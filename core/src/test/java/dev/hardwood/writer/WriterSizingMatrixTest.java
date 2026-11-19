@@ -205,7 +205,7 @@ class WriterSizingMatrixTest {
     // ==================== The shapes ====================
 
     private static FileSchema oneColumn(PhysicalType type, RepetitionType repetition) {
-        return FileSchema.builder("schema").addColumn("v", type, repetition).build();
+        return FileSchema.builder("schema").primitive("v", type, repetition).build();
     }
 
     private static FileSchema wideLongSchema() {
@@ -216,10 +216,10 @@ class WriterSizingMatrixTest {
         FileSchema.Builder schema = FileSchema.builder("schema");
         for (int c = 0; c < columns; c++) {
             if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-                schema.addColumn("c" + c, type, RepetitionType.REQUIRED, col -> col.typeLength(256));
+                schema.primitive("c" + c, type, RepetitionType.REQUIRED, col -> col.typeLength(256));
             }
             else {
-                schema.addColumn("c" + c, type, RepetitionType.REQUIRED);
+                schema.primitive("c" + c, type, RepetitionType.REQUIRED);
             }
         }
         return schema.build();

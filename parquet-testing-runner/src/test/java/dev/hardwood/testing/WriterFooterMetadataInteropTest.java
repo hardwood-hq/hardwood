@@ -138,10 +138,10 @@ class WriterFooterMetadataInteropTest {
     void parquetJavaReadsTheFieldIdsHardwoodWrote(@TempDir Path dir) throws IOException {
         Path file = dir.resolve("field-ids.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
                 .struct("person", RepetitionType.OPTIONAL, person -> person
                         .fieldId(2)
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()).fieldId(3)))
                 .list("tags", RepetitionType.OPTIONAL, element -> element
                         .groupFieldId(4)
@@ -188,18 +188,18 @@ class WriterFooterMetadataInteropTest {
 
     private static FileSchema schema() {
         return FileSchema.builder("footer-metadata")
-                .addColumn(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
     }
 
     private static FileSchema columnOrderSchema() {
         return FileSchema.builder("column-orders")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("person", RepetitionType.REQUIRED, person -> person
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED))
-                .addColumn("active", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                        .primitive("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED))
+                .primitive("active", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
     }
 

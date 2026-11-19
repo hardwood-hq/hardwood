@@ -71,13 +71,13 @@ class FileReferenceValidationTest {
     static void writeFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("photo", RepetitionType.OPTIONAL, photo -> photo
-                        .addColumn("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("offset", PhysicalType.INT64, RepetitionType.OPTIONAL)
-                        .addColumn("size", PhysicalType.INT64, RepetitionType.OPTIONAL)
-                        .addColumn("content_type", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("offset", PhysicalType.INT64, RepetitionType.OPTIONAL)
+                        .primitive("size", PhysicalType.INT64, RepetitionType.OPTIONAL)
+                        .primitive("content_type", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("inline", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
+                        .primitive("inline", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -128,9 +128,9 @@ class FileReferenceValidationTest {
     @Test
     void anInvalidNestedValueFailsOnEveryRouteAndNamesItsPath() throws IOException {
         Consumer<FileSchema.StructBuilder> children = group -> group
-                .addColumn("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("size", PhysicalType.INT64, RepetitionType.OPTIONAL);
+                .primitive("size", PhysicalType.INT64, RepetitionType.OPTIONAL);
         FileSchema schema = FileSchema.builder("schema")
                 .struct("meta", RepetitionType.OPTIONAL, meta -> meta.struct("photo", RepetitionType.OPTIONAL, children))
                 .list("attachments", RepetitionType.OPTIONAL, element -> element.struct(RepetitionType.OPTIONAL, children))

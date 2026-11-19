@@ -83,7 +83,7 @@ class WriterSchemaShapeTest {
     void rejectsUnsupportedPhysicalType() {
         // INT96 is deprecated and never produced.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT96, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT96, RepetitionType.REQUIRED)
                 .build();
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
@@ -400,7 +400,7 @@ class WriterSchemaShapeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .list("items", RepetitionType.REQUIRED, element -> element
                         .struct(RepetitionType.OPTIONAL,
-                                inner -> inner.addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)))
+                                inner -> inner.primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {

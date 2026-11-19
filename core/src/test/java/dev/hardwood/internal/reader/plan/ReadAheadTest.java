@@ -122,7 +122,7 @@ class ReadAheadTest {
         Arrays.fill(values, 42L);
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out,
-                FileSchema.builder("constant").addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED).build(),
+                FileSchema.builder("constant").primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED).build(),
                 WriterConfig.builder().rowGroupTargetRows(ROWS_PER_ROW_GROUP).build())) {
             for (int rg = 0; rg < ROW_GROUPS; rg++) {
                 writer.columnWriter().writeBatch(batch -> batch.longs("v", values));

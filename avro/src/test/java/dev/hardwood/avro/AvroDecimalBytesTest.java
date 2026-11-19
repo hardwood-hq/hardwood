@@ -61,7 +61,7 @@ class AvroDecimalBytesTest {
                 new BigDecimal("-" + largest));
         LogicalType decimal = LogicalType.decimal(precision, 3);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("d", physicalType, RepetitionType.REQUIRED, col -> col.logicalType(decimal))
+                .primitive("d", physicalType, RepetitionType.REQUIRED, col -> col.logicalType(decimal))
                 .list("ds", RepetitionType.REQUIRED, element -> element.primitive(physicalType,
                         RepetitionType.REQUIRED, col -> col.logicalType(decimal)))
                 .map("dm", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
@@ -117,7 +117,7 @@ class AvroDecimalBytesTest {
     @Test
     void anEmptyStoredValueMaterializesAsZero() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("d", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(10, 2)))
                 .build();
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());

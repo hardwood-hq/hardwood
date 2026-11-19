@@ -58,8 +58,8 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 
 | Method | Declares |
 |---|---|
-| `addColumn(name, type, repetition)` | a primitive column |
-| `addColumn(name, type, repetition, column)` | a primitive column whose optional attributes `column` sets on a `FileSchema.ColumnBuilder` |
+| `primitive(name, type, repetition)` | a primitive column |
+| `primitive(name, type, repetition, column)` | a primitive column whose optional attributes `column` sets on a `FileSchema.ColumnBuilder` |
 | `struct(name, repetition, filler)` | a `struct` group whose fields `filler` declares |
 | `file(name, repetition)` | a `FILE` group with all six children, each `OPTIONAL`, in the order `uri`, `offset`, `size`, `content_type`, `checksum`, `inline` (see [FILE groups](accessors.md#file-groups)) |
 | `file(name, repetition, fieldId)` | the same `FILE` group, with a field id (see [Field ids](#field-ids)) |
@@ -90,11 +90,11 @@ Any other annotation, or none, implies no length, and the column needs `typeLeng
 
 ```java
 FileSchema schema = FileSchema.builder("event")
-        .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+        .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                 col -> col.logicalType(LogicalType.uuid()))                         // 16 bytes
-        .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+        .primitive("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                 col -> col.logicalType(LogicalType.decimal(18, 2)))                 // 8 bytes
-        .addColumn("legacy_amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+        .primitive("legacy_amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                 col -> col.typeLength(16).logicalType(LogicalType.decimal(18, 2)))
         .build();
 ```
@@ -116,11 +116,11 @@ The synthetic `list` and `key_value` groups, the root and the children of a `FIL
 
 ```java
 FileSchema schema = FileSchema.builder("event")
-        .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
+        .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED, col -> col.fieldId(1))
         .struct("location", RepetitionType.OPTIONAL, location -> location
                 .fieldId(2)
-                .addColumn("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(3))
-                .addColumn("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(4)))
+                .primitive("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(3))
+                .primitive("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, col -> col.fieldId(4)))
         .list("tags", RepetitionType.OPTIONAL, element -> element
                 .groupFieldId(5)
                 .primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,

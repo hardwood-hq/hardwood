@@ -114,7 +114,7 @@ class UnreadableSortOrderTest {
     @Test
     void boundsOnAnOrderedAnnotationStillPrune() {
         FileSchema string = FileSchema.builder("s")
-                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
@@ -132,7 +132,7 @@ class UnreadableSortOrderTest {
     @Test
     void int96BoundsUnderTheTypeDefinedOrderAreNotReadAndReportNothing() {
         FileSchema int96 = FileSchema.builder("s")
-                .addColumn("ts", PhysicalType.INT96, RepetitionType.REQUIRED)
+                .primitive("ts", PhysicalType.INT96, RepetitionType.REQUIRED)
                 .build();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("ts", Instant.parse("2023-11-13T12:00:00Z")), int96);
@@ -169,7 +169,7 @@ class UnreadableSortOrderTest {
     @Test
     void storedByteBoundsAreNotReadAndReportNothing() {
         FileSchema decimal = FileSchema.builder("s")
-                .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(10, 2)))
                 .build();
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
@@ -515,7 +515,7 @@ class UnreadableSortOrderTest {
             UnaryOperator<byte[]> patch) throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
-                .addColumn("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(16))
+                .primitive("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(16))
                 .build())) {
             writer.columnWriter().writeBatch(batch -> batch.fixed(0, new byte[][] {
                     littleEndian(256), littleEndian(300), littleEndian(513) }));
@@ -588,14 +588,14 @@ class UnreadableSortOrderTest {
 
     private static FileSchema geometrySchema() {
         return FileSchema.builder("s")
-                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.GeometryType(null)))
                 .build();
     }
 
     private static FileSchema intSchema() {
         return FileSchema.builder("s")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
     }
 
@@ -612,9 +612,9 @@ class UnreadableSortOrderTest {
     private Path geometryThenValue() throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
-                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build())) {
             writer.columnWriter().writeBatch(batch -> batch
                     .bytes(0, new byte[][] { bytes("M") })
@@ -627,8 +627,8 @@ class UnreadableSortOrderTest {
     private Path valueThenGeometry() throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build())) {
             writer.columnWriter().writeBatch(batch -> batch

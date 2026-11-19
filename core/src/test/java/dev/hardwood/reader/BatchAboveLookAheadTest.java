@@ -52,7 +52,7 @@ class BatchAboveLookAheadTest {
     static void writeFile() throws Exception {
         file = dir.resolve("batch-above-look-ahead.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .list("l", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
                 .build();
         long[] ids = new long[ROWS];

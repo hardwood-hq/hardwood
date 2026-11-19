@@ -51,16 +51,16 @@ class HeldRowValuesTest {
 
     private static final FileSchema SCHEMA = FileSchema.builder("schema")
             .struct("person", RepetitionType.OPTIONAL, person -> person
-                    .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                    .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                             col -> col.logicalType(LogicalType.string()))
-                    .addColumn("age", PhysicalType.INT64, RepetitionType.REQUIRED))
+                    .primitive("age", PhysicalType.INT64, RepetitionType.REQUIRED))
             .list("ints", RepetitionType.OPTIONAL, element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
             .list("longs", RepetitionType.REQUIRED, element -> element.primitive(PhysicalType.INT64, RepetitionType.REQUIRED))
             .list("vector", RepetitionType.REQUIRED, element -> element.primitive(PhysicalType.DOUBLE, RepetitionType.REQUIRED))
             .list("names", RepetitionType.OPTIONAL, element -> element.primitive(PhysicalType.BYTE_ARRAY,
                     RepetitionType.OPTIONAL, col -> col.logicalType(LogicalType.string())))
             .list("items", RepetitionType.REQUIRED, element -> element.struct(RepetitionType.REQUIRED, item -> item
-                    .addColumn("sku", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                    .primitive("sku", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                             col -> col.logicalType(LogicalType.string()))))
             .map("counts", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
                     key -> key.logicalType(LogicalType.string()),

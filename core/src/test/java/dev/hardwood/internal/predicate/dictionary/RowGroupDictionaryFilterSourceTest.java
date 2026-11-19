@@ -170,8 +170,8 @@ class RowGroupDictionaryFilterSourceTest {
     @Test
     void aHardwoodWrittenFilePrunesOnItsOwnDictionaries() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("category", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("category", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         int[] ids = new int[1_000];
         int[] categories = new int[1_000];

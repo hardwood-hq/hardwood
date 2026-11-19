@@ -46,7 +46,7 @@ class PageEntryLimitTest {
 
     @Test
     void requiredColumnIsCutAtTheLimit() throws IOException {
-        FileSchema schema = FileSchema.builder("schema").addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+        FileSchema schema = FileSchema.builder("schema").primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         RecordShredder shredder = new RecordShredder(schema);
         IntArrayColumnSource source = new IntArrayColumnSource(new int[2500]);
@@ -57,7 +57,7 @@ class PageEntryLimitTest {
 
     @Test
     void optionalColumnIsCutAtTheLimit() throws IOException {
-        FileSchema schema = FileSchema.builder("schema").addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+        FileSchema schema = FileSchema.builder("schema").primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
         boolean[] nulls = new boolean[2500];
         for (int i = 0; i < nulls.length; i += 2) {

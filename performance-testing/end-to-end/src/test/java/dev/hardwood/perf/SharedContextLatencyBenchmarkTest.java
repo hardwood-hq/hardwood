@@ -310,10 +310,10 @@ class SharedContextLatencyBenchmarkTest {
         }
         Files.createDirectories(file.toAbsolutePath().getParent());
         FileSchema schema = FileSchema.builder("small")
-                .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("x", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("y", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("x", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("y", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         SplittableRandom random = new SplittableRandom(42);
         long[] a = new long[rows];

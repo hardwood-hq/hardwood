@@ -140,7 +140,7 @@ class ColumnReaderDictionaryIdsTest {
     @Test
     void aFlatNullHasIdMinusOne() throws Exception {
         FileSchema schema = FileSchema.builder("stations")
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("label", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -516,8 +516,8 @@ class ColumnReaderDictionaryIdsTest {
     private static byte[] writeStations(int rows, long rowGroupRows) throws IOException {
         String[] pool = { "Hamburg", "Oslo", "Abha" };
         FileSchema schema = FileSchema.builder("stations")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .list("tags", RepetitionType.REQUIRED,
                         el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,

@@ -65,7 +65,7 @@ class FileLogicalTypeTest {
     @BeforeAll
     static void writeFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .file("photo", RepetitionType.OPTIONAL)
                 .struct("meta", RepetitionType.OPTIONAL, meta -> meta
                         .file("thumbnail", RepetitionType.OPTIONAL))
@@ -535,7 +535,7 @@ class FileLogicalTypeTest {
     @Test
     void fileOnALeafIsRefused() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("photo", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("photo", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.file())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("FILE annotates a group, not a primitive column: photo; declare it with the file "
@@ -544,10 +544,10 @@ class FileLogicalTypeTest {
 
     private static void assertWriteFails(Consumer<StructBuilder> row, String message) throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .file("photo", RepetitionType.OPTIONAL)
                 .struct("meta", RepetitionType.OPTIONAL, meta -> meta
-                        .addColumn("note", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("note", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string())))
                 .list("attachments", RepetitionType.OPTIONAL, element -> element.file(RepetitionType.OPTIONAL))
                 .build();

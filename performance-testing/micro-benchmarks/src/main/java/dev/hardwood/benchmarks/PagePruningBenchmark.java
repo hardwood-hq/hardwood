@@ -209,7 +209,7 @@ public class PagePruningBenchmark {
 
     private void write(Path path) throws IOException {
         FileSchema schema = FileSchema.builder("pages")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .pageTargetRows(ROWS_PER_PAGE)

@@ -348,7 +348,7 @@ class DiveRenderTest {
     void dataPreviewTitleNamesNoRowsForAFileWithoutRows(@TempDir Path tempDir) throws Exception {
         Path file = tempDir.resolve("no_rows.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter ignored = ParquetFileWriter.create(OutputFile.of(file), schema)) {
         }

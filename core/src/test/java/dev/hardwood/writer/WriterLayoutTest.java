@@ -163,7 +163,7 @@ class WriterLayoutTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .pageTargetBytes(pageTarget)
@@ -212,7 +212,7 @@ class WriterLayoutTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", type, repetition)
+                .primitive("v", type, repetition)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.ALP)
@@ -280,7 +280,7 @@ class WriterLayoutTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.PLAIN)
@@ -390,7 +390,7 @@ class WriterLayoutTest {
         }
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .rowGroupBufferTargetBytes(target)
@@ -511,7 +511,7 @@ class WriterLayoutTest {
         }
 
         FileSchema schema = FileSchema.builder("m")
-                .addColumn("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED).build();
+                .primitive("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED).build();
         WriterConfig config = WriterConfig.builder().pageTargetBytes(25).build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
@@ -665,7 +665,7 @@ class WriterLayoutTest {
                 .rowGroupTargetRows(Long.MAX_VALUE)
                 .build();
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();

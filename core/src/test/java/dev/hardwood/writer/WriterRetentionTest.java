@@ -91,7 +91,7 @@ class WriterRetentionTest {
                 "needs a heap that can hold the measurement with room to spare");
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .rowGroupBufferTargetBytes(ROW_GROUP_TARGET)
@@ -153,7 +153,7 @@ class WriterRetentionTest {
                 "needs a heap that can hold the measurement with room to spare");
 
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .rowGroupBufferTargetBytes(ROW_GROUP_TARGET)
@@ -207,10 +207,10 @@ class WriterRetentionTest {
         FileSchema.Builder schema = FileSchema.builder("schema");
         for (int c = 0; c < WIDE_SCHEMA_COLUMNS; c++) {
             if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-                schema.addColumn("c" + c, type, RepetitionType.REQUIRED, col -> col.typeLength(8));
+                schema.primitive("c" + c, type, RepetitionType.REQUIRED, col -> col.typeLength(8));
             }
             else {
-                schema.addColumn("c" + c, type, RepetitionType.REQUIRED);
+                schema.primitive("c" + c, type, RepetitionType.REQUIRED);
             }
         }
         WriterConfig config = WriterConfig.builder()

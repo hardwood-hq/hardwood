@@ -44,13 +44,13 @@ class RowWriterRoundTripTest {
     @Test
     void writesEveryPhysicalTypeFlat() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("bool", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
-                .addColumn("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("f32", PhysicalType.FLOAT, RepetitionType.REQUIRED)
-                .addColumn("f64", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("bin", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
-                .addColumn("fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("bool", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("f32", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("f64", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("bin", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(3))
                 .build();
 
@@ -91,12 +91,12 @@ class RowWriterRoundTripTest {
     @Test
     void nullsArriveFromEverySpelling() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("a", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("c", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("c", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
 
@@ -128,21 +128,21 @@ class RowWriterRoundTripTest {
     @Test
     void writesLogicalTypeValuesAsTheReaderReturnsThem() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("day", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("day", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.date()))
-                .addColumn("clock", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("clock", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.time(true, TimeUnit.MILLIS)))
-                .addColumn("moment", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("moment", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(true, TimeUnit.MICROS)))
-                .addColumn("wall", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("wall", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(false, TimeUnit.MILLIS)))
-                .addColumn("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(18, 2)))
-                .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(16).logicalType(LogicalType.uuid()))
-                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(12).logicalType(LogicalType.interval()))
                 .build();
 
@@ -183,11 +183,11 @@ class RowWriterRoundTripTest {
     @Test
     void writesNestedStructsIncludingAbsentOnes() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string()))
-                        .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string())))
                 .build();
 
@@ -222,9 +222,9 @@ class RowWriterRoundTripTest {
     @Test
     void writesAFixedWidthLeafUnderAnAbsentStruct() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("key", RepetitionType.OPTIONAL, key -> key
-                        .addColumn("bytes", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("bytes", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.typeLength(4)))
                 .build();
 
@@ -249,7 +249,7 @@ class RowWriterRoundTripTest {
     @Test
     void writesListsIncludingEmptyAbsentAndNullEntries() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .list("scores", RepetitionType.OPTIONAL,
                         element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
@@ -316,7 +316,7 @@ class RowWriterRoundTripTest {
     @Test
     void writesAnOptionalStructEnclosingAnOptionalList() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .list("phones", RepetitionType.OPTIONAL,
                                 element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL)))
@@ -354,7 +354,7 @@ class RowWriterRoundTripTest {
     @Test
     void writesAnOptionalStructEnclosingAnOptionalMap() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
                                 value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL)))
@@ -429,7 +429,7 @@ class RowWriterRoundTripTest {
     void writesListsOfStructsAndListsOfLists() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .list("people", RepetitionType.REQUIRED, element -> element.struct(RepetitionType.REQUIRED,
-                        person -> person.addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        person -> person.primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string()))))
                 .list("grid", RepetitionType.REQUIRED, element -> element.list(RepetitionType.REQUIRED,
                         inner -> inner.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
@@ -468,7 +468,7 @@ class RowWriterRoundTripTest {
     @Test
     void writesMapsThroughTheirEntryStruct() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
                         key -> key.logicalType(LogicalType.string()),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
@@ -501,8 +501,8 @@ class RowWriterRoundTripTest {
     @Test
     void recordCountStraddlingTheBatchBoundarySurvives() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
 
@@ -546,8 +546,8 @@ class RowWriterRoundTripTest {
     @Test
     void largeValuesSubmitBatchesBeforeTheRecordCountTrigger() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("blob", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("blob", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
 
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(64 * 1024).build();

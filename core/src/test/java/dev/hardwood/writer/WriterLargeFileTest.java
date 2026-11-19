@@ -144,7 +144,7 @@ class WriterLargeFileTest {
         Path file = dir.resolve("boolean.parquet");
 
         FileSchema schema = FileSchema.builder("large")
-                .addColumn(COLUMN, PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive(COLUMN, PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
         // Half a gigabyte of charge at one bit a row is four billion rows: the row ceiling is
         // reached first, which is the point.
@@ -185,7 +185,7 @@ class WriterLargeFileTest {
 
     private static FileSchema schema() {
         return FileSchema.builder("large")
-                .addColumn(COLUMN, PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive(COLUMN, PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
     }
 

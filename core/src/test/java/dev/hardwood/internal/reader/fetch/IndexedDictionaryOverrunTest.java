@@ -64,7 +64,7 @@ class IndexedDictionaryOverrunTest {
     /// One row group whose one column is dictionary encoded.
     private static byte[] dictionaryEncodedFile() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

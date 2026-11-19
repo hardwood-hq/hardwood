@@ -34,8 +34,8 @@ class BatchArrayBoundTest {
     @Test
     void aNarrowReadOfEightByteValuesKeepsItsArraysWithinTheBound() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("d", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
+                .primitive("l", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("d", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
         long[] longs = new long[ROWS];
         double[] doubles = new double[ROWS];

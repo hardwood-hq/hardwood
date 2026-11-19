@@ -209,8 +209,8 @@ class ShuffledTaskOrderTest {
             dictValues.add(dictNulls[i] ? null : d);
         }
         FileSchema schema = FileSchema.builder("strings")
-                .addColumn("plain", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
-                .addColumn("dict", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
+                .primitive("plain", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
+                .primitive("dict", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

@@ -113,7 +113,7 @@ class WriterLogicalTypeStatisticsTest {
     @Test
     void undefinedOrderColumnsStillCountNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.geometry("EPSG:4326")))
                 .build();
 
@@ -228,7 +228,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { half(1.0f), half(Float.NaN), half(-99.0f), half(Float.NaN),
                 half(2.0f), half(-99.0f) };
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(2).logicalType(LogicalType.float16()))
                 .build();
 
@@ -252,9 +252,9 @@ class WriterLogicalTypeStatisticsTest {
     @Test
     void footerDeclaresATypeDefinedOrderPerLeafColumn() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, group -> group
-                        .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(LogicalType.string())))
                 .build();
 
@@ -288,10 +288,10 @@ class WriterLogicalTypeStatisticsTest {
                                                      BatchFiller filler) throws Exception {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (typeLength == null) {
-            builder.addColumn("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType));
+            builder.primitive("v", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType));
         }
         else {
-            builder.addColumn("v", type, RepetitionType.REQUIRED,
+            builder.primitive("v", type, RepetitionType.REQUIRED,
                     col -> col.typeLength(typeLength).logicalType(logicalType));
         }
 

@@ -141,11 +141,11 @@ class ParquetReaderCompatTest {
     void testOriginalTypeOfNanosecondTimesAndInterval(@TempDir File dir) throws Exception {
         File file = new File(dir, "nanos_interval.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("time_ns", PhysicalType.INT64, RepetitionType.OPTIONAL,
+                .primitive("time_ns", PhysicalType.INT64, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.time(false, LogicalType.TimeUnit.NANOS)))
-                .addColumn("ts_ns", PhysicalType.INT64, RepetitionType.OPTIONAL,
+                .primitive("ts_ns", PhysicalType.INT64, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS)))
-                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(12).logicalType(LogicalType.interval()))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file.toPath()), schema)) {
@@ -424,8 +424,8 @@ class ParquetReaderCompatTest {
     void testFilterPushdownBinaryLiteralOnByteArrayDecimalColumn(@TempDir File dir) throws Exception {
         File file = new File(dir, "byte_array_decimal.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(18, 2)))
                 .build();
         BigDecimal[] amounts = { new BigDecimal("1.27"), new BigDecimal("3.00"), new BigDecimal("-1.00") };

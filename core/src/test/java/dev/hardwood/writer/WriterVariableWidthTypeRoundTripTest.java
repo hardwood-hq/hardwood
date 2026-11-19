@@ -259,7 +259,7 @@ class WriterVariableWidthTypeRoundTripTest {
     @Test
     void builderRejectsFixedWithoutTypeLength() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build())
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -267,7 +267,7 @@ class WriterVariableWidthTypeRoundTripTest {
     @Test
     void builderRejectsTypeLengthOnNonFixedType() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(4))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -356,8 +356,8 @@ class WriterVariableWidthTypeRoundTripTest {
 
     private static FileSchema oneColumn(String name, PhysicalType type, RepetitionType repetition, Integer typeLength) {
         return typeLength == null
-                ? FileSchema.builder("schema").addColumn(name, type, repetition).build()
-                : FileSchema.builder("schema").addColumn(name, type, repetition,
+                ? FileSchema.builder("schema").primitive(name, type, repetition).build()
+                : FileSchema.builder("schema").primitive(name, type, repetition,
                         col -> col.typeLength(typeLength)).build();
     }
 

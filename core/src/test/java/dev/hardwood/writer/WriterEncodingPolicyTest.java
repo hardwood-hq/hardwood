@@ -305,7 +305,7 @@ class WriterEncodingPolicyTest {
             timestamps[i] = now + i * 1_000L;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
 
         int plain = writeLongs(schema, timestamps, ColumnEncoding.PLAIN).length;
@@ -324,7 +324,7 @@ class WriterEncodingPolicyTest {
             values[i] = 100.0 + i * 0.015625;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
 
         int plain = writeDoubles(schema, values, ColumnEncoding.PLAIN, CompressionCodec.UNCOMPRESSED).length;
@@ -348,7 +348,7 @@ class WriterEncodingPolicyTest {
             values[i] = 5.0 + (i * 7919 % 10_000) / 100.0;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
 
         int plain = writeDoubles(schema, values, ColumnEncoding.PLAIN, CompressionCodec.UNCOMPRESSED).length;
@@ -362,8 +362,8 @@ class WriterEncodingPolicyTest {
     @Test
     void aColumnOverrideBeatsTheFileWideDefault() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.PLAIN)
@@ -385,8 +385,8 @@ class WriterEncodingPolicyTest {
         // The default default is AUTO, so a column named here must not drag the rest of the
         // schema off the dictionary they would otherwise get.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("b", ColumnEncoding.DELTA_BINARY_PACKED)
@@ -455,9 +455,9 @@ class WriterEncodingPolicyTest {
         // A field name may contain a dot, so `a.b` is the path of the top-level `a.b` and of `b`
         // in `a` alike; the override would otherwise apply to both.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a.b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("a.b", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("a", RepetitionType.REQUIRED, a -> a
-                        .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        .primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("a.b", ColumnEncoding.PLAIN)
@@ -473,7 +473,7 @@ class WriterEncodingPolicyTest {
         // A path matching nothing is a typo, and its only other effect would be to write the
         // file in an encoding the caller did not ask for. The message lists what it could match.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("typo", ColumnEncoding.PLAIN)
@@ -489,7 +489,7 @@ class WriterEncodingPolicyTest {
     @Test
     void rejectsAnEncodingTheColumnsTypeCannotCarry() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("v", ColumnEncoding.DELTA_BINARY_PACKED)
@@ -508,8 +508,8 @@ class WriterEncodingPolicyTest {
         // divergence the check exists to prevent, so a mixed schema has to state its intent per
         // column.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("n", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("n", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().encoding(ColumnEncoding.BYTE_STREAM_SPLIT).build();
 
@@ -525,7 +525,7 @@ class WriterEncodingPolicyTest {
         // Validation runs before the output is touched, so a configuration the writer cannot
         // honour leaves no file behind at all — the same guarantee codec resolution gives.
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().encoding(ColumnEncoding.BYTE_STREAM_SPLIT).build();
         Path file = dir.resolve("rejected.parquet");
@@ -624,10 +624,10 @@ class WriterEncodingPolicyTest {
             boolean[] nulls, int rows) throws Exception {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            builder.addColumn("v", type, repetition, col -> col.typeLength(FIXED_WIDTH));
+            builder.primitive("v", type, repetition, col -> col.typeLength(FIXED_WIDTH));
         }
         else {
-            builder.addColumn("v", type, repetition);
+            builder.primitive("v", type, repetition);
         }
         FileSchema schema = builder.build();
 

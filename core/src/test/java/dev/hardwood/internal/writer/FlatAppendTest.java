@@ -184,15 +184,15 @@ class FlatAppendTest {
     private static FileSchema.Builder leaf(FileSchema.Builder builder, PhysicalType type,
                                            RepetitionType repetition) {
         return type == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                ? builder.addColumn("v", type, repetition, col -> col.typeLength(FIXED_LENGTH))
-                : builder.addColumn("v", type, repetition);
+                ? builder.primitive("v", type, repetition, col -> col.typeLength(FIXED_LENGTH))
+                : builder.primitive("v", type, repetition);
     }
 
     private static FileSchema.StructBuilder leaf(FileSchema.StructBuilder builder, PhysicalType type,
                                                  RepetitionType repetition) {
         return type == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                ? builder.addColumn("v", type, repetition, col -> col.typeLength(FIXED_LENGTH))
-                : builder.addColumn("v", type, repetition);
+                ? builder.primitive("v", type, repetition, col -> col.typeLength(FIXED_LENGTH))
+                : builder.primitive("v", type, repetition);
     }
 
     private static final int FIXED_LENGTH = 6;

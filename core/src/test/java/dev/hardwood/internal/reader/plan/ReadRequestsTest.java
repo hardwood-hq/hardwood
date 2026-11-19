@@ -274,7 +274,7 @@ class ReadRequestsTest {
     /// `smallRows` values of one byte.
     private static byte[] writeFrontLoaded(int largeRows, int largeLength, int smallRows) throws Exception {
         FileSchema schema = FileSchema.builder("front_loaded")
-                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())
@@ -298,7 +298,7 @@ class ReadRequestsTest {
     private static byte[] write(int rows, int rowsPerRowGroup, String... columns) throws Exception {
         FileSchema.Builder schemaBuilder = FileSchema.builder("sequence");
         for (String column : columns) {
-            schemaBuilder.addColumn(column, PhysicalType.INT64, RepetitionType.REQUIRED);
+            schemaBuilder.primitive(column, PhysicalType.INT64, RepetitionType.REQUIRED);
         }
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

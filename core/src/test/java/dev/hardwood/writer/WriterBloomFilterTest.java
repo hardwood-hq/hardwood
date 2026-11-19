@@ -50,10 +50,10 @@ class WriterBloomFilterTest {
     @Test
     void holdsEveryValueOfEachFixedWidthType() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
-                .addColumn("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("i", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("l", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         int[] ints = new int[ROWS];
         long[] longs = new long[ROWS];
@@ -90,8 +90,8 @@ class WriterBloomFilterTest {
     @Test
     void holdsEveryValueOfEachBinaryType() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
-                .addColumn("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(8))
+                .primitive("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
+                .primitive("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.typeLength(8))
                 .build();
         byte[][] strings = new byte[ROWS][];
         boolean[] nulls = new boolean[ROWS];
@@ -203,7 +203,7 @@ class WriterBloomFilterTest {
     @Test
     void writesAnEmptyFilterForAChunkOfNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
         boolean[] nulls = new boolean[100];
         Arrays.fill(nulls, true);
@@ -217,8 +217,8 @@ class WriterBloomFilterTest {
     @Test
     void writesNoFilterForAColumnNotConfigured() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         byte[] file = write(schema, config().bloomFilter("b").build(),
                 batch -> batch.ints(0, new int[10]).ints(1, new int[10]));
@@ -231,8 +231,8 @@ class WriterBloomFilterTest {
     @Test
     void placesTheFiltersTogetherBetweenTheRowGroupsAndThePageIndex() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         int[] a = new int[ROWS];
         long[] b = new long[ROWS];
@@ -302,7 +302,7 @@ class WriterBloomFilterTest {
     @Test
     void rejectsAFilterForABooleanColumn() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("flag", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("flag", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = config().bloomFilter("flag").build();
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema, config))
@@ -368,7 +368,7 @@ class WriterBloomFilterTest {
     }
 
     private static FileSchema ints() {
-        return FileSchema.builder("schema").addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED).build();
+        return FileSchema.builder("schema").primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED).build();
     }
 
     private static byte[] write(FileSchema schema, WriterConfig config, Consumer<ColumnBatch> filler) throws Exception {

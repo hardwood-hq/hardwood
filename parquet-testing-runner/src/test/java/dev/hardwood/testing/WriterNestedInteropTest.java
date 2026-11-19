@@ -67,10 +67,10 @@ class WriterNestedInteropTest {
     void requiredAndOptionalStructs(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
                 .struct("origin", RepetitionType.REQUIRED, s -> s
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .struct("person", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
-                        .addColumn("born", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
+                        .primitive("born", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
 
         // Record 1 has no person at all; record 2 has one whose name is null.
@@ -103,7 +103,7 @@ class WriterNestedInteropTest {
         FileSchema schema = FileSchema.builder("nested")
                 .struct("a", RepetitionType.OPTIONAL, outer -> outer
                         .struct("b", RepetitionType.OPTIONAL, inner -> inner
-                                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)))
                 .build();
 
         // Row 0: a.b.v = 1; row 1: a present, b absent; row 2: a absent; row 3: a.b present, v null.
@@ -196,8 +196,8 @@ class WriterNestedInteropTest {
     void listOfStructs(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
                 .list("people", RepetitionType.OPTIONAL, el -> el.struct(RepetitionType.OPTIONAL, s -> s
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("y", PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("y", PhysicalType.INT32, RepetitionType.OPTIONAL)))
                 .build();
 
         // Row 0: [{1,10}, {2,null}]; row 1: [{3,30}].
@@ -224,7 +224,7 @@ class WriterNestedInteropTest {
     void listWithNullStructElement(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
                 .list("people", RepetitionType.OPTIONAL, el -> el.struct(RepetitionType.OPTIONAL,
-                        s -> s.addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
+                        s -> s.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
 
         // One record whose middle element is a null struct rather than a struct with null fields.
@@ -320,7 +320,7 @@ class WriterNestedInteropTest {
         FileSchema schema = FileSchema.builder("nested")
                 .map("m", RepetitionType.OPTIONAL, PhysicalType.INT32,
                         value -> value.struct(RepetitionType.OPTIONAL, s -> s
-                                .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
+                                .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
 
         // Row 0: {1:{x=10}, 2:null}.
@@ -452,13 +452,13 @@ class WriterNestedInteropTest {
     @Test
     void rowWrittenStructsIncludingAbsentOnes(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("person", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
-                        .addColumn("born", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
+                        .primitive("born", PhysicalType.INT32, RepetitionType.REQUIRED)
                         // A REQUIRED fixed-width leaf: the absent record gives it a slot the row
                         // layer fills with a placeholder, which must not reach the file.
-                        .addColumn("key", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("key", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.typeLength(4)))
                 .build();
         byte[] firstKey = { 1, 2, 3, 4 };
@@ -507,7 +507,7 @@ class WriterNestedInteropTest {
     void rowWrittenListOfStructsAndListOfLists(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
                 .list("people", RepetitionType.REQUIRED, element -> element.struct(RepetitionType.REQUIRED,
-                        person -> person.addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)))
+                        person -> person.primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)))
                 .list("grid", RepetitionType.REQUIRED, element -> element.list(RepetitionType.REQUIRED,
                         inner -> inner.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
@@ -570,9 +570,9 @@ class WriterNestedInteropTest {
     @Test
     void rowWrittenNestedRecordsCrossStagedBatches(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("person", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("born", PhysicalType.INT32, RepetitionType.REQUIRED))
+                        .primitive("born", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .list("v", RepetitionType.OPTIONAL,
                         element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();

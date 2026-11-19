@@ -21,7 +21,7 @@ The builder emits the **canonical** physical layout only: a `LIST` expands to `g
 
 | Verb | Declares |
 |---|---|
-| `addColumn(name, type, repetition[, column])` | a primitive leaf; its optional attributes (logical type, type length, field id) set on a `ColumnBuilder` |
+| `primitive(name, type, repetition[, column])` | a primitive leaf; its optional attributes (logical type, type length, field id) set on a `ColumnBuilder` |
 | `struct(name, repetition, filler)` | a plain group; children declared on a `StructBuilder` |
 | `file(name, repetition[, fieldId])` | a `FILE` group with the six `OPTIONAL` children the format defines |
 | `list(name, repetition, element)` | a `LIST`; the element declared on an `ElementBuilder` via `primitive`, `struct`, `list` or `map` |

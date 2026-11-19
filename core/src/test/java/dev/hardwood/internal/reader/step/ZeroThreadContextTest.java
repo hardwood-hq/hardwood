@@ -84,8 +84,8 @@ class ZeroThreadContextTest {
     @BeforeAll
     static void writeFixtures() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("bucket", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("bucket", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(ROWS_PER_GROUP).build();
@@ -440,9 +440,9 @@ class ZeroThreadContextTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void aWriterOfSeveralCompressedColumnsWritesWithoutAPool() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("c", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
+                .primitive("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("c", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
         WriterConfig config = WriterConfig.builder().compression(Compression.zstd()).rowGroupTargetRows(ROWS_PER_GROUP)
                 .build();

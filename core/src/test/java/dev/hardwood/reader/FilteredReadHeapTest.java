@@ -75,9 +75,9 @@ class FilteredReadHeapTest {
 
     private static void write(Path file) throws Exception {
         FileSchema.Builder schema = FileSchema.builder("schema")
-                .addColumn("key", PhysicalType.INT64, RepetitionType.REQUIRED);
+                .primitive("key", PhysicalType.INT64, RepetitionType.REQUIRED);
         for (int c = 0; c < COLUMNS; c++) {
-            schema.addColumn("c" + c, PhysicalType.INT64, RepetitionType.REQUIRED);
+            schema.primitive("c" + c, PhysicalType.INT64, RepetitionType.REQUIRED);
         }
         long[] keys = new long[ROWS_PER_GROUP];
         long[] values = new long[ROWS_PER_GROUP];

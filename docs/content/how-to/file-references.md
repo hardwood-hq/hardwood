@@ -58,7 +58,7 @@ Declare the group with `file`, and set a value with `setFile`:
 
 ```java
 FileSchema schema = FileSchema.builder("schema")
-        .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+        .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
         .file("photo", RepetitionType.OPTIONAL)
         .list("attachments", RepetitionType.OPTIONAL, element -> element.file(RepetitionType.OPTIONAL))
         .build();

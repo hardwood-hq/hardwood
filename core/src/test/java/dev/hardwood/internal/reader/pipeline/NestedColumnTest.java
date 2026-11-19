@@ -133,11 +133,11 @@ class NestedColumnTest {
             elementNulls[i] = i % 5 == 2;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .list("f", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.FLOAT, RepetitionType.OPTIONAL))
                 .list("d", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.DOUBLE, RepetitionType.OPTIONAL))
                 .struct("s", RepetitionType.OPTIONAL,
-                        struct -> struct.addColumn("x", PhysicalType.DOUBLE, RepetitionType.OPTIONAL))
+                        struct -> struct.primitive("x", PhysicalType.DOUBLE, RepetitionType.OPTIONAL))
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

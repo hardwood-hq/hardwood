@@ -71,7 +71,7 @@ class EncodingRoundTripTest {
             nulls[r] = r % 4 == 1;
             expected.add(nulls[r] ? null : value(type, r));
         }
-        FileSchema schema = schema(builder -> addColumn(builder, "v", type));
+        FileSchema schema = schema(builder -> primitive(builder, "v", type));
         byte[] file = write(schema, encoding, batch -> values(batch, "v", type, RECORDS, nulls));
 
         assertRows(file, expected, rows -> rows.isNull("v") ? null : rows.getRawValue("v"));
@@ -130,7 +130,7 @@ class EncodingRoundTripTest {
             expected.add(structNulls[r] ? null : List.of(nulls[r] ? "null" : value(type, r)));
         }
         FileSchema schema = schema(builder -> builder.struct("s", RepetitionType.OPTIONAL,
-                struct -> addColumn(struct, "x", type)));
+                struct -> primitive(struct, "x", type)));
         byte[] file = write(schema, encoding, batch -> values(batch.struct("s", Validity.ofNulls(structNulls)),
                 "s.x", type, RECORDS, nulls));
 
@@ -178,27 +178,27 @@ class EncodingRoundTripTest {
     }
 
     private static FileSchema schema(Consumer<FileSchema.Builder> leaf) {
-        FileSchema.Builder builder = FileSchema.builder("schema").addColumn("id", PhysicalType.INT32,
+        FileSchema.Builder builder = FileSchema.builder("schema").primitive("id", PhysicalType.INT32,
                 RepetitionType.REQUIRED);
         leaf.accept(builder);
         return builder.build();
     }
 
-    private static void addColumn(FileSchema.Builder builder, String name, PhysicalType type) {
+    private static void primitive(FileSchema.Builder builder, String name, PhysicalType type) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            builder.addColumn(name, type, RepetitionType.OPTIONAL, col -> col.typeLength(FLBA_WIDTH));
+            builder.primitive(name, type, RepetitionType.OPTIONAL, col -> col.typeLength(FLBA_WIDTH));
         }
         else {
-            builder.addColumn(name, type, RepetitionType.OPTIONAL);
+            builder.primitive(name, type, RepetitionType.OPTIONAL);
         }
     }
 
-    private static void addColumn(FileSchema.StructBuilder builder, String name, PhysicalType type) {
+    private static void primitive(FileSchema.StructBuilder builder, String name, PhysicalType type) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            builder.addColumn(name, type, RepetitionType.OPTIONAL, col -> col.typeLength(FLBA_WIDTH));
+            builder.primitive(name, type, RepetitionType.OPTIONAL, col -> col.typeLength(FLBA_WIDTH));
         }
         else {
-            builder.addColumn(name, type, RepetitionType.OPTIONAL);
+            builder.primitive(name, type, RepetitionType.OPTIONAL);
         }
     }
 
