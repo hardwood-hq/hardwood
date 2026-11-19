@@ -93,7 +93,7 @@ class BetweenWorkItemsFailureTest {
         }
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out,
-                FileSchema.builder("longs").addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED).build(),
+                FileSchema.builder("longs").primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED).build(),
                 WriterConfig.builder().rowGroupTargetRows(100).build())) {
             writer.columnWriter().writeBatch(batch -> batch.longs("v", values));
         }

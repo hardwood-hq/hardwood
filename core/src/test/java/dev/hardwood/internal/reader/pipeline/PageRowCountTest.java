@@ -123,8 +123,8 @@ class PageRowCountTest {
         }
         InMemoryOutputFile out = OutputFile.inMemory();
         FileSchema schema = FileSchema.builder("pages")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,
                 WriterConfig.builder().pageTargetRows(100).build())) {

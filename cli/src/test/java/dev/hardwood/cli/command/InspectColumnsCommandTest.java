@@ -433,10 +433,10 @@ class InspectColumnsCommandTest implements InspectColumnsCommandContract {
     void columnPathOfTwoFieldsIsRejected(@TempDir Path dir) throws IOException {
         Path file = dir.resolve("dotted.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("a", RepetitionType.REQUIRED, a -> a
-                        .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED))
-                .addColumn("c.d", PhysicalType.INT64, RepetitionType.REQUIRED)
+                        .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED))
+                .primitive("c.d", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
             writer.rowWriter().writeRow(row -> row.setLong("a.b", 1L)

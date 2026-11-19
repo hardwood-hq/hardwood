@@ -87,8 +87,8 @@ class WriterPageIndexTest {
             unordered[i] = (i / 10_000) == 1 ? i + 100_000 : i;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("d", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("u", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("d", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("u", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.ints(0, descending).ints(1, unordered));
 
@@ -195,7 +195,7 @@ class WriterPageIndexTest {
             values[i] = i < 10_000 ? pool[2 + i % 3] : pool[1 + i % 3];
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, utf8(values)));
@@ -218,7 +218,7 @@ class WriterPageIndexTest {
             values[i] = i >= 10_000 && (i < 20_000 || i % 7 == 0);
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.booleans(0, values));
 
@@ -235,7 +235,7 @@ class WriterPageIndexTest {
             values[i] = i % 3 == 0 ? Float.NaN : i % 3;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.floats(0, values));
 
@@ -271,7 +271,7 @@ class WriterPageIndexTest {
             values[i] = i < 10_000 ? Double.NaN : i;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.doubles(0, values));
 
@@ -288,7 +288,7 @@ class WriterPageIndexTest {
             values[i] = i % 1_000 == 7 ? Float.NaN : i;
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.floats(0, values));
 
@@ -301,7 +301,7 @@ class WriterPageIndexTest {
     @Test
     void writesNoColumnIndexForAColumnWithoutAnOrder() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("i", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(12).logicalType(new LogicalType.IntervalType()))
                 .build();
         byte[][] values = { new byte[12], new byte[12] };
@@ -317,7 +317,7 @@ class WriterPageIndexTest {
         String low = "a".repeat(63) + "é" + "z".repeat(40);
         String high = "b".repeat(63) + "é" + "z".repeat(40);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, utf8(high, low)));
@@ -342,7 +342,7 @@ class WriterPageIndexTest {
         // to "ê" and the rest dropped.
         String value = "a".repeat(58) + "é" + "􏿿" + "z".repeat(10);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, new byte[][] { utf8(value) }));
@@ -362,7 +362,7 @@ class WriterPageIndexTest {
         Arrays.fill(value, (byte) 'a');
         System.arraycopy(sequence, 0, value, 64 - sequence.length, sequence.length);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, new byte[][] { value }));
@@ -378,7 +378,7 @@ class WriterPageIndexTest {
         byte[] allOnes = new byte[100];
         Arrays.fill(allOnes, (byte) 0xFF);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, new byte[][] { allOnes }));
 
@@ -423,7 +423,7 @@ class WriterPageIndexTest {
     }
 
     private static FileSchema ints(RepetitionType repetition) {
-        return FileSchema.builder("schema").addColumn("v", PhysicalType.INT32, repetition).build();
+        return FileSchema.builder("schema").primitive("v", PhysicalType.INT32, repetition).build();
     }
 
     private static byte[] write(FileSchema schema, WriterConfig config, Consumer<ColumnBatch> filler) throws Exception {

@@ -179,8 +179,8 @@ class FixedWidthSchemaValidationTest {
     /// rows, so the writer encodes it with a dictionary.
     private static byte[] dictionaryEncodedDigestFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(4))
                 .build();
 
@@ -203,10 +203,10 @@ class FixedWidthSchemaValidationTest {
 
     private static byte[] validFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(4))
-                .addColumn("price", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("price", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(8).logicalType(LogicalType.decimal(18, 2)))
                 .build();
 

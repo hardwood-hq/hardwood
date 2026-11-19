@@ -347,8 +347,8 @@ class NaNStatisticsFilterTest {
     @Test
     void writerToReaderRoundTripReturnsNaNRowsThatPredicatesMatch() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("mixed", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("collapsed", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("mixed", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("collapsed", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         double[] mixed = {1.0, 2.0, Double.NaN, 3.0};
         double[] collapsed = {1.0, 1.0, Double.NaN, 1.0};
@@ -375,7 +375,7 @@ class NaNStatisticsFilterTest {
     @Test
     void writerNaNCountOfZeroLetsTheBoundsPrune() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("finite", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("finite", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         double[] finite = {1.0, 2.0, 3.0};
 
@@ -434,8 +434,8 @@ class NaNStatisticsFilterTest {
 
     private static InMemoryOutputFile threeRowGroupsWithAnAllNaNOne() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("price", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("price", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(ROWS_PER_GROUP).build();
         InMemoryOutputFile out = OutputFile.inMemory();

@@ -926,7 +926,7 @@ class FilterPredicateResolverTest {
         FileSchema schema = FileSchema.builder("root")
                 .struct("company", RepetitionType.OPTIONAL, company -> company
                         .struct("address", RepetitionType.OPTIONAL, address -> address
-                                .addColumn("street", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)))
+                                .primitive("street", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)))
                 .build();
 
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
@@ -1060,7 +1060,7 @@ class FilterPredicateResolverTest {
         FileSchema schema = FileSchema.builder("root")
                 .struct("company", RepetitionType.OPTIONAL, company -> company
                         .struct("address", RepetitionType.OPTIONAL, address -> address
-                                .addColumn(
+                                .primitive(
                                         "street",
                                         PhysicalType.BYTE_ARRAY,
                                         RepetitionType.OPTIONAL)))

@@ -221,12 +221,12 @@ class WriterFlba12TimestampTest {
     @Test
     void aTimestampIsDeclaredOnTwelveBytesOnly() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(16).logicalType(LogicalType.timestamp(true, TimeUnit.NANOS))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("TIMESTAMP(NANOS, UTC) annotates a FIXED_LEN_BYTE_ARRAY of length 12, not 16 (column v)");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(true, TimeUnit.NANOS))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("TIMESTAMP(NANOS, UTC) annotates an INT64 or a FIXED_LEN_BYTE_ARRAY(12) column, "
@@ -235,7 +235,7 @@ class WriterFlba12TimestampTest {
 
     private static FileSchema fixed(LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.typeLength(12).logicalType(logicalType))
                 .build();
     }

@@ -278,7 +278,7 @@ class PageHeaderParseTest {
     /// One row group of a required, plain, uncompressed `INT64` column `a` holding each row's index,
     /// in pages of [#PAGE_ROWS] rows.
     private static byte[] write() throws Exception {
-        FileSchema schema = FileSchema.builder("sequence").addColumn("a", PhysicalType.INT64, RepetitionType.REQUIRED)
+        FileSchema schema = FileSchema.builder("sequence").primitive("a", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

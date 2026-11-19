@@ -426,14 +426,14 @@ final class CoverageDomain {
         FileSchema.Builder schema = FileSchema.builder("coverage");
         if (typeLength == null) {
             return logicalType == null
-                    ? schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL).build()
-                    : schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL,
+                    ? schema.primitive(COLUMN, type, RepetitionType.OPTIONAL).build()
+                    : schema.primitive(COLUMN, type, RepetitionType.OPTIONAL,
                             col -> col.logicalType(logicalType)).build();
         }
         return logicalType == null
-                ? schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL,
+                ? schema.primitive(COLUMN, type, RepetitionType.OPTIONAL,
                         col -> col.typeLength(typeLength.intValue())).build()
-                : schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL,
+                : schema.primitive(COLUMN, type, RepetitionType.OPTIONAL,
                         col -> col.typeLength(typeLength.intValue()).logicalType(logicalType))
                         .build();
     }

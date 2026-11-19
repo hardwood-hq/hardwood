@@ -180,10 +180,10 @@ class RowWriterFieldIndexTest {
     @Test
     void aRowCopiedByIndexReproducesTheFileItWasReadFrom() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("score", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
+                .primitive("score", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
 
         int records = 300;
@@ -303,37 +303,37 @@ class RowWriterFieldIndexTest {
 
     private static FileSchema everyTypeSchema() {
         return FileSchema.builder("schema")
-                .addColumn("bool", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
-                .addColumn("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("f32", PhysicalType.FLOAT, RepetitionType.REQUIRED)
-                .addColumn("f64", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("text", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("bool", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("i32", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("f32", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("f64", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("text", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("bin", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
-                .addColumn("day", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("bin", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("day", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.date()))
-                .addColumn("clock", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("clock", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.time(true, TimeUnit.MILLIS)))
-                .addColumn("moment", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("moment", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(true, TimeUnit.MICROS)))
-                .addColumn("wall", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("wall", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.timestamp(false, TimeUnit.MILLIS)))
-                .addColumn("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.decimal(18, 2)))
-                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(16).logicalType(LogicalType.uuid()))
-                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(12).logicalType(LogicalType.interval()))
-                .addColumn("absent", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("absent", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
     }
 
     private static FileSchema nestedSchema() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 col -> col.logicalType(LogicalType.string())))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
                         PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, col -> col.logicalType(LogicalType.string())))
@@ -347,13 +347,13 @@ class RowWriterFieldIndexTest {
     /// `address` `3`, so a wrong-verb or out-of-range case can name one.
     private static FileSchema rulesSchema() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
                 .list("tags", RepetitionType.OPTIONAL,
                         element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
                 .build();
     }
 

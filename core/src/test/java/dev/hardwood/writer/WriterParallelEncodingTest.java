@@ -84,10 +84,10 @@ class WriterParallelEncodingTest {
     @Test
     void writesTheSameRowsWhateverThePoolDoes() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
-                .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(5_000).build();
         byte[] serial = onBusyPool(context -> writeRows(schema, config, context));
@@ -202,9 +202,9 @@ class WriterParallelEncodingTest {
     @Test
     void reportsTheFirstFailureInSchemaOrder() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("ok", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("first", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("second", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("ok", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("first", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("second", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
         // PLAIN pages of a required column are its values alone, so a page body names its column.
         WriterConfig config = WriterConfig.builder()
@@ -299,7 +299,7 @@ class WriterParallelEncodingTest {
     @ValueSource(booleans = { false, true })
     void rejectsAWriteOnAClosedContext(boolean oneColumn) throws Exception {
         FileSchema schema = oneColumn
-                ? FileSchema.builder("schema").addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED).build()
+                ? FileSchema.builder("schema").primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED).build()
                 : schema();
         HardwoodContext context = HardwoodContext.create(2);
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -324,7 +324,7 @@ class WriterParallelEncodingTest {
     }
 
     private static FileSchema idSchema() {
-        return FileSchema.builder("schema").addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED).build();
+        return FileSchema.builder("schema").primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED).build();
     }
 
     /// One row group of many pages, so a single chunk has pages to hand off. `GZIP` names a codec
@@ -370,15 +370,15 @@ class WriterParallelEncodingTest {
     /// Flat and nested columns of several types and encodings, so chunks differ in cost.
     private static FileSchema schema() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(new LogicalType.StringType()))
-                .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL)
+                .primitive("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL)
                 .list("tags", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .struct("point", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)
-                        .addColumn("y", PhysicalType.FLOAT, RepetitionType.OPTIONAL))
+                        .primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .primitive("y", PhysicalType.FLOAT, RepetitionType.OPTIONAL))
                 .build();
     }
 

@@ -98,7 +98,7 @@ class UnsignedIntegerFilterTest {
     @Test
     void aSignedColumnIsUnaffected() throws Exception {
         FileSchema signed = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.IntType(32, true)))
                 .build();
 
@@ -138,7 +138,7 @@ class UnsignedIntegerFilterTest {
     void aNarrowUnsignedColumnTakesTheUnsignedForm() {
         for (int bitWidth : new int[] { 8, 16, 32 }) {
             FileSchema narrow = FileSchema.builder("schema")
-                    .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                    .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                             col -> col.logicalType(new LogicalType.IntType(bitWidth, false)))
                     .build();
 
@@ -218,7 +218,7 @@ class UnsignedIntegerFilterTest {
     void aNestedUnsignedColumnOrdersByUnsignedMagnitude() throws Exception {
         FileSchema nested = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, s -> s
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                                 col -> col.logicalType(new LogicalType.IntType(32, false))))
                 .build();
 
@@ -248,9 +248,9 @@ class UnsignedIntegerFilterTest {
     @Test
     void anUnsignedColumnOrdersUnsignedOnTheRecordPath() throws Exception {
         FileSchema mixed = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.IntType(32, false)))
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
                 .build();
 
@@ -288,14 +288,14 @@ class UnsignedIntegerFilterTest {
 
     private static FileSchema schema() {
         return FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.IntType(32, false)))
                 .build();
     }
 
     private static FileSchema longSchema() {
         return FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED,
+                .primitive("v", PhysicalType.INT64, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.IntType(64, false)))
                 .build();
     }

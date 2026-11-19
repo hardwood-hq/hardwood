@@ -56,8 +56,8 @@ class EncodingSupportTest {
     private static ColumnSchema column(PhysicalType type) {
         FileSchema.Builder schema = FileSchema.builder("schema");
         return (type == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                ? schema.addColumn("v", type, RepetitionType.REQUIRED, col -> col.typeLength(8))
-                : schema.addColumn("v", type, RepetitionType.REQUIRED))
+                ? schema.primitive("v", type, RepetitionType.REQUIRED, col -> col.typeLength(8))
+                : schema.primitive("v", type, RepetitionType.REQUIRED))
                 .build()
                 .getColumn(0);
     }

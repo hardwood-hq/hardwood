@@ -303,7 +303,7 @@ class WriterBatchContractTest {
     @Test
     void rejectsColumnsImplyingDifferentRecordCounts() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {

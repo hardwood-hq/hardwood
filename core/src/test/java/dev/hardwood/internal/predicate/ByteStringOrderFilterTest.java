@@ -164,20 +164,20 @@ class ByteStringOrderFilterTest {
 
     private static FileSchema float16Schema() {
         return FileSchema.builder("schema")
-                .addColumn("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(2).logicalType(LogicalType.float16()))
                 .build();
     }
 
     private static FileSchema binary(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("c", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType))
+                .primitive("c", type, RepetitionType.REQUIRED, col -> col.logicalType(logicalType))
                 .build();
     }
 
     private static FileSchema fixed(int length, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.typeLength(length).logicalType(logicalType))
                 .build();
     }

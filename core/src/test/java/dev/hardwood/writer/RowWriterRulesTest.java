@@ -42,13 +42,13 @@ class RowWriterRulesTest {
 
     private static FileSchema schema() {
         return FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string()))
                 .list("tags", RepetitionType.OPTIONAL,
                         element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
                 .build();
     }
 
@@ -76,7 +76,7 @@ class RowWriterRulesTest {
     void unsetRequiredGroupFailsTheRecord() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("address", RepetitionType.REQUIRED, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .list("tags", RepetitionType.REQUIRED,
                         element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
@@ -324,7 +324,7 @@ class RowWriterRulesTest {
     void reenteringAnOpenListScopeIsRejectedAtTheCallSite() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .list("people", RepetitionType.REQUIRED, element -> element.struct(RepetitionType.REQUIRED,
-                        person -> person.addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)))
+                        person -> person.primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -410,8 +410,8 @@ class RowWriterRulesTest {
     @Test
     void twoFieldsOfOneNameAreRejectedUpFront() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("id", PhysicalType.INT64, RepetitionType.OPTIONAL)
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL)
                 .build();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
@@ -426,8 +426,8 @@ class RowWriterRulesTest {
     void twoFieldsOfOneNameInsideANestedStructAreRejectedUpFront() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                        .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .build();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {

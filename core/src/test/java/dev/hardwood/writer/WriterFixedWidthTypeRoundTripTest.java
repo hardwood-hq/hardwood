@@ -37,11 +37,11 @@ class WriterFixedWidthTypeRoundTripTest {
     @Test
     void writesAndReadsBackEveryFixedWidthTypeInOneFile() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
-                .addColumn("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .primitive("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .primitive("i", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("l", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("f", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .primitive("d", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
 
         boolean[] b = { true, false, true, true, false };
@@ -475,7 +475,7 @@ class WriterFixedWidthTypeRoundTripTest {
     }
 
     private static FileSchema oneColumn(String name, PhysicalType type, RepetitionType repetition) {
-        return FileSchema.builder("schema").addColumn(name, type, repetition).build();
+        return FileSchema.builder("schema").primitive(name, type, repetition).build();
     }
 
     private static ParquetFileReader openReader(InMemoryOutputFile out) throws Exception {

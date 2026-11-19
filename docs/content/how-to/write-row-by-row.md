@@ -32,10 +32,10 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 
 FileSchema schema = FileSchema.builder("person")
-        .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+        .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                 col -> col.logicalType(LogicalType.string()))
-        .addColumn("hired", PhysicalType.INT32, RepetitionType.OPTIONAL,
+        .primitive("hired", PhysicalType.INT32, RepetitionType.OPTIONAL,
                 col -> col.logicalType(LogicalType.date()))
         .build();
 
@@ -124,11 +124,11 @@ Nesting is entered with a filler per level. Fields are addressed by their user-v
 
 ```java
 FileSchema schema = FileSchema.builder("person")
-        .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+        .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
         .struct("address", RepetitionType.OPTIONAL, address -> address
-                .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(LogicalType.string()))
-                .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                .primitive("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         col -> col.logicalType(LogicalType.string())))
         .list("phones", RepetitionType.OPTIONAL,
                 element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,

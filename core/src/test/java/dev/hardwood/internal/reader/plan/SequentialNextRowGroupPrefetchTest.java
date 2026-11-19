@@ -76,7 +76,7 @@ class SequentialNextRowGroupPrefetchTest {
     private static byte[] write(String... columns) throws Exception {
         FileSchema.Builder schemaBuilder = FileSchema.builder("prefetch");
         for (String column : columns) {
-            schemaBuilder.addColumn(column, PhysicalType.INT64, RepetitionType.REQUIRED);
+            schemaBuilder.primitive(column, PhysicalType.INT64, RepetitionType.REQUIRED);
         }
         WriterConfig config = WriterConfig.builder()
                 .compression(Compression.uncompressed())

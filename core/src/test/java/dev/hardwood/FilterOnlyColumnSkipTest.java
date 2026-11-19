@@ -91,11 +91,11 @@ class FilterOnlyColumnSkipTest {
 
         flatFixture = dir.resolve("filter_only_flat.parquet");
         FileSchema flat = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("amount", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("amount", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
+                .primitive("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                         col -> col.logicalType(new LogicalType.StringType()))
-                .addColumn("bucket", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("bucket", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(flatFixture), flat, config)) {
             for (int i = 0; i < ROWS; i++) {
@@ -117,10 +117,10 @@ class FilterOnlyColumnSkipTest {
         // projecting `s.amount` alone is the flat one.
         nestedFixture = dir.resolve("filter_only_nested.parquet");
         FileSchema nested = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("code", PhysicalType.INT64, RepetitionType.REQUIRED)
-                        .addColumn("amount", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                        .primitive("code", PhysicalType.INT64, RepetitionType.REQUIRED)
+                        .primitive("amount", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                         .list("tags", RepetitionType.OPTIONAL,
                                 element -> element.primitive(PhysicalType.INT64, RepetitionType.REQUIRED)))
                 .build();

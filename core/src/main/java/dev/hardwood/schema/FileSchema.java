@@ -582,7 +582,7 @@ public class FileSchema {
 
     /// Builder for constructing a [FileSchema] programmatically.
     ///
-    /// Fields are added as top-level primitive leaves ([#addColumn]), nested `struct`
+    /// Fields are added as top-level primitive leaves ([#primitive]), nested `struct`
     /// groups ([#struct]), `LIST` groups ([#list]), or `MAP` groups ([#map]). The `LIST`
     /// and `MAP` groups emit the canonical 3-level and 2-level physical layouts.
     ///
@@ -591,9 +591,9 @@ public class FileSchema {
     ///
     /// ```java
     /// FileSchema schema = FileSchema.builder("schema")
-    ///         .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+    ///         .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
     ///                 col -> col.logicalType(LogicalType.uuid()).fieldId(1))
-    ///         .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+    ///         .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
     ///                 col -> col.logicalType(LogicalType.string()).fieldId(2))
     ///         .build();
     /// ```
@@ -615,8 +615,8 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or `type` is
         ///         `FIXED_LEN_BYTE_ARRAY` (which needs a type length or an annotation that
         ///         implies one)
-        public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition) {
-            content.addColumn(columnName, type, repetition);
+        public Builder primitive(String columnName, PhysicalType type, RepetitionType repetition) {
+            content.primitive(columnName, type, repetition);
             return this;
         }
 
@@ -633,9 +633,9 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, the type length does
         ///         not match the type, the annotation does not apply to the type, or `type` is
         ///         `FIXED_LEN_BYTE_ARRAY` with no type length and no annotation that implies one
-        public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
+        public Builder primitive(String columnName, PhysicalType type, RepetitionType repetition,
                                  Consumer<ColumnBuilder> column) {
-            content.addColumn(columnName, type, repetition, column);
+            content.primitive(columnName, type, repetition, column);
             return this;
         }
 
@@ -718,7 +718,7 @@ public class FileSchema {
 
         /// Append a `MAP` group whose key has optional attributes, set by `key`. A `STRING` key
         /// is the usual case. A `FIXED_LEN_BYTE_ARRAY` key takes a type length as
-        /// [#addColumn(String, PhysicalType, RepetitionType, Consumer)] describes.
+        /// [#primitive(String, PhysicalType, RepetitionType, Consumer)] describes.
         ///
         /// @param mapName the map group name
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
@@ -863,16 +863,16 @@ public class FileSchema {
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or the type is
         ///         `FIXED_LEN_BYTE_ARRAY`
-        public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition) {
-            return addColumn(columnName, type, repetition, NO_ATTRIBUTES);
+        public StructBuilder primitive(String columnName, PhysicalType type, RepetitionType repetition) {
+            return primitive(columnName, type, repetition, NO_ATTRIBUTES);
         }
 
         /// Append a primitive field whose optional attributes are set by `column`, as
-        /// [Builder#addColumn(String, PhysicalType, RepetitionType, Consumer)] describes.
+        /// [Builder#primitive(String, PhysicalType, RepetitionType, Consumer)] describes.
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or the attributes do
         ///         not match the type
-        public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
+        public StructBuilder primitive(String columnName, PhysicalType type, RepetitionType repetition,
                                        Consumer<ColumnBuilder> column) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
@@ -1001,7 +1001,7 @@ public class FileSchema {
         }
 
         /// Declare a primitive element whose optional attributes are set by `column`, as
-        /// [Builder#addColumn(String, PhysicalType, RepetitionType, Consumer)] describes.
+        /// [Builder#primitive(String, PhysicalType, RepetitionType, Consumer)] describes.
         ///
         /// @throws IllegalArgumentException if the attributes do not match the type
         public void primitive(PhysicalType type, RepetitionType repetition, Consumer<ColumnBuilder> column) {

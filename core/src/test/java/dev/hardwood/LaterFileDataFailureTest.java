@@ -95,7 +95,7 @@ class LaterFileDataFailureTest {
 
     private static InputFile write(long[] ids) throws IOException {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,

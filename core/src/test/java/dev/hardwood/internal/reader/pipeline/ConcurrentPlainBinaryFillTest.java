@@ -109,7 +109,7 @@ class ConcurrentPlainBinaryFillTest {
     /// pages of `pageRows` rows.
     private static byte[] write(int rows, int pageRows) throws Exception {
         FileSchema schema = FileSchema.builder("binary")
-                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .primitive("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
         byte[][] values = new byte[rows][];
         for (int i = 0; i < rows; i++) {

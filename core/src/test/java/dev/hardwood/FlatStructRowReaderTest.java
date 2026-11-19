@@ -66,26 +66,26 @@ class FlatStructRowReaderTest {
     static void writeFixture() throws IOException {
         structs = dir.resolve("flat_structs.parquet");
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("a", PhysicalType.INT32, RepetitionType.OPTIONAL)
-                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("a", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.logicalType(new LogicalType.StringType()))
                         .struct("inner", RepetitionType.OPTIONAL, inner -> inner
-                                .addColumn("x", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
-                                .addColumn("day", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                                .primitive("x", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
+                                .primitive("day", PhysicalType.INT32, RepetitionType.OPTIONAL,
                                         col -> col.logicalType(new LogicalType.DateType()))))
                 .struct("r", RepetitionType.REQUIRED, r -> r
-                        .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
-                        .addColumn("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL)
-                        .addColumn("f", PhysicalType.FLOAT, RepetitionType.OPTIONAL)
-                        .addColumn("price", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                        .primitive("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL)
+                        .primitive("f", PhysicalType.FLOAT, RepetitionType.OPTIONAL)
+                        .primitive("price", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.typeLength(8).logicalType(LogicalType.decimal(18, 2)))
-                        .addColumn("key", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        .primitive("key", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
                                 col -> col.typeLength(16).logicalType(LogicalType.uuid()))
-                        .addColumn("blob", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
+                        .primitive("blob", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .struct("q", RepetitionType.REQUIRED, q -> q
-                        .addColumn("o", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                        .primitive("o", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .list("tags", RepetitionType.OPTIONAL,
                         element -> element.primitive(PhysicalType.INT64, RepetitionType.REQUIRED))
                 .build();

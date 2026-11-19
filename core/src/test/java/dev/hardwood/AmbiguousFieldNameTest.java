@@ -245,7 +245,7 @@ class AmbiguousFieldNameTest {
     void multiFileReadRefusesAnotherCountOfASharedPath(@TempDir Path tempDir) throws Exception {
         Path single = tempDir.resolve("single.parquet");
         FileSchema schema = FileSchema.builder("m")
-                .struct("s", RepetitionType.REQUIRED, s -> s.addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED))
+                .struct("s", RepetitionType.REQUIRED, s -> s.primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(single), schema)) {
             writer.rowWriter().writeRow(row -> row.setStruct("s", s -> s.setInt("v", 7)));
@@ -272,8 +272,8 @@ class AmbiguousFieldNameTest {
     @Test
     void columnarWriterRefusesAnAmbiguousStructPath() throws Exception {
         FileSchema schema = FileSchema.builder("m")
-                .struct("t", RepetitionType.OPTIONAL, t -> t.addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED))
-                .struct("t", RepetitionType.OPTIONAL, t -> t.addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED))
+                .struct("t", RepetitionType.OPTIONAL, t -> t.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))
+                .struct("t", RepetitionType.OPTIONAL, t -> t.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {

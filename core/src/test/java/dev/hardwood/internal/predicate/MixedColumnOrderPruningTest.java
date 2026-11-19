@@ -73,7 +73,7 @@ class MixedColumnOrderPruningTest {
     private Path floats(String fileName, float[] values, UnaryOperator<FileMetaData> patch) throws IOException {
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out,
-                FileSchema.builder("s").addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED).build())) {
+                FileSchema.builder("s").primitive("f", PhysicalType.FLOAT, RepetitionType.REQUIRED).build())) {
             writer.columnWriter().writeBatch(batch -> batch.floats(0, values));
         }
         byte[] rewritten = FooterRewriter.rewrite(InMemoryFiles.toByteArray(out), patch);
