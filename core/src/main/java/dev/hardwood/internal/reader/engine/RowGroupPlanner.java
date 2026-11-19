@@ -44,31 +44,24 @@ import jdk.jfr.Event;
 /// lock, except the jobs' work.
 final class RowGroupPlanner {
 
-    /// The fetch of an [IndexWindow] in the read: its units, the `count` from the one at `first`,
-    /// and its requests: its Bloom filters, read first, and its page index, read once a unit of it
-    /// survives its Bloom filters and dictionaries; each held by every unit of it.
+    /// The fetch of an [IndexWindow] in the read: its first unit, at whose key its requests are
+    /// fetched, and its requests: its Bloom filters, read first, and its page index, read once a
+    /// unit of it needs it; each held by every unit of it.
     static final class WindowFetch {
-        private final int first;
-        private final int count;
+        private final UnitListing first;
         private final List<RangeFetch> bloomFilters;
         private final List<RangeFetch> index;
         private boolean indexRead;
 
-        WindowFetch(int first, int count, List<RangeFetch> bloomFilters, List<RangeFetch> index) {
+        WindowFetch(UnitListing first, List<RangeFetch> bloomFilters, List<RangeFetch> index) {
             this.first = first;
-            this.count = count;
             this.bloomFilters = bloomFilters;
             this.index = index;
         }
 
-        /// The index of its first unit.
-        int first() {
+        /// Its first unit.
+        UnitListing first() {
             return first;
-        }
-
-        /// The index past its last unit.
-        int end() {
-            return first + count;
         }
 
         /// Its Bloom-filter requests.
@@ -111,6 +104,8 @@ final class RowGroupPlanner {
     private int reportedUnits;
     /// the unit holding the consumer's first unpublished row, as far as [#fileAt] has moved it
     private int consumerUnit;
+    /// the units let go of: the consumer has passed them, and they are batched and reported
+    private int passedUnits;
 
     private final RowGroupPruning pruning;
     /// plans a unit's pages and ranges once its page index has arrived
@@ -231,7 +226,7 @@ final class RowGroupPlanner {
         int first = from;
         for (IndexWindow window : windows) {
             int count = window.memberCount();
-            WindowFetch w = new WindowFetch(first, count, ranges(file, window.bloomFilterRanges(), count),
+            WindowFetch w = new WindowFetch(listings.get(first - from), ranges(file, window.bloomFilterRanges(), count),
                     ranges(file, window.indexRanges(), count));
             for (int i = first; i < first + count; i++) {
                 UnitListing u = listings.get(i - from);
@@ -242,11 +237,11 @@ final class RowGroupPlanner {
                 // one its Bloom filters and dictionaries cannot drop waits for its page index at once
                 units.add(RowGroupPruning.droppableOnArrival(u) ? l : new Unit.AwaitingIndex(l, null, List.of()));
             }
-            first += count;
-            request(units.get(w.first()).listing(), w.bloomFilters());
-            for (int i = w.first(); i < w.end(); i++) {
+            request(w.first(), w.bloomFilters());
+            for (int i = first; i < first + count; i++) {
                 start(units.get(i));
             }
+            first += count;
         }
     }
 
@@ -396,7 +391,7 @@ final class RowGroupPlanner {
         set(a);
         WindowFetch w = a.listed().window();
         if (w.readIndex()) {
-            fetch(units.get(w.first()).listing(), w.index(), () -> plan(a));
+            fetch(w.first(), w.index(), () -> plan(a));
         }
         else {
             whenArrived(a.listing(), w.index(), () -> plan(a));
@@ -482,7 +477,7 @@ final class RowGroupPlanner {
     }
 
     /// Commits what pruning reports of the files and units the consumer has reached, its first
-    /// unpublished row at `key`.
+    /// unpublished row at `key`, and lets go of the units the consumer has passed.
     void report(long key) {
         for (; reportedFiles < fileReports.size() && fileReports.get(reportedFiles).base() <= key; reportedFiles++) {
             fileReports.get(reportedFiles).event().commit();
@@ -490,6 +485,11 @@ final class RowGroupPlanner {
         for (; reportedUnits < units.size() && events(units.get(reportedUnits)) != null
                 && units.get(reportedUnits).listing().base() <= key; reportedUnits++) {
             events(units.get(reportedUnits)).forEach(Event::commit);
+        }
+        // a unit is read by the cursors from the consumer's, the next to report and the next to
+        // batch on: one before all three is let go of, its plan with it
+        for (int last = Math.min(consumerUnit, Math.min(reportedUnits, nextBatched)); passedUnits < last; passedUnits++) {
+            units.set(passedUnits, null);
         }
     }
 
