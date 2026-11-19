@@ -13,6 +13,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
@@ -94,6 +95,24 @@ public class BatchExchange<B> {
     /// The read's queue on a context without a pool, which [#poll()] runs; `null` where the
     /// context's pool runs the read.
     private ReadQueue queue;
+    /// Asked by a poll that waits without a batch whether the read can still progress
+    /// ([#setProgressCheck]); a no-op until the read sets it.
+    private ProgressCheck progressCheck = waiting -> {
+    };
+    /// Whether the consumer still waits: no batch is ready and the stream is open.
+    private final BooleanSupplier waiting = this::waiting;
+
+    /// Asks the read whether it can still progress, and fails it where it cannot.
+    @FunctionalInterface
+    public interface ProgressCheck {
+
+        /// Fails the read where it can no longer publish the batch the consumer waits for, by
+        /// abandoning its streams ([#abandon]).
+        ///
+        /// @param waiting whether the consumer still waits on the column, asked where the column
+        ///        publishes
+        void check(BooleanSupplier waiting);
+    }
 
     private BatchExchange(String columnName, BlockingQueue<Object> readyQueue,
                           BlockingQueue<B> freeQueue, Supplier<B> batchFactory,
@@ -250,6 +269,17 @@ public class BatchExchange<B> {
     /// [#tryPublish] found no room, and which publishes there instead of waiting.
     public void setRoomListener(Runnable listener) {
         this.roomListener = listener;
+    }
+
+    private boolean waiting() {
+        return readyQueue.isEmpty() && state == State.OPEN;
+    }
+
+    /// Sets what a poll asks whenever it has waited without a batch: on a pool after each bounded
+    /// wait, on a context of zero threads each time no job of the read is queued or in flight.
+    /// Called before the read starts.
+    public void setProgressCheck(ProgressCheck check) {
+        this.progressCheck = check;
     }
 
     /// Makes [#poll()] run the read's queue whenever it finds no batch, rather than wait for one,
@@ -421,6 +451,7 @@ public class BatchExchange<B> {
             Object item;
             while ((item = readyQueue.poll(ReadTasks.ABANDONED_CHECK_MILLIS, TimeUnit.MILLISECONDS)) == null) {
                 throwIfAbandoned();
+                progressCheck.check(waiting);
             }
             batch = taken(item);
             if (batch == END_OF_STREAM) {
@@ -439,9 +470,9 @@ public class BatchExchange<B> {
     /// ends, parking while nothing is queued; [BatchWaitEvent] spans the parks, which wait for
     /// reads in flight. An interrupt ends the wait before the next item runs, as it ends a pooled
     /// read's wait: an item may read a file, whose channel an interrupted thread would close.
-    ///
-    /// @throws IllegalStateException if no job of the read is in flight and no batch is ready:
-    ///         nothing could publish one any more
+    /// While no job of the read is queued or in flight, only another read can wake it: the poll
+    /// asks the read's [ProgressCheck] each time, which fails the read where nothing can, and
+    /// otherwise parks for at most the bounded wait before it asks again.
     @SuppressWarnings("unchecked")
     private B drive() throws InterruptedException, IOException {
         while (true) {
@@ -464,21 +495,22 @@ public class BatchExchange<B> {
             if (queue.runOne()) {
                 continue;
             }
-            if (queue.tasks().idle()) {
-                // Looked at again: work that ended before the queue was idle published before
-                if (readyQueue.isEmpty() && state == State.OPEN) {
-                    throw new IllegalStateException("The read of column '" + columnName
-                            + "' stalled: no batch is ready, and no task is queued or running and no read in flight");
+            boolean idle = queue.tasks().idle();
+            if (idle) {
+                progressCheck.check(waiting);
+                if (!waiting.getAsBoolean()) {
+                    continue;
                 }
-                continue;
             }
             BatchWaitEvent event = new BatchWaitEvent();
             event.begin();
-            // one event for the whole stall: a park that returns after its bound parks again
+            // one event for the whole stall: a park that returns after its bound parks again, unless
+            // the read is idle, whose progress is checked again after each bound
             do {
                 queue.tasks().park(seen);
             }
-            while (queue.tasks().signals() == seen && state != State.ABANDONED && !Thread.currentThread().isInterrupted());
+            while (!idle && queue.tasks().signals() == seen && state != State.ABANDONED
+                    && !Thread.currentThread().isInterrupted());
             event.column = columnName;
             event.commit();
             if (Thread.interrupted()) {

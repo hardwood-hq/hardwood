@@ -18,11 +18,11 @@ import java.util.function.BooleanSupplier;
 /// The work of one read that its close waits for, and the wait of every thread using the read.
 ///
 /// It counts the read's jobs that are submitted and not finished ([#started()], [#ended()]). The read's close waits until
-/// none is left, and a poll on a context of zero threads that finds none fails instead of waiting
-/// ([dev.hardwood.internal.reader.batch.BatchExchange#poll()]): nothing could publish a batch any
-/// more. A task's end that ends its column, such as a step the closed context refuses, therefore
-/// comes after the column's failure or end is published: a poll that found the read idle first
-/// would report a stall.
+/// none is left, and a poll on a context of zero threads that finds none asks the read whether it
+/// can still progress ([dev.hardwood.internal.reader.batch.BatchExchange#poll()]), which fails a
+/// read nothing could wake any more. A task's end that ends its column, such as a step the closed
+/// context refuses, therefore comes after the column's failure or end is published: a poll that
+/// found the read idle first would find it stalled.
 ///
 /// A thread that waits for the read parks until the read signals ([#signal()]): its last task
 /// ended, and, on a context of zero threads, an item was queued on or ended on the read's queue,

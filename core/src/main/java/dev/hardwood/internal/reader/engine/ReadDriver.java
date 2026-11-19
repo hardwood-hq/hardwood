@@ -8,10 +8,12 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -161,6 +163,73 @@ final class ReadDriver {
         finally {
             drainAndUnlock();
         }
+    }
+
+    /// Fails the read where it can no longer progress, for a consumer whose poll of `column` has
+    /// waited without a batch. The read is stalled where its consumer still waits, no job of it is
+    /// in flight and no result is queued, starting jobs at the consumer's position starts nothing,
+    /// and it waits on nothing another read may release: room in R, or a footer load another read
+    /// runs. Nothing could then wake it, and it is abandoned with an `IllegalStateException`
+    /// naming what holds it back. A reconcile that publishes the consumer's batch, or a job that
+    /// starts, fails it too: work no event tried, a lost wake-up the check does not cover for.
+    /// A check that throws abandons the read with the throw.
+    ///
+    /// @param waiting whether the consumer still waits on the column; asked under the lock, where
+    ///        the column publishes
+    /// @param waitsOnOtherRead whether the read waits for a footer another read loads; under the lock
+    void checkProgress(String column, BooleanSupplier waiting, BooleanSupplier waitsOnOtherRead) {
+        Throwable stall;
+        lock.lock();
+        try {
+            try {
+                stall = stall(column, waiting, waitsOnOtherRead);
+            }
+            catch (Throwable t) {
+                // a reconcile or a start that throws, as one does where the heap is exhausted, leaves
+                // the read half changed: it is abandoned with the throw, as a result that throws is
+                stall = t;
+            }
+            if (stall != null) {
+                // before the lock is let go, so that no job starts past the stall
+                toAbandoned();
+            }
+        }
+        finally {
+            drainAndUnlock();
+        }
+        if (stall != null) {
+            onAbandon.accept(stall);
+            tasks.signal();
+        }
+    }
+
+    /// The failure the read stalled with, `null` where it can progress; under the lock.
+    private Throwable stall(String column, BooleanSupplier waiting, BooleanSupplier waitsOnOtherRead) {
+        if (state != State.RUNNING || !waiting.getAsBoolean() || !results.isEmpty() || scheduler.inFlight() > 0
+                || !tasks.idle()) {
+            return null;
+        }
+        // a wait on another read first: a release of R on its way has room for a job the start
+        // below would take, before the release's wake-up is queued
+        if (scheduler.waitingForRoom() || waitsOnOtherRead.getAsBoolean()) {
+            return null;
+        }
+        JobScheduler.Position at = reconcile.get();
+        if (!waiting.getAsBoolean()) {
+            return new IllegalStateException("The read of column '" + column
+                    + "' missed a wake-up: no job was in flight, and its next batch was publishable");
+        }
+        List<JobScheduler.Job<?>> started = scheduler.start(at);
+        if (!started.isEmpty()) {
+            JobScheduler.Job<?> job = started.getFirst();
+            return new IllegalStateException("The read of column '" + column + "' missed a wake-up: no job was in flight, and a "
+                    + job.kind().name().toLowerCase(Locale.ROOT) + " job at row " + job.key() + " could start");
+        }
+        if (scheduler.waitingForRoom()) {
+            // the start's charge did not fit: R's next release wakes the read
+            return null;
+        }
+        return new IllegalStateException("The read of column '" + column + "' stalled: " + scheduler.describeStall(at));
     }
 
     /// Runs `result` under the lock; one that throws fails the read.

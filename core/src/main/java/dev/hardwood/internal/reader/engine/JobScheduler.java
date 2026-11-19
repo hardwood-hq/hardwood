@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader.engine;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -168,7 +169,11 @@ final class JobScheduler {
     private static final int PLANS = 1 << Kind.PLAN.ordinal();
 
     private final ReadAheadBuffer budget;
+    /// set once a charge did not fit, and cleared under the lock by the first [#start] after R's
+    /// release reached the read: until then the release is on its way, which wakes the read
     private final AtomicBoolean waitingForRoom = new AtomicBoolean();
+    /// set by R's release, on the releasing thread, for the next [#start] to clear the wait
+    private final AtomicBoolean roomArrived = new AtomicBoolean();
     /// registered with R once a charge did not fit; runs `wake` on its next release
     private final Runnable roomReleased;
     private final int cpuSlots;
@@ -194,7 +199,7 @@ final class JobScheduler {
     JobScheduler(ReadAheadBuffer budget, Runnable wake, int cpuSlots, long fetchAheadLimit) {
         this.budget = budget;
         this.roomReleased = () -> {
-            waitingForRoom.set(false);
+            roomArrived.set(true);
             wake.run();
         };
         this.cpuSlots = cpuSlots;
@@ -223,6 +228,9 @@ final class JobScheduler {
 
     /// Starts what the position and the bounds let start, lowest key first.
     List<Job<?>> start(Position at) {
+        if (roomArrived.getAndSet(false)) {
+            waitingForRoom.set(false);
+        }
         List<Job<?>> out = new ArrayList<>();
         int refused = 0;
         while (true) {
@@ -374,6 +382,45 @@ final class JobScheduler {
 
     int inFlight() {
         return running.size();
+    }
+
+    /// Whether a charge did not fit into R and the read waits for its next release, which another
+    /// read's work may bring: true until a [#start] after the release has reached the read, so
+    /// that a release on its way, whose wake-up is not yet queued, counts as the read's waker.
+    boolean waitingForRoom() {
+        return waitingForRoom.get();
+    }
+
+    /// What holds the read back at `at` where no job is in flight and none starts: the lowest
+    /// pending job and the bound that refuses it, and where the consumer stands.
+    String describeStall(Position at) {
+        String position = "the consumer needs the rows below " + at.need() + ", and decodes reach row " + at.reach();
+        Job<?> lowest = null;
+        for (TreeSet<Job<?>> set : ready) {
+            if (!set.isEmpty() && (lowest == null || ORDER.compare(set.first(), lowest) < 0)) {
+                lowest = set.first();
+            }
+        }
+        if (lowest == null) {
+            return "no job is in flight or pending; " + position;
+        }
+        return "no job is in flight, and the lowest pending job, a " + lowest.kind().name().toLowerCase(Locale.ROOT)
+                + " job at row " + lowest.key() + ", " + refusal(lowest, at) + "; " + position;
+    }
+
+    /// The bound that refuses `job` at `at`, as [#tryStart] applies them.
+    private String refusal(Job<?> job, Position at) {
+        if (job.key() > at.end()) {
+            return "lies past the read's end at row " + at.end();
+        }
+        if (job.kind() == Kind.DECODE && job.key() >= at.reach()) {
+            return "lies past the look-ahead";
+        }
+        boolean forced = job.key() < at.need() && neededInFlight == 0;
+        if (!job.cpu() && !forced && fetchedAhead >= fetchAheadLimit) {
+            return "waits for F, with " + fetchedAhead + " bytes fetched ahead of " + fetchAheadLimit;
+        }
+        return "is held back by a job refused before it";
     }
 
     /// Whether a job keyed at or below `key` is ready or running: work that may still fail at a

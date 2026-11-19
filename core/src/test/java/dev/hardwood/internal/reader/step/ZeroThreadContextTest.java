@@ -409,18 +409,43 @@ class ZeroThreadContextTest {
         }
     }
 
-    /// A poll that finds no batch, nothing queued and no read in flight fails rather than parks:
-    /// nothing could publish a batch any more.
+    /// A poll that finds no batch, nothing queued and no read in flight asks the read whether it
+    /// can progress, and raises the failure a check that finds it stalled abandons it with.
     @Test
-    void aPollNothingCanServeFails() throws Exception {
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aPollNothingCanServeRaisesTheFailureOfItsCheck() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
             BatchExchange<FlatBatch> exchange = BatchExchange.detachingFlat("c", 10);
             exchange.setQueue(new ReadQueue(context));
+            exchange.setProgressCheck(waiting -> {
+                if (waiting.getAsBoolean()) {
+                    exchange.abandon(new IllegalStateException("stalled"));
+                }
+            });
 
             assertThatThrownBy(exchange::poll)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("The read of column 'c' stalled: no batch is ready, "
-                            + "and no task is queued or running and no read in flight");
+                    .hasMessage("stalled");
+        }
+    }
+
+    /// A check that finds the read can progress, as one waiting on another read does, leaves the
+    /// poll parked for at most the bounded wait, and it asks again.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aPollWhoseCheckFindsProgressAsksAgain() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(0)) {
+            BatchExchange<FlatBatch> exchange = BatchExchange.detachingFlat("c", 10);
+            exchange.setQueue(new ReadQueue(context));
+            int[] checks = { 0 };
+            exchange.setProgressCheck(waiting -> {
+                if (++checks[0] == 2) {
+                    exchange.finish();
+                }
+            });
+
+            assertThat(exchange.poll()).isNull();
+            assertThat(checks[0]).isEqualTo(2);
         }
     }
 

@@ -306,4 +306,179 @@ class ReadDriverTest {
                 "decode failed: The HardwoodContext was closed while a reader using it was reading");
         driver.awaitIdle();
     }
+
+    // ==================== Progress check ====================
+
+    /// The consumer's position, which [#checked] reports.
+    private JobScheduler.Position position = new JobScheduler.Position(10, 10, Long.MAX_VALUE);
+    /// whether the consumer waits on the column the check is asked for
+    private boolean consumerWaits = true;
+    private boolean waitsOnOtherRead;
+
+    /// A driver whose reconcile reports [#position], and which records what it was abandoned with.
+    private ReadDriver checked() {
+        return new ReadDriver(context, queue, Long.MAX_VALUE, () -> position,
+                t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+    }
+
+    private void checkProgress(ReadDriver d) {
+        d.checkProgress("c", () -> consumerWaits, () -> waitsOnOtherRead);
+    }
+
+    private void addDecodeAt(ReadDriver d, long key) {
+        JobScheduler s = d.scheduler();
+        d.submit(() -> s.add(job("decode", key, 0, JobScheduler.Kind.DECODE, null, () -> {
+        })));
+    }
+
+    @Test
+    void aReadWhoseOnlyJobLiesPastTheLookAheadFailsNamingIt() {
+        ReadDriver d = checked();
+        addDecodeAt(d, 10);
+
+        checkProgress(d);
+
+        assertThat(applied).containsExactly("abandoned: The read of column 'c' stalled: no job is in flight, and the lowest "
+                + "pending job, a decode job at row 10, lies past the look-ahead; the consumer needs the rows below 10, "
+                + "and decodes reach row 10");
+        assertThat(queue.runOne()).as("no job starts past the stall").isFalse();
+    }
+
+    @Test
+    void aReadWithNoJobLeftFails() {
+        ReadDriver d = checked();
+
+        checkProgress(d);
+
+        assertThat(applied).containsExactly("abandoned: The read of column 'c' stalled: no job is in flight or pending; "
+                + "the consumer needs the rows below 10, and decodes reach row 10");
+    }
+
+    @Test
+    void aReadWhoseOnlyJobLiesPastItsEndFailsNamingIt() {
+        position = new JobScheduler.Position(10, 10, 5);
+        ReadDriver d = checked();
+        JobScheduler s = d.scheduler();
+        d.submit(() -> s.add(job("plan", 7, 0, JobScheduler.Kind.PLAN, null, () -> {
+        })));
+
+        checkProgress(d);
+
+        assertThat(applied).containsExactly("abandoned: The read of column 'c' stalled: no job is in flight, and the lowest "
+                + "pending job, a plan job at row 7, lies past the read's end at row 5; the consumer needs the rows "
+                + "below 10, and decodes reach row 10");
+    }
+
+    @Test
+    void aReadWithAJobInFlightIsNotChecked() {
+        ReadDriver d = checked();
+        JobScheduler s = d.scheduler();
+        d.submit(() -> s.add(job("fetch", 20, 0, JobScheduler.Kind.FETCH, null, () -> {
+        })));
+        assertThat(fetches).hasSize(1);
+
+        checkProgress(d);
+
+        assertThat(applied).isEmpty();
+        fetches.poll().run();
+        assertThat(applied).containsExactly("fetch");
+    }
+
+    @Test
+    void aConsumerThatNoLongerWaitsIsNotChecked() {
+        ReadDriver d = checked();
+        consumerWaits = false;
+
+        checkProgress(d);
+
+        assertThat(applied).isEmpty();
+    }
+
+    /// A read whose charge did not fit into R waits for another read to release room, which wakes it.
+    @Test
+    void aReadWaitingForRoomInTheReadAheadBufferIsNotStalled() {
+        ReadDriver d = checked();
+        JobScheduler s = d.scheduler();
+        d.submit(() -> s.add(job("fetch", 20, Long.MAX_VALUE / 2, JobScheduler.Kind.FETCH, new Charge(), () -> {
+        })));
+        assertThat(fetches).as("refused by R").isEmpty();
+
+        checkProgress(d);
+
+        assertThat(applied).isEmpty();
+    }
+
+    @Test
+    void aReadWaitingForAnotherReadsFooterLoadIsNotStalled() {
+        ReadDriver d = checked();
+        waitsOnOtherRead = true;
+
+        checkProgress(d);
+
+        assertThat(applied).isEmpty();
+    }
+
+    /// A job the position lets start that no event tried is a lost wake-up, which fails the read
+    /// rather than being started by the check.
+    @Test
+    void aJobNoEventStartedFailsTheRead() {
+        ReadDriver d = checked();
+        addDecodeAt(d, 10);
+        // the look-ahead moves on without an event that polls the scheduler
+        position = new JobScheduler.Position(10, 20, Long.MAX_VALUE);
+
+        checkProgress(d);
+
+        assertThat(applied).containsExactly("abandoned: The read of column 'c' missed a wake-up: no job was in flight, "
+                + "and a decode job at row 10 could start");
+        assertThat(queue.runOne()).as("the job is not dispatched").isFalse();
+    }
+
+    /// The job the check started is never dispatched, and the close of the abandoned read returns
+    /// what it was charged.
+    @Test
+    void theCloseOfAReadThatMissedAWakeUpReturnsEveryCharge() {
+        ReadDriver d = checked();
+        JobScheduler s = d.scheduler();
+        d.submit(() -> s.add(job("decode", 10, 100, JobScheduler.Kind.DECODE, new Charge(), () -> {
+        })));
+        position = new JobScheduler.Position(0, 20, Long.MAX_VALUE);
+
+        checkProgress(d);
+        assertThat(context.readAheadBuffer().held()).isEqualTo(100);
+        d.close();
+
+        assertThat(applied).containsExactly("abandoned: The read of column 'c' missed a wake-up: no job was in flight, "
+                + "and a decode job at row 10 could start");
+        assertThat(context.readAheadBuffer().held()).isZero();
+    }
+
+    /// A reconcile that throws during the check, as one does where the heap is exhausted, leaves the
+    /// read half changed: the read is abandoned with the throw, and its close does not wait for it.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aCheckThatThrowsAbandonsTheReadWithTheThrow() {
+        ReadDriver d = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
+            throw new OutOfMemoryError("reconcile");
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+
+        checkProgress(d);
+        d.close();
+
+        assertThat(applied).containsExactly("abandoned: reconcile");
+    }
+
+    @Test
+    void aBatchOnlyTheCheckPublishesFailsTheRead() {
+        ReadDriver d = new ReadDriver(context, queue, Long.MAX_VALUE, () -> {
+            consumerWaits = false;
+            return position;
+        }, t -> applied.add("broken: " + t.getMessage()), t -> applied.add("abandoned: " + t.getMessage()));
+        consumerWaits = true;
+
+        checkProgress(d);
+
+        assertThat(applied).containsExactly("abandoned: The read of column 'c' missed a wake-up: no job was in flight, "
+                + "and its next batch was publishable");
+    }
 }
