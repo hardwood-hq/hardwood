@@ -11,9 +11,11 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -92,8 +94,8 @@ class LeafKindTest {
 
     @Test
     void aLeafNodeClassifiesAsItsTypeAndAnnotationDo() {
-        SchemaNode leaf = new SchemaNode.PrimitiveNode(
-                "d", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date(), 0, 0, 0, null);
+        SchemaNode leaf = new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("d"), PhysicalType.INT32,
+                RepetitionType.REQUIRED, null, 0, 0, 0, LogicalType.date(), null));
 
         assertThat(LeafKind.of(leaf)).isEqualTo(LeafKind.CONVERT);
     }

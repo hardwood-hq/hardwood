@@ -363,8 +363,7 @@ public class FileSchema {
                 }
                 // Primitive node - represents an actual column
                 int colIdx = columnIndex[0]++;
-                LogicalType effectiveLogicalType = LeafAnnotation.effective(element);
-                columns.add(new ColumnSchema(
+                ColumnSchema column = new ColumnSchema(
                         new FieldPath(List.copyOf(currentPath)),
                         element.type(),
                         repType,
@@ -372,18 +371,10 @@ public class FileSchema {
                         colIdx,
                         defLevel,
                         repLevel,
-                        effectiveLogicalType,
-                        element.fieldId()));
-
-                children.add(new SchemaNode.PrimitiveNode(
-                        name,
-                        element.type(),
-                        repType,
-                        effectiveLogicalType,
-                        colIdx,
-                        defLevel,
-                        repLevel,
-                        element.fieldId()));
+                        LeafAnnotation.effective(element),
+                        element.fieldId());
+                columns.add(column);
+                children.add(new SchemaNode.PrimitiveNode(column));
 
                 cursor[0]++;
             }

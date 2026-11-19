@@ -128,9 +128,8 @@ other. `ExceptionContext` enrichment reaches the two readers and none of the thr
 flyweights, which is #1156 and #447. The CLI's four renderers (#1021) decode from the
 same table again.
 
-`ColumnSchema` and `SchemaNode.PrimitiveNode` are two public records describing one
-leaf. Unifying them is a public-API change and is not required: a decode taking
-`(PhysicalType, LogicalType)` leaves each caller to unwrap its own carrier.
+`SchemaNode.PrimitiveNode` holds the leaf's `ColumnSchema` (`column()`), so a decode
+taking the `ColumnSchema` serves both carriers.
 
 ## Finding 5 — batch sizing under-counts the nested path
 

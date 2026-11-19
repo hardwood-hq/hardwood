@@ -219,6 +219,8 @@ Before opening a reader for a nested column, you usually need to walk the file's
 
 All three navigation methods return `null` when the group isn't of the expected kind or its encoding is malformed. Callers decide whether `null` is fatal at their layer.
 
+The walk ends at a `SchemaNode.PrimitiveNode`. Its `column()` returns the leaf's `ColumnSchema`, the entry `FileSchema.getColumns()` lists for it; pass `column().columnIndex()` to `columnReader(int)`, or `column().fieldPath().toString()` to `columnReader(String)`.
+
 #### Reading nested data: the layer model
 
 `ColumnReader` exposes a nested column's schema chain as a sequence of **layers**, numbered

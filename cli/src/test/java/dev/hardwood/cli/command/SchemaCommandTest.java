@@ -22,10 +22,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.ConvertedType;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -281,8 +283,8 @@ class SchemaCommandTest implements SchemaCommandContract {
     /// The writer refuses INT96 columns, so the map is declared directly.
     @Test
     void rejectsInt96ProtoMapKeys() {
-        SchemaNode.PrimitiveNode key = new SchemaNode.PrimitiveNode("key", PhysicalType.INT96,
-                RepetitionType.REQUIRED, null, 0, 1, 1, null);
+        SchemaNode.PrimitiveNode key = new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("key"), PhysicalType.INT96,
+                RepetitionType.REQUIRED, null, 0, 1, 1, null, null));
         SchemaNode.GroupNode keyValue = new SchemaNode.GroupNode("key_value", RepetitionType.REPEATED, null, null,
                 List.of(key), 1, 1, null);
         SchemaNode.GroupNode map = new SchemaNode.GroupNode("stamps", RepetitionType.OPTIONAL, ConvertedType.MAP,
