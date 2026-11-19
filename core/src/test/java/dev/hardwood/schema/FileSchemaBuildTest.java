@@ -217,4 +217,34 @@ class FileSchemaBuildTest {
                 .hasMessage("Schema element 'g.a': STRING is read from BYTE_ARRAY, but the column is INT32; a schema carries "
                         + "no annotation its field cannot carry");
     }
+
+    /// Each leaf of the tree holds the entry of the flat column list for the same leaf, so the
+    /// node's attributes are the column's, `typeLength` included.
+    @Test
+    void eachPrimitiveNodeHoldsItsColumn() {
+        FileSchema schema = FileSchema.builder("schema")
+                .primitive("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.uuid()))
+                .struct("s", RepetitionType.OPTIONAL, s -> s
+                        .primitive("raw", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                col -> col.typeLength(5).fieldId(7)))
+                .primitive("n", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+
+        SchemaNode.PrimitiveNode id = (SchemaNode.PrimitiveNode) schema.getField("id");
+        SchemaNode.PrimitiveNode raw = (SchemaNode.PrimitiveNode) ((SchemaNode.GroupNode) schema.getField("s"))
+                .children().getFirst();
+        SchemaNode.PrimitiveNode n = (SchemaNode.PrimitiveNode) schema.getField("n");
+
+        assertThat(id.column()).isSameAs(schema.getColumn(0));
+        assertThat(raw.column()).isSameAs(schema.getColumn(1));
+        assertThat(n.column()).isSameAs(schema.getColumn(2));
+
+        assertThat(id.typeLength()).isEqualTo(16);
+        assertThat(raw.name()).isEqualTo("raw");
+        assertThat(raw.typeLength()).isEqualTo(5);
+        assertThat(raw.fieldId()).isEqualTo(7);
+        assertThat(raw.maxDefinitionLevel()).isEqualTo(2);
+        assertThat(n.typeLength()).isNull();
+    }
 }

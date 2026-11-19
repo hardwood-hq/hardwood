@@ -934,7 +934,8 @@ class ValueFormatterTest {
     }
 
     private static SchemaNode.PrimitiveNode primitive(PhysicalType type, LogicalType logical) {
-        return new SchemaNode.PrimitiveNode("f", type, RepetitionType.REQUIRED, logical, 0, 0, 0, null);
+        return new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("f"), type, RepetitionType.REQUIRED, null,
+                0, 0, 0, logical, null));
     }
 
     private static ColumnSchema column(PhysicalType type, LogicalType logical) {

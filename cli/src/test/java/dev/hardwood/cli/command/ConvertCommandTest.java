@@ -24,11 +24,13 @@ import org.skyscreamer.jsonassert.JSONCompareMode;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.cli.dive.internal.Plurals;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.StructAccessor;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -296,8 +298,8 @@ class ConvertCommandTest implements ConvertCommandContract {
 
     @Test
     void csvFlattenRejectsStructFieldThatIsNotAStruct() {
-        SchemaNode.PrimitiveNode child = new SchemaNode.PrimitiveNode("id", PhysicalType.INT32,
-                RepetitionType.OPTIONAL, null, 0, 2, 0, null);
+        SchemaNode.PrimitiveNode child = new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("id"), PhysicalType.INT32,
+                RepetitionType.OPTIONAL, null, 0, 2, 0, null, null));
         SchemaNode.GroupNode account = new SchemaNode.GroupNode("account", RepetitionType.OPTIONAL, null, null,
                 List.of(child), 1, 0, null);
         List<String> values = new ArrayList<>();

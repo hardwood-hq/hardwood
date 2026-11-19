@@ -15,11 +15,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,7 +50,8 @@ class ShredLevelTest {
     @Test
     void valueColumnOfTheWrongPhysicalTypeIsAReadFailure() {
         SchemaNode.GroupNode field = group("field", List.of(
-                new SchemaNode.PrimitiveNode("value", PhysicalType.INT32, RepetitionType.OPTIONAL, null, 0, 1, 0, null)));
+                new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("value"), PhysicalType.INT32,
+                        RepetitionType.OPTIONAL, null, 0, 1, 0, null, null))));
 
         assertThatThrownBy(() -> ShredLevel.buildNested(field, null))
                 .isInstanceOf(ParquetReadException.class)
@@ -67,7 +70,8 @@ class ShredLevelTest {
     @Test
     void arrayTypedValueWithAPrimitiveElementIsAReadFailure() {
         SchemaNode.PrimitiveNode element =
-                new SchemaNode.PrimitiveNode("element", PhysicalType.INT32, RepetitionType.OPTIONAL, null, 0, 3, 1, null);
+                new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("element"), PhysicalType.INT32,
+                        RepetitionType.OPTIONAL, null, 0, 3, 1, null, null));
         SchemaNode.GroupNode repeated = new SchemaNode.GroupNode(
                 "list", RepetitionType.REPEATED, null, null, List.of(element), 2, 1, null);
         SchemaNode.GroupNode typedValue = new SchemaNode.GroupNode(
@@ -94,7 +98,8 @@ class ShredLevelTest {
     }
 
     private static SchemaNode.PrimitiveNode binary(String name) {
-        return new SchemaNode.PrimitiveNode(name, PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, null, 0, 1, 0, null);
+        return new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of(name), PhysicalType.BYTE_ARRAY,
+                RepetitionType.OPTIONAL, null, 0, 1, 0, null, null));
     }
 
     /// Carriers the Variant shredding spec does not allow as a `typed_value`: a file using

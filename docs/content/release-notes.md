@@ -22,7 +22,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, the getter `codec()` by `compression()`, and `WriterConfig.DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - `FileSchema.Builder` sets the logical type and type length of a primitive leaf in a `FileSchema.PrimitiveBuilder` lambda, for example `primitive("name", BYTE_ARRAY, REQUIRED, col -> col.logicalType(LogicalType.string()))`. The overloads that took a `typeLength` or a `LogicalType` are removed ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
 - `FileSchema.Builder.addColumn(...)` and `FileSchema.StructBuilder.addColumn(...)` are renamed to `primitive(...)`, the name `FileSchema.ElementBuilder` uses ([#1883](https://github.com/hardwood-hq/hardwood/issues/1883))
-- `ColumnSchema`, `SchemaNode.PrimitiveNode` and `SchemaNode.GroupNode` have a last record component `fieldId`. Their constructors and record patterns take the new component, and two schemas that differ only in field ids are no longer equal ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
+- `ColumnSchema` and `SchemaNode.GroupNode` have a last record component `fieldId`. Their constructors and record patterns take the new component, and two schemas that differ only in field ids are no longer equal ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
+- `SchemaNode.PrimitiveNode` has the single record component `column`, the leaf's `ColumnSchema`; its other accessors read from that column and remain ([#1892](https://github.com/hardwood-hq/hardwood/issues/1892))
 
 **Deprecations:**
 

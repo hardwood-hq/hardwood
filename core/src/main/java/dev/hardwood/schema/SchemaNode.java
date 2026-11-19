@@ -16,6 +16,8 @@ import dev.hardwood.metadata.RepetitionType;
 
 /// Tree-based representation of Parquet schema for nested data support.
 /// Each node represents either a primitive column or a group (struct/list/map).
+/// [FileSchema#getColumns()] lists the leaves of the tree as [ColumnSchema]s, in the
+/// same order; each [PrimitiveNode] holds its column.
 ///
 /// Hardwood creates the nodes when it reads or builds a schema; callers obtain them from
 /// [FileSchema] rather than constructing them.
@@ -42,23 +44,59 @@ public sealed interface SchemaNode {
 
     /// Primitive leaf node representing an actual data column.
     ///
-    /// @param name field name
-    /// @param type physical (storage) type
-    /// @param repetitionType whether the field is required, optional, or repeated
-    /// @param logicalType logical type annotation, or `null` if absent
-    /// @param columnIndex zero-based index among all leaf columns
-    /// @param maxDefinitionLevel maximum definition level
-    /// @param maxRepetitionLevel maximum repetition level
-    /// @param fieldId field id of the schema element, or `null` if absent
-    record PrimitiveNode(
-            String name,
-            PhysicalType type,
-            RepetitionType repetitionType,
-            LogicalType logicalType,
-            int columnIndex,
-            int maxDefinitionLevel,
-            int maxRepetitionLevel,
-            Integer fieldId) implements SchemaNode {
+    /// The node holds the leaf's entry in the flat column list, [FileSchema#getColumns()], and
+    /// reads each of its attributes from that entry.
+    ///
+    /// @param column the leaf's column
+    record PrimitiveNode(ColumnSchema column) implements SchemaNode {
+
+        /// Returns the field name.
+        @Override
+        public String name() {
+            return column.name();
+        }
+
+        /// Returns the physical (storage) type.
+        public PhysicalType type() {
+            return column.type();
+        }
+
+        /// Returns whether the field is required, optional, or repeated.
+        @Override
+        public RepetitionType repetitionType() {
+            return column.repetitionType();
+        }
+
+        /// Returns the fixed byte length of a [PhysicalType#FIXED_LEN_BYTE_ARRAY] field, or `null`
+        /// for any other type.
+        public Integer typeLength() {
+            return column.typeLength();
+        }
+
+        /// Returns the logical type annotation, or `null` if absent.
+        public LogicalType logicalType() {
+            return column.logicalType();
+        }
+
+        /// Returns the zero-based index among all leaf columns.
+        public int columnIndex() {
+            return column.columnIndex();
+        }
+
+        @Override
+        public int maxDefinitionLevel() {
+            return column.maxDefinitionLevel();
+        }
+
+        @Override
+        public int maxRepetitionLevel() {
+            return column.maxRepetitionLevel();
+        }
+
+        @Override
+        public Integer fieldId() {
+            return column.fieldId();
+        }
     }
 
     /// Group node representing a struct, list, map, or variant.

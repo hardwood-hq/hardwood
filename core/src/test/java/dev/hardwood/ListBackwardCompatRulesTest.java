@@ -12,8 +12,10 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.ConvertedType;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.SchemaNode;
 import dev.hardwood.schema.SchemaNode.GroupNode;
 import dev.hardwood.schema.SchemaNode.PrimitiveNode;
@@ -30,7 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ListBackwardCompatRulesTest {
 
     private static PrimitiveNode prim(String name, RepetitionType rep) {
-        return new PrimitiveNode(name, PhysicalType.BYTE_ARRAY, rep, null, 0, 0, 0, null);
+        return new PrimitiveNode(new ColumnSchema(FieldPath.of(name), PhysicalType.BYTE_ARRAY, rep, null,
+                0, 0, 0, null, null));
     }
 
     private static GroupNode group(String name, RepetitionType rep, ConvertedType ct,

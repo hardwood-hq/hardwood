@@ -17,6 +17,9 @@ import dev.hardwood.metadata.RepetitionType;
 /// Represents a primitive column in a Parquet schema. Stores computed definition
 /// and repetition levels based on schema hierarchy.
 ///
+/// [FileSchema#getColumns()] lists one column per leaf of the schema tree, and the leaf's
+/// [SchemaNode.PrimitiveNode#column()] returns it.
+///
 /// Hardwood creates instances when it reads or builds a schema; callers obtain them from
 /// [FileSchema] rather than constructing them.
 ///

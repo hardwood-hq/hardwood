@@ -47,7 +47,8 @@ class NestedBatchIndexDecodeTest {
     }
 
     private static SchemaNode.PrimitiveNode leaf() {
-        return new SchemaNode.PrimitiveNode("i8", PhysicalType.INT32, RepetitionType.REQUIRED, INT_8, 0, 0, 0, null);
+        return new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("i8"), PhysicalType.INT32,
+                RepetitionType.REQUIRED, null, 0, 0, 0, INT_8, null));
     }
 
     private static NestedBatchIndex int8Batch(int... values) {

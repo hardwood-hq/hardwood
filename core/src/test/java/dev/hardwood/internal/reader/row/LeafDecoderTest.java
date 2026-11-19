@@ -11,9 +11,11 @@ import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,7 +64,7 @@ class LeafDecoderTest {
     }
 
     private static SchemaNode.PrimitiveNode primitive(PhysicalType type, LogicalType logicalType) {
-        return new SchemaNode.PrimitiveNode(
-                "field", type, RepetitionType.REQUIRED, logicalType, 0, 0, 0, null);
+        return new SchemaNode.PrimitiveNode(new ColumnSchema(FieldPath.of("field"), type,
+                RepetitionType.REQUIRED, null, 0, 0, 0, logicalType, null));
     }
 }
