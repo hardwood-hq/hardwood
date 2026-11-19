@@ -85,7 +85,7 @@ Codecs other than `UNCOMPRESSED` and `GZIP` need their library on the classpath;
 | File key-value metadata | Yes | Yes |
 | Column-chunk key-value metadata | Yes | No ([#1809](https://github.com/hardwood-hq/hardwood/issues/1809)) |
 | `sorting_columns` | No ([#483](https://github.com/hardwood-hq/hardwood/issues/483)) | Yes |
-| Schema `field_id` | On `SchemaElement` | No ([#957](https://github.com/hardwood-hq/hardwood/issues/957)) |
+| Schema `field_id` | Yes | Yes |
 
 See [Query Controls](query-controls.md) for skipping data with these structures, and [Statistics Written](writer.md#statistics-written) for their contents in a file Hardwood writes.
 
