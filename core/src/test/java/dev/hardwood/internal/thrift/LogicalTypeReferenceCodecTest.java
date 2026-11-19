@@ -180,7 +180,7 @@ class LogicalTypeReferenceCodecTest {
             case INT -> Stream.of(8, 16, 32, 64)
                     .flatMap(width -> Stream.of(dev.hardwood.metadata.LogicalType.intType(width, true),
                             dev.hardwood.metadata.LogicalType.intType(width, false)));
-            case NULL -> Stream.of(dev.hardwood.metadata.LogicalType.nullType());
+            case NULL -> Stream.of(dev.hardwood.metadata.LogicalType.unknown());
             case JSON -> Stream.of(dev.hardwood.metadata.LogicalType.json());
             case BSON -> Stream.of(dev.hardwood.metadata.LogicalType.bson());
             case UUID -> Stream.of(dev.hardwood.metadata.LogicalType.uuid());

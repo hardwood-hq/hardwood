@@ -30,8 +30,8 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
         return StringType.INSTANCE;
     }
 
-    /// The `NULL` annotation, for a column whose every value is null.
-    static NullType nullType() {
+    /// The `UNKNOWN` annotation, for a column whose every value is null.
+    static NullType unknown() {
         return NullType.INSTANCE;
     }
 
@@ -167,14 +167,14 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
         }
     }
 
-    /// Column whose every value is null. Carries no parameters; the value of
-    /// every row in such a column is SQL NULL.
+    /// The `UNKNOWN` annotation: a column whose every value is null. Carries no parameters; the
+    /// value of every row in such a column is SQL NULL.
     record NullType() implements LogicalType {
         private static final NullType INSTANCE = new NullType();
 
         @Override
         public String toString() {
-            return "NULL";
+            return "UNKNOWN";
         }
     }
 

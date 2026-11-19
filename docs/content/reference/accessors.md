@@ -214,7 +214,7 @@ Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`)
 (`getString`, `getDate`, `getTimestamp`, `getLocalTimestamp`, `getDecimal`, `getUuid`,
 `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
-A column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()`) holds a null value at
+A column annotated with the `UNKNOWN` logical type (e.g. PyArrow's `pa.null()`) holds a null value at
 every row: `column.logicalType()` returns `LogicalType.NullType`, `isNull(name)` is always `true`,
 and the object accessors return `null`.
 

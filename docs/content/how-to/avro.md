@@ -91,7 +91,7 @@ Two schema shapes have no valid Avro naming, and building a reader over either f
 - A group whose two children carry the same Parquet name. Avro records cannot hold two fields of one name.
 - A file whose root is named `interval` or `float16` and that carries a column of that logical type. Those two logical types convert to Avro `fixed` types with exactly those names and no namespace, which is also the root's full name. Excluding the column from the projection does not lift the rejection; read such a file through Hardwood's `RowReader`.
 
-A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
+A Parquet column annotated with the `UNKNOWN` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
 
 A key-only Parquet MAP, whose repeated `key_value` group has no value column, also maps to an Avro `map` with bare `null` values. Each decoded key is present in the Java map with a `null` value.
 

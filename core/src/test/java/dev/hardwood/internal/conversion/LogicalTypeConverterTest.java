@@ -189,10 +189,10 @@ class LogicalTypeConverterTest {
 
     @Test
     void nullTypeRejectsNonNullValuesButPassesNullThrough() {
-        assertThatThrownBy(() -> LogicalTypeConverter.convert(7, PhysicalType.INT32, LogicalType.nullType()))
+        assertThatThrownBy(() -> LogicalTypeConverter.convert(7, PhysicalType.INT32, LogicalType.unknown()))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Non-null physical value on NULL-typed column: 7");
-        assertThat(LogicalTypeConverter.convert(null, PhysicalType.INT32, LogicalType.nullType())).isNull();
+                .hasMessage("Non-null physical value on UNKNOWN-typed column: 7");
+        assertThat(LogicalTypeConverter.convert(null, PhysicalType.INT32, LogicalType.unknown())).isNull();
     }
 
     @Test

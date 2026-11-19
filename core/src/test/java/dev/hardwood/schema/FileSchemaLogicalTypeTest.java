@@ -444,8 +444,8 @@ class FileSchemaLogicalTypeTest {
     void unknownAnnotatesAnyPhysicalType() {
         for (PhysicalType type : List.of(PhysicalType.BOOLEAN, PhysicalType.INT32, PhysicalType.DOUBLE,
                 PhysicalType.BYTE_ARRAY)) {
-            assertThat(lowered(type, LogicalType.nullType()).logicalType())
-                    .isEqualTo(LogicalType.nullType());
+            assertThat(lowered(type, LogicalType.unknown()).logicalType())
+                    .isEqualTo(LogicalType.unknown());
         }
     }
 
@@ -456,7 +456,7 @@ class FileSchemaLogicalTypeTest {
     void unknownIsRejectedOnARequiredColumn() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
                 .primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED,
-                        col -> col.logicalType(LogicalType.nullType()))
+                        col -> col.logicalType(LogicalType.unknown()))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("UNKNOWN annotates a column holding only nulls, so it cannot be REQUIRED "

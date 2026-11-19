@@ -44,7 +44,7 @@ public final class AvroPlanNode {
         VARIANT,
         LIST,
         MAP,
-        /// The Parquet NULL logical type. A non-null value at this position is
+        /// The Parquet `UNKNOWN` logical type. A non-null value at this position is
         /// always a materialization invariant failure.
         NULL
     }

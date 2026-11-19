@@ -506,14 +506,14 @@ class AvroSchemaConverterTest {
                 ordinary, ordinaryMetadata, ordinaryValue));
     }
 
-    /// `pa.null()` columns carry the NULL logical type on an OPTIONAL primitive.
+    /// `pa.null()` columns carry the `UNKNOWN` logical type on an OPTIONAL primitive.
     /// The Avro schema must be a bare `NULL` — not `union [null, null]`, which
     /// the Avro spec forbids.
     @Test
     void nullLogicalTypeBecomesBareAvroNull() {
         SchemaElement rootElement = root("root", 1);
         SchemaElement nothing = primitive("nothing", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                LogicalType.nullType());
+                LogicalType.unknown());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, nothing));
 
         Schema avroSchema = convert(schema);
@@ -632,7 +632,7 @@ class AvroSchemaConverterTest {
         SchemaElement listGroup = group("nulls", RepetitionType.OPTIONAL, 1, LogicalType.list());
         SchemaElement listInner = group("list", RepetitionType.REPEATED, 1);
         SchemaElement element = primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                LogicalType.nullType());
+                LogicalType.unknown());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, listGroup, listInner, element));
 
         Schema avroSchema = convert(schema);
@@ -652,7 +652,7 @@ class AvroSchemaConverterTest {
         SchemaElement key = primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                 LogicalType.string());
         SchemaElement value = primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                LogicalType.nullType());
+                LogicalType.unknown());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, mapGroup, kv, key, value));
 
         Schema avroSchema = convert(schema);

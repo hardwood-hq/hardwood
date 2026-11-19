@@ -84,7 +84,7 @@ public class LogicalTypeReader {
             case TIME -> readTimeType(reader, header);
             case TIMESTAMP -> readTimestampType(reader, header);
             case INT -> readIntType(reader, header);
-            case NULL -> emptyArm(reader, header, LogicalType.nullType());
+            case NULL -> emptyArm(reader, header, LogicalType.unknown());
             case JSON -> emptyArm(reader, header, LogicalType.json());
             case BSON -> emptyArm(reader, header, LogicalType.bson());
             case UUID -> emptyArm(reader, header, LogicalType.uuid());

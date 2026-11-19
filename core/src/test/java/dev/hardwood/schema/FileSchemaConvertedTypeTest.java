@@ -77,18 +77,18 @@ class FileSchemaConvertedTypeTest {
     /// it, for any converted type and under the same drop rule, while `UNKNOWN` alone stays `NULL`.
     @Test
     void aConvertedTypeBesideUnknownDecidesTheAnnotation() {
-        assertThat(resolveColumn(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, ConvertedType.INTERVAL, LogicalType.nullType())
+        assertThat(resolveColumn(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, ConvertedType.INTERVAL, LogicalType.unknown())
                 .logicalType()).isEqualTo(LogicalType.interval());
-        assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, null, ConvertedType.UTF8, LogicalType.nullType())
+        assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, null, ConvertedType.UTF8, LogicalType.unknown())
                 .logicalType()).isEqualTo(LogicalType.string());
-        assertThat(resolveColumn(PhysicalType.INT32, null, ConvertedType.UTF8, LogicalType.nullType())
+        assertThat(resolveColumn(PhysicalType.INT32, null, ConvertedType.UTF8, LogicalType.unknown())
                 .logicalType()).isNull();
-        assertThat(resolveColumn(PhysicalType.INT32, null, null, LogicalType.nullType())
-                .logicalType()).isEqualTo(LogicalType.nullType());
+        assertThat(resolveColumn(PhysicalType.INT32, null, null, LogicalType.unknown())
+                .logicalType()).isEqualTo(LogicalType.unknown());
 
         SchemaElement legacyTimestamp = new SchemaElement(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
                 RepetitionType.OPTIONAL, null, ConvertedType.TIMESTAMP_MICROS, null, null, null,
-                LogicalType.nullType());
+                LogicalType.unknown());
         assertThat(LeafAnnotation.dropFault(legacyTimestamp))
                 .isEqualTo("TIMESTAMP_MICROS is read from INT64, but the column is FIXED_LEN_BYTE_ARRAY");
     }

@@ -62,7 +62,7 @@ eq("ts", Instant.parse("2026-01-01T00:00:00.000000500Z"))   // ✗ throws: finer
 ```
 
 The ordered operators `lt`, `ltEq`, `gt` and `gtEq` throw `IllegalArgumentException` at reader
-creation on an `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` or `NULL` column, and with a `byte[]` literal
+creation on an `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` or `UNKNOWN` column, and with a `byte[]` literal
 where [Binary columns](#binary-columns) says so. `BOOLEAN` has no set form, since `eq`, `notEq` and
 `isNotNull` express every set of two values.
 
@@ -89,7 +89,7 @@ where [Binary columns](#binary-columns) says so. `BOOLEAN` has no set form, sinc
 | `UUID` | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID`, `byte[]` of 16 bytes | the 16 bytes, unsigned |
 | `FLOAT16` | `FIXED_LEN_BYTE_ARRAY(2)` | `float`, `byte[]` of 2 bytes | numeric, widened to `float`; a `byte[]` as the stored bytes |
 | `INTERVAL` | `FIXED_LEN_BYTE_ARRAY(12)` | `PqInterval`, `byte[]` of 12 bytes | the 12 bytes |
-| `NULL` | any | the literal for the physical type | the stored value; a column that keeps to its annotation holds only nulls, so no comparison matches |
+| `UNKNOWN` | any | the literal for the physical type | the stored value; a column that keeps to its annotation holds only nulls, so no comparison matches |
 | `VARIANT` | group of two `BYTE_ARRAY` | `isNull`, `isNotNull` | whether the group is present |
 
 A predicate on a `VARIANT` column reaches the group's presence, not the values inside it. The
@@ -227,7 +227,7 @@ column index (below). Bounds are ignored when:
 | The minimum sorts above the maximum | `min` and `max` are the wrong way round in the column's order, so the pair brackets nothing |
 | One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound. `TYPE_ORDER` forbids it; under `IEEE_754_TOTAL_ORDER` it marks a unit whose every non-null value is `NaN` |
 | They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair is ordered by signed comparison whatever the column's type is, so its order is wrong for every unsigned integer and byte string |
-| The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order, or a `NULL` column |
+| The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order, or an `UNKNOWN` column |
 | The column is `INT96` under `TYPE_ORDER` | The Parquet spec defines no order for `INT96` bounds under `TYPE_ORDER`; `INT96` bounds are read under `INT96_TIMESTAMP_ORDER` only |
 | An `INT96` bound holds nanoseconds of the day outside one day | Under `INT96_TIMESTAMP_ORDER`, which orders the day before the nanoseconds of the day, such a bound does not sort by the instant it encodes |
 | The column's annotation is dropped | An annotation the column's physical type cannot carry, or one this release does not recognize, so the column is read as its physical type while its bounds were recorded in the annotation's order |

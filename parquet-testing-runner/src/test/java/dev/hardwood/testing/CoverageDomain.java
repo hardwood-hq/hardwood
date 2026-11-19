@@ -212,7 +212,7 @@ final class CoverageDomain {
                 LogicalType.EdgeInterpolationAlgorithm.KARNEY));
 
         annotations.add(new Annotation(LogicalType.date(), PhysicalType.INT32, null));
-        annotations.add(new Annotation(LogicalType.nullType(), PhysicalType.INT32, null));
+        annotations.add(new Annotation(LogicalType.unknown(), PhysicalType.INT32, null));
         fixed(annotations, LogicalType.uuid(), 16);
         fixed(annotations, LogicalType.float16(), 2);
         fixed(annotations, LogicalType.interval(), 12);

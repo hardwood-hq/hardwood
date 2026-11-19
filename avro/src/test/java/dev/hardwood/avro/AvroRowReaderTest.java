@@ -58,8 +58,8 @@ import dev.hardwood.writer.ParquetFileWriter;
 import static dev.hardwood.metadata.LogicalType.intType;
 import static dev.hardwood.metadata.LogicalType.list;
 import static dev.hardwood.metadata.LogicalType.map;
-import static dev.hardwood.metadata.LogicalType.nullType;
 import static dev.hardwood.metadata.LogicalType.string;
+import static dev.hardwood.metadata.LogicalType.unknown;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -279,7 +279,7 @@ class AvroRowReaderTest {
     void nonNullValueForNullLogicalTypeFailsAtRootField() {
         SchemaElement root = SchemaElement.root("root", 1);
         SchemaElement value = SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                nullType());
+                unknown());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(root, value));
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
         RowReader rows = proxy(RowReader.class, values(
@@ -1917,7 +1917,7 @@ class AvroRowReaderTest {
         SchemaElement root = SchemaElement.root("root", 1);
         SchemaElement listGroup = SchemaElement.group("nulls", RepetitionType.REQUIRED, 1, list());
         SchemaElement repeated = SchemaElement.group("list", RepetitionType.REPEATED, 1);
-        SchemaElement element = SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL, nullType());
+        SchemaElement element = SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL, unknown());
         return FileSchema.fromSchemaElements(List.of(root, listGroup, repeated, element));
     }
 
@@ -1928,7 +1928,7 @@ class AvroRowReaderTest {
         SchemaElement keyValue = SchemaElement.group("key_value", RepetitionType.REPEATED, 2);
         SchemaElement key = SchemaElement.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, string());
         SchemaElement value = SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                nullType());
+                unknown());
         return FileSchema.fromSchemaElements(List.of(root, mapGroup, keyValue, key, value));
     }
 

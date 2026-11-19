@@ -374,7 +374,7 @@ class WriterLogicalTypeInteropTest {
     /// The `UNKNOWN` row: an `OPTIONAL INT32` column whose every value is null, which is the only
     /// shape the annotation is legal on and the only one whose meaning it can describe.
     private static Annotated nulls() {
-        return new Annotated(PhysicalType.INT32, null, LogicalType.nullType(),
+        return new Annotated(PhysicalType.INT32, null, LogicalType.unknown(),
                 LogicalTypeAnnotation.unknownType(), null, false, true);
     }
 

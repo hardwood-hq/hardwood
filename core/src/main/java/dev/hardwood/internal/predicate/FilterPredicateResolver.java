@@ -563,7 +563,7 @@ public class FilterPredicateResolver {
     ///
     /// parquet-format defines no sort order for `INTERVAL`, `GEOMETRY` and `GEOGRAPHY`: an
     /// interval's months, days and milliseconds have no fixed conversion between them, and a
-    /// geometry is a shape. A `NULL` column stores no values to order. Comparing their stored bytes
+    /// geometry is a shape. An `UNKNOWN` column stores no values to order. Comparing their stored bytes
     /// would answer in an order nobody defined — for an `INTERVAL`, one that sorts 256 months below
     /// 1 month, since the components are little-endian. Equality and the set form stay: those ask
     /// whether a stored value *is* the literal, which the bytes answer.

@@ -627,7 +627,7 @@ public final class ValueFormatter {
     /// rendered as a leaf. These values come from the file unchecked, so one the
     /// annotation cannot decode — a payload of the wrong width, a `TIME` outside
     /// a day, a `TIMESTAMP` past the range of the Java type, any value of a
-    /// `NULL` column, an `INT(8)` or `INT(16)` outside its bit width — renders in its stored
+    /// `UNKNOWN` column, an `INT(8)` or `INT(16)` outside its bit width — renders in its stored
     /// form: the number (unsigned under an unsigned `INT`), or the bytes as
     /// `0x` hex. An INT96 timestamp decodes to its instant, and renders as hex in
     /// physical mode.
