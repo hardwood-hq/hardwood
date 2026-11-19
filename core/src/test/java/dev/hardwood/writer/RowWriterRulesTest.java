@@ -135,6 +135,18 @@ class RowWriterRulesTest {
                 .hasMessage("Field id is INT32; setLong requires an INT64 column"));
     }
 
+    /// Other readers read an unannotated `BYTE_ARRAY` as binary, so a string written to one is
+    /// refused rather than encoded; the caller annotates the column or writes the bytes.
+    @Test
+    void setStringOnAnUnannotatedColumnIsRejected() throws Exception {
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row
+                .setInt("id", 1)
+                .setStruct("address", address -> address.setString("city", "Berlin"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field address.city is BYTE_ARRAY; setString requires a BYTE_ARRAY column annotated "
+                        + "STRING, ENUM or JSON; an unannotated column takes setBinary"));
+    }
+
     @Test
     void verbThatDoesNotFitTheFieldShapeIsRejected() throws Exception {
         withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setStruct("tags", tags -> { })))
