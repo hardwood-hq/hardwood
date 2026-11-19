@@ -68,7 +68,7 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | `map(name, repetition, keyType[, keyTypeLength][, keyLogicalType], value)` | a `MAP` group with a `REQUIRED` key of `keyType` and a value `value` declares |
 | `build()` | the `FileSchema` |
 
-The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as.
+The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as, both with `UnsupportedOperationException`.
 
 `repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. `typeLength` is rejected for every type but `FIXED_LEN_BYTE_ARRAY`, and a `FIXED_LEN_BYTE_ARRAY` column has a positive one. Declared without one, it takes the length its annotation implies:
 
@@ -462,8 +462,8 @@ Every other failure throws and fails the writer, as it does under `writeRow`: a 
 
 | Exception | When |
 |---|---|
-| `UnsupportedOperationException` | Something the writer does not produce, such as an `INT96` column, the `LZ4` or `LZO` codec, or a [schema shape](#schema-shapes) outside what it writes. For a codec whose library is missing, the message names the dependency to add |
-| `IllegalArgumentException` | The input does not fit the schema, or a configuration value lies outside what it accepts, such as a setter that does not fit the column's type, a column left unset or set twice, a value outside the range its annotation declares, a `REQUIRED` field a record leaves unset, a row out of the declared sort order, or a compression level outside the codec's range |
+| `UnsupportedOperationException` | Something the format allows and the writer does not produce, such as a schema with no columns, an `INT96` column, the `LZ4` or `LZO` codec, or a [schema shape](#schema-shapes) outside what it writes. For a codec whose library is missing, the message names the dependency to add |
+| `IllegalArgumentException` | The input does not fit the schema, the schema is one the format does not allow, or a configuration value lies outside what it accepts, such as a `MAP` key that is not `REQUIRED`, a setter that does not fit the column's type, a column left unset or set twice, a value outside the range its annotation declares, a `REQUIRED` field a record leaves unset, a row out of the declared sort order, or a compression level outside the codec's range |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | A call the writer's state does not allow at that point, such as a write after `close()` or after the writer has failed, using both write APIs on one file, or using a `ColumnBatch` after it has been submitted |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |
@@ -473,7 +473,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: a 
 
 Repetition is writable wherever a `LIST` or `MAP` annotation accounts for it. An annotated group is `REQUIRED` or `OPTIONAL` and holds exactly one `REPEATED` entry, which for a `MAP` is a group of `key` and `value`. That admits the canonical three-level `LIST` and two-level `MAP` layouts `FileSchema.builder` declares, and the legacy two-level lists a schema read from an existing file may carry: `LIST { repeated element }`, whose entry is the element, and `LIST { repeated group element { … } }`, whose entry is an element struct.
 
-Any other repetition is rejected with `UnsupportedOperationException` when the writer is created, as are a `FILE` group with no children and a `MAP` whose entry group has no fields or whose key is not `REQUIRED`. A key-only map needs a `REQUIRED` key too, and an `OPTIONAL` key is rejected even if every key value would be present. These rules apply to schemas read from existing files as well as built ones.
+A `repeated` field outside a `LIST` or `MAP` group is rejected with `UnsupportedOperationException` when the writer is created. An annotated group that is itself `REPEATED`, holds other than one field, or holds an entry that is not `REPEATED` (or for a `MAP`, is not a group), a `MAP` whose entry group has no fields or whose key is not `REQUIRED`, and a `FILE` group with no children are rejected with `IllegalArgumentException`. A key-only map needs a `REQUIRED` key too, and an `OPTIONAL` key is rejected even if every key value would be present. These rules apply to schemas read from existing files as well as built ones.
 
 The row API reaches a list's values through an element node below the entry, which the legacy two-level lists do not have, so `rowWriter()` refuses those two shapes and `columnWriter()` writes them. `rowWriter()` also requires sibling field names to be unique, which the `ColumnBatch` indices and dotted paths do not.
 

@@ -208,11 +208,11 @@ public final class ParquetFileWriter implements Closeable {
     /// @param schema the schema to write
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
-    ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
+    /// @throws IllegalArgumentException if the schema has a shape the format does not allow, such
+    ///         as a `MAP` whose key is not `REQUIRED`, or a column the writer cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
     ///         its physical type cannot carry or no value can be written for
-    /// @throws UnsupportedOperationException if the schema has a column of an unsupported
-    ///         physical type, or a shape the writer cannot produce
+    /// @throws UnsupportedOperationException if the schema declares no columns, or has a column
+    ///         of an unsupported physical type or a shape the writer cannot produce
     public static ParquetFileWriter create(OutputFile out, FileSchema schema) throws IOException {
         return create(out, schema, WriterConfig.defaults());
     }
@@ -224,11 +224,11 @@ public final class ParquetFileWriter implements Closeable {
     /// @param config the writer configuration
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema has a column of an unsupported
-    ///         physical type, a shape the writer cannot produce, or the configured codec's library
-    ///         is missing
-    /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
-    ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
+    /// @throws UnsupportedOperationException if the schema declares no columns, or has a column
+    ///         of an unsupported physical type or a shape the writer cannot produce, or the
+    ///         configured codec's library is missing
+    /// @throws IllegalArgumentException if the schema has a shape the format does not allow, such
+    ///         as a `MAP` whose key is not `REQUIRED`, or a column the writer cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
     ///         its physical type cannot carry or no value can be written for; or an encoding
     ///         policy names a column the schema does not have, or one its physical type cannot carry;
     ///         or a Bloom filter names a column the schema does not have, or a `BOOLEAN` column
@@ -249,11 +249,11 @@ public final class ParquetFileWriter implements Closeable {
     /// @param context the context whose threads append and encode column chunks
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema has a column of an unsupported
-    ///         physical type, a shape the writer cannot produce, or the configured codec's library
-    ///         is missing
-    /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
-    ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
+    /// @throws UnsupportedOperationException if the schema declares no columns, or has a column
+    ///         of an unsupported physical type or a shape the writer cannot produce, or the
+    ///         configured codec's library is missing
+    /// @throws IllegalArgumentException if the schema has a shape the format does not allow, such
+    ///         as a `MAP` whose key is not `REQUIRED`, or a column the writer cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
     ///         its physical type cannot carry or no value can be written for; or an encoding
     ///         policy names a column the schema does not have, or one its physical type cannot carry;
     ///         or a Bloom filter names a column the schema does not have, or a `BOOLEAN` column

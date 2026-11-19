@@ -494,7 +494,7 @@ class FileLogicalTypeTest {
                 SchemaElement.group("photo", RepetitionType.OPTIONAL, 0, LogicalType.file())));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Group photo is annotated FILE but has no children; none of its values could be read"
                         + " back as written");
     }

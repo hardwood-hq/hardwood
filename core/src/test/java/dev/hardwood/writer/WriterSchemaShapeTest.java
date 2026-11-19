@@ -61,6 +61,14 @@ class WriterSchemaShapeTest {
     /// `no_columns.parquet`, an Arrow-written file whose root has no children. That is the
     /// route such a schema actually arrives by, and it makes the case a real one rather than
     /// a hand-assembled root.
+    /// The builder refuses the same schema as [#rejectsSchemaWithNoColumns()], with the same type.
+    @Test
+    void builderRejectsSchemaWithNoColumns() {
+        assertThatThrownBy(() -> FileSchema.builder("schema").build())
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("Schema must have at least one column");
+    }
+
     @Test
     void rejectsSchemaWithNoColumns() throws IOException {
         FileSchema schema;
@@ -71,7 +79,7 @@ class WriterSchemaShapeTest {
         InMemoryOutputFile out = OutputFile.inMemory();
 
         assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Schema schema has no columns; the writer requires at least one column");
 
         // Refused before the destination was opened, so there is nothing at it to clean up.
@@ -240,7 +248,7 @@ class WriterSchemaShapeTest {
         String path = nested ? "outer.props" : "props";
 
         assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("MAP key " + path + ".entries.k is OPTIONAL rather than REQUIRED;"
                         + " a map key must always be present");
 
@@ -261,7 +269,7 @@ class WriterSchemaShapeTest {
         InMemoryOutputFile out = OutputFile.inMemory();
 
         assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("MAP entry props.entries has no fields; a map key must always be present");
 
         assertThatThrownBy(out::position)
@@ -282,7 +290,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Group items is annotated LIST and is itself REPEATED; the annotation accounts "
                          + "for the repetition of its entry only, so nothing supplies the group's own "
                          + "entry offsets")
@@ -302,7 +310,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Group items.inner is annotated LIST and is itself REPEATED; the annotation "
                          + "accounts for the repetition of its entry only, so nothing supplies the "
                          + "group's own entry offsets")
@@ -320,7 +328,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Group items is annotated LIST but its entry element is OPTIONAL rather than "
                          + "REPEATED; the annotation then carries no repetition and the group's entry "
                          + "offsets have nowhere to go")
@@ -338,7 +346,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Group items is annotated LIST but holds 2 fields where the layout requires "
                          + "exactly one, its REPEATED entry")
                 ;
@@ -355,7 +363,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
-                .isInstanceOf(UnsupportedOperationException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Group props is annotated MAP but its entry key is a leaf where the layout "
                          + "requires a repeated group of key and value")
                 ;

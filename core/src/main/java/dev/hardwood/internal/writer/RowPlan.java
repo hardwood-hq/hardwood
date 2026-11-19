@@ -327,7 +327,7 @@ public final class RowPlan {
 
     private static SchemaNode onlyChild(SchemaNode.GroupNode group, String path) {
         if (group.children().size() != 1) {
-            throw new UnsupportedOperationException("Group " + path + " holds "
+            throw new IllegalArgumentException("Group " + path + " holds "
                     + group.children().size() + " fields where the LIST or MAP layout it is part of "
                     + "requires exactly one");
         }
