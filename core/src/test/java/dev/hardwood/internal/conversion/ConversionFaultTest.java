@@ -186,8 +186,8 @@ class ConversionFaultTest {
     /// Only the values can contradict it, and this answers from the schema alone.
     @Test
     void nullIsLegalOverAnyPhysicalType() {
-        assertThat(fault(PhysicalType.INT32, null, LogicalType.nullType())).isNull();
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.nullType())).isNull();
+        assertThat(fault(PhysicalType.INT32, null, LogicalType.unknown())).isNull();
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.unknown())).isNull();
     }
 
     /// A footer that omits `type_length` states no width for the annotation to contradict,

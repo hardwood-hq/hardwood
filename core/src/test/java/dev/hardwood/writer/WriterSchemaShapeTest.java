@@ -127,7 +127,7 @@ class WriterSchemaShapeTest {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
                 SchemaElement.primitive("nothing", PhysicalType.INT32, RepetitionType.REQUIRED,
-                        LogicalType.nullType())));
+                        LogicalType.unknown())));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)

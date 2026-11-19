@@ -1305,11 +1305,11 @@ class ValueFormatterTest {
         assertThat(ValueFormatter.formatBytes(littleEndian(-1), uint8, true)).isEqualTo("4294967295");
     }
 
-    /// A `NULL` column holds no value, so a statistic or dictionary entry on one
+    /// An `UNKNOWN` column holds no value, so a statistic or dictionary entry on one
     /// is no value of its type: it shows the stored integer.
     @Test
     void valueOnANullColumnRendersAsItsStoredInteger() {
-        ColumnSchema col = column(PhysicalType.INT32, LogicalType.nullType());
+        ColumnSchema col = column(PhysicalType.INT32, LogicalType.unknown());
 
         assertThat(ValueFormatter.formatBytes(littleEndian(7), col, true)).isEqualTo("7");
         assertThat(ValueFormatter.formatDictionary(7, col, true, NO_LIMIT)).isEqualTo("7");

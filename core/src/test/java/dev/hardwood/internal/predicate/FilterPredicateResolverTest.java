@@ -1257,9 +1257,9 @@ class FilterPredicateResolverTest {
                         "GEOMETRY(OGC:CRS84)", "byte[]"),
                 Arguments.of("GEOGRAPHY", geography, FilterPredicate.ltEq("c", new byte[] { 1 }),
                         "GEOGRAPHY(OGC:CRS84, SPHERICAL)", "byte[]"),
-                Arguments.of("NULL", nullColumn, FilterPredicate.lt("c", 1), "NULL", "int"),
-                Arguments.of("NULL, a literal type it does not take", nullColumn, FilterPredicate.lt("c", 1L),
-                        "NULL", "int"));
+                Arguments.of("UNKNOWN", nullColumn, FilterPredicate.lt("c", 1), "UNKNOWN", "int"),
+                Arguments.of("UNKNOWN, a literal type it does not take", nullColumn, FilterPredicate.lt("c", 1L),
+                        "UNKNOWN", "int"));
     }
 
     /// Equality asks whether a stored value *is* the literal, which the stored bytes answer
@@ -1910,9 +1910,9 @@ class FilterPredicateResolverTest {
                         schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
                                 new LogicalType.GeographyType(null, null)),
                         notText("annotated GEOGRAPHY", "byte[]")),
-                Arguments.of("NULL",
+                Arguments.of("UNKNOWN",
                         schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY, new LogicalType.NullType()),
-                        notText("annotated NULL", "byte[]")),
+                        notText("annotated UNKNOWN", "byte[]")),
                 Arguments.of("unannotated FIXED_LEN_BYTE_ARRAY",
                         schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null),
                         notText("an unannotated FIXED_LEN_BYTE_ARRAY", "byte[]")));

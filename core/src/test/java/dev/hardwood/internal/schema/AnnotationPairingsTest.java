@@ -63,8 +63,8 @@ class AnnotationPairingsTest {
                 Arguments.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, LogicalType.interval()),
                 Arguments.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2, LogicalType.float16()),
                 // UNKNOWN says every value is null, which no physical type contradicts.
-                Arguments.of(PhysicalType.BOOLEAN, null, LogicalType.nullType()),
-                Arguments.of(PhysicalType.INT96, null, LogicalType.nullType()),
+                Arguments.of(PhysicalType.BOOLEAN, null, LogicalType.unknown()),
+                Arguments.of(PhysicalType.INT96, null, LogicalType.unknown()),
                 // An unannotated column of any physical type.
                 Arguments.of(PhysicalType.BOOLEAN, null, null),
                 Arguments.of(PhysicalType.INT64, null, null),
@@ -162,7 +162,7 @@ class AnnotationPairingsTest {
     void unknownIsLegalOverEveryPhysicalType() {
         for (PhysicalType type : PhysicalType.values()) {
             Integer width = type == PhysicalType.FIXED_LEN_BYTE_ARRAY ? 4 : null;
-            assertThat(AnnotationPairings.check(type, width, LogicalType.nullType()))
+            assertThat(AnnotationPairings.check(type, width, LogicalType.unknown()))
                     .as("UNKNOWN over %s", type)
                     .isInstanceOf(Pairing.Legal.class);
         }
@@ -202,7 +202,7 @@ class AnnotationPairingsTest {
                 .isEqualTo(ByteColumnOrder.INT96_INSTANT);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval()))
                 .isEqualTo(ByteColumnOrder.NONE);
-        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.INT96, LogicalType.nullType()))
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.INT96, LogicalType.unknown()))
                 .isEqualTo(ByteColumnOrder.INT96_INSTANT);
     }
 
@@ -222,7 +222,7 @@ class AnnotationPairingsTest {
         assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER,
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, null)).isFalse();
         assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER, PhysicalType.FLOAT,
-                LogicalType.nullType())).isFalse();
+                LogicalType.unknown())).isFalse();
 
         assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.TYPE_DEFINED_ORDER, PhysicalType.INT32, null))
                 .isTrue();

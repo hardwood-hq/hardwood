@@ -62,7 +62,7 @@ public final class LogicalTypeConverter {
     /// `DECIMAL` with more digits than its carrier holds. [LogicalTypeValidator] refuses the
     /// same pairings to the writer. The two differ only where a file on disk leaves nothing to
     /// prove wrong: a `FIXED_LEN_BYTE_ARRAY` without a usable width, which `FixedWidthValidator`
-    /// refuses by name, and `NULL`, which no physical type contradicts.
+    /// refuses by name, and `UNKNOWN`, which no physical type contradicts.
     ///
     /// @param physicalType the column's physical type
     /// @param typeLength its `FIXED_LEN_BYTE_ARRAY` byte length, `null` for any other type
@@ -159,7 +159,7 @@ public final class LogicalTypeConverter {
             // at the top of this method means this arm is unreachable for a
             // well-formed file.
             case LogicalType.NullType n -> throw new ParquetReadException(
-                    "Non-null physical value on NULL-typed column: " + physicalValue);
+                    "Non-null physical value on UNKNOWN-typed column: " + physicalValue);
             // Structural / self-describing logical types are carried on group
             // nodes (handled by RecordAssembler / variant flyweights) and
             // must never reach a primitive-typed conversion.

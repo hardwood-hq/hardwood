@@ -399,7 +399,7 @@ class RowWriterTryWriteRowTest {
         Path file = dir.resolve("out.parquet");
         FileSchema schema = FileSchema.builder("schema")
                 .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                        col -> col.logicalType(LogicalType.nullType()))
+                        col -> col.logicalType(LogicalType.unknown()))
                 .build();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {

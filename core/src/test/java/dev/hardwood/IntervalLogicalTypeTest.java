@@ -139,7 +139,7 @@ class IntervalLogicalTypeTest {
 
     /// parquet-java writes `converted_type=INTERVAL` beside the `LogicalType` union's `UNKNOWN`
     /// member, as the union has no `INTERVAL` member. The converted type decides the column's
-    /// annotation, so the column reads and filters as an interval rather than as a `NULL` column.
+    /// annotation, so the column reads and filters as an interval rather than as an `UNKNOWN` column.
     @Test
     void testParquetJavaFooterIsReadAsInterval() throws IOException {
         Path parquetJavaFile = Paths.get("src/test/resources/interval_parquet_java_test.parquet");

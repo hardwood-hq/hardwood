@@ -167,7 +167,7 @@ class WriterLogicalTypeRoundTripTest {
     void unknownColumnWritesOnlyItsNullCount() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                        col -> col.logicalType(LogicalType.nullType()))
+                        col -> col.logicalType(LogicalType.unknown()))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -177,7 +177,7 @@ class WriterLogicalTypeRoundTripTest {
         }
 
         try (ParquetFileReader reader = openReader(out)) {
-            assertThat(reader.getFileSchema().getColumn("v").logicalType()).isEqualTo(LogicalType.nullType());
+            assertThat(reader.getFileSchema().getColumn("v").logicalType()).isEqualTo(LogicalType.unknown());
             Statistics statistics = columnMeta(reader, 0).statistics();
             assertThat(statistics.minValue()).isNull();
             assertThat(statistics.maxValue()).isNull();

@@ -35,7 +35,7 @@ class LogicalTypeWriterTest {
                 LogicalType.date(),
                 LogicalType.json(),
                 LogicalType.bson(),
-                LogicalType.nullType(),
+                LogicalType.unknown(),
                 LogicalType.uuid(),
                 LogicalType.float16(),
                 LogicalType.decimal(1, 0),

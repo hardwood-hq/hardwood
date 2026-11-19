@@ -149,7 +149,7 @@ An annotation is built with the `LogicalType` static factory of the same name. T
 | `LogicalType.bson()` | `BSON` — BSON document stored as a byte array |
 | `LogicalType.interval()` | `INTERVAL` — 12-byte fixed-length byte array (months, days, millis) |
 | `LogicalType.float16()` | `FLOAT16` — IEEE 754 half-precision, 2-byte fixed-length byte array |
-| `LogicalType.nullType()` | `NULL` — every value in the column is null |
+| `LogicalType.unknown()` | `UNKNOWN` — every value in the column is null |
 | `LogicalType.list()` | `LIST` |
 | `LogicalType.map()` | `MAP` |
 | `LogicalType.intType(bitWidth, isSigned)` | `INT_8` … `UINT_64` — `bitWidth` is 8, 16, 32 or 64 |

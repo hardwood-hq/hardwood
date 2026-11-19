@@ -322,7 +322,7 @@ class WriterAnnotationRangeTest {
     void anUnknownColumnHoldsOnlyNulls() {
         FileSchema schema = FileSchema.builder("schema")
                 .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                        col -> col.logicalType(LogicalType.nullType()))
+                        col -> col.logicalType(LogicalType.unknown()))
                 .build();
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 7 })))
@@ -345,7 +345,7 @@ class WriterAnnotationRangeTest {
     void anUnknownColumnTakesItsNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                        col -> col.logicalType(LogicalType.nullType()))
+                        col -> col.logicalType(LogicalType.unknown()))
                 .build();
 
         InMemoryOutputFile out = writeBatch(schema,
@@ -369,7 +369,7 @@ class WriterAnnotationRangeTest {
                 .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                                col -> col.logicalType(LogicalType.nullType())))
+                                col -> col.logicalType(LogicalType.unknown())))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -395,7 +395,7 @@ class WriterAnnotationRangeTest {
                 .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                                col -> col.logicalType(LogicalType.nullType())))
+                                col -> col.logicalType(LogicalType.unknown())))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -419,7 +419,7 @@ class WriterAnnotationRangeTest {
     void anUnknownListElementHoldsOnlyNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.INT32, RepetitionType.OPTIONAL, col -> col.logicalType(LogicalType.nullType())))
+                        PhysicalType.INT32, RepetitionType.OPTIONAL, col -> col.logicalType(LogicalType.unknown())))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();

@@ -26,7 +26,7 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// - the annotation names no order — parquet-format defines none for `INTERVAL`, `GEOMETRY`,
 ///   `GEOGRAPHY`, `VARIANT`, `LIST` and `MAP`, and asks that `INTERVAL` record no bounds at all,
-///   and a `NULL` column stores no values to order;
+///   and an `UNKNOWN` column stores no values to order;
 /// - the file names an order this build does not recognize, which `parquet.thrift` says to treat
 ///   as a column whose `min` / `max` are to be ignored, `IEEE_754_TOTAL_ORDER` on a column other
 ///   than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for, or

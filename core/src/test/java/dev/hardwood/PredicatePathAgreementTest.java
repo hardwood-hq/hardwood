@@ -286,8 +286,8 @@ abstract class PredicatePathAgreementTest extends PredicateCorpus {
         cases.add(new Case("nul", "in(1)", FilterPredicate.in("nul", 1), matching(never())));
         cases.add(new Case("nul", "not(in(1))", FilterPredicate.not(FilterPredicate.in("nul", 1)), matching(never())));
         cases.add(new Case("nul", "isNull", FilterPredicate.isNull("nul"), new MatchingNulls()));
-        cases.add(new Case("nul", "lt(1), an ordered operator on a NULL column", FilterPredicate.lt("nul", 1),
-                new Rejected("Column 'nul' is annotated NULL, which defines no order; "
+        cases.add(new Case("nul", "lt(1), an ordered operator on an UNKNOWN column", FilterPredicate.lt("nul", 1),
+                new Rejected("Column 'nul' is annotated UNKNOWN, which defines no order; "
                         + "it takes int literals with eq, notEq and in only")));
 
         // --- GEOMETRY: equality over the WKB bytes ---

@@ -29,7 +29,7 @@ class AnnotationKindTest {
         assertThat(AnnotationKind.namesAnOrder(LogicalType.interval())).isFalse();
         assertThat(AnnotationKind.namesAnOrder(LogicalType.geometry(null))).isFalse();
         assertThat(AnnotationKind.namesAnOrder(LogicalType.geography(null, null))).isFalse();
-        assertThat(AnnotationKind.namesAnOrder(LogicalType.nullType())).isFalse();
+        assertThat(AnnotationKind.namesAnOrder(LogicalType.unknown())).isFalse();
         assertThat(AnnotationKind.namesAnOrder(LogicalType.variant(1))).isFalse();
         assertThat(AnnotationKind.namesAnOrder(LogicalType.list())).isFalse();
         assertThat(AnnotationKind.namesAnOrder(LogicalType.map())).isFalse();
@@ -63,7 +63,7 @@ class AnnotationKindTest {
         assertThat(AnnotationKind.of(LogicalType.variant(1)).annotatesGroup()).isTrue();
 
         assertThat(AnnotationKind.of(LogicalType.string()).annotatesGroup()).isFalse();
-        assertThat(AnnotationKind.of(LogicalType.nullType()).annotatesGroup()).isFalse();
+        assertThat(AnnotationKind.of(LogicalType.unknown()).annotatesGroup()).isFalse();
     }
 
     /// The widths a `FIXED_LEN_BYTE_ARRAY` declared without one takes, each legal under
