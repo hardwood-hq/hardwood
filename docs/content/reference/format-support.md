@@ -20,8 +20,7 @@ Entries marked *legacy* are deprecated by the Parquet specification or kept in i
 |---|---|
 | `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | Yes |
 | `INT96` (legacy) | Yes |
-| `STRING`, `ENUM`, `JSON`, `BSON`, `UUID`, `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `INTERVAL`, `FLOAT16`, `UNKNOWN`, signed and unsigned `INT` | Yes |
-| `GEOMETRY`, `GEOGRAPHY` | Yes |
+| `STRING`, `ENUM`, `JSON`, `BSON`, `UUID`, `DATE`, `TIME`, `TIMESTAMP`, `DECIMAL`, `INTERVAL`, `FLOAT16`, `UNKNOWN`, signed and unsigned `INT`, `GEOMETRY`, `GEOGRAPHY` | Yes |
 | `VARIANT`, unshredded and shredded | Yes |
 | `LIST`, `MAP` and structs, nested | Yes |
 | Two-level lists (legacy) | Yes |
@@ -38,14 +37,21 @@ The Java types each annotation reads as are in [Typed Accessors](accessors.md).
 | `RLE` for levels | Yes |
 | `RLE` for `BOOLEAN` values | Yes |
 | `BIT_PACKED` levels (legacy) | No ([#569](https://github.com/hardwood-hq/hardwood/issues/569)) |
-| `DELTA_BINARY_PACKED`, `DELTA_LENGTH_BYTE_ARRAY`, `DELTA_BYTE_ARRAY` | Yes |
+| `DELTA_BINARY_PACKED` | Yes |
+| `DELTA_LENGTH_BYTE_ARRAY` | Yes |
+| `DELTA_BYTE_ARRAY` | Yes |
 | `BYTE_STREAM_SPLIT` | Yes |
 
 ## Compression Codecs
 
 | Codec | Read |
 |---|---|
-| `UNCOMPRESSED`, `GZIP`, `SNAPPY`, `ZSTD`, `LZ4_RAW`, `BROTLI` | Yes |
+| `UNCOMPRESSED` | Yes |
+| `GZIP` | Yes |
+| `SNAPPY` | Yes |
+| `ZSTD` | Yes |
+| `LZ4_RAW` | Yes |
+| `BROTLI` | Yes |
 | `LZ4`, with Hadoop framing (legacy) | Yes |
 | `LZO` | No |
 
@@ -55,7 +61,8 @@ Codecs other than `UNCOMPRESSED` and `GZIP` need their library on the classpath;
 
 | Page | Read |
 |---|---|
-| Data pages V1 and V2 | Yes |
+| Data pages V1 | Yes |
+| Data pages V2 | Yes |
 | Dictionary pages | Yes |
 | Page CRC | Yes |
 | Index pages (unused by writers) | No |
