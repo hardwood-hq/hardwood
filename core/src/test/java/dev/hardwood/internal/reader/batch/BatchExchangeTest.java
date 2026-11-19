@@ -290,4 +290,37 @@ class BatchExchangeTest {
 
         assertThat(raised.get()).isSameAs(failure);
     }
+
+    /// A consumer that waits without a batch asks the read whether it can progress after each
+    /// bounded wait, and raises the failure a check that finds it stalled abandons it with.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aWaitingConsumerRaisesTheFailureOfAReadItsCheckFindsStalled() {
+        BatchExchange<String> exchange = BatchExchange.detaching("c", () -> "batch", batch -> 1, 1);
+        exchange.setProgressCheck(waiting -> {
+            if (waiting.getAsBoolean()) {
+                exchange.abandon(new IllegalStateException("stalled"));
+            }
+        });
+
+        assertThatThrownBy(exchange::poll)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("stalled");
+    }
+
+    /// A check that finds the read can progress leaves the consumer waiting, and asks again.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aWaitingConsumerWhoseCheckFindsProgressWaitsOn() throws Exception {
+        BatchExchange<String> exchange = BatchExchange.detaching("c", () -> "batch", batch -> 1, 1);
+        int[] checks = { 0 };
+        exchange.setProgressCheck(waiting -> {
+            if (++checks[0] == 2) {
+                exchange.tryPublish("batch");
+            }
+        });
+
+        assertThat(exchange.poll()).isEqualTo("batch");
+        assertThat(checks[0]).isEqualTo(2);
+    }
 }

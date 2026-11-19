@@ -115,6 +115,8 @@ final class FooterReader {
     private int dropped;
     /// once set, another read's load ending starts nothing: the read is done with its footers
     private boolean closed;
+    /// the loads of footers another read runs that the read waits for, until their end is applied
+    private int awaitingOtherReads;
 
     FooterReader(FileMetadataCache files, JobScheduler scheduler, RowGroupPlanner planner, ReadFailure readFailure,
                  SchemaCompatibility compatibility, ResolvedPredicate filter, RowGroupPruning pruning, boolean limited,
@@ -185,6 +187,11 @@ final class FooterReader {
         }
     }
 
+    /// Whether the read waits for a footer another read loads, whose end wakes it; under the lock.
+    boolean awaitsOtherRead() {
+        return awaitingOtherReads > 0;
+    }
+
     /// Claims file `i`'s footer, which waits: takes what another read loaded, waits for another
     /// read's load, or loads it on a job of this read.
     private void startFooter(int i) {
@@ -200,7 +207,11 @@ final class FooterReader {
         FileMetadataCache.ClaimedLoad load = claim.load();
         if (load == null) {
             if (claim.pending() != null) {
-                claim.pending().whenComplete((ignored, t) -> results.accept(() -> startFooter(i)));
+                awaitingOtherReads++;
+                claim.pending().whenComplete((ignored, t) -> results.accept(() -> {
+                    awaitingOtherReads--;
+                    startFooter(i);
+                }));
                 return;
             }
             loaded(i, claim.file(), claim.failure(), null);

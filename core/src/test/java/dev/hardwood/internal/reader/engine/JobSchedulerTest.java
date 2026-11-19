@@ -135,6 +135,31 @@ class JobSchedulerTest {
         assertThat(r.held()).isEqualTo(90);
     }
 
+    /// R's release reaches the read on the releasing thread, ahead of the result that polls the
+    /// scheduler: the read waits for room until that poll, so that a release on its way, which has
+    /// already made room, counts as the read's waker.
+    @Test
+    void aReadWaitsForRoomUntilItsSchedulerIsPolledAfterTheRelease() {
+        ReadAheadBuffer r = new ReadAheadBuffer(100);
+        JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 1000);
+        Charge first = new Charge();
+        first.reader();
+        s.add(job("f1", 10, 80, JobScheduler.Kind.FETCH, first));
+        s.add(job("f2", 20, 80, JobScheduler.Kind.FETCH, new Charge()));
+        JobScheduler.Position at = new JobScheduler.Position(0, NONE, NONE);
+        assertThat(keys(s.start(at))).containsExactly(10L);
+        assertThat(s.waitingForRoom()).isTrue();
+
+        assertThat(first.readerDone()).isTrue();
+        s.release(first);
+        r.release(s.takeReleased());
+
+        assertThat(wakes).hasValue(1);
+        assertThat(s.waitingForRoom()).as("the release's wake-up is not yet applied").isTrue();
+        assertThat(keys(s.start(at))).containsExactly(20L);
+        assertThat(s.waitingForRoom()).isFalse();
+    }
+
     @Test
     void needStartsOneRefusedJobAtATimeUncharged() {
         ReadAheadBuffer r = new ReadAheadBuffer(10);

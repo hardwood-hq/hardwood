@@ -130,6 +130,8 @@ public final class ReadEngine implements Closeable {
                 started.get(c).setQueue(readQueue);
             }
             started.get(c).setRoomListener(() -> driver.submitOrAbandon(() -> publisher.publishable(column)));
+            String name = schemas[c].name();
+            started.get(c).setProgressCheck(waiting -> driver.checkProgress(name, waiting, footers::awaitsOtherRead));
         }
         try {
             driver.runLocked(() -> {
