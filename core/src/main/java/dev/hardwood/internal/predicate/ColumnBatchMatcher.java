@@ -20,6 +20,10 @@ import dev.hardwood.internal.reader.batch.FlatBatch;
 /// The matcher overwrites `outWords` in full — the caller does not need to
 /// clear it beforehand. `outWords.length` must be at least
 /// `(batch.recordCount + 63) >>> 6`.
+///
+/// The jobs completing a column's batches call its matcher at once, so a matcher keeps no
+/// mutable state of its own: what it reuses between calls lives in the batch
+/// ([FlatBatch#matchScratch(int, int)]) or in the batch's dictionary.
 public sealed interface ColumnBatchMatcher
         permits LongBatchMatcher, DoubleBatchMatcher, IntBatchMatcher, FloatBatchMatcher,
         BooleanBatchMatcher, BinaryBatchMatcher, NullBatchMatcher, AndBatchMatcher, OrBatchMatcher {

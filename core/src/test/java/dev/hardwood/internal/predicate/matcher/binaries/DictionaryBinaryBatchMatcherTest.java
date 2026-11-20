@@ -15,6 +15,12 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -92,6 +98,106 @@ class DictionaryBinaryBatchMatcherTest {
                 .containsExactly(1L);
 
         assertThat(delegate.callsFor("match")).isEqualTo(2);
+    }
+
+    @Test
+    void keepsEachDictionarysOutcomesWhileTheirBatchesInterleave() throws Exception {
+        CountingMatcher delegate = new CountingMatcher();
+        DictionaryBinaryBatchMatcher matcher = new DictionaryBinaryBatchMatcher(delegate);
+        Dictionary.ByteArrayDictionary first = dictionary(utf8("match"), utf8("a"));
+        Dictionary.ByteArrayDictionary second = dictionary(utf8("match"), utf8("a"));
+
+        for (int i = 0; i < 3; i++) {
+            for (Dictionary.ByteArrayDictionary dictionary : List.of(first, second)) {
+                assertThat(run(matcher, binaryBatch(dictionary, new int[]{0, 1}, null, utf8("match"), utf8("a"))))
+                        .containsExactly(1L);
+            }
+        }
+
+        assertThat(delegate.callsFor("match")).isEqualTo(2);
+        assertThat(delegate.callsFor("a")).isEqualTo(2);
+    }
+
+    @Test
+    void keepsTheOutcomesOfTwoMatchersOfOneDictionaryApart() throws Exception {
+        // Two leaves on one column, as `s = 'b' OR s < 'b'` folds into one compound matcher:
+        // each keeps its own outcomes on the shared dictionary.
+        Dictionary.ByteArrayDictionary dictionary = dictionary(utf8("a"), utf8("b"), utf8("c"));
+        BinaryBatchMatcher equal = new DictionaryBinaryBatchMatcher(
+                new BinaryEqBatchMatcher(utf8("b"), Comparison.BYTE_STRING));
+        BinaryBatchMatcher less = new DictionaryBinaryBatchMatcher(
+                new BinaryLtBatchMatcher(utf8("b"), Comparison.BYTE_STRING));
+        FlatBatch batch = binaryBatch(dictionary, new int[]{0, 1, 2}, null, utf8("a"), utf8("b"), utf8("c"));
+
+        for (int i = 0; i < 2; i++) {
+            assertThat(run(equal, batch)).containsExactly(0b010L);
+            assertThat(run(less, batch)).containsExactly(0b001L);
+        }
+    }
+
+    @Test
+    void decidesBatchesOfSeveralDictionariesOnSeveralThreadsAtOnce() throws Exception {
+        int entries = 500;
+        int rows = 1000;
+        byte[][] members = new byte[entries / 3][];
+        for (int m = 0; m < members.length; m++) {
+            members[m] = utf8("value-" + (m * 3));
+        }
+        BinaryBatchMatcher delegate = new BinaryInBatchMatcher(members, Comparison.BYTE_STRING);
+        DictionaryBinaryBatchMatcher matcher = new DictionaryBinaryBatchMatcher(delegate);
+
+        // Three dictionaries of the same values in different entry orders, as three column chunks
+        // can have, so that one dictionary's outcomes give another's batches wrong matches;
+        // batches of each, and the outcome every batch must have, from the delegate over the
+        // batch's plain bytes.
+        Random random = new Random(42);
+        List<FlatBatch> batches = new ArrayList<>();
+        List<long[]> expected = new ArrayList<>();
+        for (int d = 0; d < 3; d++) {
+            byte[][] entryValues = new byte[entries][];
+            for (int e = 0; e < entries; e++) {
+                entryValues[e] = utf8("value-" + ((e + d * 167) % entries));
+            }
+            Dictionary.ByteArrayDictionary dictionary = dictionary(entryValues);
+            for (int b = 0; b < 20; b++) {
+                int[] indices = new int[rows];
+                byte[][] values = new byte[rows][];
+                for (int i = 0; i < rows; i++) {
+                    indices[i] = random.nextInt(entries);
+                    values[i] = entryValues[indices[i]];
+                }
+                batches.add(binaryBatch(dictionary, indices, null, values));
+                expected.add(run(delegate, binaryBatch(null, null, null, values)));
+            }
+        }
+
+        int threads = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<Integer>> mismatches = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                int offset = t * 7;
+                mismatches.add(pool.submit(() -> {
+                    start.await();
+                    int wrong = 0;
+                    for (int k = 0; k < batches.size(); k++) {
+                        int b = (k + offset) % batches.size();
+                        if (!Arrays.equals(expected.get(b), run(matcher, batches.get(b)))) {
+                            wrong++;
+                        }
+                    }
+                    return wrong;
+                }));
+            }
+            start.countDown();
+            for (Future<Integer> wrong : mismatches) {
+                assertThat(wrong.get(1, TimeUnit.MINUTES)).isZero();
+            }
+        }
+        finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

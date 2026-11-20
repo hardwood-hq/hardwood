@@ -21,8 +21,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// The memory a read must hold to produce its next batch, held to a limit before any of it is
 /// allocated.
 ///
-/// The working set has two parts. Each decoded column holds a dictionary's entries and a data
-/// page's batches, which live until the consumer has read them, and a nested column also the
+/// The working set has two parts. Each decoded column holds a dictionary's entries, with the
+/// per-entry outcomes its filter keeps beside a binary one, and a data page's batches, which live
+/// until the consumer has read them, and a nested column also the
 /// page's decompressed bytes and levels, which it keeps until its cells fill. The task decoding a
 /// page holds the page's decompressed bytes and its level scratch while it runs.
 /// The file's declared sizes decide both, so a file can ask for any amount; a read whose working
@@ -60,6 +61,8 @@ public final class WorkingSet {
     /// Per column, the dictionaries its current batch may hold.
     private final HeldDictionaries[] heldDictionaries;
     private final AtomicLongArray pages;
+    /// Per column, the per-entry outcome tables its filter keeps beside each dictionary.
+    private final int[] outcomeTables;
     /// The largest buffers a task has needed, in a one-element array to share [#raise].
     private final AtomicLongArray task = new AtomicLongArray(1);
     private final AtomicLong total = new AtomicLong();
@@ -69,8 +72,24 @@ public final class WorkingSet {
         this(columns, maxWorkingSetBytes());
     }
 
+    /// A working set of decoded columns, held to [#maxWorkingSetBytes], where the column at `i`
+    /// keeps `outcomeTables[i]` per-entry outcome tables of its filter beside each of its
+    /// dictionaries, one byte per entry each.
+    public WorkingSet(int[] outcomeTables) {
+        this(outcomeTables.length, maxWorkingSetBytes(), outcomeTables);
+    }
+
     public WorkingSet(int columns, long limit) {
+        this(columns, limit, new int[columns]);
+    }
+
+    public WorkingSet(int columns, long limit, int[] outcomeTables) {
+        if (outcomeTables.length != columns) {
+            throw new IllegalArgumentException("Outcome tables for " + outcomeTables.length + " columns, but "
+                    + columns + " columns");
+        }
         this.limit = limit;
+        this.outcomeTables = outcomeTables.clone();
         this.dictionaries = new AtomicLongArray(columns);
         this.heldDictionaries = new HeldDictionaries[columns];
         for (int i = 0; i < columns; i++) {
@@ -177,8 +196,16 @@ public final class WorkingSet {
             }
         }
 
+        /// The bytes the column's filter keeps beside a binary dictionary of `entries` entries: one
+        /// per entry for each of its outcome tables
+        /// ([dev.hardwood.internal.reader.batch.Dictionary.ByteArrayDictionary#outcomes(Object)]).
+        private long outcomeBytes(long entries) {
+            return set.outcomeTables[index] * entries;
+        }
+
         /// Charges a dictionary page before it is decompressed and parsed: the entries the column
-        /// holds, as many bytes as the page plus an offset per entry for a binary column, beside
+        /// holds, as many bytes as the page plus an offset per entry for a binary column, and the
+        /// filter's outcome table per entry ([#outcomeBytes]), beside
         /// those of the other chunks its batch holds, and the page's decompressed bytes, which the
         /// parsing task holds.
         ///
@@ -186,7 +213,7 @@ public final class WorkingSet {
         public void dictionary(int numValues, int uncompressedSize) {
             long entries = uncompressedSize;
             if (!isNumeric(schema.type())) {
-                entries += Integer.BYTES * (numValues + 1L);
+                entries += Integer.BYTES * (numValues + 1L) + outcomeBytes(numValues);
             }
             set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), uncompressedSize,
                     entries + uncompressedSize, "Dictionary page");
@@ -199,6 +226,7 @@ public final class WorkingSet {
         public void dictionary(Dictionary dictionary) {
             long entries = dictionary instanceof Dictionary.ByteArrayDictionary binary
                     ? binary.byteCount() + Integer.BYTES * ((long) dictionary.size() + binary.chunkCount())
+                            + outcomeBytes(dictionary.size())
                     : (long) dictionary.size() * valueWidth(schema.type());
             set.charge(set.dictionaries, index, set.heldDictionaries[index].add(entries), 0, entries, "Dictionary page");
         }

@@ -120,6 +120,11 @@ public final class BatchFilterCompiler {
             matchers[r.columnIndex] = r.columnMatcher;
             r.mergePlan = new MergePlan.Column(r.columnIndex);
         }
+        for (int c = 0; c < matchers.length; c++) {
+            if (matchers[c] != null) {
+                matchers[c] = numberSlots(matchers[c], new int[1]);
+            }
+        }
         return new CompiledBatchFilter(matchers, r.mergePlan);
     }
 
@@ -169,8 +174,28 @@ public final class BatchFilterCompiler {
         return r;
     }
 
+    /// The slot of a compound matcher before [#numberSlots] gives its column's fragment theirs.
+    private static final int UNNUMBERED = -1;
+
     private static ColumnBatchMatcher fold(boolean isOr, ColumnBatchMatcher a, ColumnBatchMatcher b) {
-        return isOr ? new OrBatchMatcher(a, b) : new AndBatchMatcher(a, b);
+        return isOr ? new OrBatchMatcher(a, b, UNNUMBERED) : new AndBatchMatcher(a, b, UNNUMBERED);
+    }
+
+    /// `matcher`'s tree rebuilt with its compound matchers numbered from `next[0]` on, so that
+    /// each keeps its child's mask in a batch scratch bitmap of its own
+    /// ([dev.hardwood.internal.reader.batch.FlatBatch#matchScratch(int, int)]).
+    private static ColumnBatchMatcher numberSlots(ColumnBatchMatcher matcher, int[] next) {
+        if (matcher instanceof AndBatchMatcher and) {
+            ColumnBatchMatcher first = numberSlots(and.first(), next);
+            ColumnBatchMatcher second = numberSlots(and.second(), next);
+            return new AndBatchMatcher(first, second, next[0]++);
+        }
+        if (matcher instanceof OrBatchMatcher or) {
+            ColumnBatchMatcher first = numberSlots(or.first(), next);
+            ColumnBatchMatcher second = numberSlots(or.second(), next);
+            return new OrBatchMatcher(first, second, next[0]++);
+        }
+        return matcher;
     }
 
     private static Result compileCompound(List<ResolvedPredicate> children, boolean isOr,

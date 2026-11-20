@@ -17,6 +17,7 @@ import java.util.Map;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.DictionaryBinaryBatchMatcher;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.BatchExchange;
@@ -111,7 +112,8 @@ public final class ReadEngine implements Closeable {
         JobScheduler scheduler = driver.scheduler();
         RangeFetcher fetcher = new RangeFetcher(scheduler);
         publisher = new BatchPublisher(fetcher, readFailure, started, batchSize, CAP_BUDGETS * budgetRows);
-        ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(n), read.files().footersSupplied());
+        ColumnContext columns = new ColumnContext(schemas, layers, new WorkingSet(outcomeTables(filters, n)),
+                read.files().footersSupplied());
         cells = new CellWriter(scheduler, publisher, readFailure, columns, started, indexMode, fixedListFastPathEnabled,
                 batchSize, context.decompressorFactory(), filters);
         PageTracker tracker = new PageTracker(scheduler, fetcher, publisher, readFailure, cells, columns, context,
@@ -241,5 +243,14 @@ public final class ReadEngine implements Closeable {
     /// of zero threads, for tests.
     public void awaitQuiescent() {
         driver.awaitIdle();
+    }
+
+    /// Per decoded column, the outcome tables its filter fragment keeps beside each dictionary.
+    private static int[] outcomeTables(ColumnBatchMatcher[] filters, int columns) {
+        int[] tables = new int[columns];
+        for (int c = 0; filters != null && c < Math.min(columns, filters.length); c++) {
+            tables[c] = DictionaryBinaryBatchMatcher.tables(filters[c]);
+        }
+        return tables;
     }
 }

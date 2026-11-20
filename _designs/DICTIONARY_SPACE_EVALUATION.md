@@ -36,7 +36,9 @@ Short-value equality (`EQ` and `NOT_EQ` against a literal of at most eight bytes
 
 A row whose entry is `UNKNOWN` decides it through the delegate's `testValue` over the entry's bytes in the dictionary, stores the outcome, and uses it at once; later rows and batches holding the same entry read the stored outcome. Comparison work is therefore proportional to the distinct entries the read touches: page pruning, row masks and early termination leave the entries no surviving row references undecided, and a full scan decides each entry once. A null row is skipped before either lookup and has an unset bit.
 
-The state belongs to one dictionary object, which is one column chunk's dictionary, and is keyed by its identity. A batch with a different dictionary resets the state to `UNKNOWN` over that dictionary's size, reusing the array.
+The state lives on the dictionary object, which is one column chunk's dictionary: `ByteArrayDictionary.outcomes` keeps one table per matcher that decides its entries, created on the matcher's first batch of that dictionary and dropped with the dictionary. A table holds a byte per entry, and the read's working set counts one per dictionary matcher of the column's filter beside each of its dictionaries ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)). A read's batches of several column chunks keep their outcomes side by side, so a matcher that sees them interleaved decides each entry once per dictionary.
+
+Several jobs complete batches of one column chunk at once ([RECORD_FILTERING.md](RECORD_FILTERING.md#batch-matchers)) and write its table without a lock. An entry only ever goes from `UNKNOWN` to the outcome `testValue` gives it, which every job writes alike, so a job that misses another's write decides the entry again and writes the same byte, and no job reads an outcome other than its entry's.
 
 ## Rows without an entry id
 

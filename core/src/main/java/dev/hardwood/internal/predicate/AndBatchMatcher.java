@@ -15,31 +15,43 @@ import dev.hardwood.internal.reader.batch.FlatBatch;
 ///
 /// Both children must be valid matchers for the column's batch — the composite
 /// is type-agnostic and delegates the `batch.values` cast to each child. The
-/// scratch buffer is allocated lazily on the first [#test] call and reused
-/// across batches, so calls must not overlap: a decoded column serializes the calls of the
-/// tasks that complete its batches, and the column readers' merger calls it on the
-/// consumer thread.
+/// second child's mask goes to the batch's scratch bitmap at this composite's
+/// [#slot()], so the composite holds no state of its own and the tasks completing
+/// a column's batches call it at once.
 public final class AndBatchMatcher implements ColumnBatchMatcher {
 
     private final ColumnBatchMatcher first;
     private final ColumnBatchMatcher second;
-    private long[] scratch;
+    private final int slot;
 
-    public AndBatchMatcher(ColumnBatchMatcher first, ColumnBatchMatcher second) {
+    /// @param slot the batch scratch bitmap this composite uses, distinct from every other
+    ///        composite in the column's fragment ([BatchFilterCompiler] numbers them)
+    public AndBatchMatcher(ColumnBatchMatcher first, ColumnBatchMatcher second, int slot) {
         this.first = first;
         this.second = second;
+        this.slot = slot;
     }
 
     @Override
     public void test(FlatBatch batch, long[] outWords) {
-        if (scratch == null || scratch.length < outWords.length) {
-            scratch = new long[outWords.length];
-        }
+        long[] scratch = batch.matchScratch(slot, outWords.length);
         first.test(batch, outWords);
         second.test(batch, scratch);
         int activeWords = (batch.recordCount + 63) >>> 6;
         for (int i = 0; i < activeWords; i++) {
             outWords[i] &= scratch[i];
         }
+    }
+
+    ColumnBatchMatcher first() {
+        return first;
+    }
+
+    ColumnBatchMatcher second() {
+        return second;
+    }
+
+    int slot() {
+        return slot;
     }
 }

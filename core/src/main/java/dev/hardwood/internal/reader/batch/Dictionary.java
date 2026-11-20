@@ -11,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReference;
 
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.metadata.PhysicalType;
@@ -142,7 +143,8 @@ public sealed interface Dictionary {
     /// the entries in any other form.
     ///
     /// A class (not a record) so it can hold the lazily-materialised interned `String` cache
-    /// ([#internedString(int)]) alongside the entry bytes.
+    /// ([#internedString(int)]) and the per-entry predicate outcomes ([#outcomes(Object)])
+    /// alongside the entry bytes.
     final class ByteArrayDictionary implements Dictionary {
 
         /// The most entries a chunk holds, so that its offsets stay within the bound.
@@ -161,6 +163,10 @@ public sealed interface Dictionary {
         /// Interned `String` per entry and chunk, decoded once per column chunk and reused. Lazily
         /// allocated; populated only for columns read as text, via [#internedString(int)].
         private String[][] interned;
+
+        /// The per-entry outcome tables of the matchers deciding entries of this dictionary, as
+        /// `owner, table` pairs; replaced whole when a matcher adds its table.
+        private final AtomicReference<Object[]> outcomeTables = new AtomicReference<>(new Object[0]);
 
         private ByteArrayDictionary(byte[][] chunkBytes, int[][] chunkOffsets, int[] firstEntries, long byteCount) {
             this.chunkBytes = chunkBytes;
@@ -477,6 +483,29 @@ public sealed interface Dictionary {
                 strings[k] = s;
             }
             return s;
+        }
+
+        /// The table `owner` keeps an outcome per entry of this dictionary in, one byte per entry,
+        /// zero until `owner` decides the entry; created on `owner`'s first call. Several tasks
+        /// complete batches of the same column chunk at once and write the table without a lock,
+        /// so `owner` writes an entry only with the outcome every task would write for it: a task
+        /// that misses another's write decides the entry again and writes the same byte.
+        public byte[] outcomes(Object owner) {
+            while (true) {
+                Object[] tables = outcomeTables.get();
+                for (int i = 0; i < tables.length; i += 2) {
+                    if (tables[i] == owner) {
+                        return (byte[]) tables[i + 1];
+                    }
+                }
+                byte[] table = new byte[size()];
+                Object[] next = Arrays.copyOf(tables, tables.length + 2);
+                next[tables.length] = owner;
+                next[tables.length + 1] = table;
+                if (outcomeTables.compareAndSet(tables, next)) {
+                    return table;
+                }
+            }
         }
 
     }
