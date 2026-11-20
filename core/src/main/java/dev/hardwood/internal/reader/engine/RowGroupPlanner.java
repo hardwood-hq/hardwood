@@ -93,6 +93,8 @@ final class RowGroupPlanner {
     private final BatchPlan batchPlan;
     private final ColumnSchema[] schemas;
     private final List<Unit> units = new ArrayList<>();
+    /// the rows a unit not yet planned is taken to keep, for the look-ahead
+    private final KeptRowsEstimate keptEstimate;
     private int nextBatched;
     private long endKey;
     private boolean listed;
@@ -122,6 +124,7 @@ final class RowGroupPlanner {
                     PageTracker tracker, HeaderScanner scanner, ColumnContext columns, BatchPlan batchPlan, ColumnSchema[] schemas, boolean[] filterOnly, RowGroupPruning pruning,
                     long budget, boolean filteredRead, long skip, long maskedRows) {
         this.budget = budget;
+        this.keptEstimate = new KeptRowsEstimate(batchPlan.capacity());
         this.filteredRead = filteredRead;
         this.skip = skip;
         this.pages = new PagePlanner(schemas, filterOnly, pruning, maskedRows);
@@ -401,6 +404,10 @@ final class RowGroupPlanner {
     /// Replaces the unit's state with `u`.
     private void set(Unit u) {
         units.set(u.listing().index(), u);
+        if (u instanceof Unit.Planned p) {
+            long rows = p.listing().metaData().numRows();
+            keptEstimate.planned(p.plan().matching().rowCount(rows), rows);
+        }
     }
 
     /// Whether the read's row limit leaves rows to list.
@@ -419,6 +426,21 @@ final class RowGroupPlanner {
     /// The key below which every batch has been added.
     long batchedKey() {
         return nextBatched < units.size() ? units.get(nextBatched).listing().base() : endKey;
+    }
+
+    /// The key `rows` kept rows past the batched units end at, the units not batched counted in
+    /// unit order: a planned unit by the rows its filter keeps, one not yet planned by the rows it
+    /// is taken to keep ([KeptRowsEstimate]), and past the units listed every row.
+    long keyPastBatched(long rows) {
+        return keptEstimate.keyPast(nextBatched, units.size(), i -> units.get(i).listing().base(),
+                i -> units.get(i).listing().metaData().numRows(), this::plannedKept, endKey, rows);
+    }
+
+    /// The rows unit `i` keeps once planned, `-1` before.
+    private long plannedKept(int i) {
+        return units.get(i) instanceof Unit.Planned p
+                ? p.plan().matching().rowCount(p.listing().metaData().numRows())
+                : -1;
     }
 
     /// The file of the unit holding `key`, `-1` where none is listed; `consumer` where `key` is

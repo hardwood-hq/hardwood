@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
+import java.util.function.LongUnaryOperator;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,16 +33,16 @@ class BatchPublisherTest {
             List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 50);
 
     /// The last batch the plan has added may go on into the units not yet batched, such as
-    /// those Bloom filters drop as they are planned, which lie past the slowest column's
-    /// look-ahead: the planning of the next is within need, and the look-ahead reaches to it.
+    /// those Bloom filters drop as they are planned: the planning of the next is within need, and
+    /// the look-ahead reaches past it by the cap's rows the batched unit leaves.
     @Test
     void needReachesTheNextUnitWhileTheLastBatchMayGoOn() {
         publisher.add(new BatchPlan(BATCH_ROWS, false, false, 0).plan(0, 0, "a", false, 20), 1000, new BitSet());
 
-        JobScheduler.Position at = publisher.position(5000);
+        JobScheduler.Position at = publisher.position(5000, pastBatched(5000));
 
-        assertThat(at.need()).isGreaterThan(5000);
-        assertThat(at.reach()).isEqualTo(at.need());
+        assertThat(at.need()).isEqualTo(5001);
+        assertThat(at.reach()).isEqualTo(5030);
     }
 
     /// The look-ahead reaches the cap's rows past the first row some column has not published.
@@ -51,10 +52,45 @@ class BatchPublisherTest {
         }, 1, 1000)), new ReadFailure(), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
         wide.add(new BatchPlan(BATCH_ROWS, false, false, 0).plan(0, 0, "a", false, 20), 1000, new BitSet());
 
-        JobScheduler.Position at = wide.position(1020);
+        JobScheduler.Position at = wide.position(1020, pastBatched(1020));
 
         assertThat(at.need()).isEqualTo(1101);
         assertThat(at.reach()).isEqualTo(1500);
+    }
+
+    /// The rows a unit's filter drops take none of the look-ahead: from the first unpublished
+    /// row, it counts the kept rows of each batched unit, then every row past them.
+    @Test
+    void lookAheadCountsTheRowsEachUnitKeeps() {
+        BatchPublisher wide = new BatchPublisher(new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
+        }, 1, 1000)), new ReadFailure(), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 500);
+        BatchPlan plan = new BatchPlan(BATCH_ROWS, false, false, 0);
+        // two units of 1,000 rows, keyed at their bases, each keeping 20 of them
+        wide.add(plan.plan(0, 0, "a", false, 20), 1000, new BitSet());
+        wide.add(plan.plan(1, 0, "a", false, 20), 2000, new BitSet());
+
+        JobScheduler.Position at = wide.position(3000, pastBatched(3000));
+
+        assertThat(at.reach()).isEqualTo(3000 + 500 - 40);
+    }
+
+    /// The look-ahead that ends among the batched units ends in the unit whose kept rows reach
+    /// the cap, at its row: three units of 1,000 rows keeping 20 each, a cap of 50 from the first
+    /// unpublished row, the first of the first unit, ends 10 rows into the third.
+    @Test
+    void lookAheadEndsInTheBatchedUnitWhoseKeptRowsReachTheCap() {
+        BatchPublisher three = new BatchPublisher(new RangeFetcher(new JobScheduler(new ReadAheadBuffer(1000), () -> {
+        }, 1, 1000)), new ReadFailure(), List.of(BatchExchange.detachingFlat("c", BATCH_ROWS)), BATCH_ROWS, 50);
+        // each unit closes its batch, so that the consumer's next batch is the first unit's and
+        // need lies short of the look-ahead's end
+        BatchPlan plan = new BatchPlan(BATCH_ROWS, true, false, 0);
+        three.add(plan.plan(0, 0, "a", false, 20), 1000, new BitSet());
+        three.add(plan.plan(1, 0, "a", false, 20), 2000, new BitSet());
+        three.add(plan.plan(2, 0, "a", false, 20), 3000, new BitSet());
+
+        JobScheduler.Position at = three.position(4000, pastBatched(4000));
+
+        assertThat(at.reach()).isEqualTo(3010);
     }
 
     /// A batch the plan has closed, by adding the next, ends the need one row past it: a column
@@ -65,7 +101,7 @@ class BatchPublisherTest {
         publisher.add(plan.plan(0, 0, "a", false, 20), 1000, new BitSet());
         publisher.add(plan.plan(1, 0, "a", false, 20), 1020, new BitSet());
 
-        assertThat(publisher.position(5000).need()).isEqualTo(1101);
+        assertThat(publisher.position(5000, pastBatched(5000)).need()).isEqualTo(1101);
     }
 
     /// A row group whose first rows continue the batch the one before left open, added before any
@@ -154,7 +190,12 @@ class BatchPublisherTest {
         two.publish(5 * BATCH_ROWS, false);
 
         assertThat(filterOnly.isFinished()).isFalse();
-        assertThat(two.position(5 * BATCH_ROWS).need()).isEqualTo(3 * BATCH_ROWS + 1);
+        assertThat(two.position(5 * BATCH_ROWS, pastBatched(5 * BATCH_ROWS)).need()).isEqualTo(3 * BATCH_ROWS + 1);
+    }
+
+    /// Past the batched units, every row up from `batchedTo` counts.
+    private static LongUnaryOperator pastBatched(long batchedTo) {
+        return left -> batchedTo + left;
     }
 
     private static BatchPublisher publisher(List<BatchExchange<?>> exchanges) {

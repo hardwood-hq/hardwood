@@ -191,7 +191,7 @@ public final class ReadEngine implements Closeable {
             cells.sealAt(readFailure.cause(), readFailure.row(), batchedTo >= readFailure.row());
         }
         publisher.publish(batchedTo, planner.allBatched());
-        JobScheduler.Position at = publisher.position(batchedTo);
+        JobScheduler.Position at = publisher.position(batchedTo, planner::keyPastBatched);
         if (cells.allPlacementEnded()) {
             // no column takes a further page: nothing of a unit not batched starts, neither its
             // pruning, plan and index fetches nor a footer past it
@@ -206,6 +206,13 @@ public final class ReadEngine implements Closeable {
         }
         planner.report(publisher.firstUnpublished(batchedTo));
         return at;
+    }
+
+    /// The key below which every unit is batched. Visible for testing.
+    long batchedKey() {
+        long[] key = new long[1];
+        driver.runLocked(() -> key[0] = planner.batchedKey());
+        return key[0];
     }
 
     /// Stops the read and waits until no job of it is in flight, then releases what it holds.
