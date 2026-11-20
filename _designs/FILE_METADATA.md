@@ -189,7 +189,7 @@ Tests: `StatisticsReaderTest`, `SizeStatisticsReaderTest`.
 
 ## Page index
 
-The page index is two structs per column chunk: `ColumnIndex` with per-page statistics and `OffsetIndex` with per-page locations. The footer carries their offsets and lengths; the bytes are fetched per row group as one region ([FETCH_PLANNING.md](FETCH_PLANNING.md)) and parsed per column chunk when the chunk's pages are planned.
+The page index is two structs per column chunk: `ColumnIndex` with per-page statistics and `OffsetIndex` with per-page locations. The footer carries their offsets and lengths; the bytes are fetched per row group as one region ([FETCH_PLANNING.md](FETCH_PLANNING.md)) and parsed per column chunk when the chunk's pages are planned, each structure of each chunk at most once per plan.
 
 Consistency is checked at the parse boundary, so page filtering can walk every per-page array with one page index:
 
@@ -197,7 +197,7 @@ Consistency is checked at the parse boundary, so page filtering can walk every p
 |---|---|
 | `null_pages` is required and defines the page count; `min_values`, `max_values`, `null_counts` and `nan_counts` have exactly that many entries | `ColumnIndexReader` |
 | each level histogram has a length that is a whole multiple of the page count (zero for zero pages) | `ColumnIndexReader` |
-| `ColumnIndex` and `OffsetIndex` describe the same number of pages | `PageFilterEvaluator.readIndexPair`, which parses the two together |
+| `ColumnIndex` and `OffsetIndex` describe the same number of pages | `PageFilterEvaluator.checkPageCounts`, where page filtering first takes the pair of a chunk |
 | `PageLocation` offset, size and first row index are non-negative | `PageLocationReader` |
 | the `OffsetIndex` of a chunk with values lists at least one page | `OffsetIndexReader` |
 | each page has a positive `compressed_page_size`, starts no earlier than the previous page ends, and lies within its column chunk | `OffsetIndexReader` |
@@ -210,9 +210,9 @@ The CLI and dive parse an offset index without these checks and run them separat
 
 A failure is a `ParquetReadException` that names the file, row group and column whose index failed (`PageFilterEvaluator.evaluateLeafPages`), not a column of the read, since the row group's planning that meets it serves every column.
 
-`ReadEngine` also parses a column's `OffsetIndex` on its own to build the column's indexed fetch plan ([FETCH_PLANNING.md](FETCH_PLANNING.md)); the cross-check against `ColumnIndex` runs where page filtering parses the pair. The null-page placeholders in `min_values` / `max_values` are carried as read and not decoded.
+A unit's plan parses each structure of each of its chunks at most once (`UnitPageIndex`): page filtering, which takes a filter column's pair for every leaf testing it, and the fetch plan, which reads every decoded column's `OffsetIndex` ([FETCH_PLANNING.md](FETCH_PLANNING.md)), share the parse, and nothing of it outlives the plan. The cross-check against `ColumnIndex` runs where page filtering takes the pair; a column only the fetch plan reads has its `OffsetIndex` parsed alone. The null-page placeholders in `min_values` / `max_values` are carried as read and not decoded.
 
-Tests: `ColumnIndexReaderTest`, `OffsetIndexReaderTest`, `MalformedMetadataValidationTest`, `PageFilterEvaluatorTest`, `ColumnIndexTest`, `EmptyOffsetIndexTest`, `OffsetIndexPageLocationsTest`.
+Tests: `ColumnIndexReaderTest`, `OffsetIndexReaderTest`, `MalformedMetadataValidationTest`, `PageFilterEvaluatorTest`, `PageIndexParsedOnceTest`, `UnitPageIndexTest`, `ColumnIndexTest`, `EmptyOffsetIndexTest`, `OffsetIndexPageLocationsTest`.
 
 ## Bloom filter
 
