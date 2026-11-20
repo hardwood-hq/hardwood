@@ -422,16 +422,14 @@ final class CellWriter {
 
     /// Writes the matches of the column's batch for the column's filter fragment `filter`: all ones when
     /// statistics proved every record matches, else the matcher's verdict, while the values are in
-    /// this job's cache. A matcher keeps scratch between calls, and cells complete on several jobs
-    /// at once, so its calls are serialized.
+    /// this job's cache. Cells complete on several jobs at once, each calling `filter` without a
+    /// lock: a matcher keeps no state between calls but in the batch and the dictionary.
     private static void testFilter(ColumnBatchMatcher filter, FlatBatch batch, int records) {
         if (batch.filterAlwaysMatches) {
             BitmapWords.fillAllOnes(batch.matches, records);
             return;
         }
-        synchronized (filter) {
-            filter.test(batch, batch.matches);
-        }
+        filter.test(batch, batch.matches);
     }
 
     @SuppressWarnings("unchecked")

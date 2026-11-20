@@ -7,7 +7,14 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.IntUnaryOperator;
 
 import org.junit.jupiter.api.Nested;
@@ -91,6 +98,75 @@ class BatchFilterCompilerTest {
         matcher.test(batch, out);
 
         assertEquals(0b1010L, out[0]);
+    }
+
+    @Test
+    void outcomeTables_countEveryDictionaryMatcherOfAFragment() {
+        // s = 'b' OR s < 'b' on a binary column: one compound holding two dictionary matchers
+        ResolvedPredicate predicate = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.BinaryPredicate(0, Operator.EQ, new byte[]{ 'b' }, Comparison.BYTE_STRING),
+                new ResolvedPredicate.BinaryPredicate(0, Operator.LT, new byte[]{ 'b' }, Comparison.BYTE_STRING)));
+        ColumnBatchMatcher binary = compileMatchers(
+                predicate, schema(leaf("s", PhysicalType.BYTE_ARRAY)), IntUnaryOperator.identity())[0];
+        ColumnBatchMatcher numeric = compileMatchers(new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
+                schema(leaf("id", PhysicalType.INT64)), IntUnaryOperator.identity())[0];
+
+        assertEquals(2, DictionaryBinaryBatchMatcher.tables(binary));
+        assertEquals(0, DictionaryBinaryBatchMatcher.tables(numeric));
+        assertEquals(0, DictionaryBinaryBatchMatcher.tables(null));
+    }
+
+    @Test
+    void sameColumnCompound_decidesBatchesOnSeveralThreadsAtOnce() throws Exception {
+        // id >= 10 AND (id < 20 OR id > 90): a composite holding a composite, both on one column
+        ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.LongPredicate(0, Operator.GT_EQ, 10L),
+                new ResolvedPredicate.Or(List.of(
+                        new ResolvedPredicate.LongPredicate(0, Operator.LT, 20L),
+                        new ResolvedPredicate.LongPredicate(0, Operator.GT, 90L)))));
+        ColumnBatchMatcher matcher = compileMatchers(
+                predicate, schema(leaf("id", PhysicalType.INT64)), IntUnaryOperator.identity())[0];
+        int threads = 8;
+        int rows = 1000;
+
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<Integer>> mismatches = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                long seed = t;
+                mismatches.add(pool.submit(() -> {
+                    start.await();
+                    Random random = new Random(seed);
+                    long[] values = new long[rows];
+                    FlatBatch batch = new FlatBatch();
+                    batch.values = values;
+                    batch.recordCount = rows;
+                    long[] out = new long[(rows + 63) >>> 6];
+                    int wrong = 0;
+                    for (int b = 0; b < 200; b++) {
+                        for (int i = 0; i < rows; i++) {
+                            values[i] = random.nextInt(100);
+                        }
+                        matcher.test(batch, out);
+                        for (int i = 0; i < rows; i++) {
+                            boolean expected = values[i] >= 10 && (values[i] < 20 || values[i] > 90);
+                            if (expected != ((out[i >>> 6] & (1L << i)) != 0)) {
+                                wrong++;
+                            }
+                        }
+                    }
+                    return wrong;
+                }));
+            }
+            start.countDown();
+            for (Future<Integer> wrong : mismatches) {
+                assertEquals(0, wrong.get(1, TimeUnit.MINUTES));
+            }
+        }
+        finally {
+            pool.shutdownNow();
+        }
     }
 
     private static ColumnBatchMatcher[] compileMatchers(ResolvedPredicate predicate, FileSchema schema,

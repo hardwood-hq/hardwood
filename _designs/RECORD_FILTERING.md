@@ -96,6 +96,8 @@ A leaf below a struct is eligible on the flat row reader because no column it de
 
 **Compilation.** The compiler walks the tree bottom up. A subtree living on one column collapses into one matcher slot: same-column siblings under an `And` chain through `AndBatchMatcher`, under an `Or` through `OrBatchMatcher`. A subtree spanning columns becomes a `MergePlan.And`/`Or` whose children are `MergePlan.Column(decodedIndex)` references or nested plans. Each column appears in at most one `Column` node.
 
+**No state in a matcher.** The jobs completing one column's batches call its fragment at once, without a lock, so a matcher keeps no mutable state of its own. A compound matcher keeps its second child's bitmap in a scratch bitmap of the batch (`FlatBatch.matchScratch`), at a slot the compiler numbers per column fragment, and a batch is completed by one job at a time. A dictionary-space matcher keeps its per-entry outcomes on the dictionary ([DICTIONARY_SPACE_EVALUATION.md](DICTIONARY_SPACE_EVALUATION.md#lazy-per-entry-outcomes)).
+
 Tests: `BatchFilterCompilerTest`, `FlatStructRowReaderTest`.
 
 ### Bitmap semantics

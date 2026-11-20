@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-import java.util.Arrays;
-
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.batch.FlatBatch;
@@ -28,8 +26,6 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
     private static final byte MATCH = 2;
 
     private final BinaryBatchMatcher delegate;
-    private Dictionary.ByteArrayDictionary cachedDictionary;
-    private byte[] entryStates;
 
     public DictionaryBinaryBatchMatcher(BinaryBatchMatcher delegate) {
         this.delegate = delegate;
@@ -44,8 +40,7 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
             return;
         }
 
-        prepareDictionary(dictionary);
-        writeMatches(values, values.dictIndices, batch.validity, batch.recordCount, outWords);
+        writeMatches(values, dictionary, dictionary.outcomes(this), batch.validity, batch.recordCount, outWords);
     }
 
     @Override
@@ -57,22 +52,23 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
         return delegate;
     }
 
-    private void prepareDictionary(Dictionary.ByteArrayDictionary dictionary) {
-        if (dictionary == cachedDictionary) {
-            return;
-        }
-        cachedDictionary = dictionary;
-        int size = dictionary.size();
-        if (entryStates == null || entryStates.length < size) {
-            entryStates = new byte[size];
-        }
-        else {
-            Arrays.fill(entryStates, 0, size, UNKNOWN);
-        }
+    /// The outcome tables a column's filter fragment keeps per dictionary of the column: one for
+    /// each dictionary matcher in it, `0` for a `null` fragment.
+    public static int tables(ColumnBatchMatcher fragment) {
+        return switch (fragment) {
+            case null -> 0;
+            case DictionaryBinaryBatchMatcher dictionary -> 1;
+            case AndBatchMatcher and -> tables(and.first()) + tables(and.second());
+            case OrBatchMatcher or -> tables(or.first()) + tables(or.second());
+            default -> 0;
+        };
     }
 
-    private void writeMatches(BinaryBatchValues values, int[] dictionaryIndices,
+    /// Decides the batch's rows from `dictionary`'s outcome table `entryStates`, deciding and
+    /// storing the outcome of each entry not yet decided.
+    private void writeMatches(BinaryBatchValues values, Dictionary.ByteArrayDictionary dictionary, byte[] entryStates,
                               long[] validity, int recordCount, long[] outWords) {
+        int[] dictionaryIndices = values.dictIndices;
         int activeWords = (recordCount + 63) >>> 6;
         for (int wordIndex = 0; wordIndex < activeWords; wordIndex++) {
             int base = wordIndex << 6;
@@ -92,7 +88,7 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
                 else {
                     byte state = entryStates[dictionaryIndex];
                     if (state == UNKNOWN) {
-                        state = cachedDictionary.testEntry(dictionaryIndex, delegate) ? MATCH : NO_MATCH;
+                        state = dictionary.testEntry(dictionaryIndex, delegate) ? MATCH : NO_MATCH;
                         entryStates[dictionaryIndex] = state;
                     }
                     matches = state == MATCH;

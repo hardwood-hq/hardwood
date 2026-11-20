@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader.batch;
 
+import java.util.Arrays;
+
 /// A flat column's batch: the column's values for one batch of the read's batch plan. The
 /// column's cell fills it and its exchange publishes it to the consumer, which reads from it; a
 /// recycling exchange reuses it.
@@ -46,4 +48,28 @@ public final class FlatBatch {
     /// predicate, making [#matches] all-ones without per-record evaluation.
     /// Only set on the batch-matcher filter path; `false` is always safe.
     public boolean filterAlwaysMatches;
+
+    /// The bitmaps a compound filter fragment keeps a child's mask in while it combines it with
+    /// another's, by slot; see [#matchScratch(int, int)].
+    private long[][] matchScratch;
+
+    /// Scratch bitmap `slot` of this batch, at least `words` long. A compound matcher of the
+    /// column's filter fragment ([dev.hardwood.internal.predicate.AndBatchMatcher],
+    /// [dev.hardwood.internal.predicate.OrBatchMatcher]) keeps its second child's mask here.
+    /// The batch owns it, and one task completes a batch at a time, so the tasks completing a
+    /// column's batches call the fragment at once without sharing a bitmap. Allocated on first
+    /// use and kept while the batch object is recycled.
+    public long[] matchScratch(int slot, int words) {
+        long[][] scratch = matchScratch;
+        if (scratch == null || scratch.length <= slot) {
+            scratch = scratch == null ? new long[slot + 1][] : Arrays.copyOf(scratch, slot + 1);
+            matchScratch = scratch;
+        }
+        long[] bitmap = scratch[slot];
+        if (bitmap == null || bitmap.length < words) {
+            bitmap = new long[words];
+            scratch[slot] = bitmap;
+        }
+        return bitmap;
+    }
 }
