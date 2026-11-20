@@ -146,7 +146,13 @@ public class RowGroupIndexBuffers {
     }
 
     private static ByteBuffer slice(ByteSource bytes, long offset, int length) throws IOException {
-        ByteBuffer slice = bytes.read(offset, length);
+        return requirePresent(bytes.read(offset, length), offset, length);
+    }
+
+    /// `slice`, the bytes `[offset, offset + length)` a read fetched for a page-index structure.
+    ///
+    /// @throws IllegalStateException if the read does not hold them, `slice` being `null`
+    public static ByteBuffer requirePresent(ByteBuffer slice, long offset, int length) {
         if (slice == null) {
             throw new IllegalStateException("Range [" + offset + ", " + (offset + length) + ") is not present");
         }
