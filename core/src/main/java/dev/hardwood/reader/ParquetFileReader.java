@@ -31,6 +31,7 @@ import dev.hardwood.internal.reader.engine.ReadEngine;
 import dev.hardwood.internal.reader.footer.FileFooter;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader.FooterRead;
+import dev.hardwood.internal.reader.plan.BatchPlan;
 import dev.hardwood.internal.reader.plan.BatchSizing;
 import dev.hardwood.internal.reader.plan.FileMetadataCache;
 import dev.hardwood.internal.reader.row.FlatRowReader;
@@ -462,7 +463,7 @@ public class ParquetFileReader implements Closeable {
             // (row-group-filtered) relation, cap the underlying reader at `skip + head`
             // matched rows, then discard the first `skip` matches. A `skip` past the end
             // of the matched relation simply yields an exhausted (empty) reader.
-            long matchedCap = maxRows == 0 ? 0L : Math.addExact(maxRows, skip);
+            long matchedCap = BatchPlan.raiseCap(maxRows, skip);
             RowReader reader = buildRowReader(projection, filter, matchedCap, filteredRowGroups);
             return discardLeadingRows(reader, skip);
         }
@@ -653,50 +654,108 @@ public class ParquetFileReader implements Closeable {
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) throws IOException {
-        return buildColumnReader(columnName, filter, null, AUTO_BATCH_SIZE);
+        return buildColumnReader(columnName, filter, null, AUTO_BATCH_SIZE, RowBounds.NONE);
     }
 
     ColumnReader buildColumnReader(
-            String columnName, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) throws IOException {
+            String columnName, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize,
+            RowBounds bounds) throws IOException {
         ensureSingleFile("columnReader(String)");
         // Rejects a name that is not a leaf column's path, such as a group's, which the
         // projection below would otherwise expand to every leaf under it.
         schema.getColumn(columnName);
         return buildSingleColumnReader(ColumnRequests.of(ColumnProjection.columns(columnName)), filter,
-                rowGroupFilter, batchSize);
+                rowGroupFilter, batchSize, bounds);
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) throws IOException {
-        return buildColumnReader(columnIndex, filter, null, AUTO_BATCH_SIZE);
+        return buildColumnReader(columnIndex, filter, null, AUTO_BATCH_SIZE, RowBounds.NONE);
     }
 
     ColumnReader buildColumnReader(
-            int columnIndex, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) throws IOException {
+            int columnIndex, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize,
+            RowBounds bounds) throws IOException {
         ensureSingleFile("columnReader(int)");
-        return buildSingleColumnReader(ColumnRequests.ofColumns(columnIndex), filter, rowGroupFilter, batchSize);
+        return buildSingleColumnReader(ColumnRequests.ofColumns(columnIndex), filter, rowGroupFilter, batchSize,
+                bounds);
     }
 
     /// A single-column read is the one view of a one-column scan, and advances that scan itself.
     private ColumnReader buildSingleColumnReader(
-            ColumnRequests requests, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize)
-            throws IOException {
-        ColumnRead read = openColumnRead(requests, filter, rowGroupFilter, batchSize);
+            ColumnRequests requests, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize,
+            RowBounds bounds) throws IOException {
+        ColumnRead read = openColumnRead(requests, filter, rowGroupFilter, batchSize, bounds);
         int payloadIndex = read.payload().requestedColumn(0);
         ColumnSchema column = schema.getColumn(read.payload().toOriginalIndex(payloadIndex));
         return new ColumnReader(read.scan(), payloadIndex, read.layers()[column.columnIndex()], column, false);
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) throws IOException {
-        return buildColumnReaders(projection, filter, null, AUTO_BATCH_SIZE);
+        return buildColumnReaders(projection, filter, null, AUTO_BATCH_SIZE, RowBounds.NONE);
     }
 
     ColumnReaders buildColumnReaders(
             ColumnProjection projection,
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
-            int batchSize) throws IOException {
-        ColumnRead read = openColumnRead(ColumnRequests.of(projection), filter, rowGroupFilter, batchSize);
+            int batchSize,
+            RowBounds bounds) throws IOException {
+        ColumnRead read = openColumnRead(ColumnRequests.of(projection), filter, rowGroupFilter, batchSize, bounds);
         return new ColumnReaders(read.scan(), schema, read.payload(), read.layers());
+    }
+
+    /// The rows a column read returns of those its filters keep: `head` and `skip` as
+    /// [RowReaderBuilder] takes them, `0` for none, or, where `ranged`, the physical rows
+    /// `[rangeStart, rangeEnd)`, which exclude both.
+    record RowBounds(long head, long skip, boolean ranged, long rangeStart, long rangeEnd) {
+
+        static final RowBounds NONE = new RowBounds(0, 0, false, 0, 0);
+
+        /// The bounds a column builder's controls give, checked against each other.
+        ///
+        /// @throws IllegalArgumentException if a row range is combined with `head` or `skip`
+        static RowBounds of(long head, long skip, boolean ranged, long rangeStart, long rangeEnd) {
+            if (ranged && skip > 0) {
+                throw new IllegalArgumentException("rowRange and skip are mutually exclusive: "
+                        + "the row range fixes the first row itself");
+            }
+            if (ranged && head > 0) {
+                throw new IllegalArgumentException("rowRange and head are mutually exclusive: "
+                        + "the row range fixes the row count itself");
+            }
+            return new RowBounds(head, skip, ranged, rangeStart, rangeEnd);
+        }
+    }
+
+    /// The row-selection controls of a column builder as its setters take them, each checked on
+    /// its own; [#bounds()] checks them against each other.
+    private static final class RowBoundsBuilder {
+
+        private long head;
+        private long skip;
+        private boolean ranged;
+        private long rangeStart;
+        private long rangeEnd;
+
+        void head(long maxRows) {
+            head = checkHead(maxRows);
+        }
+
+        void skip(long rows) {
+            skip = checkSkip(rows);
+        }
+
+        void rowRange(long start, long end) {
+            checkRowRange(start, end);
+            ranged = true;
+            rangeStart = start;
+            rangeEnd = end;
+        }
+
+        /// @throws IllegalArgumentException if a row range is combined with `head` or `skip`
+        RowBounds bounds() {
+            return RowBounds.of(head, skip, ranged, rangeStart, rangeEnd);
+        }
     }
 
     /// A column-reader scan, the payload columns its views expose, and the layers of every
@@ -708,22 +767,24 @@ public class ParquetFileReader implements Closeable {
             ColumnRequests requests,
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
-            int batchSize) throws IOException {
-        return buildChild(() -> openColumnReadUnderLock(requests, filter, rowGroupFilter, batchSize));
+            int batchSize,
+            RowBounds bounds) throws IOException {
+        return buildChild(() -> openColumnReadUnderLock(requests, filter, rowGroupFilter, batchSize, bounds));
     }
 
     private ColumnRead openColumnReadUnderLock(
             ColumnRequests requests,
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
-            int batchSize) throws IOException {
+            int batchSize,
+            RowBounds bounds) throws IOException {
         ResolvedPredicate resolved = resolveFilter(filter);
         List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
         NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
 
         if (resolved == null) {
             return openRead(ReadProjection.of(ProjectedSchema.create(schema, requests, false)), null,
-                    rowGroups, layers, batchSize);
+                    rowGroups, layers, batchSize, bounds);
         }
 
         // Exact filtering (#624): decode the payload columns *and* the predicate
@@ -733,21 +794,48 @@ public class ParquetFileReader implements Closeable {
         // `false`: the columnar paths read individual leaves, so the projection stays literal.
         ReadProjection readProjection = ReadProjection.withPredicateColumns(schema, requests,
                 SelectionEngine.predicateColumns(resolved), false);
-        return openRead(readProjection, resolved, rowGroups, layers, batchSize);
+        return openRead(readProjection, resolved, rowGroups, layers, batchSize, bounds);
     }
 
     /// A column read of `projection` driven by the [ReadEngine], filtered by `resolved` unless it
-    /// is `null`. The batches are sized against the decoded columns: the predicate columns
-    /// allocate per-batch arrays too, so they count toward the byte budget. Where pruning drops
-    /// every row group, the columns publish their end and the scan's first batch finds it.
+    /// is `null`, returning the rows `bounds` leave. The batches are sized against the decoded
+    /// columns: the predicate columns allocate per-batch arrays too, so they count toward the byte
+    /// budget. Where pruning drops every row group, the columns publish their end and the scan's
+    /// first batch finds it.
+    ///
+    /// The bounds reach the read as a row read's do: a row range is the read's physical window,
+    /// with or without a filter; `head` and `skip` are a row limit and a physical skip without a
+    /// filter, and with one a cap of `skip + head` matching rows, the scan dropping the first
+    /// `skip` of them. Rows before a physical skip that the read cannot mask out are published,
+    /// and the scan drops them.
     private ColumnRead openRead(ReadProjection projection, ResolvedPredicate resolved,
-                                      List<RowGroup> rowGroups, NestedLevelComputer.Layers[] layers, int batchSize)
+                                      List<RowGroup> rowGroups, NestedLevelComputer.Layers[] layers, int batchSize,
+                                      RowBounds bounds)
             throws IOException {
-        PreparedRead read = prepare(rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled, 0, 0);
+        long limit = 0;
+        long skip = 0;
+        long windowEnd = Long.MAX_VALUE;
+        long offset = 0;
+        long scanLimit = Long.MAX_VALUE;
+        if (bounds.ranged()) {
+            skip = bounds.rangeStart();
+            windowEnd = bounds.rangeEnd();
+        }
+        else if (resolved == null) {
+            limit = bounds.head();
+            skip = bounds.skip();
+        }
+        else {
+            limit = BatchPlan.raiseCap(bounds.head(), bounds.skip());
+            offset = bounds.skip();
+            scanLimit = bounds.head() == 0 ? Long.MAX_VALUE : bounds.head();
+        }
+        PreparedRead read = prepare(rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled,
+                limit, skip, windowEnd);
         ProjectedSchema decoded = projection.decoded();
         ColumnScan scan = trackedChild(read, ColumnScan.open(read, fixedListFastPathEnabled, schema, layers,
                 projection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
-                readAheadBudgetRows(decoded, rowGroups)));
+                readAheadBudgetRows(decoded, rowGroups), offset, scanLimit));
         return new ColumnRead(scan, projection.payload(), layers);
     }
 
@@ -761,12 +849,20 @@ public class ParquetFileReader implements Closeable {
         openChildren.replaceAll((read, child) -> wrapper.apply(child));
     }
 
+    /// Prepares a read over this reader's files without a physical window end; see
+    /// [#prepare(List, ReadProjection, ResolvedPredicate, boolean, long, long, long)].
+    private PreparedRead prepare(List<RowGroup> rowGroups, ReadProjection projection, ResolvedPredicate filter,
+                                 boolean metadataFiltering, long limit, long skip) throws IOException {
+        return prepare(rowGroups, projection, filter, metadataFiltering, limit, skip, Long.MAX_VALUE);
+    }
+
     /// Prepares a read over this reader's files, whose engine is tracked from its start until it
     /// closes. See [#openChildren] and [PreparedRead#prepare] for the parameters.
     private PreparedRead prepare(List<RowGroup> rowGroups, ReadProjection projection, ResolvedPredicate filter,
-                                 boolean metadataFiltering, long limit, long skip) throws IOException {
+                                 boolean metadataFiltering, long limit, long skip, long windowEnd)
+            throws IOException {
         return PreparedRead.prepare(fileMetadataCache, context, tracking, schema, rowGroups, projection, filter,
-                metadataFiltering, limit, skip);
+                metadataFiltering, limit, skip, windowEnd);
     }
 
     /// Records `child` as what [#close()] closes in place of the engine of `read`, whose reader it
@@ -957,6 +1053,38 @@ public class ParquetFileReader implements Closeable {
     // Nested builders
     // ============================================================
 
+    /// `maxRows` as a builder's `head` takes it.
+    ///
+    /// @throws IllegalArgumentException if `maxRows` is not positive
+    private static long checkHead(long maxRows) {
+        if (maxRows <= 0) {
+            throw new IllegalArgumentException("head row count must be positive: " + maxRows);
+        }
+        return maxRows;
+    }
+
+    /// `skip` as a builder's `skip` takes it.
+    ///
+    /// @throws IllegalArgumentException if `skip` is negative
+    private static long checkSkip(long skip) {
+        if (skip < 0) {
+            throw new IllegalArgumentException("skip must be non-negative: " + skip);
+        }
+        return skip;
+    }
+
+    /// Checks the rows `[start, end)` a column builder's `rowRange` takes.
+    ///
+    /// @throws IllegalArgumentException if `start` is negative or `end` is below it
+    private static void checkRowRange(long start, long end) {
+        if (start < 0) {
+            throw new IllegalArgumentException("rowRange start must be non-negative: " + start);
+        }
+        if (end < start) {
+            throw new IllegalArgumentException("rowRange end must not be below its start: [" + start + ", " + end + ")");
+        }
+    }
+
     /// Builds a [RowReader] with optional projection, filter, and head/tail
     /// row limit.
     ///
@@ -1028,10 +1156,7 @@ public class ParquetFileReader implements Closeable {
         /// is exhausted (SQL `LIMIT` over the filtered relation). Mutually exclusive with
         /// [#tail].
         public RowReaderBuilder head(long maxRows) {
-            if (maxRows <= 0) {
-                throw new IllegalArgumentException("head row count must be positive: " + maxRows);
-            }
-            this.headRows = maxRows;
+            this.headRows = checkHead(maxRows);
             return this;
         }
 
@@ -1068,10 +1193,7 @@ public class ParquetFileReader implements Closeable {
         /// with [#head] (`skip(n).head(k)` is `OFFSET n LIMIT k`) and with
         /// [#filter(RowGroupPredicate)] over the kept row-group sequence.
         public RowReaderBuilder skip(long skip) {
-            if (skip < 0) {
-                throw new IllegalArgumentException("skip must be non-negative: " + skip);
-            }
-            this.skip = skip;
+            this.skip = checkSkip(skip);
             return this;
         }
 
@@ -1121,6 +1243,7 @@ public class ParquetFileReader implements Closeable {
         private FilterPredicate filter;
         private RowGroupPredicate rowGroupFilter;
         private int batchSize = AUTO_BATCH_SIZE;
+        private final RowBoundsBuilder bounds = new RowBoundsBuilder();
 
         private ColumnReaderBuilder(ParquetFileReader fileReader, String columnName) {
             this.fileReader = fileReader;
@@ -1172,11 +1295,48 @@ public class ParquetFileReader implements Closeable {
             return this;
         }
 
+        /// Limit to the first `maxRows` rows, as [RowReaderBuilder#head(long)]: with a
+        /// [#filter(FilterPredicate)], the first `maxRows` matching rows. Mutually exclusive with
+        /// [#rowRange(long, long)].
+        public ColumnReaderBuilder head(long maxRows) {
+            bounds.head(maxRows);
+            return this;
+        }
+
+        /// Skip leading rows before reading, as [RowReaderBuilder#skip(long)]: without a
+        /// [#filter(FilterPredicate)], `skip` is a physical row index; with one, the number of
+        /// matching rows to discard. Composes with [#head(long)] (`skip(n).head(k)` is
+        /// `OFFSET n LIMIT k`) and with [#filter(RowGroupPredicate)] over the kept row groups.
+        /// Mutually exclusive with [#rowRange(long, long)].
+        public ColumnReaderBuilder skip(long skip) {
+            bounds.skip(skip);
+            return this;
+        }
+
+        /// Read only the rows at physical positions `[start, end)`. With a
+        /// [#filter(FilterPredicate)], the reader returns the rows in that range that match it.
+        /// Positions count the rows of the file's row groups in file order; with a
+        /// [#filter(RowGroupPredicate)], only the row groups it keeps. Row groups outside the
+        /// range are not read. Where the file has an OffsetIndex, the pages after the range's
+        /// end are not fetched, nor those before its start unless a nested column of the read
+        /// has no OffsetIndex; such pages are read and their rows discarded.
+        ///
+        /// A range past the last row is cut at it, and `start == end` reads no row. Mutually
+        /// exclusive with [#head(long)] and [#skip(long)]: `build()` throws
+        /// [IllegalArgumentException].
+        ///
+        /// @throws IllegalArgumentException if `start` is negative or `end` is below `start`
+        public ColumnReaderBuilder rowRange(long start, long end) {
+            bounds.rowRange(start, end);
+            return this;
+        }
+
         public ColumnReader build() throws IOException {
+            RowBounds rows = bounds.bounds();
             if (byName) {
-                return fileReader.buildColumnReader(columnName, filter, rowGroupFilter, batchSize);
+                return fileReader.buildColumnReader(columnName, filter, rowGroupFilter, batchSize, rows);
             }
-            return fileReader.buildColumnReader(columnIndex, filter, rowGroupFilter, batchSize);
+            return fileReader.buildColumnReader(columnIndex, filter, rowGroupFilter, batchSize, rows);
         }
     }
 
@@ -1201,6 +1361,7 @@ public class ParquetFileReader implements Closeable {
         private FilterPredicate filter;
         private RowGroupPredicate rowGroupFilter;
         private int batchSize = AUTO_BATCH_SIZE;
+        private final RowBoundsBuilder bounds = new RowBoundsBuilder();
 
         private ColumnReadersBuilder(ParquetFileReader fileReader, ColumnProjection projection) {
             if (projection == null) {
@@ -1248,8 +1409,46 @@ public class ParquetFileReader implements Closeable {
             return this;
         }
 
+        /// Limit every column to the first `maxRows` rows, as [RowReaderBuilder#head(long)]: with
+        /// a [#filter(FilterPredicate)], the first `maxRows` matching rows. Mutually exclusive
+        /// with [#rowRange(long, long)].
+        public ColumnReadersBuilder head(long maxRows) {
+            bounds.head(maxRows);
+            return this;
+        }
+
+        /// Skip leading rows before reading, as [RowReaderBuilder#skip(long)]: without a
+        /// [#filter(FilterPredicate)], `skip` is a physical row index over the input files in
+        /// order; with one, the number of matching rows to discard. Composes with [#head(long)]
+        /// (`skip(n).head(k)` is `OFFSET n LIMIT k`) and with [#filter(RowGroupPredicate)] over
+        /// the kept row groups. Mutually exclusive with [#rowRange(long, long)].
+        public ColumnReadersBuilder skip(long skip) {
+            bounds.skip(skip);
+            return this;
+        }
+
+        /// Read only the rows at physical positions `[start, end)`. With a
+        /// [#filter(FilterPredicate)], every column returns the rows in that range that match it.
+        /// Positions count the rows of every input file's row groups, in file order; with a
+        /// [#filter(RowGroupPredicate)], only the row groups it keeps. Row groups outside the
+        /// range are not read. Where a file has an OffsetIndex, the pages after the range's end
+        /// are not fetched, nor those before its start where that start lies in the first file
+        /// and every nested column of the read has an OffsetIndex; otherwise the pages before it
+        /// are read and their rows discarded.
+        ///
+        /// A range past the last row is cut at it, and `start == end` reads no row. Mutually
+        /// exclusive with [#head(long)] and [#skip(long)]: `build()` throws
+        /// [IllegalArgumentException].
+        ///
+        /// @throws IllegalArgumentException if `start` is negative or `end` is below `start`
+        public ColumnReadersBuilder rowRange(long start, long end) {
+            bounds.rowRange(start, end);
+            return this;
+        }
+
         public ColumnReaders build() throws IOException {
-            return fileReader.buildColumnReaders(projection, filter, rowGroupFilter, batchSize);
+            return fileReader.buildColumnReaders(projection, filter, rowGroupFilter, batchSize,
+                    bounds.bounds());
         }
     }
 

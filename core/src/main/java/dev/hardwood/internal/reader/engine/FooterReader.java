@@ -137,9 +137,10 @@ final class FooterReader {
 
     /// The files past the one it has reached whose footers a read of `fileCount` files reads ahead:
     /// [#DEFAULT_MAX_FILES_AHEAD] unless overridden through [#MAX_FILES_AHEAD_PROPERTY], for a
-    /// multi-file read of files not all in memory and without a row limit; otherwise only the next
-    /// file: a read of files all in memory waits for nothing to overlap, and one with a row limit
-    /// may need no further file. A property value that is not a positive count is rejected.
+    /// multi-file read of files not all in memory and without a row limit or physical window;
+    /// otherwise only the next file: a read of files all in memory waits for nothing to overlap,
+    /// and one with a row limit or window may need no further file. A property value that is not a
+    /// positive count is rejected.
     private static int filesAhead(boolean limited, boolean allInMemory, int fileCount) {
         return fileCount < 2 || allInMemory || limited ? 1
                 : InternalProperty.intValue(MAX_FILES_AHEAD_PROPERTY, DEFAULT_MAX_FILES_AHEAD, 1, "a positive count");
@@ -280,7 +281,7 @@ final class FooterReader {
             }
             nextList++;
             if (!planner.budgetLeft()) {
-                // the row limit is covered: no further file is listed
+                // the row limit or the window is covered: no further file is listed
                 nextList = count;
             }
         }

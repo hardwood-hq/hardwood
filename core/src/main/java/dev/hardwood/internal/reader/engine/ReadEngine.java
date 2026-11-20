@@ -57,7 +57,8 @@ import dev.hardwood.schema.FileSchema;
 /// each column publishes every batch before it and then ends with it.
 ///
 /// A read with a row limit lists row groups until the limit is covered and truncates the pages past
-/// it; once every column has placed its last row, the read plans nothing more.
+/// it; a read with a physical window lists only the row groups it overlaps; once every column has
+/// placed its last row, the read plans nothing more.
 public final class ReadEngine implements Closeable {
 
     public static final String FETCH_AHEAD_BYTES_PROPERTY = "hardwood.internal.fetchAheadBytes";
@@ -120,10 +121,11 @@ public final class ReadEngine implements Closeable {
                 read.pruning().prunesByMetadata() ? PageDropPredicates.byColumn(filter) : Map.of());
         planner = new RowGroupPlanner(scheduler, fetcher, publisher, readFailure, tracker, scanner, columns,
                 new BatchPlan(batchSize, BatchPlan.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns()),
-                        filter != null, limit == 0 ? 0 : limit + read.leadingRows()), schemas, filterOnly,
-                read.pruning(), limit > 0 ? limit : Long.MAX_VALUE, filter != null, read.skip(), read.maskedRows());
+                        filter != null, BatchPlan.raiseCap(limit, read.leadingRows())), schemas, filterOnly,
+                read.pruning(), limit > 0 ? limit : Long.MAX_VALUE, filter != null, read.skip(), read.windowEnd(),
+                read.masksSkip());
         footers = new FooterReader(read.files(), scheduler, planner, readFailure, read.compatibility(), filter,
-                read.pruning(), limit > 0, driver::submitOrAbandon);
+                read.pruning(), limit > 0 || read.windowEnd() != Long.MAX_VALUE, driver::submitOrAbandon);
         for (int c = 0; c < n; c++) {
             int column = c;
             if (readQueue != null) {
@@ -171,6 +173,14 @@ public final class ReadEngine implements Closeable {
     /// Each decoded column's exchange, in decoded order.
     public List<BatchExchange<?>> exchanges() {
         return exchanges;
+    }
+
+    /// The leading rows of the row group the read's physical skip lands in that the read publishes
+    /// and its consumer drops: those the plan placed, where it could not mask them out. `0` where it
+    /// masked them, where pruning dropped the row group, and for a read without a skip. Known once
+    /// the consumer has taken a batch of the read.
+    public long leadingRows() {
+        return planner.leadingRows();
     }
 
     /// Ends or seals the columns' placement where the read has reached its end or a failure

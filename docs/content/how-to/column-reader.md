@@ -62,6 +62,24 @@ Column readers can also be created by index via `columnReader(int columnIndex)`.
 
 A filtered column reader returns **only** the matching rows: each batch's `getRecordCount()` and typed arrays exclude non-matching rows, and `nextBatch()` passes over batches without a matching row, so every batch holds at least one. The predicate may reference the column being read, another column, or a column outside the projection; for `columnReaders(projection)` every column is filtered to the same row set and stays row-aligned. Predicate columns that are not part of the projection are decoded internally to evaluate the filter but are not exposed.
 
+### Selecting Rows by Position
+
+The column builders take `head(long)` and `skip(long)` with the meaning they have on a `RowReader`, and `rowRange(start, end)`, which reads the rows at physical positions `[start, end)` and, with a filter, the matching rows among them:
+
+```java
+try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
+     ColumnReader ids = parquet.buildColumnReader("id")
+             .filter(FilterPredicate.gt("fare_amount", 10.0))
+             .rowRange(1_000_000, 1_500_000)
+             .build()) {
+    while (ids.nextBatch()) {
+        // ...
+    }
+}
+```
+
+The controls apply to every column of a `ColumnReaders` alike. How each counts with and without a filter, and which combinations `build()` rejects, is in [Row Limit](query-controls.md#row-limit), [Skipping Rows](query-controls.md#skipping-rows-skip) and [Reading a Row Range](query-controls.md#reading-a-row-range-rowrange).
+
 ### Reading Multiple Columns
 
 For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection. `getColumnReader(String)` takes a column's field path and `getColumnReader(int)` its position in the projection (see [Index order](../reference/query-controls.md#index-order)). Drive every reader in lockstep with `ColumnReaders.nextBatch()`. Open the columns together rather than building one `ColumnReader` per column: separately built readers batch at different row boundaries, so pairing their values by position reads different rows from each (see [RowReader vs. ColumnReader](../concepts/reader-models.md#several-columns-means-one-columnreaders-not-several-columnreaders)).

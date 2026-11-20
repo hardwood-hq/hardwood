@@ -130,9 +130,10 @@ A disagreement is investigated as a Hardwood defect first. Where it turns out to
 | `skip(m)` | `... ORDER BY __row__ LIMIT ALL OFFSET m` |
 | `skip(m).head(n)` | `... ORDER BY __row__ LIMIT n OFFSET m` |
 | `tail(n)` | `SELECT __row__ FROM (... ORDER BY __row__ DESC LIMIT n) ORDER BY __row__` |
+| `rowRange(a, b)` (column readers) | `... WHERE __row__ >= a AND __row__ < b [AND p] ORDER BY __row__` |
 | `projection(cols)` | the query always projects `__row__` in addition to `cols` |
 
-`filter` combines with `head` and `skip` as in SQL: the offset and limit apply to the matched rows. The combinations the builder rejects (`filter` with `tail`, `head` with `tail`, `skip` with `tail`) are pinned in `BuilderCombinationTest`, not here.
+`filter` combines with `head` and `skip` as in SQL: the offset and limit apply to the matched rows, while `rowRange` bounds the physical position ahead of the filter. The combinations the builders reject (`filter` with `tail`, `head` with `tail`, `skip` with `tail`, `rowRange` with `head` or `skip`) are pinned in `BuilderCombinationTest`, not here.
 
 `__row__` makes these instrumented fixtures, distinct from the real-world files checked in elsewhere: those cover decoding an actual file, the differential corpus covers whether the right rows are selected and decoded.
 
@@ -152,6 +153,7 @@ The harness is a set of JUnit classes in `core/src/test/java/dev/hardwood/`, eac
 | Class | Layer | Fixtures | Covers |
 |-------|-------|----------|--------|
 | `DifferentialReadTest` | row identity | `diff_numbers_single`, `diff_numbers_multi` | projection, comparison filters on a required column, `head`, `tail`, `skip` and their legal combinations, `skip` past the end |
+| `DifferentialColumnReadTest` | row identity | `diff_numbers_single`, `diff_numbers_multi` | `head`, `skip` and `rowRange` on `ColumnReaders` and `ColumnReader`, alone and with a filter, ranges across row-group boundaries and past the end |
 | `DifferentialNullTest` | row identity | `diff_nulls` | comparison filters on a nullable column drop null rows |
 | `DifferentialColumnOrderTest` | row identity | `diff_order_single`, `diff_order_multi`, `diff_order_dict` | filters on columns whose sort order differs from their stored bits: `UINT_32`, `UINT_64`, `FLOAT16`, `DECIMAL` as `FIXED_LEN_BYTE_ARRAY` |
 | `DifferentialValueTest` | values | `diff_types` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `BOOLEAN`, `STRING`, `DATE`, `TIMESTAMP`, `DECIMAL`, raw `BYTE_ARRAY` |

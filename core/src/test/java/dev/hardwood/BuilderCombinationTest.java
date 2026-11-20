@@ -24,8 +24,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetFileReader.ColumnReaderBuilder;
+import dev.hardwood.reader.ParquetFileReader.ColumnReadersBuilder;
 import dev.hardwood.reader.ParquetFileReader.RowReaderBuilder;
 import dev.hardwood.reader.RowGroupPredicate;
 import dev.hardwood.reader.RowReader;
@@ -34,7 +37,8 @@ import dev.hardwood.schema.ColumnProjection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Coverage matrix for [RowReaderBuilder] option combinations.
+/// Coverage matrix for [RowReaderBuilder] option combinations, and for those of the column
+/// builders ([ColumnReadersBuilder], [ColumnReaderBuilder]).
 ///
 /// Every public option — `projection`, `filter(FilterPredicate)` (row-level),
 /// `filter(RowGroupPredicate)` (group-level / byte-range), `head`, `tail`, `skip` —
@@ -190,6 +194,159 @@ class BuilderCombinationTest {
         }
     }
 
+    record ColumnCombo(String name, Consumer<ColumnReadersBuilder> apply, String rejectMessage) {
+
+        static ColumnCombo builds(String name, Consumer<ColumnReadersBuilder> apply) {
+            return new ColumnCombo(name, apply, null);
+        }
+
+        static ColumnCombo rejected(String name, Consumer<ColumnReadersBuilder> apply, String rejectMessage) {
+            return new ColumnCombo(name, apply, rejectMessage);
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    /// The column builders take `head`, `skip` and `rowRange` beside the two filters; a row range
+    /// excludes `head` and `skip`, and the column builders have no `tail`.
+    static Stream<ColumnCombo> columnMatrix() {
+        return Stream.of(
+                ColumnCombo.builds("head", b -> b.head(50)),
+                ColumnCombo.builds("skip", b -> b.skip(50)),
+                ColumnCombo.builds("rowRange", b -> b.rowRange(50, 150)),
+                ColumnCombo.builds("skip + head", b -> b.skip(50).head(50)),
+                ColumnCombo.builds("filterFP + head", b -> b.filter(FilterPredicate.gt("id", 150L)).head(50)),
+                ColumnCombo.builds("filterFP + skip", b -> b.filter(FilterPredicate.gt("id", 150L)).skip(50)),
+                ColumnCombo.builds("filterFP + skip + head",
+                        b -> b.filter(FilterPredicate.gt("id", 150L)).skip(20).head(50)),
+                ColumnCombo.builds("filterFP + rowRange",
+                        b -> b.filter(FilterPredicate.gt("id", 150L)).rowRange(50, 250)),
+                ColumnCombo.builds("filterRGP + skip + head",
+                        b -> b.filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).skip(20).head(50)),
+                ColumnCombo.builds("filterRGP + rowRange",
+                        b -> b.filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).rowRange(50, 150)),
+                ColumnCombo.builds("filterFP + filterRGP + rowRange",
+                        b -> b.filter(FilterPredicate.gt("id", 150L))
+                                .filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).rowRange(50, 150)),
+                ColumnCombo.rejected("rowRange + skip", b -> b.rowRange(50, 150).skip(10),
+                        "rowRange and skip are mutually exclusive: the row range fixes the first row itself"),
+                ColumnCombo.rejected("rowRange + head", b -> b.head(10).rowRange(50, 150),
+                        "rowRange and head are mutually exclusive: the row range fixes the row count itself"),
+                ColumnCombo.rejected("filterFP + rowRange + skip",
+                        b -> b.filter(FilterPredicate.gt("id", 150L)).rowRange(50, 150).skip(10),
+                        "rowRange and skip are mutually exclusive: the row range fixes the first row itself"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("columnMatrix")
+    void columnCombination(ColumnCombo c) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
+            ColumnReadersBuilder builder = reader.buildColumnReaders(ColumnProjection.columns("id"));
+            c.apply().accept(builder);
+
+            if (c.rejectMessage() != null) {
+                assertThatThrownBy(builder::build)
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage(c.rejectMessage());
+                return;
+            }
+
+            long count = 0;
+            try (ColumnReaders columns = builder.build()) {
+                while (columns.nextBatch()) {
+                    count += columns.getRecordCount();
+                }
+            }
+            assertThat(count).as(c.name()).isBetween(0L, TOTAL_ROWS);
+        }
+    }
+
+    /// The setters of every builder reject a count or position that names no rows.
+    @Test
+    void settersRejectInvalidRowCounts() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
+            ColumnReadersBuilder columns = reader.buildColumnReaders(ColumnProjection.columns("id"));
+            ColumnReaderBuilder column = reader.buildColumnReader("id");
+            assertThatThrownBy(() -> columns.head(0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("head row count must be positive: 0");
+            assertThatThrownBy(() -> column.head(-1))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("head row count must be positive: -1");
+            assertThatThrownBy(() -> columns.skip(-1))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("skip must be non-negative: -1");
+            assertThatThrownBy(() -> column.skip(-5))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("skip must be non-negative: -5");
+            assertThatThrownBy(() -> columns.rowRange(-1, 10))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("rowRange start must be non-negative: -1");
+            assertThatThrownBy(() -> column.rowRange(10, 9))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("rowRange end must not be below its start: [10, 9)");
+            assertThatThrownBy(() -> reader.buildRowReader().head(0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("head row count must be positive: 0");
+        }
+    }
+
+    /// Beside a filter and a `skip`, the largest `head` a setter takes caps nothing: every builder
+    /// returns each match after the skipped ones.
+    @Test
+    void largestHeadBesideFilterAndSkip() throws Exception {
+        FilterPredicate filter = FilterPredicate.gt("id", 150L);
+        List<Long> expected = longRange(161, 300);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
+            assertThat(ids(reader.buildRowReader().filter(filter).skip(10).head(Long.MAX_VALUE)))
+                    .isEqualTo(expected);
+            assertThat(ids(reader.buildColumnReaders(ColumnProjection.columns("id"))
+                    .filter(filter).skip(10).head(Long.MAX_VALUE)))
+                    .isEqualTo(expected);
+        }
+    }
+
+    /// Beside a physical `skip` the read cannot mask out, one landing in a file after the first,
+    /// the largest `head` a setter takes caps nothing either.
+    @Test
+    void largestHeadBesideUnmaskedSkip() throws Exception {
+        List<Long> expected = longRange(160, 249);
+        try (ParquetFileReader reader = ParquetFileReader.openAll(MULTI_FIXTURE)) {
+            assertThat(ids(reader.buildRowReader().skip(160).head(Long.MAX_VALUE))).isEqualTo(expected);
+            assertThat(ids(reader.buildColumnReaders(ColumnProjection.columns("id"))
+                    .skip(160).head(Long.MAX_VALUE)))
+                    .isEqualTo(expected);
+        }
+    }
+
+    /// The single-column builder rejects a reader over several files whatever its controls, and
+    /// `rowRange` on [ColumnReadersBuilder] counts rows across the files.
+    @Test
+    void multiFileColumnBoundaries() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.openAll(MULTI_FIXTURE)) {
+            assertThatThrownBy(reader.buildColumnReader("id").rowRange(0, 10)::build)
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("columnReader(String) is single-file only; use columnReaders(projection) "
+                            + "for multi-file readers");
+            assertThatThrownBy(reader.buildColumnReaders(ColumnProjection.columns("id"))
+                    .filter(RowGroupPredicate.byteRange(0, Long.MAX_VALUE)).rowRange(0, 10)::build)
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("filter(RowGroupPredicate) is single-file only: "
+                            + "a byte range names positions in one file");
+            long count = 0;
+            try (ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                    .rowRange(140, 160).build()) {
+                while (columns.nextBatch()) {
+                    count += columns.getRecordCount();
+                }
+            }
+            assertThat(count).isEqualTo(20);
+        }
+    }
+
     /// Multi-file boundary cells (#577, #672) — physical `skip` (no filter) is a
     /// global offset across all files, logical `skip` (with a filter) counts matches
     /// across *all* files in order, and `tail` and `filter(RowGroupPredicate)` are
@@ -277,6 +434,19 @@ class BuilderCombinationTest {
             while (r.hasNext()) {
                 r.next();
                 rows.add(r.getLong("id"));
+            }
+        }
+        return rows;
+    }
+
+    private static List<Long> ids(ColumnReadersBuilder builder) throws IOException {
+        List<Long> rows = new ArrayList<>();
+        try (ColumnReaders columns = builder.build()) {
+            while (columns.nextBatch()) {
+                long[] ids = columns.getColumnReader("id").getLongs();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    rows.add(ids[i]);
+                }
             }
         }
         return rows;
