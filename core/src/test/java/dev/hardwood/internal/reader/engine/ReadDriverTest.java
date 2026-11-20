@@ -9,7 +9,9 @@ package dev.hardwood.internal.reader.engine;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
@@ -255,6 +257,55 @@ class ReadDriverTest {
 
         assertThat(applied).containsExactly(
                 "broken: dev.hardwood.reader.ParquetReadException: integer overflow");
+    }
+
+    /// A thread of the pool runs the jobs the ends of its own job and of those after it start, up
+    /// to the continuations' bound, before a task another read queued on the pool meanwhile; then
+    /// that task, then the read's next job. One thread, so the order is the pool's.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void aThreadOfThePoolRunsTheJobsItsJobStartsUpToTheBoundBeforeOtherTasks() throws InterruptedException {
+        try (HardwoodContextImpl pool = HardwoodContextImpl.create(1)) {
+            List<String> ran = Collections.synchronizedList(new ArrayList<>());
+            CountDownLatch done = new CountDownLatch(1);
+            ReadDriver read = new ReadDriver(pool, null, Long.MAX_VALUE, () -> ANYWHERE,
+                    t -> ran.add("broken: " + t), t -> ran.add("abandoned: " + t));
+            JobScheduler s = read.scheduler();
+            int jobs = ReadDriver.CONTINUATIONS + 3;
+            JobScheduler.Job<?>[] chain = new JobScheduler.Job<?>[jobs];
+            for (int i = jobs - 1; i >= 0; i--) {
+                int n = i;
+                chain[i] = new JobScheduler.Job<>(n, 0, JobScheduler.Kind.DECODE, null, buffers -> {
+                    ran.add("job " + n);
+                    if (n == 0) {
+                        // queued behind the job running, as another read's task would be
+                        pool.execute(b -> ran.add("other"));
+                    }
+                    return n;
+                }, value -> {
+                    if (value + 1 < jobs) {
+                        s.add(chain[value + 1]);
+                    }
+                    else {
+                        done.countDown();
+                    }
+                }, t -> ran.add("failed: " + t));
+            }
+
+            read.submit(() -> s.add(chain[0]));
+            done.await();
+            read.close();
+
+            List<String> expected = new ArrayList<>();
+            for (int i = 0; i <= ReadDriver.CONTINUATIONS; i++) {
+                expected.add("job " + i);
+            }
+            expected.add("other");
+            for (int i = ReadDriver.CONTINUATIONS + 1; i < jobs; i++) {
+                expected.add("job " + i);
+            }
+            assertThat(ran).containsExactlyElementsOf(expected);
+        }
     }
 
     @Test

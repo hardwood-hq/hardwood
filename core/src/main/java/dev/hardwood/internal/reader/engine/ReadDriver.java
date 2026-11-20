@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -32,10 +33,17 @@ import dev.hardwood.internal.reader.step.ReadTasks;
 /// job that ends while another thread holds it queues its result, and the holder applies every
 /// queued result before it lets go. Once it has let go, it dispatches the jobs its polls started
 /// and returns to R what the results released, since R runs other reads' waiters on the releasing
-/// thread.
+/// thread. A thread of the pool that applies the end of its own job runs one of the jobs that end
+/// started itself, up to [#CONTINUATIONS] after its first, rather than handing every one to the
+/// pool's queue and waking another thread for it.
 ///
 /// The read moves through the states of [State]; only a running read starts jobs.
 final class ReadDriver {
+
+    /// The jobs a task of the pool runs after its first, each started by the end of the one before
+    /// and applied on its thread, before it returns to the pool's queue: it bounds how long a read
+    /// keeps a thread of the pool from the tasks of other reads queued there.
+    static final int CONTINUATIONS = 4;
 
     /// Where the read stands in its life. A close moves a running read to [#CLOSING] and, once
     /// no job is in flight, to [#CLOSED]; it moves an abandoned read to [#CLOSED] at once. A read
@@ -278,6 +286,14 @@ final class ReadDriver {
     /// count as ended; a release to R that throws, from another read's waiter, still counts and
     /// dispatches.
     private void drainAndUnlock() {
+        drainAndUnlock(false);
+    }
+
+    /// [#drainAndUnlock()], keeping out of the dispatch, where `keepOne`, the first CPU job a poll
+    /// started (a plan first, as the scheduler starts plans ahead of other work, otherwise the
+    /// lowest keyed) for the calling thread to run; returns it, `null` where none was started.
+    private JobScheduler.Job<?> drainAndUnlock(boolean keepOne) {
+        JobScheduler.Job<?> kept = null;
         do {
             List<JobScheduler.Job<?>> dispatch = List.of();
             int ended = 0;
@@ -296,9 +312,38 @@ final class ReadDriver {
             finally {
                 long released = scheduler.takeReleased();
                 lock.unlock();
+                if (keepOne && kept == null) {
+                    int first = firstCpu(dispatch);
+                    if (first >= 0) {
+                        kept = dispatch.get(first);
+                        dispatch = without(dispatch, first);
+                    }
+                }
                 afterUnlock(released, ended, dispatch);
             }
         } while (!results.isEmpty() && lock.tryLock());
+        return kept;
+    }
+
+    /// The position of the first CPU job in `jobs`, `-1` for none.
+    private static int firstCpu(List<JobScheduler.Job<?>> jobs) {
+        for (int i = 0; i < jobs.size(); i++) {
+            if (jobs.get(i).cpu()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /// `jobs` without the one at `i`.
+    private static List<JobScheduler.Job<?>> without(List<JobScheduler.Job<?>> jobs, int i) {
+        List<JobScheduler.Job<?>> rest = new ArrayList<>(jobs.size() - 1);
+        for (int j = 0; j < jobs.size(); j++) {
+            if (j != i) {
+                rest.add(jobs.get(j));
+            }
+        }
+        return rest;
     }
 
     /// Releases `released` to R, counts `ended` jobs as ended and dispatches `dispatch`, outside
@@ -326,7 +371,7 @@ final class ReadDriver {
                     queue.executePage(buffers -> runJob(job, buffers));
                 }
                 else {
-                    context.execute(buffers -> runJob(job, buffers));
+                    context.execute(buffers -> runOnPool(job, buffers));
                 }
             }
             else {
@@ -336,6 +381,23 @@ final class ReadDriver {
         catch (RejectedExecutionException e) {
             // a closed context refuses the job: it ends here, with its failure
             submit(new JobEnd(scheduler.refused(job, HardwoodContextImpl.contextClosed(e))));
+        }
+    }
+
+    /// Runs `job`, a CPU job on a thread of the pool, then up to [#CONTINUATIONS] of the jobs its
+    /// end and theirs start, as [#runJob] runs one: where the lock is free, the thread applies the
+    /// end itself, keeps the first CPU job the poll started and runs it; where another thread holds
+    /// the lock, that thread applies the end and dispatches what it starts, and this task ends.
+    private void runOnPool(JobScheduler.Job<?> job, DecodeBuffers buffers) {
+        try {
+            JobScheduler.Job<?> next = job;
+            for (int continued = 0; next != null; continued++) {
+                results.add(new JobEnd(scheduler.run(next, buffers)));
+                next = lock.tryLock() ? drainAndUnlock(continued < CONTINUATIONS) : null;
+            }
+        }
+        catch (Throwable t) {
+            abandon(t);
         }
     }
 
