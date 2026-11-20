@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
@@ -16,6 +17,7 @@ import dev.hardwood.internal.reader.select.RowRanges;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.OffsetIndex;
@@ -57,24 +59,52 @@ public class PageFilterEvaluator {
     /// @return row ranges that might contain matching rows
     public static RowRanges computeMatchingRows(ResolvedPredicate predicate, RowGroup rowGroup,
             RowGroupIndexBuffers indexBuffers, LogContext logContext, BoundsReadability readability) {
+        return computeMatchingRows(predicate, rowGroup, column -> {
+            ColumnIndexBuffers colBuffers = indexBuffers.forColumn(column);
+            if (colBuffers.columnIndex() == null || colBuffers.offsetIndex() == null) {
+                return null;
+            }
+            return readIndexPair(colBuffers, column, rowGroup);
+        }, logContext, readability);
+    }
+
+    /// Computes the row ranges within a row group that might match the given predicate, from the
+    /// parsed page index `lookup` gives for each filter column, so that a column several leaves
+    /// test is parsed once.
+    ///
+    /// @param lookup the parsed page index of a column of the row group, by its ordinal in the
+    ///        file; `null` where the column has no usable pair
+    public static RowRanges computeMatchingRows(ResolvedPredicate predicate, RowGroup rowGroup,
+            IndexLookup lookup, LogContext logContext, BoundsReadability readability) {
         long rowCount = rowGroup.numRows();
-        return evaluate(predicate, rowGroup, indexBuffers, rowCount, logContext, readability);
+        return evaluate(predicate, rowGroup, lookup, rowCount, logContext, readability);
+    }
+
+    /// The parsed page index of a column chunk of one row group, by the column's ordinal in the
+    /// file.
+    @FunctionalInterface
+    public interface IndexLookup {
+
+        /// The chunk's `ColumnIndex` and `OffsetIndex`, `null` where it lacks either. A
+        /// [ParquetReadException] it raises is the pair failing to parse, which the evaluator
+        /// names the column of.
+        IndexPair pageIndex(int column);
     }
 
     private static RowRanges evaluate(ResolvedPredicate predicate, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext, BoundsReadability readability) {
+            IndexLookup lookup, long rowCount, LogContext logContext, BoundsReadability readability) {
         return switch (predicate) {
             case ResolvedPredicate.And a -> {
                 RowRanges result = RowRanges.all(rowCount);
                 for (ResolvedPredicate child : a.children()) {
-                    result = result.intersect(evaluate(child, rowGroup, indexBuffers, rowCount, logContext, readability));
+                    result = result.intersect(evaluate(child, rowGroup, lookup, rowCount, logContext, readability));
                 }
                 yield result;
             }
             case ResolvedPredicate.Or o -> {
                 RowRanges result = null;
                 for (ResolvedPredicate child : o.children()) {
-                    RowRanges childRanges = evaluate(child, rowGroup, indexBuffers, rowCount, logContext, readability);
+                    RowRanges childRanges = evaluate(child, rowGroup, lookup, rowCount, logContext, readability);
                     result = (result == null) ? childRanges : result.union(childRanges);
                 }
                 yield (result != null) ? result : RowRanges.all(rowCount);
@@ -82,35 +112,34 @@ public class PageFilterEvaluator {
             // Parquet has no per-page geospatial statistics (GeospatialStatistics lives only on
             // ColumnMetaData, applied during row-group filtering), so no page-level pruning is possible.
             case ResolvedPredicate.GeospatialPredicate ignored -> RowRanges.all(rowCount);
-            default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount, logContext, readability);
+            default -> evaluateLeafPages(predicate, rowGroup, lookup, rowCount, logContext, readability);
         };
     }
 
     /// Evaluates a leaf predicate against the Column Index of the column it tests, keeping every
     /// page where the column has none.
     private static RowRanges evaluateLeafPages(ResolvedPredicate leaf, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext, BoundsReadability readability) {
+            IndexLookup lookup, long rowCount, LogContext logContext, BoundsReadability readability) {
 
         int columnIndex = ResolvedPredicate.leafColumnIndex(leaf);
         if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
             return RowRanges.all(rowCount);
         }
 
-        ColumnIndexBuffers colBuffers = indexBuffers.forColumn(columnIndex);
-        if (colBuffers.columnIndex() == null || colBuffers.offsetIndex() == null) {
-            return RowRanges.all(rowCount);
-        }
-
         FieldPath path = rowGroup.columns().get(columnIndex).metaData().pathInSchema();
         IndexPair indexPair;
         try {
-            indexPair = readIndexPair(colBuffers, columnIndex, rowGroup);
+            indexPair = lookup.pageIndex(columnIndex);
         }
         catch (ParquetReadException e) {
             // the column's own, which the pipeline cannot name: it plans the row group, not the
             // column whose index failed
             throw new ParquetReadException(ExceptionContext.readPrefix(logContext.fileName(),
                     logContext.rowGroupIndex(), path.toString()) + e.getMessage(), e);
+        }
+
+        if (indexPair == null) {
+            return RowRanges.all(rowCount);
         }
 
         LogContext columnContext = logContext.withColumn(path);
@@ -284,29 +313,80 @@ public class PageFilterEvaluator {
     /// [dev.hardwood.internal.reader.footer.ParquetMetadataReader] attributes. A failure says the
     /// page index was being read; the caller names the file, row group and column.
     static IndexPair readIndexPair(ColumnIndexBuffers colBuffers, int columnIndex, RowGroup rowGroup) {
-        ColumnIndex columnIdx;
-        OffsetIndex offsetIdx;
+        ColumnChunk chunk = rowGroup.columns().get(columnIndex);
+        IndexPair pair = new IndexPair(parseColumnIndex(colBuffers.columnIndex()),
+                parseOffsetIndex(colBuffers.offsetIndex(), chunk, rowGroup.numRows(), true));
+        checkPageCounts(pair);
+        return pair;
+    }
+
+    /// Parses a chunk's `ColumnIndex`.
+    ///
+    /// @throws ParquetReadException if it fails to parse; the message says it was the page index,
+    ///         and the caller names the file, row group and column
+    public static ColumnIndex parseColumnIndex(ByteBuffer bytes) {
+        IndexParseObserver observer = parseObserver;
+        if (observer != null) {
+            observer.parsing(ColumnIndex.class);
+        }
         try {
-            columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
-            offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()),
-                    rowGroup.columns().get(columnIndex), rowGroup.numRows());
+            return ColumnIndexReader.read(new ThriftCompactReader(bytes));
         }
         catch (ParquetReadException e) {
             // the reader says the failure is the file's; this frame says it was the page index,
             // and evaluateLeafPages names the column whose index it was
             throw new ParquetReadException(PARSE_FAILURE + e.getMessage(), e);
         }
-        // Outside the catch, and prefixed once: both structs parsed, so this is the
-        // pair disagreeing rather than either of them failing to read.
-        int columnIndexPages = columnIdx.getPageCount();
-        int offsetIndexPages = offsetIdx.pageLocations().size();
+    }
+
+    /// Parses `chunk`'s `OffsetIndex`, checked against the chunk and the row group's `numRows`.
+    ///
+    /// @param prefixed whether a failure says it was the page index, as page filtering reports it;
+    ///        otherwise it is left as the reader raised it, for the caller to place
+    /// @throws ParquetReadException if it fails to parse
+    public static OffsetIndex parseOffsetIndex(ByteBuffer bytes, ColumnChunk chunk, long numRows, boolean prefixed) {
+        IndexParseObserver observer = parseObserver;
+        if (observer != null) {
+            observer.parsing(OffsetIndex.class);
+        }
+        try {
+            return OffsetIndexReader.read(new ThriftCompactReader(bytes), chunk, numRows);
+        }
+        catch (ParquetReadException e) {
+            if (!prefixed) {
+                throw e;
+            }
+            throw new ParquetReadException(PARSE_FAILURE + e.getMessage(), e);
+        }
+    }
+
+    /// Told of every page-index structure [#parseColumnIndex] and [#parseOffsetIndex] parse, on the
+    /// thread parsing it; for tests that count the parses of a read. `null` for none.
+    public static volatile IndexParseObserver parseObserver;
+
+    /// Sees each page-index structure parsed.
+    public interface IndexParseObserver {
+
+        /// @param structure [ColumnIndex] or [OffsetIndex]
+        void parsing(Class<?> structure);
+    }
+
+    /// Checks that a chunk's `ColumnIndex` and `OffsetIndex` describe the same pages, so page
+    /// filtering can walk them with one page index.
+    ///
+    /// @throws ParquetReadException if they do not
+    public static void checkPageCounts(IndexPair pair) {
+        // prefixed once: both structs parsed, so this is the pair disagreeing rather than either
+        // of them failing to read
+        int columnIndexPages = pair.columnIndex().getPageCount();
+        int offsetIndexPages = pair.offsetIndex().pageLocations().size();
         if (columnIndexPages != offsetIndexPages) {
             throw new ParquetReadException(PARSE_FAILURE
                     + "Malformed Parquet metadata: ColumnIndex describes "
                     + columnIndexPages + " pages but OffsetIndex locates " + offsetIndexPages);
         }
-        return new IndexPair(columnIdx, offsetIdx);
     }
 
-    record IndexPair(ColumnIndex columnIndex, OffsetIndex offsetIndex) {}
+    /// A column chunk's parsed `ColumnIndex` and `OffsetIndex`.
+    public record IndexPair(ColumnIndex columnIndex, OffsetIndex offsetIndex) {}
 }
