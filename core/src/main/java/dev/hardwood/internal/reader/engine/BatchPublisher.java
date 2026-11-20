@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader.engine;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
+import java.util.function.LongUnaryOperator;
 
 import dev.hardwood.internal.reader.batch.BatchExchange;
 import dev.hardwood.internal.reader.pipeline.BatchCell;
@@ -36,6 +37,8 @@ final class BatchPublisher {
         private final BatchPlan.RowGroupBatches batches;
         private final long base;
         private final BitSet skipped;
+        /// the rows the units batched before it keep, from the read's first
+        private final long keptBefore;
         /// the index of the first batch it starts
         private final long firstIndex;
         /// the segment its first batch starts at: `1` where its first segment continues the batch
@@ -49,7 +52,8 @@ final class BatchPublisher {
         /// whether its first segment has extended the batch it continues
         private boolean continued;
 
-        Span(BatchPlan.RowGroupBatches batches, long base, BitSet skipped, long firstIndex) {
+        Span(BatchPlan.RowGroupBatches batches, long base, BitSet skipped, long firstIndex, long keptBefore) {
+            this.keptBefore = keptBefore;
             this.batches = batches;
             this.base = base;
             this.skipped = skipped;
@@ -118,6 +122,8 @@ final class BatchPublisher {
     private int firstSpan;
     /// the index past the last batch of every unit batched
     private long planned;
+    /// the rows every unit batched keeps, from the read's first
+    private long keptBatched;
     /// per column, the next batch it publishes, and the next its placement opens a cell in
     private final long[] published;
     private final long[] opened;
@@ -146,7 +152,8 @@ final class BatchPublisher {
         if (batches.segmentCount() == 0) {
             return;
         }
-        Span span = new Span(batches, base, skipped, planned);
+        Span span = new Span(batches, base, skipped, planned, keptBatched);
+        keptBatched += batches.plannedRows();
         if (span.continues()) {
             Span owner = continuedSpan(spans.size());
             if (owner.madeAll()) {
@@ -397,9 +404,9 @@ final class BatchPublisher {
     /// column with repetition closes a batch only as it places the record after it, so the decode
     /// of a page starting where the batch ends completes it. Where that batch is the last the plan
     /// added, the units not yet batched may go on with it, so the need reaches the next of them.
-    /// Decodes reach the cap past the first row some column has not published. Nothing past the
+    /// Decodes reach the cap's kept rows past the first row some column has not published. Nothing past the
     /// failure starts.
-    JobScheduler.Position position(long batchedTo) {
+    JobScheduler.Position position(long batchedTo, LongUnaryOperator pastBatched) {
         long next = consumerNext();
         long need = batchedTo + batchRows + 1;
         if (next >= 0 && next < planned) {
@@ -415,7 +422,43 @@ final class BatchPublisher {
                 need = Math.max(need, batchedTo + 1);
             }
         }
-        return new JobScheduler.Position(need, firstUnpublished(batchedTo) + capRows, readFailure.row());
+        return new JobScheduler.Position(need, reach(pastBatched), readFailure.row());
+    }
+
+    /// The key the cap's kept rows past the first row some column has not published end at. A
+    /// unit's base lies past every row of the units before it, so the rows a unit's filter drops
+    /// lie between the key of its last kept row and the next unit's base, and take none of the
+    /// cap. Each batched unit records the rows the units batched before it keep, so the cap's end
+    /// among them is found by a search over those counts, not a walk; past the batched units,
+    /// `pastBatched` gives the key the rows left end at.
+    private long reach(LongUnaryOperator pastBatched) {
+        if (head == planned) {
+            return pastBatched.applyAsLong(capRows);
+        }
+        Span first = spans.get(spanOf(head));
+        long end = first.keptBefore + keyOf(head) - first.base + capRows;
+        if (end >= keptBatched) {
+            return pastBatched.applyAsLong(end - keptBatched);
+        }
+        Span span = spans.get(spanKeeping(end));
+        return span.base + end - span.keptBefore;
+    }
+
+    /// The position in `spans` of the span holding kept row `kept`, counted from the read's first:
+    /// the last whose units before it keep no more.
+    private int spanKeeping(long kept) {
+        int low = firstSpan;
+        int high = spans.size() - 1;
+        while (low < high) {
+            int mid = (low + high + 1) >>> 1;
+            if (spans.get(mid).keptBefore <= kept) {
+                low = mid;
+            }
+            else {
+                high = mid - 1;
+            }
+        }
+        return low;
     }
 
     /// The consumer's next batch: the next of the column furthest behind, since a consumer takes

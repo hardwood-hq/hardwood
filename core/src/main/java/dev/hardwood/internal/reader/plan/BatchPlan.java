@@ -100,7 +100,7 @@ public final class BatchPlan {
         return false;
     }
 
-    int capacity() {
+    public int capacity() {
         return capacity;
     }
 
