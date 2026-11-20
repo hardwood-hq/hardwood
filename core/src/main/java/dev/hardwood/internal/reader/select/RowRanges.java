@@ -64,6 +64,12 @@ public class RowRanges {
         return !all && ranges.length == 0;
     }
 
+    /// Returns the first row of the first matching row range: `0` for all rows, and for an empty
+    /// set.
+    public long startRow() {
+        return ranges.length == 0 ? 0 : ranges[0];
+    }
+
     /// Returns the exclusive end of the last matching row range. Used as a
     /// short-circuit cursor by sequential page scanners: once the iterator's
     /// row cursor has crossed `endRow()`, no later page can produce a non-null

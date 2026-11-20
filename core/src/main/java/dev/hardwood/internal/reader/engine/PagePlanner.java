@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -23,13 +22,10 @@ import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.decode.DictionaryParser;
 import dev.hardwood.internal.reader.fetch.CoalescingPolicy;
 import dev.hardwood.internal.reader.plan.NeededPage;
-import dev.hardwood.internal.reader.plan.RowGroupIndexBuffers;
 import dev.hardwood.internal.reader.plan.RowGroupPruning;
 import dev.hardwood.internal.reader.plan.UnitListing;
 import dev.hardwood.internal.reader.plan.UnitPlan;
 import dev.hardwood.internal.reader.select.RowRanges;
-import dev.hardwood.internal.thrift.OffsetIndexReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.PageFilterEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
@@ -88,16 +84,13 @@ final class PagePlanner {
 
     /// The rows of `u` its filter keeps by the ColumnIndex, where it narrows them: all of them
     /// where a nested column without an OffsetIndex could not take a page mask.
-    private RowRanges matching(Unit.AwaitingIndex p, List<RangeFetch> index) throws IOException {
+    private RowRanges matching(Unit.AwaitingIndex p, UnitPageIndex indexes) {
         UnitListing u = p.listing();
         if (!pruning.pageFiltering(u)) {
             return RowRanges.ALL;
         }
-        RowGroupIndexBuffers buffers = RowGroupIndexBuffers.slice(u.metaData(), p.listed().offsetIndexes(),
-                p.listed().columnIndexes(),
-                (offset, length) -> RangeFetch.read(index, offset, length));
         RowRanges matching = PageFilterEvaluator.computeMatchingRows(u.columnOrdinals().filter(), u.metaData(),
-                buffers, new LogContext(u.file().name(), u.rowGroup()), u.columnOrdinals().boundsReadability());
+                indexes, new LogContext(u.file().name(), u.rowGroup()), u.columnOrdinals().boundsReadability());
         for (int c = 0; c < schemas.length && !matching.isAll() && !matching.isEmpty(); c++) {
             if (schemas[c].maxRepetitionLevel() > 0 && u.chunks()[c].offsetIndexOffset() == null) {
                 return RowRanges.ALL;
@@ -114,7 +107,9 @@ final class PagePlanner {
             throws IOException {
         UnitListing u = p.listing();
         u.requireSameFile();
-        RowRanges matching = matching(p, index);
+        UnitPageIndex indexes = new UnitPageIndex(u.metaData(), (offset, length) -> RangeFetch.read(index, offset, length),
+                p.listed().offsetIndexes(), p.listed().columnIndexes());
+        RowRanges matching = matching(p, indexes);
         // whether a predicate narrowed the pages, which is what a page filter event reports
         boolean pageFiltered = !matching.isAll();
         if (u.index() == 0 && maskedRows > 0 && matching.isAll()) {
@@ -153,10 +148,8 @@ final class PagePlanner {
                 continue;
             }
             try {
-                ByteBuffer slice = RangeFetch.read(index, chunk.offsetIndexOffset(), chunk.offsetIndexLength());
-                List<PageLocation> all = OffsetIndexReader.read(new ThriftCompactReader(slice), chunk, u.metaData().numRows())
-                        .pageLocations();
-                pages[c] = NeededPage.select(all, matching, u.metaData().numRows());
+                List<PageLocation> all = indexes.offsetIndex(ordinal).pageLocations();
+                pages[c] = indexes.neededPages(ordinal, matching);
                 if (u.limit() < u.metaData().numRows()) {
                     pages[c] = pages[c].stream().filter(page -> page.location().firstRowIndex() < u.limit()).toList();
                 }
