@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.PageLocation;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -492,5 +493,32 @@ class RowRangesTest {
                 new PageLocation(0, 100, 0),
                 new PageLocation(100, 100, start));
         return RowRanges.fromPages(pages, new boolean[]{ false, true }, end);
+    }
+
+    @Test
+    void maskForPageFromALaterIntervalSkipsTheOnesBefore() {
+        RowRanges ranges = RowRanges.range(0, 5).union(RowRanges.range(20, 25)).union(RowRanges.range(28, 40));
+        PageRowMask mask = ranges.maskForPage(20, 30, 1);
+        assertEquals(2, mask.intervalCount());
+        assertEquals(0, mask.start(0));
+        assertEquals(5, mask.end(0));
+        assertEquals(8, mask.start(1));
+        assertEquals(10, mask.end(1));
+        assertSame(PageRowMask.ALL, ranges.maskForPage(30, 40, 2));
+        assertNull(ranges.maskForPage(10, 20, 1));
+    }
+
+    @Test
+    void maskForPageRejectsAStartPastAnIntervalReachingThePage() {
+        RowRanges ranges = RowRanges.range(0, 15).union(RowRanges.range(20, 25));
+        assertThatThrownBy(() -> ranges.maskForPage(10, 20, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Interval 1 of 2 cannot start the mask of a page from row 10");
+        assertThatThrownBy(() -> ranges.maskForPage(30, 40, 3))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Interval 3 of 2 cannot start the mask of a page from row 30");
+        assertThatThrownBy(() -> ranges.maskForPage(0, 10, -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Interval -1 of 2 cannot start the mask of a page from row 0");
     }
 }

@@ -235,39 +235,57 @@ public class RowRanges {
     ///   ranges with `[pageFirstRow, pageLastRow)`, expressed as page-relative
     ///   offsets.
     public PageRowMask maskForPage(long pageFirstRow, long pageLastRow) {
+        return maskForPage(pageFirstRow, pageLastRow, 0);
+    }
+
+    /// [#maskForPage(long, long)], looking at the intervals from `fromInterval` on: a caller
+    /// walking pages in row order passes the first interval that can still reach the page, so
+    /// that the intervals before it are not visited again.
+    ///
+    /// @param fromInterval an interval at or before the first one ending after `pageFirstRow`
+    /// @throws IllegalArgumentException if `fromInterval` is not one, or an interval before it
+    ///         still reaches the page
+    public PageRowMask maskForPage(long pageFirstRow, long pageLastRow, int fromInterval) {
+        if (fromInterval < 0 || fromInterval > intervalCount()
+                || fromInterval > 0 && intervalEnd(fromInterval - 1) > pageFirstRow) {
+            throw new IllegalArgumentException("Interval " + fromInterval + " of " + intervalCount()
+                    + " cannot start the mask of a page from row " + pageFirstRow);
+        }
         if (all) {
             return PageRowMask.ALL;
         }
         if (pageLastRow <= pageFirstRow) {
             return null;
         }
-        int[] result = new int[ranges.length];
-        int pos = 0;
-        for (int i = 0; i < ranges.length; i += 2) {
-            long rangeStart = ranges[i];
-            long rangeEnd = ranges[i + 1];
-            if (rangeEnd <= pageFirstRow) {
-                continue;
-            }
-            if (rangeStart >= pageLastRow) {
-                break;
-            }
-            long start = Math.max(rangeStart, pageFirstRow) - pageFirstRow;
-            long end = Math.min(rangeEnd, pageLastRow) - pageFirstRow;
-            result[pos++] = Math.toIntExact(start);
-            result[pos++] = Math.toIntExact(end);
+        int first = fromInterval;
+        while (first < intervalCount() && intervalEnd(first) <= pageFirstRow) {
+            first++;
         }
-        if (pos == 0) {
+        int end = first;
+        while (end < intervalCount() && intervalStart(end) < pageLastRow) {
+            end++;
+        }
+        if (end == first) {
             return null;
         }
-        if (pos == 2 && result[0] == 0 && result[1] == pageLastRow - pageFirstRow) {
+        if (end - first == 1 && intervalStart(first) <= pageFirstRow && intervalEnd(first) >= pageLastRow) {
             return PageRowMask.ALL;
         }
-        if (pos != result.length) {
-            int[] trimmed = new int[pos];
-            System.arraycopy(result, 0, trimmed, 0, pos);
-            return PageRowMask.of(trimmed);
+        int[] result = new int[2 * (end - first)];
+        for (int i = first, pos = 0; i < end; i++) {
+            result[pos++] = Math.toIntExact(Math.max(intervalStart(i), pageFirstRow) - pageFirstRow);
+            result[pos++] = Math.toIntExact(Math.min(intervalEnd(i), pageLastRow) - pageFirstRow);
         }
         return PageRowMask.of(result);
+    }
+
+    /// Returns the first row of interval `i`.
+    public long intervalStart(int i) {
+        return ranges[2 * i];
+    }
+
+    /// Returns the exclusive end of interval `i`.
+    public long intervalEnd(int i) {
+        return ranges[2 * i + 1];
     }
 }
