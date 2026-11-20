@@ -33,12 +33,9 @@ final class TrackedPage {
     /// the rows a page its inline statistics drop stands for, as nulls without bytes; `0` for a
     /// page read from its bytes
     private int placeholder;
-    /// its header, parsed by the scan that found it, by its header job or for its charge; `null`
-    /// until then, and for a header that did not parse
+    /// its header, parsed by the scan that found it, or by a decode job that ended without room in
+    /// R ([PageTracker]); `null` until then, and for a header that did not parse
     private PageFormatProbe.HeaderAt header;
-    /// ended once the job parsing its header off the read's lock has ended; `null` for a page
-    /// without one
-    private Output<Void> headerJob;
     private PageDecoder decoder;
     private PageTask task;
     private boolean ready;
@@ -138,23 +135,13 @@ final class TrackedPage {
         this.header = header;
     }
 
-    /// Its header is parsed off the read's lock by a job that ends `headerJob`.
-    void headerJob(Output<Void> headerJob) {
-        this.headerJob = headerJob;
-    }
-
-    /// The output of the job parsing its header off the read's lock, `null` for a page without one.
-    Output<Void> headerJob() {
-        return headerJob;
-    }
-
     /// Its header, `null` until parsed and where it did not parse.
     PageFormatProbe.HeaderAt header() {
         return header;
     }
 
     /// The page, on its decode's job: from its header as parsed before, or parsed here where it
-    /// did not parse before, which fails with what the header's defect is, in the words every
+    /// was not parsed before or did not parse, which fails with what the header's defect is, in the words every
     /// reader of a header uses ([PageFormatProbe#readHeader]).
     ///
     /// @throws dev.hardwood.reader.ParquetReadException if its header does not parse

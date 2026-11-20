@@ -355,6 +355,9 @@ final class JobScheduler {
 
     /// Returns the bytes `charge` holds to the bounds.
     void release(Charge charge) {
+        // what the job took from R itself, never counted as held, goes back to R as the rest does:
+        // once the read's lock is let go of
+        released += charge.takeBackItself();
         long bytes = charge.takeBack();
         if (bytes > 0) {
             held -= bytes;
@@ -448,6 +451,13 @@ final class JobScheduler {
     /// Returns every charge still held, once nothing is in flight, and stops waiting for R.
     void releaseAll() {
         budget.cancel(roomReleased);
+        // what a job took from R itself is returned with its end; one whose end was never applied,
+        // as where the read was abandoned before the end could be handed to it, still holds it
+        for (Job<?> job : running) {
+            if (job.charge() != null) {
+                released += job.charge().takeBackItself();
+            }
+        }
         released += held;
         held = 0;
         fetchedAhead = 0;

@@ -48,6 +48,29 @@ class JobSchedulerTest {
         return new JobScheduler(new ReadAheadBuffer(budget), wakes::incrementAndGet, cpuSlots, fetchAhead);
     }
 
+    /// What a started job took from R itself is returned by the read's close where the job's end is
+    /// never applied, as where its read was abandoned before the end could be handed to it; an end
+    /// applied after the close returns nothing more.
+    @Test
+    void releaseAllReturnsWhatAJobWhoseEndIsNeverAppliedTookItself() {
+        ReadAheadBuffer r = new ReadAheadBuffer(1000);
+        JobScheduler s = new JobScheduler(r, wakes::incrementAndGet, 4, 1000);
+        Charge charge = new Charge();
+        JobScheduler.Job<String> job = job("d", 10, 0, JobScheduler.Kind.DECODE, charge);
+        s.add(job);
+        assertThat(s.start(new JobScheduler.Position(0, NONE, NONE))).containsExactly(job);
+        // the job's work: charges its task itself, then its end is lost
+        assertThat(r.tryCharge(400)).isTrue();
+        charge.tookItself(400);
+
+        s.releaseAll();
+        r.release(s.takeReleased());
+
+        assertThat(r.held()).isZero();
+        s.run(job, null).run();
+        assertThat(s.takeReleased()).isZero();
+    }
+
     @Test
     void startsLowestKeyFirstAcrossKinds() {
         JobScheduler s = scheduler(1000, 4, 1000);

@@ -13,8 +13,7 @@ import java.util.List;
 /// Something a service waits for that ends once, with a value or a failure: a range's bytes
 /// ([RangeFetch]), which pages, scans and the planner read, ended by the fetch's callbacks; a chunk's
 /// dictionary's values ([ChunkDictionary]), which its data pages read, ended by the dictionary
-/// page's decode; the parse of planned pages' headers ([TrackedPage#headerJob]), which those pages'
-/// decodes wait for, ended by its job; or a flat page's placement ([TrackedPage#placement]), ended by its column's
+/// page's decode; or a flat page's placement ([TrackedPage#placement]), ended by its column's
 /// placement. It exists from when a service decides it needs it, so anything can wait for it from
 /// then on ([#whenEnded]). A range a file holds in memory, or a dictionary that dictionary
 /// pruning decoded, has one ended from the start ([#of]). Used under the read's lock.

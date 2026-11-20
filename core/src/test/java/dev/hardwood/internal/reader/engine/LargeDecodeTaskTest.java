@@ -17,6 +17,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 import dev.hardwood.internal.thrift.RleExpansionFile;
@@ -65,6 +66,32 @@ class LargeDecodeTaskTest {
                 count++;
             }
             assertThat(count).isEqualTo(PAGE_VALUES);
+        }
+    }
+
+    /// The same eight columns read with a read-ahead buffer that holds one page's task but not two,
+    /// on a pool of eight threads: decodes that find no room for their task are added again,
+    /// charged what they need, and run as room is released or need forces them. The read returns
+    /// every row, and once it is closed the buffer holds nothing, so no charge is lost or returned
+    /// twice on the way.
+    @ParameterizedTest
+    @ValueSource(booleans = { false, true })
+    void largePagesReadWithRoomForOneTaskReturnEveryCharge(boolean indexed) throws IOException {
+        System.setProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY, Long.toString(PAGE_BYTES * 3L / 2));
+        byte[] file = RleExpansionFile.buildWide(COLUMNS, 1, Long.BYTES, PAGE_VALUES, indexed, PAGE_BYTES);
+
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(8)) {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
+                    RowReader rows = reader.buildRowReader().build()) {
+                long count = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    assertThat(rows.getLong("c7")).isZero();
+                    count++;
+                }
+                assertThat(count).isEqualTo(PAGE_VALUES);
+            }
+            assertThat(context.readAheadBuffer().held()).isZero();
         }
     }
 
