@@ -219,16 +219,21 @@ final class NestedFill {
         KeptRuns runs = segment.page.inPlace.runs();
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         int[] ids = null;
+        // A segment of ids writes its nulls' empty views only into view arrays a segment of plain
+        // values installed
+        boolean views;
         if (dictionary != null) {
             ids = out.installDictionary(dictionary);
-            if (!values.allPresent()) {
-                out.installViews();
-            }
+            views = !values.allPresent() && out.views();
             wroteIds[index] = true;
         }
         else {
             out.installViews();
+            views = true;
         }
+        int[] starts = views ? out.fillStarts() : null;
+        int[] ends = views ? out.fillEnds() : null;
+        int[] bufferIds = views ? out.fillBufferIds() : null;
         int kept = segment.valueStart;
         int end = segment.valueEnd;
         int destPos = valueStart;
@@ -237,10 +242,8 @@ final class NestedFill {
             int n = runs == null ? end - kept : Math.min(end - kept, runs.remaining(run, kept));
             int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
             destPos += ids != null
-                    ? values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos,
-                            slotLevel)
-                    : values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos,
-                            dest, slotLevel);
+                    ? values.copyIds(pagePos, n, ids, starts, ends, bufferIds, destPos, slotLevel)
+                    : values.copyPlain(pagePos, n, starts, ends, bufferIds, destPos, dest, slotLevel);
             kept += n;
         }
         return destPos - valueStart;

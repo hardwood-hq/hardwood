@@ -459,8 +459,9 @@ public final class BinaryPageValues {
     }
 
     /// Writes the entry ids of page rows `[pageRow, pageRow + length)` as values `[destPos, destPos
-    /// + length)` of `dictIndices`; a null gets `-1` and an empty view in `starts`, `ends` and `bufferIds`,
-    /// which are `null` only for a page with no null. Rows must be asked for in increasing order.
+    /// + length)` of `dictIndices`; a null gets `-1`, and an empty view in `starts`, `ends` and
+    /// `bufferIds` unless they are `null`: for a page with no null, or a batch whose view arrays,
+    /// installed later or never, are zeroed. Rows must be asked for in increasing order.
     public void copyIds(int pageRow, int length, int[] dictIndices, int[] starts, int[] ends, int[] bufferIds,
                  int destPos) {
         copyIds(pageRow, length, dictIndices, starts, ends, bufferIds, destPos, 0);
@@ -499,7 +500,9 @@ public final class BinaryPageValues {
             }
             else if (level >= slotLevel) {
                 dictIndices[--dest] = -1;
-                view(starts, ends, bufferIds, dest, 0, 0, 0);
+                if (starts != null) {
+                    view(starts, ends, bufferIds, dest, 0, 0, 0);
+                }
             }
         }
         nonNull += present;

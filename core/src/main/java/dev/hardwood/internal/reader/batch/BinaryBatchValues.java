@@ -26,7 +26,10 @@ import dev.hardwood.row.PqInterval;
 /// Each value is held in one form, fixed by its fill: a value from a dictionary page as its entry
 /// `dictIndices[i]` of [#dictionary], every other value as the view `[starts[i], ends[i])` into
 /// buffer `bufferIds[i]` of [#buffers], into which its segment copied its bytes ([PlainBytes]). A
-/// null value's view is empty. Reading one value's bytes ([#buffer(int)], [#start(int)],
+/// null value's view is empty: only a segment of plain values installs the view arrays, so a batch
+/// whose segments all wrote entry ids has none, and a null read without a view reads as empty. A
+/// null writes its empty view where the arrays exist ([#views()]); arrays installed after it are
+/// zeroed, which is the empty view. Reading one value's bytes ([#buffer(int)], [#start(int)],
 /// [#end(int)] and the accessors that copy, decode, test or compare it) goes through its entry where
 /// it has one, and through its view otherwise.
 ///
@@ -196,17 +199,30 @@ public final class BinaryBatchValues {
 
     private byte[] bufferThroughEntry(int i) {
         int entry = dictIndices[i];
-        return entry >= 0 ? dictionary.entryBuffer(entry) : buffers[bufferIds[i]];
+        return entry >= 0 ? dictionary.entryBuffer(entry) : viewBuffer(i);
     }
 
     private int startThroughEntry(int i) {
         int entry = dictIndices[i];
-        return entry >= 0 ? dictionary.entryStart(entry) : starts[i];
+        return entry >= 0 ? dictionary.entryStart(entry) : viewStart(i);
     }
 
     private int endThroughEntry(int i) {
         int entry = dictIndices[i];
-        return entry >= 0 ? dictionary.entryEnd(entry) : ends[i];
+        return entry >= 0 ? dictionary.entryEnd(entry) : viewEnd(i);
+    }
+
+    /// The buffer of value `i`'s view; empty for a null of a batch without view arrays.
+    private byte[] viewBuffer(int i) {
+        return starts == null ? EMPTY : buffers[bufferIds[i]];
+    }
+
+    private int viewStart(int i) {
+        return starts == null ? 0 : starts[i];
+    }
+
+    private int viewEnd(int i) {
+        return starts == null ? 0 : ends[i];
     }
 
     /// The window of the first `count` values: their views in arrays of exactly `count` elements,
@@ -302,7 +318,7 @@ public final class BinaryBatchValues {
         viewDemand = null;
     }
 
-    /// Installs the view arrays for a segment that writes views, unless a segment already has.
+    /// Installs the view arrays for a segment of plain values, unless a segment already has.
     /// A segment reads them with [#fillStarts], [#fillEnds] and [#fillBufferIds] after this.
     public synchronized void installViews() {
         if (starts == null) {
@@ -310,7 +326,15 @@ public final class BinaryBatchValues {
         }
     }
 
-    /// The view arrays, for a segment that ran [#installViews].
+    /// Whether the view arrays are installed, for a segment of entry ids whose nulls write their
+    /// empty views into them where they are: [#fillStarts], [#fillEnds] and [#fillBufferIds] give
+    /// them after this returns `true`. Arrays installed after it returned `false` are zeroed, which
+    /// is every null's empty view, so such a segment writes no views at all.
+    public synchronized boolean views() {
+        return starts != null;
+    }
+
+    /// The view arrays, for a segment that ran [#installViews] or saw [#views()] return `true`.
     public int[] fillStarts() {
         return starts;
     }
@@ -469,13 +493,13 @@ public final class BinaryBatchValues {
     /// paths; hot loops should read [#buffer(int)] / [#start(int)] / [#end(int)] directly.
     public byte[] byteArrayAt(int idx) {
         int entry = entryOf(idx);
-        return entry >= 0 ? dictionary.entry(entry) : Arrays.copyOfRange(buffers[bufferIds[idx]], starts[idx], ends[idx]);
+        return entry >= 0 ? dictionary.entry(entry) : Arrays.copyOfRange(viewBuffer(idx), viewStart(idx), viewEnd(idx));
     }
 
     /// Tests value `idx` with `test`, handing it the bytes where they sit.
     public boolean testAt(int idx, BinaryValueTest test) {
         int entry = entryOf(idx);
-        return entry >= 0 ? dictionary.testEntry(entry, test) : test.testValue(buffers[bufferIds[idx]], starts[idx], ends[idx]);
+        return entry >= 0 ? dictionary.testEntry(entry, test) : test.testValue(viewBuffer(idx), viewStart(idx), viewEnd(idx));
     }
 
     /// Whether value `idx` holds exactly the bytes of `other`, compared where they sit rather than
@@ -483,7 +507,7 @@ public final class BinaryBatchValues {
     public boolean equalsAt(int idx, byte[] other) {
         int entry = entryOf(idx);
         return entry >= 0 ? dictionary.entryEquals(entry, other)
-                : Arrays.equals(buffers[bufferIds[idx]], starts[idx], ends[idx], other, 0, other.length);
+                : Arrays.equals(viewBuffer(idx), viewStart(idx), viewEnd(idx), other, 0, other.length);
     }
 
     /// Decode value `idx` as the single-precision value its `FLOAT16` payload stands for,
@@ -555,10 +579,9 @@ public final class BinaryBatchValues {
                 return dict.internedString(dictIndex);
             }
         }
-        // A value without an entry id, plain or null, had its view written by its segment
-        int start = starts[idx];
-        int len = ends[idx] - start;
-        return new String(buffers[bufferIds[idx]], start, len, StandardCharsets.UTF_8);
+        // A value without an entry id is plain, with the view its segment wrote, or null
+        int start = viewStart(idx);
+        return new String(viewBuffer(idx), start, viewEnd(idx) - start, StandardCharsets.UTF_8);
     }
 
     private static IllegalStateException twoDictionaries() {
