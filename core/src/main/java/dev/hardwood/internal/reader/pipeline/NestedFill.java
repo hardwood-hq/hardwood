@@ -213,10 +213,10 @@ final class NestedFill {
     /// @return the value slots written
     private static int fillBinary(NestedSegment segment, BinaryBatchValues out, PlainBytes dest,
                                   boolean[] wroteIds, int index, int valueStart, int slotLevel) {
-        // Each fill reads through a cursor of its own: two cells sharing the page may be filled
-        // from it at once
-        BinaryPageValues values = segment.page.measure.binary().cursor();
+        // Each fill reads through a cursor of its own, two cells sharing the page may be filled
+        // from it at once, and takes up the cursor of an earlier segment's fill where it can
         KeptRuns runs = segment.page.inPlace.runs();
+        BinaryPageValues values = segment.page.binaryCursor(firstPageRow(segment, runs));
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         int[] ids = null;
         // A segment of ids writes its nulls' empty views only into view arrays a segment of plain
@@ -246,7 +246,14 @@ final class NestedFill {
                     : values.copyPlain(pagePos, n, starts, ends, bufferIds, destPos, dest, slotLevel);
             kept += n;
         }
+        segment.page.parkCursor(values);
         return destPos - valueStart;
+    }
+
+    /// The page row a segment's first value is at.
+    private static int firstPageRow(NestedSegment segment, KeptRuns runs) {
+        int kept = segment.valueStart;
+        return runs == null || kept == segment.valueEnd ? kept : runs.pagePosition(runs.runOf(kept), kept);
     }
 
     /// Writes a segment of a page read in place straight from the page's bytes, through the kept
@@ -255,21 +262,25 @@ final class NestedFill {
     ///
     /// @return the value slots written
     private static int copyInPlace(NestedSegment segment, Object out, int valueStart, int slotLevel) {
-        PageDecoder.InPlaceNestedPage inPlace = segment.page.inPlace;
-        FlatPageValues values = inPlace.flat().cursor();
-        KeptRuns runs = inPlace.runs();
+        KeptRuns runs = segment.page.inPlace.runs();
+        FlatPageValues values = segment.page.flatCursor(firstPageRow(segment, runs));
+        int written;
         if (runs == null) {
-            return values.copy(segment.valueStart, out, valueStart, segment.values(), slotLevel);
+            written = values.copy(segment.valueStart, out, valueStart, segment.values(), slotLevel);
         }
-        int kept = segment.valueStart;
-        int destPos = valueStart;
-        while (kept < segment.valueEnd) {
-            int run = runs.runOf(kept);
-            int n = Math.min(segment.valueEnd - kept, runs.remaining(run, kept));
-            destPos += values.copy(runs.pagePosition(run, kept), out, destPos, n, slotLevel);
-            kept += n;
+        else {
+            int kept = segment.valueStart;
+            int destPos = valueStart;
+            while (kept < segment.valueEnd) {
+                int run = runs.runOf(kept);
+                int n = Math.min(segment.valueEnd - kept, runs.remaining(run, kept));
+                destPos += values.copy(runs.pagePosition(run, kept), out, destPos, n, slotLevel);
+                kept += n;
+            }
+            written = destPos - valueStart;
         }
-        return destPos - valueStart;
+        segment.page.parkCursor(values);
+        return written;
     }
 
     /// Writes the segment's levels into the arrays given, each `null` when it is not written.
