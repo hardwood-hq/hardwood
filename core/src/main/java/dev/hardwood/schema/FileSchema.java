@@ -658,6 +658,27 @@ public class FileSchema {
             return this;
         }
 
+        /// Append a `VARIANT` column: a group annotated `VARIANT(1)` with two `BYTE_ARRAY` children,
+        /// `metadata` and `value`, both `REQUIRED`. The writer produces unshredded Variants only.
+        ///
+        /// @param variantName the group name
+        /// @param repetition `REQUIRED` or `OPTIONAL`
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`
+        public Builder variant(String variantName, RepetitionType repetition) {
+            content.variant(variantName, repetition);
+            return this;
+        }
+
+        /// Append a `VARIANT` column whose own attributes are set by `group`, as
+        /// [#variant(String, RepetitionType)] describes.
+        ///
+        /// @throws IllegalArgumentException if `variantName` is `null`, empty or already declared,
+        ///         an argument is `null`, or `repetition` is `REPEATED`
+        public Builder variant(String variantName, RepetitionType repetition, Consumer<GroupBuilder> group) {
+            content.variant(variantName, repetition, group);
+            return this;
+        }
+
         /// Append a `LIST` group whose element is declared by `element`.
         ///
         /// @param listName the list group name
@@ -909,6 +930,26 @@ public class FileSchema {
             return this;
         }
 
+        /// Append a nested `VARIANT` field, as [Builder#variant(String, RepetitionType)] describes.
+        ///
+        /// @throws IllegalArgumentException if `variantName` is `null`, empty or already declared in
+        ///         this group, `repetition` is `null` or `REPEATED`
+        public StructBuilder variant(String variantName, RepetitionType repetition) {
+            return variant(variantName, repetition, NO_GROUP_ATTRIBUTES);
+        }
+
+        /// Append a nested `VARIANT` field whose own attributes are set by `group`, as
+        /// [Builder#variant(String, RepetitionType, Consumer)] describes.
+        ///
+        /// @throws IllegalArgumentException if `variantName` is `null`, empty or already declared in
+        ///         this group, an argument is `null`, or `repetition` is `REPEATED`
+        public StructBuilder variant(String variantName, RepetitionType repetition, Consumer<GroupBuilder> group) {
+            String childPath = declare(variantName);
+            requireFieldRepetition(childPath, repetition);
+            children.add(new BuilderVariant(variantName, repetition, groupFieldId(childPath, group)));
+            return this;
+        }
+
         /// Append a nested `LIST` field.
         ///
         /// @throws IllegalArgumentException if `listName` is `null`, empty or already declared in
@@ -1048,6 +1089,22 @@ public class FileSchema {
         public void file(RepetitionType repetition, Consumer<GroupBuilder> group) {
             requireFieldRepetition(path, repetition);
             set(new BuilderFile(childName, repetition, groupFieldId(path, group)));
+        }
+
+        /// Declare a `VARIANT` element, as [Builder#variant(String, RepetitionType)] describes.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `null` or `REPEATED`
+        public void variant(RepetitionType repetition) {
+            variant(repetition, NO_GROUP_ATTRIBUTES);
+        }
+
+        /// Declare a `VARIANT` element whose own attributes are set by `group`, as
+        /// [Builder#variant(String, RepetitionType, Consumer)] describes.
+        ///
+        /// @throws IllegalArgumentException if an argument is `null` or `repetition` is `REPEATED`
+        public void variant(RepetitionType repetition, Consumer<GroupBuilder> group) {
+            requireFieldRepetition(path, repetition);
+            set(new BuilderVariant(childName, repetition, groupFieldId(path, group)));
         }
 
         /// Declare a nested `LIST` element.
@@ -1244,6 +1301,8 @@ public class FileSchema {
 
     private record BuilderFile(String name, RepetitionType repetition, Integer fieldId) implements BuilderNode {}
 
+    private record BuilderVariant(String name, RepetitionType repetition, Integer fieldId) implements BuilderNode {}
+
     private record BuilderList(String name, RepetitionType repetition, Integer fieldId, BuilderNode element)
             implements BuilderNode {}
 
@@ -1273,6 +1332,14 @@ public class FileSchema {
                         out.add(leafElement(leaf(child.fieldName(), file.name() + "." + child.fieldName(),
                                 child.type(), RepetitionType.OPTIONAL, null, child.annotation(), null)));
                     }
+                }
+                case BuilderVariant variant -> {
+                    out.add(groupElement(variant.name(), variant.repetition(), 2, null,
+                            LogicalType.variant(1), variant.fieldId()));
+                    out.add(leafElement(leaf("metadata", variant.name() + ".metadata",
+                            PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null, null, null)));
+                    out.add(leafElement(leaf("value", variant.name() + ".value",
+                            PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null, null, null)));
                 }
                 case BuilderList list -> {
                     out.add(groupElement(list.name(), list.repetition(), 1, ConvertedType.LIST, LogicalType.list(),
