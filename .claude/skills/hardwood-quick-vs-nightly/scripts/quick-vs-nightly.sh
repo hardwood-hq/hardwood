@@ -16,6 +16,12 @@
 # written.
 set -uo pipefail
 
+# Started in the background of an SSH command, the job runs at shell level 1 with SSH_CLIENT
+# set, so every `bash -c` below it takes itself for a shell sshd started and sources ~/.bashrc,
+# whose `cd /home/build` moves it out of its directory: run-regression.sh then records no heap
+# flags in the manifest, and the run matches no nightly machine epoch.
+unset SSH_CLIENT SSH_CONNECTION SSH_TTY
+
 REF="${1:?usage: quick-vs-nightly.sh REF [METRIC]}"
 METRIC="${2:-wall}"
 SCRIPTS="${3:-}"
