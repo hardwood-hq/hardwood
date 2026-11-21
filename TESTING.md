@@ -212,6 +212,10 @@ JAZZER_FUZZ=1 ./mvnw test -pl core -Dtest='MetadataFuzzTest#footer' -Djazzer.max
 
 `jazzer.keep_going` continues past a finding, up to that many distinct ones; without it a run stops at the first. Jazzer writes each finding's input to the target's directory under `src/test/resources`, where the next regression run replays it, and the inputs that reach new coverage to `core/.cifuzz-corpus/`, which git ignores and the next run of the target starts from. No workflow runs fuzzing mode.
 
+### The Arrow comparison
+
+`hardwood-arrow` compares against Arrow C++'s own Parquet reader, in memory: `ArrowDatasetOracleTest` scans a file through `arrow-dataset`, Arrow Java's JNI binding to that reader (a test dependency bundling the native library for Linux, macOS and Windows), takes the batches over the C Data Interface, and requires the module's schema, null counts and vectors to equal them. The module's own fixtures are written at test time under `arrow/target/arrow-fixtures` by Hardwood's writer; the other shapes that writer cannot produce come from core's checked-in fixtures.
+
 ## Manual S3 testing
 
 The steps below run a local S3-compatible endpoint via [s3proxy](https://github.com/gaul/s3proxy) and exercise the CLI against it. Useful for verifying S3 behaviour without an AWS account, and for testing the native binary's S3 path (see also [NATIVE_BUILD.md](NATIVE_BUILD.md)).

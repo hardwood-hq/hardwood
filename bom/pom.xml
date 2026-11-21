@@ -71,6 +71,11 @@
         <artifactId>hardwood-avro</artifactId>
         <version>${project.version}</version>
       </dependency>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-arrow</artifactId>
+        <version>${project.version}</version>
+      </dependency>
 
       <!-- Optional compression libraries used by hardwood-core -->
       <dependency>
@@ -92,6 +97,34 @@
         <groupId>com.aayushatharva.brotli4j</groupId>
         <artifactId>brotli4j</artifactId>
         <version>1.24.0</version>
+      </dependency>
+
+      <!-- Arrow Java, used by hardwood-arrow. The memory backend (unsafe or netty) is the
+           application's choice; arrow-c-data is managed here for C Data Interface handoff. -->
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-vector</artifactId>
+        <version>20.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-memory-core</artifactId>
+        <version>20.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-memory-unsafe</artifactId>
+        <version>20.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-memory-netty</artifactId>
+        <version>20.0.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-c-data</artifactId>
+        <version>20.0.0</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
