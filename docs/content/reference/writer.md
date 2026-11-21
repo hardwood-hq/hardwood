@@ -158,7 +158,7 @@ An annotation is built with the `LogicalType` static factory of the same name. T
 | `LogicalType.decimal(precision, scale)` | `DECIMAL(precision, scale)` — `precision` is positive and `scale` lies in `[0, precision]`; other values throw `IllegalArgumentException` |
 | `LogicalType.time(isAdjustedToUTC, unit)` | `TIME` — `unit` is `TimeUnit.MILLIS`, `MICROS` or `NANOS` |
 | `LogicalType.timestamp(isAdjustedToUTC, unit)` | `TIMESTAMP` — same units, over an `INT64` or a `FIXED_LEN_BYTE_ARRAY(12)` |
-| `LogicalType.variant(specVersion)` | `VARIANT` — `specVersion` is `1`; the writer rejects a column carrying it |
+| `LogicalType.variant(specVersion)` | `VARIANT` — annotates a group; `specVersion` is `1`; declared with `variant(name, repetition)`, and the writer produces unshredded Variants only |
 | `LogicalType.geometry(crs)` | `GEOMETRY` — `crs` defaults to `OGC:CRS84` when `null` |
 | `LogicalType.geography(crs, edgeInterpolation)` | `GEOGRAPHY` — `edgeInterpolation` is an `EdgeInterpolationAlgorithm` |
 | `LogicalType.file()` | `FILE` — annotates a group; declared with `file(name, repetition)`, and rejected on a column |

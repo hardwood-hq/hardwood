@@ -285,4 +285,31 @@ class FileSchemaFieldIdTest {
         }
         return ids;
     }
+
+    /// A `VARIANT` group takes a field id; its children have none.
+    @Test
+    void builderDeclaresTheFieldIdOfAVariantGroup() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .variant("top", RepetitionType.OPTIONAL, group -> group.fieldId(1))
+                .struct("s", RepetitionType.OPTIONAL, s -> s
+                        .variant("nested", RepetitionType.OPTIONAL, group -> group.fieldId(2)))
+                .list("events", RepetitionType.OPTIONAL, element -> element
+                        .variant(RepetitionType.OPTIONAL, group -> group.fieldId(3)))
+                .build();
+
+        // root; top and its children; s, nested and its children; events, list, element and its children
+        List<Integer> expected = Arrays.asList(null,
+                1, null, null,
+                null, 2, null, null,
+                null, null, 3, null, null);
+
+        assertThat(fieldIds(schema.toSchemaElements())).isEqualTo(expected);
+        assertThat(fieldIds(footerSchema(write(schema)))).isEqualTo(expected);
+        assertThat(schema.getField("top").fieldId()).isEqualTo(1);
+        SchemaNode.GroupNode s = (SchemaNode.GroupNode) schema.getField("s");
+        assertThat(s.children().get(0).fieldId()).isEqualTo(2);
+        SchemaNode.GroupNode events = (SchemaNode.GroupNode) schema.getField("events");
+        SchemaNode.GroupNode repeated = (SchemaNode.GroupNode) events.children().get(0);
+        assertThat(repeated.children().get(0).fieldId()).isEqualTo(3);
+    }
 }
