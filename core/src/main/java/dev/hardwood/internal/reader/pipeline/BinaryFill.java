@@ -54,13 +54,11 @@ public final class BinaryFill implements FlatFill.Run {
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         if (dictionary != null) {
             int[] ids = out.installDictionary(dictionary);
-            // Only a null writes a view: an all-present page leaves the views to the cell's completion
-            boolean nulls = !values.allPresent();
-            if (nulls) {
-                out.installViews();
-            }
-            FlatFill.forEachRun(segment, new BinaryFill(values, validity, nulls ? out.fillStarts() : null,
-                    nulls ? out.fillEnds() : null, nulls ? out.fillBufferIds() : null, ids, null));
+            // Only a null writes a view, and only into view arrays a segment of plain values or an
+            // earlier fill of a recycled batch installed: arrays installed later are zeroed
+            boolean views = !values.allPresent() && out.views();
+            FlatFill.forEachRun(segment, new BinaryFill(values, validity, views ? out.fillStarts() : null,
+                    views ? out.fillEnds() : null, views ? out.fillBufferIds() : null, ids, null));
             segment.wroteIds = true;
             return;
         }
