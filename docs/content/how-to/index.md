@@ -16,6 +16,7 @@
 - [**Filter, Project, Limit, and Split**](query-controls.md): predicate pushdown, column projection, row limits, split-aware reading. Apply to both reader types.
 - [**Read Multiple Files as One Dataset**](multi-file.md): `Hardwood.openAll(...)` with cross-file prefetching and a shared thread pool.
 - [**Read into Avro GenericRecords**](avro.md): `AvroRowReader` and schema conversion (`hardwood-avro` module).
+- [**Read into Arrow VectorSchemaRoots**](arrow.md): `ArrowBatchReader`, Arrow's `ArrowReader` over flat and nested columns, IPC and C Data handoff (`hardwood-arrow` module).
 - [**Read from S3**](s3.md): object-store reading without Hadoop (`hardwood-s3` module).
 - [**Read with the parquet-java API**](compat.md): drop-in `org.apache.parquet.*` replacement (experimental).
 - [**Read Variant Columns**](variant.md): `getVariant` and the `PqVariant` API.

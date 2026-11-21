@@ -8,6 +8,7 @@
 package dev.hardwood.reader;
 
 import dev.hardwood.Experimental;
+import dev.hardwood.internal.reader.batch.BinaryDictionaryLayout;
 import dev.hardwood.internal.reader.batch.Dictionary;
 import dev.hardwood.internal.reader.row.LogicalAccessorKind;
 import dev.hardwood.schema.ColumnSchema;
@@ -21,6 +22,10 @@ import dev.hardwood.schema.ColumnSchema;
 /// deprecation.
 @Experimental
 public final class BinaryDictionary implements ColumnDictionary {
+
+    static {
+        BinaryDictionaryLayout.register(d -> d.dictionary);
+    }
 
     private final Dictionary.ByteArrayDictionary dictionary;
     private final ColumnSchema column;

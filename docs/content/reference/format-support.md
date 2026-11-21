@@ -108,5 +108,6 @@ Parquet Modular Encryption is not supported. Reading an encrypted file fails wit
 |---|---|---|
 | `hardwood-core` | Yes | Yes |
 | `hardwood-avro` (`GenericRecord`) | Yes | No |
+| `hardwood-arrow` (`VectorSchemaRoot`) | Yes | No |
 | `hardwood-parquet-java-compat` (`ParquetReader<Group>`) | Yes | No |
 | `hardwood` CLI | Yes | No |
