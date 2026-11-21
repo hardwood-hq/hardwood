@@ -64,6 +64,18 @@ git -C "$BENCH" checkout -q --detach "${BENCH_REF:-origin/main}" && git -C "$BEN
   || fail "cannot check out the benchmarks"
 [ -f "$BENCH/charts/against-history.py" ] || fail "the benchmarks at ${BENCH_REF:-origin/main} have no charts/against-history.py"
 
+# The Overture places file of the nested scripts: the nightly checkout's, linked rather than
+# downloaded a second time (740 MB), so a run reads the release the nightly reads. The benchmarks
+# download only a missing file, so nothing writes through the links.
+DATA=target/overture-maps-data
+if [ -s "$HOME/nightly/hardwood-benchmarks/$DATA/overture_places.zstd.parquet" ]; then
+  mkdir -p "$BENCH/$DATA"
+  for f in overture_places.zstd.parquet overture_places.zstd.parquet.release; do
+    rm -f "$BENCH/$DATA/$f"
+    [ -e "$HOME/nightly/hardwood-benchmarks/$DATA/$f" ] && ln -s "$HOME/nightly/hardwood-benchmarks/$DATA/$f" "$BENCH/$DATA/$f"
+  done
+fi
+
 # Measure on the pinned clock, and restore it whatever happens.
 pgrep -x java > /dev/null && refuse "a JVM started on the box meanwhile"
 sudo -n profiling-setup pin > /dev/null || refuse "the clock could not be pinned"
