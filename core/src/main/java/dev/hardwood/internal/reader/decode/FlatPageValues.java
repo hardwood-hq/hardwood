@@ -248,6 +248,11 @@ public final class FlatPageValues {
                 deltaLimit);
     }
 
+    /// The page row the cursor is at: the next read starts here or further on.
+    public int row() {
+        return row;
+    }
+
     /// The page's values, nulls included.
     public int size() {
         return numValues;

@@ -124,6 +124,42 @@ class NestedFillMaskedPageTest {
         assertThat(strings(second)).containsExactly("e");
     }
 
+    /// A masked page split across a cell per kept record holds the same values whichever order the
+    /// cells are filled in: a fill takes up the cursor an earlier segment's fill left on the page,
+    /// and starts its own where that cursor is already past its first row.
+    @Test
+    void aMaskedPageSplitAcrossCellsReadsTheSameInAnyFillOrder() {
+        Column ints = column(PhysicalType.INT32);
+        Column bytes = column(PhysicalType.BYTE_ARRAY);
+        for (int[] order : new int[][]{ { 0, 1, 2 }, { 2, 0, 1 }, { 1, 2, 0 }, { 2, 1, 0 } }) {
+            // Records [10, null], [], [30, 31], [null, 41], [50], [60, 61]; kept: 2, 4, 5
+            NestedPageTask intPage = page(intPage(new int[]{ 10, 0, 0, 30, 31, 0, 41, 50, 60, 61 },
+                    new int[]{ 3, 2, 1, 3, 3, 2, 3, 3, 3, 3 }, new int[]{ 0, 1, 0, 0, 1, 0, 1, 0, 0, 1 }, 0),
+                    new int[]{ 2, 3, 4, 6 });
+            // Records ["a", null], ["bb"], null, ["ccc", "dd"], ["e"]; kept: 1, 3, 4
+            int[] def = { 3, 2, 3, 0, 3, 3, 3 };
+            int[] rep = { 0, 1, 0, 0, 0, 1, 0 };
+            byte[] plain = plain("a", "bb", "ccc", "dd", "e");
+            PageDecoder.LevelScratch scratch = new PageDecoder.LevelScratch();
+            BinaryPageValues values = BinaryPageValues.plain(PhysicalType.BYTE_ARRAY, 0, def, MAX_DEF, def.length,
+                    plain, 0, plain.length, scratch);
+            NestedPageTask bytePage = page(new PageDecoder.InPlaceNestedPage(def.length, def, rep, 0, null, values,
+                    null), new int[]{ 1, 2, 3, 5 }, scratch);
+
+            int[][] intValues = new int[3][];
+            String[][] strings = new String[3][];
+            for (int record : order) {
+                intValues[record] = (int[]) ints.fill(cell(intPage, record, record + 1)).values;
+                strings[record] = strings(bytes.fill(cell(bytePage, record, record + 1)));
+            }
+
+            assertThat(intValues).as("order %s", Arrays.toString(order))
+                    .isDeepEqualTo(new int[][]{ { 30, 31 }, { 50 }, { 60, 61 } });
+            assertThat(strings).as("order %s", Arrays.toString(order))
+                    .isDeepEqualTo(new String[][]{ { "bb" }, { "ccc", "dd" }, { "e" } });
+        }
+    }
+
     // ==================== Helpers ====================
 
     private record Column(ColumnSchema schema, NestedLevelComputer.Layers layers) {
