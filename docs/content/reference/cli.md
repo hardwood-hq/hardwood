@@ -23,7 +23,7 @@ A command writes its result to standard output and any warning or error to stand
 | `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups and field ids as `= <id>` |
 | `hardwood print` | Print rows as an ASCII table (head, tail, or all) |
 | `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all) |
-| `hardwood footer` | Print decoded footer length, offset, and file structure |
+| `hardwood footer` | Print decoded footer length, offset, and file structure, plus the data-region split, encoding and codec histograms, page-index / bloom-filter / dictionary coverage, and aggregate byte sizes |
 | `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
 | `hardwood inspect columns` | Rank columns by size, with each column's share of the file, its compression, its data-page encoding and dictionary cardinality, and its unencoded size |
