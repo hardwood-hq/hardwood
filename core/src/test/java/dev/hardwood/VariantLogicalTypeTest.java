@@ -18,6 +18,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.FileSchema;
@@ -91,6 +92,35 @@ class VariantLogicalTypeTest {
             assertThat(v3.asString()).isEqualTo("hi");
 
             assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void emptyOuterShreddedArraysNeitherGainNorTakeElements() throws IOException {
+        Path file = Paths.get("src/test/resources/variant_nested_array_test.parquet");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            PqVariantArray first = rowReader.getVariant("var").asArray();
+            assertThat(first.size()).isEqualTo(1);
+            assertThat(first.get(0).asArray().size()).isEqualTo(2);
+
+            rowReader.next();
+            assertThat(rowReader.getVariant("var").asArray().size()).isZero();
+
+            rowReader.next();
+            PqVariantArray third = rowReader.getVariant("var").asArray();
+            assertThat(third.size()).isEqualTo(1);
+            assertThat(third.get(0).asArray().size()).isEqualTo(1);
+            assertThat(third.get(0).asArray().get(0).asBoolean()).isTrue();
+
+            rowReader.next();
+            assertThat(rowReader.getVariant("var").asArray().size()).isZero();
+
+            rowReader.next();
+            PqVariantArray fifth = rowReader.getVariant("var").asArray();
+            assertThat(fifth.size()).isEqualTo(1);
+            assertThat(fifth.get(0).isNull()).isTrue();
         }
     }
 
