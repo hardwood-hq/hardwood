@@ -122,7 +122,11 @@ final class ColumnScan implements Closeable {
         SelectionEngine selection = filter == null
                 ? null
                 : createSelectionEngine(schema, decoded, filter, compiled, cursors, batchSize, read, engine);
-        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, engine);
+        ColumnScan scan = new ColumnScan(cursors, projection.payloadColumnCount(), selection, engine);
+        if (filter != null) {
+            scan.tally.withFilter(filter, schema);
+        }
+        return scan;
     }
 
     /// The detaching exchange of each decoded column, in decoded order, for a read whose filter
