@@ -897,6 +897,35 @@ class DiveRenderTest {
         assertThat(frame.contains("· unencoded")).isFalse();
     }
 
+    /// #508: the chunk detail names the data pages' encoding mix, so a
+    /// dictionary abandoned partway through the chunk is visible at a glance.
+    @Test
+    void chunkDetailShowsPageEncodingMix() throws Exception {
+        Path path = TestResources.path("/dict_plain_fallback.parquet");
+        try (ParquetModel fallbackModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.ColumnChunkDetail(0, 0,
+                            ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false), fallbackModel);
+
+            assertThat(frame.contains("Page encodings")).isTrue();
+            assertThat(frame.contains("RLE_DICTIONARY 5, PLAIN 3")).isTrue();
+        }
+    }
+
+    /// A chunk whose data pages share one encoding shows the single entry.
+    @Test
+    void chunkDetailShowsSinglePageEncoding() throws Exception {
+        Path path = TestResources.path("/column_index_pushdown_dict.parquet");
+        try (ParquetModel dictModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.ColumnChunkDetail(0, 0,
+                            ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false), dictModel);
+
+            assertThat(frame.contains("Page encodings")).isTrue();
+            assertThat(frame.contains("RLE_DICTIONARY 10")).isTrue();
+        }
+    }
+
     /// The other half of the hint, and the two kinds it splits into: `Pages`
     /// is a count, so having none to show is an absent value; the rest answer
     /// whether the file carries the structure at all, which reads as a word
