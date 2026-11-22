@@ -8,12 +8,19 @@
 package dev.hardwood.internal.thrift;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+import dev.hardwood.internal.thrift.ThriftCompactReader.BinaryRange;
 import dev.hardwood.metadata.Statistics;
 
 /// Reader for the Thrift Statistics struct from Parquet metadata.
 ///
 /// Prefers fields 5/6 (`max_value`/`min_value` with correct sort order)
 /// over deprecated fields 1/2 (`max`/`min`).
+///
+/// The deprecated fields are skipped, not read: fields 1/2 come before 5/6 on the wire,
+/// and a struct carrying both pairs never uses the deprecated bytes, so copying them is
+/// two allocations per column chunk for nothing. Each deprecated value's offset and length
+/// are recorded as it is skipped, and decoded only after the loop, when the preferred
+/// field is missing and the deprecated one is the only bound available.
 public class StatisticsReader {
 
     public static Statistics read(ThriftCompactReader reader) {
@@ -27,8 +34,8 @@ public class StatisticsReader {
     }
 
     private static Statistics readInternal(ThriftCompactReader reader) {
-        byte[] deprecatedMax = null;
-        byte[] deprecatedMin = null;
+        BinaryRange deprecatedMax = null;
+        BinaryRange deprecatedMin = null;
         Long nullCount = null;
         Long distinctCount = null;
         byte[] maxValue = null;
@@ -47,12 +54,12 @@ public class StatisticsReader {
             switch (ThriftCompactReader.fieldId(header)) {
                 case 1: // max (deprecated)
                     if (reader.acceptField(header, Codes.BINARY)) {
-                        deprecatedMax = reader.readBinary();
+                        deprecatedMax = reader.skipBinary();
                     }
                     break;
                 case 2: // min (deprecated)
                     if (reader.acceptField(header, Codes.BINARY)) {
-                        deprecatedMin = reader.readBinary();
+                        deprecatedMin = reader.skipBinary();
                     }
                     break;
                 case 3: // null_count
@@ -98,10 +105,14 @@ public class StatisticsReader {
         // deprecated for everything that reads the flag.
         boolean deprecated = minValue == null && maxValue == null
                 && (deprecatedMin != null || deprecatedMax != null);
-        byte[] resolvedMin = minValue != null ? minValue : deprecatedMin;
-        byte[] resolvedMax = maxValue != null ? maxValue : deprecatedMax;
+        byte[] resolvedMin = minValue != null ? minValue : copyIfPresent(reader, deprecatedMin);
+        byte[] resolvedMax = maxValue != null ? maxValue : copyIfPresent(reader, deprecatedMax);
 
         return new Statistics(resolvedMin, resolvedMax, nullCount, distinctCount, deprecated,
                 minValueExact, maxValueExact, nanCount);
+    }
+
+    private static byte[] copyIfPresent(ThriftCompactReader reader, BinaryRange range) {
+        return range == null ? null : reader.copyRange(range.offset(), range.length());
     }
 }
