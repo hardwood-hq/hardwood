@@ -21,7 +21,6 @@ import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.Statistics;
@@ -289,7 +288,7 @@ public final class ColumnChunkDetailScreen {
                     .map(Enum::name)
                     .collect(Collectors.joining(", "))));
         }
-        appendStorageStatistics(lines, summary, cmd, model, state);
+        appendStorageStatistics(lines, summary, cmd);
 
         lines.blank();
         lines.decoration(group("Content"));
@@ -357,14 +356,14 @@ public final class ColumnChunkDetailScreen {
     /// The size-statistics rows that describe how the bytes are stored. Rows
     /// whose input the file does not record are dropped rather than shown as
     /// `—`: scaffolding a flat column with rows that can never be filled costs
-    /// more lines than it explains.
-    private static void appendStorageStatistics(Document.Builder lines, LevelSummary summary, ColumnMetaData cmd,
-                                                ParquetModel model, ScreenState.ColumnChunkDetail state) {
+    /// more lines than it explains. The `Size statistics` row itself is dropped
+    /// when statistics are present: the drill menu already shows the page count
+    /// and whether the column and offset indexes exist, so the row would restate
+    /// it. Only the degraded form is kept, `— (not written)`, which says
+    /// something the menu does not.
+    private static void appendStorageStatistics(Document.Builder lines, LevelSummary summary, ColumnMetaData cmd) {
         if (!summary.hasSizeStatistics()) {
             lines.row(advisory("Size statistics", Strings.ABSENT_VALUE + " (not written)"));
-        }
-        else {
-            lines.row(fact("Size statistics", coverage(model, state)));
         }
         if (summary.hasUnencoded()) {
             // The length-prefix parenthetical needs the present-value count; a
@@ -524,21 +523,6 @@ public final class ColumnChunkDetailScreen {
     /// always and the per-page copies when the page index carries them. Says
     /// which before the reader drills in to find out.
     ///
-    /// Both indexes count. The histograms live in the column index and the
-    /// unencoded sizes in the offset index, so a required `BYTE_ARRAY` column —
-    /// which has no histogram to write — still describes its pages.
-    private static String coverage(ParquetModel model, ScreenState.ColumnChunkDetail state) {
-        ColumnIndex columnIndex = model.columnIndex(state.rowGroupIndex(), state.columnIndex());
-        OffsetIndex offsetIndex = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
-        if (!LevelSummary.hasPageLevelHistograms(columnIndex)
-                && !LevelSummary.hasPageUnencodedSizes(offsetIndex)) {
-            return "chunk only";
-        }
-        return offsetIndex != null
-                ? "chunk + " + Plurals.format(offsetIndex.pageLocations().size(), "page", "pages")
-                : "chunk + pages";
-    }
-
     private static void renderMenuPane(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunkDetail state) {
         boolean focused = state.focus() == ScreenState.ColumnChunkDetail.Pane.MENU;
         Block block = paneBlock(" Drill into ", focused);
