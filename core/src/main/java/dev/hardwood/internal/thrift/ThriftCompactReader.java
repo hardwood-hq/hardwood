@@ -98,6 +98,9 @@ public class ThriftCompactReader {
     /// Per-decode cache of repeated column paths, created on first use so the page-header path —
     /// which has none — never allocates one.
     private RepeatedPathCache pathCache;
+    /// Per-decode cache of repeated column encoding stats, created on first use for the same
+    /// reason.
+    private RepeatedEncodingStatsCache encodingStatsCache;
     /// The values [#skipField] is inside of, the one it is skipping included.
     private int skipDepth;
     /// The struct and field the outermost skip started on, which a failure deeper in the skip
@@ -138,6 +141,14 @@ public class ThriftCompactReader {
             pathCache = new RepeatedPathCache();
         }
         return pathCache;
+    }
+
+    /// This decode's cache of repeated column encoding stats.
+    RepeatedEncodingStatsCache encodingStatsCache() {
+        if (encodingStatsCache == null) {
+            encodingStatsCache = new RepeatedEncodingStatsCache();
+        }
+        return encodingStatsCache;
     }
 
     /// The reader's current offset into its buffer, for capturing a byte range that was read.
