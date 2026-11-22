@@ -100,10 +100,17 @@ public sealed interface ScreenState {
         }
     }
 
-    /// Column chunks within one row group.
-    record ColumnChunks(int rowGroupIndex, int selection, int scrollTop) implements ScreenState {
+    /// Column chunks within one row group. `filter` is the live search
+    /// substring matched against each chunk's column path (empty = show all
+    /// chunks); `searching` toggles inline filter-edit mode via `/`.
+    record ColumnChunks(int rowGroupIndex, int selection, int scrollTop,
+                        String filter, boolean searching) implements ScreenState {
         public ColumnChunks(int rowGroupIndex, int selection) {
-            this(rowGroupIndex, selection, 0);
+            this(rowGroupIndex, selection, 0, "", false);
+        }
+
+        public ColumnChunks(int rowGroupIndex, int selection, int scrollTop) {
+            this(rowGroupIndex, selection, scrollTop, "", false);
         }
     }
 
@@ -228,11 +235,19 @@ public sealed interface ScreenState {
     /// [ColumnChunkDetail] for the corresponding `(rowGroup, column)`.
     /// `logicalTypes` controls whether Min / Max render via logical type
     /// (default) or raw physical-type form — toggled with `t`.
+    /// `filter` is the live search substring matched against each row
+    /// group's formatted min / max (empty = show all row groups);
+    /// `searching` toggles inline filter-edit mode via `/`.
     record ColumnAcrossRowGroups(int columnIndex, int selection, boolean logicalTypes,
-                                  int scrollTop)
+                                  int scrollTop, String filter, boolean searching)
             implements ScreenState {
         public ColumnAcrossRowGroups(int columnIndex, int selection, boolean logicalTypes) {
-            this(columnIndex, selection, logicalTypes, 0);
+            this(columnIndex, selection, logicalTypes, 0, "", false);
+        }
+
+        public ColumnAcrossRowGroups(int columnIndex, int selection, boolean logicalTypes,
+                                     int scrollTop) {
+            this(columnIndex, selection, logicalTypes, scrollTop, "", false);
         }
     }
 
