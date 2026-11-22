@@ -108,7 +108,7 @@ public final class PreparedRead {
         List<RowGroup> first = rowGroups != null ? rowGroups : files.getFileMetaData(0).rowGroups();
         InputFile file = files.preparedInputFile(0);
         SchemaCompatibility.validateFirstFile(file, schema, projection.decoded(), first);
-        RowGroupPruning pruning = new RowGroupPruning(context, filter, metadataFiltering);
+        RowGroupPruning pruning = new RowGroupPruning(context, filter, metadataFiltering, schema);
         SchemaCompatibility compatibility = new SchemaCompatibility(schema, projection.decoded(), filter);
         FileColumnOrdinals firstOrdinals = FileColumnOrdinals.identity(schema.getColumnCount(), filter,
                 files.getFile(0).boundsReadability());
