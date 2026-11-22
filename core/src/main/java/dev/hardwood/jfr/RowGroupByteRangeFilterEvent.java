@@ -43,4 +43,8 @@ public class RowGroupByteRangeFilterEvent extends Event {
     @Label("Row Groups Skipped")
     @Description("Number of row groups skipped because their midpoint falls outside the split")
     public int rowGroupsSkipped;
+
+    @Label("Predicate")
+    @Description("The byte-range split predicate, rendered in full, e.g. byteRange(0, 134217728)")
+    public String predicate;
 }
