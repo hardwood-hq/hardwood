@@ -24,6 +24,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.PredicateRenderer;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.reader.engine.PreparedRead;
@@ -920,6 +921,9 @@ public class ParquetFileReader implements Closeable {
         event.totalRowGroups = all.size();
         event.rowGroupsKept = kept.size();
         event.rowGroupsSkipped = all.size() - kept.size();
+        if (event.isEnabled()) {
+            event.predicate = PredicateRenderer.render(rowGroupFilter);
+        }
         event.commit();
 
         return kept;
