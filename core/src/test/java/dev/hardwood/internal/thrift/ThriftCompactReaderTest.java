@@ -326,6 +326,34 @@ class ThriftCompactReaderTest {
         assertThat(reader.getBytesRead()).isEqualTo(6);
     }
 
+    /// `skipBinary` advances past a binary value without copying it, and the returned
+    /// range locates the bytes for a later `copyRange` — the lazy-decode path
+    /// `StatisticsReader` uses for the deprecated min/max fields.
+    @Test
+    void skipBinaryLocatesBytesWithoutCopying() throws IOException {
+        ThriftCompactReader reader = reader(0x03, 0x11, 0x22, 0x33, SENTINEL);
+
+        ThriftCompactReader.BinaryRange range = reader.skipBinary();
+
+        assertThat(range.offset()).isEqualTo(1);
+        assertThat(range.length()).isEqualTo(3);
+        assertThat(reader.getBytesRead()).isEqualTo(4);
+        assertThat(reader.copyRange(range.offset(), range.length()))
+                .isEqualTo(new byte[]{0x11, 0x22, 0x33});
+    }
+
+    @Test
+    void skipBinaryRejectsDeclaredLengthPastBuffer() {
+        // Same validation as `readBinary`: a corrupt length fails at the skip, not by
+        // desyncing the stream.
+        ThriftCompactReader reader = reader(0xD0, 0x0F);
+
+        assertThatThrownBy(reader::skipBinary)
+                .isInstanceOf(ThriftTruncatedException.class)
+                .hasMessage("Malformed Parquet metadata: binary value declares 2000 bytes but only 0 "
+                        + "remain");
+    }
+
     private static ThriftCompactReader reader(int... bytes) {
         byte[] b = new byte[bytes.length];
         for (int i = 0; i < bytes.length; i++) {
