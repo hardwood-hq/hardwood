@@ -43,6 +43,7 @@ nav:
     - Write Column by Column: how-to/write-column-by-column.md
     - Handle Write Failures: how-to/write-failures.md
     - Inspect File Metadata: how-to/metadata.md
+    - Size the Heap for a Read: how-to/heap-sizing.md
   - Concepts:
     - How a Parquet File Is Laid Out: concepts/parquet-layout.md
     - The Write Model: concepts/write-model.md
