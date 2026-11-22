@@ -421,7 +421,7 @@ class FilterOnlyColumnSkipTest {
                 assertThat(s.getFieldCount()).isEqualTo(1);
                 assertThatThrownBy(() -> s.getLong("code"))
                         .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage("Field not found: code");
+                        .hasMessage("[filter_only_nested.parquet] Field not found: code");
             }
         }
         assertThat(amounts).isEqualTo(expectedAmounts(1200, id -> false));
