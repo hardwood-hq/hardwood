@@ -18,21 +18,27 @@ import dev.hardwood.metadata.Statistics;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The unsigned bounds [BinaryStatisticsCollector] accumulates agree with `Arrays.compareUnsigned`,
-/// including where the fast prefix test reads a short value at the end of its array and where the
-/// first eight bytes are equal and only the remainder decides.
+/// whether accepted one at a time or in bulk, including where the fast prefix test reads a short
+/// value at the end of its array and where the first eight bytes are equal and only the remainder
+/// decides.
 class BinaryStatisticsCollectorTest {
 
     @Test
-    void unsignedBoundsAgreeWithArraysCompareUnsigned() {
+    void unsignedBoundsAgreeWithArraysCompareUnsignedAfterEveryAccept() {
         Random random = new Random(20_260_819L);
         BinaryStatisticsCollector collector = collector();
         byte[] expectedMin = null;
         byte[] expectedMax = null;
 
         for (int i = 0; i < 10_000; i++) {
-            int length = random.nextInt(25);
+            // A narrow alphabet and lengths around and well past the eight-byte prefix make
+            // prefix ties common, so the length-decided tail, the in-place short tail and the
+            // longer Arrays.compareUnsigned tail are all exercised.
+            int length = 6 + random.nextInt(19);
             byte[] value = new byte[length];
-            random.nextBytes(value);
+            for (int j = 0; j < length; j++) {
+                value[j] = (byte) ('a' + random.nextInt(3));
+            }
 
             int offset = random.nextInt(8);
             int trailing = random.nextInt(9);
@@ -48,11 +54,46 @@ class BinaryStatisticsCollectorTest {
             if (expectedMax == null || Arrays.compareUnsigned(value, expectedMax) > 0) {
                 expectedMax = value.clone();
             }
+
+            Statistics statistics = collector.toStatistics();
+            assertThat(statistics.minValue()).isEqualTo(expectedMin);
+            assertThat(statistics.maxValue()).isEqualTo(expectedMax);
+        }
+    }
+
+    @Test
+    void bulkAcceptAgreesWithPerValueAccept() {
+        Random random = new Random(20_260_820L);
+        int count = 10_000;
+        byte[][] values = new byte[count][];
+        int[] offsets = new int[count + 1];
+        int total = 0;
+        for (int i = 0; i < count; i++) {
+            int length = 6 + random.nextInt(6);
+            byte[] value = new byte[length];
+            for (int j = 0; j < length; j++) {
+                value[j] = (byte) ('a' + random.nextInt(3));
+            }
+            values[i] = value;
+            offsets[i] = total;
+            total += length;
+        }
+        offsets[count] = total;
+        byte[] data = new byte[total];
+        for (int i = 0; i < count; i++) {
+            System.arraycopy(values[i], 0, data, offsets[i], values[i].length);
         }
 
-        Statistics statistics = collector.toStatistics();
-        assertThat(statistics.minValue()).isEqualTo(expectedMin);
-        assertThat(statistics.maxValue()).isEqualTo(expectedMax);
+        BinaryStatisticsCollector bulk = collector();
+        bulk.acceptAll(data, offsets, 0, count);
+
+        BinaryStatisticsCollector oneByOne = collector();
+        for (int i = 0; i < count; i++) {
+            oneByOne.accept(data, offsets[i], offsets[i + 1] - offsets[i]);
+        }
+
+        assertThat(bulk.toStatistics().minValue()).isEqualTo(oneByOne.toStatistics().minValue());
+        assertThat(bulk.toStatistics().maxValue()).isEqualTo(oneByOne.toStatistics().maxValue());
     }
 
     @Test

@@ -22,13 +22,20 @@ import dev.hardwood.internal.schema.ByteColumnOrder;
 /// `INT96_TIMESTAMP_ORDER`.
 ///
 /// Both the reader's predicate evaluation and the writer's statistics collection compare through
-/// here, so a chunk's bounds and a predicate over them cannot come to disagree.
+/// here, so a chunk's bounds and a predicate over them cannot come to disagree. The writer's
+/// per-value fast path also lives here: [#prefix] reads the first eight bytes a bound is
+/// compared on, and [#compareUnsignedAfterPrefix] settles the values those bytes tie on.
 public final class BinaryComparator {
 
     private static final VarHandle LONG_LE =
             MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
     private static final VarHandle INT_LE =
             MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final VarHandle LONG_BE =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.BIG_ENDIAN);
+
+    /// `PREFIX_MASKS[k]` keeps the first `k` bytes of a big-endian `long` and clears the rest.
+    private static final long[] PREFIX_MASKS = prefixMasks();
 
     private static final long NANOS_PER_DAY = 86_400_000_000_000L;
 
@@ -48,6 +55,66 @@ public final class BinaryComparator {
     /// @return negative if the slice < b, zero if equal, positive if the slice > b
     public static int compareUnsigned(byte[] a, int aFrom, int aTo, byte[] b) {
         return Arrays.compareUnsigned(a, aFrom, aTo, b, 0, b.length);
+    }
+
+    /// The first up-to-eight bytes of `array[offset, offset + length)` as a big-endian `long`,
+    /// zero-padded where the value is shorter. Values whose prefixes differ are ordered by their
+    /// prefixes alone, which lets the writer's statistics settle most comparisons without reading
+    /// the values again.
+    public static long prefix(byte[] array, int offset, int length) {
+        if (length >= Long.BYTES) {
+            return (long) LONG_BE.get(array, offset);
+        }
+        if (offset <= array.length - Long.BYTES) {
+            return (long) LONG_BE.get(array, offset) & PREFIX_MASKS[length];
+        }
+        long prefix = 0L;
+        for (int i = 0; i < length; i++) {
+            prefix |= Byte.toUnsignedLong(array[offset + i]) << (Long.SIZE - Byte.SIZE * (i + 1));
+        }
+        return prefix;
+    }
+
+    /// Compares two unsigned lexicographic values whose [#prefix]es are equal. A value that fits
+    /// within the prefix is decided by its length: if both fit, the shorter sorts first; if only
+    /// one does, it sorts first. Otherwise the bytes after the prefix decide, compared in place
+    /// where the remainder is short.
+    ///
+    /// @return negative if `a` < `b`, zero if equal, positive if `a` > `b`
+    public static int compareUnsignedAfterPrefix(byte[] a, int aOffset, int aLength,
+                                                 byte[] b, int bOffset, int bLength) {
+        boolean aShort = aLength <= Long.BYTES;
+        boolean bShort = bLength <= Long.BYTES;
+        if (aShort && bShort) {
+            return Integer.compare(aLength, bLength);
+        }
+        if (aShort) {
+            return -1;
+        }
+        if (bShort) {
+            return 1;
+        }
+        int aTail = aLength - Long.BYTES;
+        int bTail = bLength - Long.BYTES;
+        // A short remainder is cheaper to compare in place than through Arrays.compareUnsigned,
+        // whose entry point costs more than the one to eight bytes most keys leave here. The
+        // zero padding only ties where one remainder is a prefix of the other, which the lengths
+        // then settle.
+        if (aTail <= Long.BYTES && bTail <= Long.BYTES) {
+            int difference = Long.compareUnsigned(prefix(a, aOffset + Long.BYTES, aTail),
+                    prefix(b, bOffset + Long.BYTES, bTail));
+            return difference != 0 ? difference : Integer.compare(aTail, bTail);
+        }
+        return Arrays.compareUnsigned(a, aOffset + Long.BYTES, aOffset + aLength,
+                b, bOffset + Long.BYTES, bOffset + bLength);
+    }
+
+    private static long[] prefixMasks() {
+        long[] masks = new long[Long.BYTES + 1];
+        for (int length = 1; length <= Long.BYTES; length++) {
+            masks[length] = -1L << (Long.SIZE - Byte.SIZE * length);
+        }
+        return masks;
     }
 
     /// Compare the slice `a[aFrom, aTo)` against all of `b` as big-endian two's complement values,
