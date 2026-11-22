@@ -70,7 +70,7 @@ A handler reads the model and may cause it to fill a cache, but changes nothing 
 
 1. `Ctrl-C` quits.
 2. While the `:` prompt is open it takes every key (see [Jump prompt](#jump-prompt)).
-3. When the top screen is in text-input mode (the `/` filter on Schema, Column index or Dictionary), `q`, `?` and `o` are passed to the screen as characters. Otherwise `q` quits and `?` toggles the help overlay.
+3. When the top screen is in text-input mode (the `/` filter on Schema, Column index, Dictionary, Column chunks or Column-across-RGs), `q`, `?` and `o` are passed to the screen as characters. Otherwise `q` quits and `?` toggles the help overlay.
 4. While the help overlay is open it takes every key: `Esc` closes it, the navigation keys scroll it.
 5. `o` clears any read failure and collapses to Overview.
 6. `:` opens the prompt on a screen that resolves jumps, when no read failure is showing.
