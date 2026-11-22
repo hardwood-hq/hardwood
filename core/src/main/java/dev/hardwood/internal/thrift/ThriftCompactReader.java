@@ -155,12 +155,60 @@ public class ThriftCompactReader {
             int offset = buffer.arrayOffset() + from;
             return Arrays.equals(expected, 0, expected.length, buffer.array(), offset, offset + expected.length);
         }
-        for (int i = 0; i < expected.length; i++) {
+        int i = 0;
+        int longEnd = expected.length & ~7;
+        for (; i < longEnd; i += 8) {
+            if (buffer.getLong(from + i) != getLong(expected, i)) {
+                return false;
+            }
+        }
+        for (; i < expected.length; i++) {
             if (expected[i] != buffer.get(from + i)) {
                 return false;
             }
         }
         return true;
+    }
+
+    /// Whether the `length` bytes at the current position equal the `length` bytes starting
+    /// at `from` in this reader's buffer, without moving the position.
+    ///
+    /// Local files are memory-mapped and S3 reads go into direct buffers, so the footer
+    /// decode almost always takes this path. Comparing 8 bytes at a time with `getLong`
+    /// instead of one byte at a time is about 3.9× faster on long column paths (see
+    /// #1907); the tail past the last whole word is compared byte by byte. Both sides are
+    /// read from the same buffer in its own byte order, so equal longs mean equal bytes.
+    boolean matchesRange(int from, int length) {
+        if (buffer.remaining() < length || from < 0 || length < 0 || from > buffer.limit() - length) {
+            return false;
+        }
+        int at = buffer.position();
+        int i = 0;
+        int longEnd = length & ~7;
+        for (; i < longEnd; i += 8) {
+            if (buffer.getLong(at + i) != buffer.getLong(from + i)) {
+                return false;
+            }
+        }
+        for (; i < length; i++) {
+            if (buffer.get(at + i) != buffer.get(from + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// The 8 bytes of `bytes` at `offset` as a little-endian long, matching what
+    /// `ByteBuffer.getLong` reads from this reader's buffer.
+    private static long getLong(byte[] bytes, int offset) {
+        return (bytes[offset] & 0xFFL)
+                | ((bytes[offset + 1] & 0xFFL) << 8)
+                | ((bytes[offset + 2] & 0xFFL) << 16)
+                | ((bytes[offset + 3] & 0xFFL) << 24)
+                | ((bytes[offset + 4] & 0xFFL) << 32)
+                | ((bytes[offset + 5] & 0xFFL) << 40)
+                | ((bytes[offset + 6] & 0xFFL) << 48)
+                | ((bytes[offset + 7] & 0xFFL) << 56);
     }
 
     /// Advances past `length` bytes already known to be present.
