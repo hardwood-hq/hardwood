@@ -9,6 +9,8 @@ package dev.hardwood.cli.dive.internal;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import dev.hardwood.cli.dive.NavigationStack;
@@ -20,9 +22,11 @@ import dev.hardwood.cli.internal.LevelSummary;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.ValueFormatter;
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
@@ -289,6 +293,14 @@ public final class ColumnChunkDetailScreen {
                     .map(Enum::name)
                     .collect(Collectors.joining(", "))));
         }
+        // The data pages' own encoding mix, walked from the page headers: this
+        // is what shows a dictionary abandoned partway through the chunk, which
+        // neither the declared encoding list nor `encoding_stats` can. The
+        // dictionary page is not a data page, so it is not counted.
+        String pageEncodings = pageEncodings(model, state);
+        if (pageEncodings != null) {
+            lines.row(fact("Page encodings", pageEncodings));
+        }
         appendStorageStatistics(lines, summary, cmd, model, state);
 
         lines.blank();
@@ -317,6 +329,42 @@ public final class ColumnChunkDetailScreen {
             lines.row(OffsetIndexFlag.line(offsetIndexViolation));
         }
         return lines.build();
+    }
+
+    /// Counts of data pages per encoding, most common first: the roll-up of
+    /// the Pages screen for this chunk. Returns null when the chunk holds no
+    /// data pages.
+    private static String pageEncodings(ParquetModel model, ScreenState.ColumnChunkDetail state) {
+        Map<Encoding, Integer> histogram = new TreeMap<>();
+        for (PageHeader header : model.pageHeaders(state.rowGroupIndex(), state.columnIndex())) {
+            Encoding encoding = dataPageEncoding(header);
+            if (encoding != null) {
+                histogram.merge(encoding, 1, Integer::sum);
+            }
+        }
+        if (histogram.isEmpty()) {
+            return null;
+        }
+        List<Map.Entry<Encoding, Integer>> entries = new ArrayList<>(histogram.entrySet());
+        entries.sort((a, b) -> {
+            int byCount = Integer.compare(b.getValue(), a.getValue());
+            return byCount != 0 ? byCount : a.getKey().name().compareTo(b.getKey().name());
+        });
+        return entries.stream()
+                .map(entry -> entry.getKey().name() + " " + entry.getValue())
+                .collect(Collectors.joining(", "));
+    }
+
+    /// The encoding a data page (v1 or v2) was written with; null for the
+    /// dictionary page and anything else.
+    private static Encoding dataPageEncoding(PageHeader header) {
+        if (header.dataPageHeader() != null) {
+            return header.dataPageHeader().encoding();
+        }
+        if (header.dataPageHeaderV2() != null) {
+            return header.dataPageHeaderV2().encoding();
+        }
+        return null;
     }
 
     private static void renderFactsPane(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunkDetail state) {
