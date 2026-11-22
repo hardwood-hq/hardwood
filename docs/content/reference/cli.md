@@ -407,7 +407,7 @@ hardwood dive -f data.parquet
 | `Enter` | Drill into the selected item |
 | `Esc` / `Backspace` | Go back one level |
 | `Tab` / `Shift-Tab` | Switch focused pane |
-| `/` | Inline search (Schema, Column index, Dictionary) |
+| `/` | Inline search (Schema, Column index, Dictionary, Column chunks, Column-across-RGs) |
 | `t` | Toggle logical / physical value rendering (screen-specific: Pages, Column index, Dictionary, Data preview, Column chunk detail) |
 | `l` | Toggle the repetition / definition level histograms (Column chunk detail) |
 | `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
@@ -485,16 +485,20 @@ group and the column the screen was reading:
 
 ### Inline search
 
-The **Schema**, **Column index**, and **Dictionary** screens support inline
-search. Press `/` to enter search-edit mode:
+The **Schema**, **Column index**, **Dictionary**, **Column chunks**, and
+**Column-across-RGs** screens support inline search. Press `/` to enter
+search-edit mode:
 
 - **Schema** — filters leaf columns whose field path contains the query.
   While the filter is active, the tree collapses to a flat list of matches.
 - **Column index** — filters pages whose formatted min or max value
   contains the query.
 - **Dictionary** — filters entries whose value contains the query.
+- **Column chunks** — filters chunks whose column path contains the query.
+- **Column-across-RGs** — filters row groups whose formatted min or max
+  value contains the query.
 
-In all three cases: typed characters extend the filter; *Backspace* trims;
+In all five cases: typed characters extend the filter; *Backspace* trims;
 *Esc* clears the filter and exits edit mode; *Enter* commits (keeps the
 filter applied but exits edit mode).
 
