@@ -51,4 +51,9 @@ public class RecordFilterEvent extends Event {
     @Label("Records Skipped")
     @Description("Number of records skipped by the predicate")
     public long recordsSkipped;
+
+    @Label("Predicate")
+    @Description("The filter predicate as a structural rendering with literals elided, "
+            + "e.g. and(gt(id, ?), eq(label, ?)); null when the read carries no filter")
+    public String predicate;
 }
