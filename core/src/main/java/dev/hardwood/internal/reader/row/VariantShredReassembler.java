@@ -425,12 +425,7 @@ public final class VariantShredReassembler {
             pos = snap;
             elements.add(bytes);
         }
-        int totalBytes = 0;
-        for (byte[] e : elements) {
-            totalBytes += e.length;
-        }
-        ensureCapacity(16 + totalBytes);
-        pos = VariantValueEncoder.writeArray(scratch, pos, elements.toArray(new byte[0][]));
+        emitArray(elements);
         return pos - before;
     }
 
@@ -439,7 +434,7 @@ public final class VariantShredReassembler {
     /// the struct's max def level. Required because the level's `value`
     /// column's def level reflects `value`'s nullness, not `typed_value`'s.
     /// `index` is a row index when `rowIndexed`, else an array element's value
-    /// index, which addresses every leaf below the element directly.
+    /// index; descendant arrays resolve that index to their first leaf.
     private static boolean isTypedValuePresent(ShredLevel[] children,
                                                NestedBatchIndex batch, int index, boolean rowIndexed,
                                                int containerDefLevel) {
@@ -448,7 +443,7 @@ public final class VariantShredReassembler {
             if (leaf < 0) {
                 continue;
             }
-            int idx = rowIndexed ? batch.getValueIndex(leaf, index) : index;
+            int idx = rowIndexed ? batch.getValueIndex(leaf, index) : firstLeafIndex(child, batch, index);
             if (batch.getDefLevel(leaf, idx) >= containerDefLevel) {
                 return true;
             }
@@ -475,6 +470,27 @@ public final class VariantShredReassembler {
             }
         }
         return -1;
+    }
+
+    /// Resolve an item's first leaf position without confusing the indexes of
+    /// arrays at different repetition levels. A raw value ends the traversal.
+    private static int firstLeafIndex(ShredLevel level, NestedBatchIndex batch, int index) {
+        if (level.valueCol() >= 0 || level.typed() instanceof Typed.Primitive) {
+            return index;
+        }
+        if (level.typed() instanceof Typed.Array a) {
+            int leaf = firstLeafCol(a.element());
+            int childIndex = batch.getLevelStart(leaf, a.elementRepLevel() - 1, index);
+            return firstLeafIndex(a.element(), batch, childIndex);
+        }
+        if (level.typed() instanceof Typed.Object o) {
+            for (ShredLevel field : o.fields()) {
+                if (firstLeafCol(field) >= 0) {
+                    return firstLeafIndex(field, batch, index);
+                }
+            }
+        }
+        return index;
     }
 
     /// Write one array element. Elements inside a shredded list use the
@@ -561,30 +577,31 @@ public final class VariantShredReassembler {
     private int writeElementNestedArray(ShredLevel level, Typed.Array typed,
                                         NestedBatchIndex batch, int elementIdx,
                                         int valueCol, boolean valuePresent) {
-        // Navigate the inner list via the nested element's leaf column. The
-        // outer list has already placed us at `elementIdx` in level-0; for the
-        // inner list, we walk level-1 of the leaf's multi-level offsets.
+        // elementIdx addresses the parent array's items; the schema's absolute
+        // repetition level selects this array's own offset table.
         int before = pos;
         int innerLeaf = firstLeafCol(typed.element());
         if (innerLeaf < 0) {
             return valuePresent ? writeRawValue(batch, valueCol, elementIdx) : -1;
         }
-        int innerStart = batch.getLevelStart(innerLeaf, 1, elementIdx);
-        int innerEnd = batch.getLevelEnd(innerLeaf, 1, elementIdx);
+        int innerStart = batch.getLevelStart(innerLeaf, typed.elementRepLevel() - 1, elementIdx);
+        int innerEnd = batch.getLevelEnd(innerLeaf, typed.elementRepLevel() - 1, elementIdx);
         // Present-but-empty lists still carry a synthetic entry at `innerStart`
         // whose def level reports the list's max def level; truly-null lists
         // carry a lower def level at that position. `innerStart == innerEnd`
         // just means there are no real elements — the synthetic entry (if any)
         // sits at `innerStart`, which is the valid probe position either way.
-        boolean listPresent = innerStart < batch.valueCounts[innerLeaf]
-                && batch.getDefLevel(innerLeaf, innerStart) >= typed.listDefLevel();
+        int probeIdx = firstLeafIndex(typed.element(), batch, innerStart);
+        boolean listPresent = probeIdx < batch.valueCounts[innerLeaf]
+                && batch.getDefLevel(innerLeaf, probeIdx) >= typed.listDefLevel();
         if (!listPresent) {
             return valuePresent ? writeRawValue(batch, valueCol, elementIdx) : -1;
         }
         rejectValueAlongsideTypedValue(valuePresent);
         List<byte[]> inner = new ArrayList<>(innerEnd - innerStart);
         for (int i = innerStart; i < innerEnd; i++) {
-            if (batch.getDefLevel(innerLeaf, i) < typed.elementDefLevel()) {
+            int leafIdx = firstLeafIndex(typed.element(), batch, i);
+            if (batch.getDefLevel(innerLeaf, leafIdx) < typed.elementDefLevel()) {
                 continue;
             }
             int snap = pos;
@@ -600,13 +617,20 @@ public final class VariantShredReassembler {
             pos = snap;
             inner.add(bytes);
         }
-        int totalBytes = 0;
-        for (byte[] e : inner) {
-            totalBytes += e.length;
-        }
-        ensureCapacity(16 + totalBytes);
-        pos = VariantValueEncoder.writeArray(scratch, pos, inner.toArray(new byte[0][]));
+        emitArray(inner);
         return pos - before;
+    }
+
+    private void emitArray(List<byte[]> elements) {
+        int totalBytes = 0;
+        for (byte[] element : elements) {
+            totalBytes += element.length;
+        }
+        int count = elements.size();
+        int offsetSize = totalBytes <= 0xFF ? 1 : totalBytes <= 0xFFFF ? 2 : totalBytes <= 0xFFFFFF ? 3 : 4;
+        // One header byte, element count, count + 1 offsets, and the payload.
+        ensureCapacity(1 + (count > 0xFF ? 4 : 1) + (count + 1) * offsetSize + totalBytes);
+        pos = VariantValueEncoder.writeArray(scratch, pos, elements.toArray(new byte[0][]));
     }
 
     /// Enforce the shredding invariant that a non-object level (primitive or

@@ -3573,6 +3573,60 @@ annotate_group_as_variant('core/src/test/resources/variant_nested_array_test.par
 print("\nGenerated variant_nested_array_test.parquet:")
 print("  - Nested shredded arrays: [[true, true]], [], [[true]], [], [null]")
 
+# Nested arrays with independently exercised depth and framing boundaries.
+_deeper_array = pa.struct([
+    pa.field('typed_value', pa.list_(pa.field('element', _nested_array, False)), True),
+])
+_boundary_types = {'deep': _deeper_array, 'inner': _nested_array, 'outer': _nested_array}
+_boundary_rows = {
+    'deep': [[[[True], [True]]], [], [[[True], [False], [True], [False], [True]]]],
+    'inner': [[[True, True]], [], [[True] * 200]],
+    'outer': [[[True, True]], [], [[]] * 64],
+}
+
+
+def _shredded_array_item(value, depth):
+    return {'typed_value': value if depth == 0 or value is None else [
+        _shredded_array_item(item, depth - 1) for item in value
+    ]}
+
+
+_boundary_schema = pa.schema([
+    (name, pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), True),
+        pa.field('typed_value', pa.list_(pa.field('element', item_type, False)), True),
+    ]))
+    for name, item_type in _boundary_types.items()
+])
+_boundary_columns = {
+    name: [dict(metadata=_empty_metadata, value=None,
+                **_shredded_array_item(row, 3 if name == 'deep' else 2)) for row in rows]
+    for name, rows in _boundary_rows.items()
+}
+_object_element = pa.struct([pa.field('typed_value', pa.struct([
+    pa.field('a', _nested_array),
+]))])
+_boundary_schema = _boundary_schema.append(pa.field('objects', pa.struct([
+    pa.field('metadata', pa.binary(), False),
+    pa.field('value', pa.binary()),
+    pa.field('typed_value', pa.list_(pa.field('element', _object_element, False))),
+])))
+_boundary_columns['objects'] = [
+    {'metadata': bytes([1, 1, 0, 1, ord('a')]), 'value': None, 'typed_value': items}
+    for items in [
+        [{'typed_value': {'a': _shredded_array_item([True, True], 1)}}],
+        [],
+        [{'typed_value': {}}, {'typed_value': {'a': _shredded_array_item([], 1)}},
+         {'typed_value': None}],
+    ]
+]
+_boundary_file = 'core/src/test/resources/variant_nested_array_boundaries.parquet'
+pq.write_table(pa.table(_boundary_columns, schema=_boundary_schema), _boundary_file,
+               compression='NONE', use_dictionary=False, data_page_version='1.0')
+for _name in _boundary_columns:
+    annotate_group_as_variant(_boundary_file, _name)
+
 # ============================================================================
 # hardwood-hq/hardwood#1371: shredded Variant nested in a struct
 # ============================================================================
