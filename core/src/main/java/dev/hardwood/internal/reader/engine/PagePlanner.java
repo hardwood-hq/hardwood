@@ -204,7 +204,7 @@ final class PagePlanner {
                 CoalescingPolicy.coalesce(needs, names, u.rowGroup(), maxSpan, HeldBytes.heldFrom(u.file())));
     }
 
-    private static PageFilterEvent pageFilterEvent(UnitListing u, String column, int totalPages, int pagesKept) {
+    private PageFilterEvent pageFilterEvent(UnitListing u, String column, int totalPages, int pagesKept) {
         PageFilterEvent event = new PageFilterEvent();
         event.file = u.file().name();
         event.rowGroupIndex = u.rowGroup();
@@ -212,6 +212,9 @@ final class PagePlanner {
         event.totalPages = totalPages;
         event.pagesKept = pagesKept;
         event.pagesSkipped = totalPages - pagesKept;
+        if (event.isEnabled() && u.columnOrdinals().filter() != null) {
+            event.predicate = pruning.predicateDescription();
+        }
         return event;
     }
 
