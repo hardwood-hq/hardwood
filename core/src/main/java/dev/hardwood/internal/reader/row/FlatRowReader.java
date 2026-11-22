@@ -336,6 +336,9 @@ public final class FlatRowReader implements FileAwareRowReader {
         // the record matcher single records, and either way the reader marks the file
         // boundaries as it loads batches.
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
+        if (tally != null) {
+            tally.withFilter(filter, schema);
+        }
 
         // Every column closes its batches where the read's batch plan does, so the columns
         // stay row-aligned. Under a filter the cap counts matching rows: the plan holds it
