@@ -19,6 +19,7 @@ import dev.hardwood.internal.predicate.BloomFilterPruningPlan;
 import dev.hardwood.internal.predicate.DictionaryPruningPlan;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.LogContext;
+import dev.hardwood.internal.predicate.PredicateRenderer;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
@@ -33,6 +34,7 @@ import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.schema.FileSchema;
 import jdk.jfr.Event;
 
 /// The pruning of a read's row groups by metadata, in four stages: statistics pruning when a file
@@ -44,11 +46,30 @@ public final class RowGroupPruning {
     private final HardwoodContextImpl context;
     private final ResolvedPredicate filterPredicate;
     private final boolean metadataFilteringEnabled;
+    /// The schema the filter was resolved against, whose column names the predicate
+    /// rendering reads. Names are path-stable across the files of a multi-file read
+    /// even where their leaf ordinals differ, so one rendering covers every event
+    /// of the read.
+    private final FileSchema schema;
+    /// The filter rendered once, on first use behind an event's `isEnabled()`;
+    /// `null` until rendered, and when the read carries no filter.
+    private String predicateDescription;
 
-    public RowGroupPruning(HardwoodContextImpl context, ResolvedPredicate filterPredicate, boolean metadataFilteringEnabled) {
+    public RowGroupPruning(HardwoodContextImpl context, ResolvedPredicate filterPredicate,
+                           boolean metadataFilteringEnabled, FileSchema schema) {
         this.context = context;
         this.filterPredicate = filterPredicate;
         this.metadataFilteringEnabled = metadataFilteringEnabled;
+        this.schema = schema;
+    }
+
+    /// The read's filter as a structural rendering with literals elided, rendered
+    /// once on first use; `null` when the read carries no filter.
+    public String predicateDescription() {
+        if (predicateDescription == null && filterPredicate != null) {
+            predicateDescription = PredicateRenderer.render(filterPredicate, schema);
+        }
+        return predicateDescription;
     }
 
     /// Whether the read prunes by metadata: under a filter, with metadata filtering on.
@@ -281,6 +302,9 @@ public final class RowGroupPruning {
         event.rowGroupsKept = filtered.size();
         event.rowGroupsSkipped = rowGroups.size() - filtered.size();
         event.rowGroupsFullyMatching = fullyMatching;
+        if (event.isEnabled() && columnOrdinals.filter() != null) {
+            event.predicate = predicateDescription();
+        }
         return new FilteredRowGroups(filtered, event);
     }
 }
