@@ -189,6 +189,9 @@ public final class NestedRowReader implements FileAwareRowReader {
                 ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
                 : null;
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
+        if (tally != null) {
+            tally.withFilter(filter, schema);
+        }
         long readerMatchLimit = filter != null ? maxRows : FlatRowReader.UNLIMITED;
 
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
@@ -290,12 +293,18 @@ public final class NestedRowReader implements FileAwareRowReader {
         return activeMatcher.test(predicateView);
     }
 
+    /// The `[file] ` prefix for caller-mistake messages, following
+    /// [FlatRowReader] and [ColumnReader]. Empty before the first batch loads.
+    private String prefix() {
+        return ExceptionContext.filePrefix(currentFileName);
+    }
+
     @Override
     public void next() throws IOException {
         // hasNext parks the row it picked in `pendingRowIndex`; this only commits it.
         if (activeMatcher != null) {
             if (pendingRowIndex < 0) {
-                throw new NoSuchElementException("No matching row available. Call hasNext() first.");
+                throw new NoSuchElementException(prefix() + "No matching row available. Call hasNext() first.");
             }
             rowIndex = pendingRowIndex;
             pendingRowIndex = -1;
@@ -308,7 +317,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         // After any hasNext() == true this check never trips (a freshly loaded
         // batch resets rowIndex to -1).
         if (rowIndex + 1 >= batchSize) {
-            throw new NoSuchElementException("No row available. Call hasNext() first.");
+            throw new NoSuchElementException(prefix() + "No row available. Call hasNext() first.");
         }
         rowIndex++;
         dataView.setRowIndex(rowIndex);
