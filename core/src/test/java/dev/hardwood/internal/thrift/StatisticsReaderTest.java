@@ -121,6 +121,58 @@ class StatisticsReaderTest {
         assertThat(stats.isMinMaxDeprecated()).isTrue();
     }
 
+    @Test
+    void preferredBoundsWinWhenBothPairsPresent() throws IOException {
+        // parquet-java writes both pairs for signed-order types, with the deprecated
+        // pair holding the same bounds in the old sort order. The deprecated bytes must
+        // never surface: the preferred pair decides, and the flag stays clear.
+        byte[] thrift = struct()
+                .field(1, FieldType.BINARY).binary(bytes(8))
+                .field(2, FieldType.BINARY).binary(bytes(2))
+                .field(5, FieldType.BINARY).binary(bytes(9))
+                .field(6, FieldType.BINARY).binary(bytes(1))
+                .stop().build();
+
+        Statistics stats = read(thrift);
+
+        assertThat(stats.minValue()).isEqualTo(bytes(1));
+        assertThat(stats.maxValue()).isEqualTo(bytes(9));
+        assertThat(stats.isMinMaxDeprecated()).isFalse();
+    }
+
+    @Test
+    void deprecatedFieldsAfterPreferredFieldsStillResolve() throws IOException {
+        // Wire order is not guaranteed: the deprecated pair may follow the preferred
+        // one, and the preferred pair must still win.
+        byte[] thrift = struct()
+                .field(5, FieldType.BINARY).binary(bytes(9))
+                .field(6, FieldType.BINARY).binary(bytes(1))
+                .field(1, FieldType.BINARY).binary(bytes(8))
+                .field(2, FieldType.BINARY).binary(bytes(2))
+                .stop().build();
+
+        Statistics stats = read(thrift);
+
+        assertThat(stats.minValue()).isEqualTo(bytes(1));
+        assertThat(stats.maxValue()).isEqualTo(bytes(9));
+        assertThat(stats.isMinMaxDeprecated()).isFalse();
+    }
+
+    @Test
+    void repeatedDeprecatedFieldKeepsTheLast() throws IOException {
+        // A repeated field overwrites the earlier one, as a direct read would.
+        byte[] thrift = struct()
+                .field(1, FieldType.BINARY).binary(bytes(7))
+                .field(1, FieldType.BINARY).binary(bytes(8))
+                .stop().build();
+
+        Statistics stats = read(thrift);
+
+        assertThat(stats.maxValue()).isEqualTo(bytes(8));
+        assertThat(stats.minValue()).isNull();
+        assertThat(stats.isMinMaxDeprecated()).isTrue();
+    }
+
     private static Statistics read(byte[] thrift) throws IOException {
         return StatisticsReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)));
     }
