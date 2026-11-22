@@ -716,7 +716,7 @@ class DiveRenderTest {
     @Test
     void helpOverlayWrapsLongDescriptions() {
         // At 80 width, the description budget is 38 chars.
-        // The longest description is 52 chars, so it should be forced to wrap.
+        // The longest description is 88 chars, so it should be forced to wrap.
         Rect screenArea = new Rect(0, 0, 80, 40);
         Buffer buffer = Buffer.empty(screenArea);
 
@@ -724,7 +724,8 @@ class DiveRenderTest {
 
         assertThat(renderToString(buffer, screenArea))
                 .contains("enter filter mode (Schema, Column ")
-                .contains("               index, Dictionary) ");
+                .contains("index, Dictionary, Column chunks, ")
+                .contains("Column-across-RGs)");
     }
 
     /// The overlay is where a TUI user reads which build they are on, so the line must carry
