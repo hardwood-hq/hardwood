@@ -140,6 +140,32 @@ class DiveAppTest {
     }
 
     @Test
+    void qIsNotConsumedWhileEditingColumnChunksFilter() {
+        // searching=true puts the column-chunks screen in input mode; q should
+        // append to the filter rather than quit.
+        app.stack().push(new ScreenState.ColumnChunks(0, 0, 0, "", true));
+
+        DiveApp.Action a = app.dispatchKey(charKey('q'));
+
+        assertThat(a).isNotEqualTo(DiveApp.Action.QUIT);
+        ScreenState.ColumnChunks top = (ScreenState.ColumnChunks) app.stack().top();
+        assertThat(top.filter()).isEqualTo("q");
+    }
+
+    @Test
+    void qIsNotConsumedWhileEditingColumnAcrossRowGroupsFilter() {
+        // searching=true puts the column-across-RGs screen in input mode; q should
+        // append to the filter rather than quit.
+        app.stack().push(new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0, "", true));
+
+        DiveApp.Action a = app.dispatchKey(charKey('q'));
+
+        assertThat(a).isNotEqualTo(DiveApp.Action.QUIT);
+        ScreenState.ColumnAcrossRowGroups top = (ScreenState.ColumnAcrossRowGroups) app.stack().top();
+        assertThat(top.filter()).isEqualTo("q");
+    }
+
+    @Test
     void colonOpensJumpPromptOnDataPreview() {
         app.stack().push(DataPreviewScreen.initialState(model, 10));
 
