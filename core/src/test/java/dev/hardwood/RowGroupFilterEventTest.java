@@ -75,6 +75,9 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
                 .isEqualTo(3);
         assertThat(pushDown.getFirst().getInt("rowGroupsKept")).isEqualTo(2);
         assertThat(pushDown.getFirst().getInt("rowGroupsSkipped")).isEqualTo(1);
+        assertThat(pushDown.getFirst().getString("predicate"))
+                .as("the literal is elided; only the shape names the filter")
+                .isEqualTo("gt(id, ?)");
 
         assertThat(events(BYTE_RANGE_EVENT).count())
                 .as("no byte-range event without a RowGroupPredicate")
@@ -124,9 +127,13 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
                 .filter(RowGroupPredicate.byteRange(0, fileLen))
                 .build());
 
-        assertThat(events(BYTE_RANGE_EVENT).count())
+        List<RecordedEvent> byteRange = events(BYTE_RANGE_EVENT).toList();
+        assertThat(byteRange)
                 .as("byte-range selection emits exactly one byte-range event")
-                .isEqualTo(1);
+                .hasSize(1);
+        assertThat(byteRange.getFirst().getString("predicate"))
+                .as("a byte range is file offsets, not user data, so it renders in full")
+                .isEqualTo("byteRange(0, " + fileLen + ")");
         assertThat(events(PUSH_DOWN_EVENT).count())
                 .as("no push-down event without a FilterPredicate")
                 .isZero();
@@ -142,9 +149,13 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
         assertThat(events(BYTE_RANGE_EVENT).count())
                 .as("one byte-range event")
                 .isEqualTo(1);
+        assertThat(events(BYTE_RANGE_EVENT).findFirst().orElseThrow().getString("predicate"))
+                .isEqualTo("byteRange(0, " + fileLen + ")");
         assertThat(events(PUSH_DOWN_EVENT).count())
                 .as("statistics evaluated once: one push-down event")
                 .isEqualTo(1);
+        assertThat(events(PUSH_DOWN_EVENT).findFirst().orElseThrow().getString("predicate"))
+                .isEqualTo("gt(id, ?)");
     }
 
     @Test
