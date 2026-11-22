@@ -378,7 +378,7 @@ public final class NestedBatchDataView {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
         long[] validity = fieldElementValidity[projectedIndex];
         if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
-            throw new IllegalStateException("Field '" + lookupPrimitiveByIndex(projectedIndex).schema().name() + "' is null");
+            throw new IllegalStateException(prefix() + "Field '" + lookupPrimitiveByIndex(projectedIndex).schema().name() + "' is null");
         }
         return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).testAt(valueIdx, test);
     }
@@ -531,7 +531,7 @@ public final class NestedBatchDataView {
         int projCol = p.projectedCol();
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
-            throw new IllegalStateException("Field '" + p.schema().name() + "' is null");
+            throw new IllegalStateException(prefix() + "Field '" + p.schema().name() + "' is null");
         }
         return batchIndex.testBinary(projCol, valueIdx, test);
     }
@@ -710,7 +710,7 @@ public final class NestedBatchDataView {
         }
         if (desc.metadataCol() < 0) {
             throw new IllegalStateException(
-                    "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
+                    prefix() + "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
         }
         int metaIdx = cachedValueIndex[desc.metadataCol()];
         byte[] metadataBytes = batchIndex.getBinary(desc.metadataCol(), metaIdx);
@@ -720,7 +720,7 @@ public final class NestedBatchDataView {
         int valueCol = desc.valueCol();
         if (!shredded && valueCol < 0) {
             throw new IllegalStateException(
-                    "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
+                    prefix() + "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
         }
         try {
             if (shredded) {
