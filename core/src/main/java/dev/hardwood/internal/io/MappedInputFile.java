@@ -15,6 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import dev.hardwood.InputFile;
@@ -54,6 +56,9 @@ public class MappedInputFile implements InputFile, HeldBytes {
     /// Per-region mode (file > 2 GB): channel kept open for lazy per-region mapping.
     private FileChannel channel;
     private long size;
+
+    /// Every mapping [#map] created, whole-file and per-region, released by [#close()].
+    private final List<MappedByteBuffer> mappings = new ArrayList<>();
 
     /// The file's attributes, from which [#identity()] is spelled when it is asked for: read by
     /// [#open()], or by the first [#identity()] call after [#openDeferringIdentity()]; `null`
@@ -105,7 +110,7 @@ public class MappedInputFile implements InputFile, HeldBytes {
         }
         finally {
             if (!keepOpen) {
-                // Whole-file mode: the mapping survives channel close, released by GC.
+                // Whole-file mode: the mapping survives channel close and is unmapped by close().
                 // Failure: release the channel we just opened.
                 ch.close();
             }
@@ -201,7 +206,16 @@ public class MappedInputFile implements InputFile, HeldBytes {
 
     @Override
     public void close() throws IOException {
-        // Whole-file mode: channel was closed eagerly in open(); the mapping is released by GC.
+        // Explicitly release every mapping, whole-file and per-region, instead of leaving
+        // them for the garbage collector: on Windows a live mapping keeps the file locked,
+        // and in a long scan the address space of closed files is exhausted before the
+        // collector runs. Buffers handed out by readRange and sliceHeld must not be used
+        // after close(); a read after close fails with IllegalStateException.
+        for (MappedByteBuffer mapping : mappings) {
+            MappedBuffers.unmap(mapping);
+        }
+        mappings.clear();
+        wholeFile = null;
         // Per-region mode: close the channel held open for lazy mapping.
         if (channel != null) {
             channel.close();
@@ -217,6 +231,7 @@ public class MappedInputFile implements InputFile, HeldBytes {
         event.begin();
 
         MappedByteBuffer region = ch.map(FileChannel.MapMode.READ_ONLY, offset, length);
+        mappings.add(region);
 
         event.file = name;
         event.offset = offset;
