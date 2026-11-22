@@ -7,11 +7,13 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.HeldBytes;
+import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.fetch.FileRange;
 
 /// The fetch of one range of a file, for the planner before a unit is batched or for a batched
@@ -31,11 +33,28 @@ final class RangeFetch {
     /// The fetch of `range` of `file`, arrived already where the file holds those bytes in memory.
     static RangeFetch of(InputFile file, FileRange range) {
         RangeFetch r = new RangeFetch(range);
-        ByteBuffer held = HeldBytes.slice(file, range.start(), range.length());
+        ByteBuffer held = held(file, range);
         if (held != null) {
             r.bytes.arrived(held);
         }
         return r;
+    }
+
+    /// `range` of `file` where the file holds it: a slice of what it holds, or, for a file that
+    /// holds every byte without a slice to give (a local file mapped region by region), the range
+    /// read in place, which maps it; `null` otherwise. A read in place that fails leaves the range
+    /// to its fetch, which reads it again and fails the read with the file's context.
+    private static ByteBuffer held(InputFile file, FileRange range) {
+        ByteBuffer slice = HeldBytes.slice(file, range.start(), range.length());
+        if (slice != null || !HeldBytes.inMemory(file)) {
+            return slice;
+        }
+        try {
+            return ReadRanges.read(file, range.start(), range.length());
+        }
+        catch (IOException e) {
+            return null;
+        }
     }
 
     FileRange range() {
