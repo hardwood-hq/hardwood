@@ -97,6 +97,85 @@ class RepeatedPathCacheTest {
         assertThat(pathAt(decoded, 1, 0)).isSameAs(pathAt(decoded, 0, 0));
     }
 
+    @Test
+    void sharesLongPathsAcrossRowGroups() throws IOException {
+        // Encoded paths longer than one word and not a multiple of eight, so the in-place
+        // comparison exercises both its `getLong` loop and its byte tail.
+        FileMetaData decoded = roundTrip(List.of(
+                List.of("alongcolumnname", "anotherlongcolumnname"),
+                List.of("alongcolumnname", "anotherlongcolumnname"),
+                List.of("alongcolumnname", "anotherlongcolumnname")));
+
+        assertThat(pathsOf(decoded, 0)).containsExactly("alongcolumnname", "anotherlongcolumnname");
+        assertThat(pathAt(decoded, 1, 0)).isSameAs(pathAt(decoded, 0, 0));
+        assertThat(pathAt(decoded, 2, 1)).isSameAs(pathAt(decoded, 0, 1));
+    }
+
+    @Test
+    void pathDifferingOnlyPastTheLastWholeWordStillDecodes() throws IOException {
+        // The two paths agree for the first whole words and differ in the tail the
+        // `getLong` loop does not cover: the comparison must still say no.
+        FileMetaData decoded = roundTrip(List.of(
+                List.of("alongcolumnname", "anotherlongcolumnname"),
+                List.of("alongcolumnnamf", "anotherlongcolumnname")));
+
+        assertThat(pathsOf(decoded, 1)).containsExactly("alongcolumnnamf", "anotherlongcolumnname");
+        assertThat(pathAt(decoded, 1, 0)).isNotSameAs(pathAt(decoded, 0, 0));
+        assertThat(pathAt(decoded, 1, 1)).isSameAs(pathAt(decoded, 0, 1));
+    }
+
+    @Test
+    void pathDifferingInTheFirstWordStillDecodes() throws IOException {
+        FileMetaData decoded = roundTrip(List.of(
+                List.of("alongcolumnname", "anotherlongcolumnname"),
+                List.of("blongcolumnname", "anotherlongcolumnname")));
+
+        assertThat(pathsOf(decoded, 1)).containsExactly("blongcolumnname", "anotherlongcolumnname");
+        assertThat(pathAt(decoded, 1, 0)).isNotSameAs(pathAt(decoded, 0, 0));
+        assertThat(pathAt(decoded, 1, 1)).isSameAs(pathAt(decoded, 0, 1));
+    }
+
+    @Test
+    void sharesLongPathsFromADirectBuffer() throws IOException {
+        // A memory-mapped file hands the footer over as a direct buffer, which is the case
+        // the in-place comparison exists for: the heap `Arrays.equals` path never runs.
+        FileMetaData decoded = roundTripDirect(List.of(
+                List.of("alongcolumnname", "anotherlongcolumnname"),
+                List.of("alongcolumnname", "anotherlongcolumnname")));
+
+        assertThat(pathsOf(decoded, 0)).containsExactly("alongcolumnname", "anotherlongcolumnname");
+        assertThat(pathsOf(decoded, 1)).containsExactly("alongcolumnname", "anotherlongcolumnname");
+        assertThat(pathAt(decoded, 1, 0)).isSameAs(pathAt(decoded, 0, 0));
+        assertThat(pathAt(decoded, 1, 1)).isSameAs(pathAt(decoded, 0, 1));
+    }
+
+    /// Writes a footer whose row groups carry the given column paths — one inner list per row
+    /// group, each element a dot-separated path — and reads it back from a direct buffer.
+    private static FileMetaData roundTripDirect(List<List<String>> rowGroupPaths) throws IOException {
+        byte[] bytes = write(rowGroupPaths);
+        ByteBuffer direct = ByteBuffer.allocateDirect(bytes.length);
+        direct.put(bytes);
+        direct.flip();
+        return FileMetaDataReader.read(new ThriftCompactReader(direct));
+    }
+
+    private static byte[] write(List<List<String>> rowGroupPaths) throws IOException {
+        List<RowGroup> rowGroups = new ArrayList<>();
+        for (List<String> paths : rowGroupPaths) {
+            List<ColumnChunk> chunks = new ArrayList<>();
+            for (String path : paths) {
+                chunks.add(new ColumnChunk(columnMetaData(path), null, null, null, null, ""));
+            }
+            rowGroups.add(new RowGroup(List.copyOf(chunks), 1024, 10));
+        }
+
+        FileMetaData metaData = new FileMetaData(1, schemaElements(rowGroupPaths.get(0)), 10,
+                List.copyOf(rowGroups), Map.of(), "test", List.of());
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        FileMetaDataWriter.write(writer, metaData);
+        return writer.toByteArray();
+    }
+
     /// Writes a footer whose row groups carry the given column paths — one inner list per row
     /// group, each element a dot-separated path — and reads it back.
     private static FileMetaData roundTrip(List<List<String>> rowGroupPaths) throws IOException {
