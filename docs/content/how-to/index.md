@@ -25,6 +25,7 @@
 - [**Write Column by Column**](write-column-by-column.md): `ColumnWriter`, typed arrays, nulls, per-layer offsets.
 - [**Handle Write Failures**](write-failures.md): what `close()` does after a failed write, and `abort()`.
 - [**Inspect File Metadata**](metadata.md): file metadata, row groups, column chunks, schema introspection.
+- [**Size the Heap for a Read**](heap-sizing.md): what a read holds at once, and how to check a heap against a file.
 
 !!! example "Runnable examples"
     Most guides link to a matching standalone example in the
