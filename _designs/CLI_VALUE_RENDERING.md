@@ -213,7 +213,7 @@ The facts pane groups rows under Identity, Storage, Content, the two level block
 
 | Row | Content |
 |---|---|
-| `Size statistics` | `chunk + N pages` when either page-index field is present (the histograms live in `ColumnIndex`, the unencoded sizes in `OffsetIndex`, and a required `BYTE_ARRAY` column has only the latter to write), `chunk only` otherwise, `— (not written)` without `SizeStatistics` |
+| `Size statistics` | `— (not written)` without `SizeStatistics`; dropped when statistics are present, since the drill menu already shows the page count and whether the column and offset indexes exist |
 | `Chunk encodings` | the declared list, shown only where `encoding_stats` exists and so can differ from `Encoding` |
 | `Records`, `Present` | dropped where they would restate `Values` (a column that cannot repeat, cannot be null) or are unknown |
 | `Avg list length`, `Avg value size` | dropped where undefined |
@@ -240,5 +240,4 @@ This document fixes the text. Colour is added only in dive and follows the tiers
 ## Boundaries
 
 - An annotation the physical type cannot carry makes `print`, `convert` and `dive` fail instead of rendering the stored value (#1090).
-- The column chunk detail's `Size statistics` row restates what the drill menu already shows (#951).
 - `inspect` and dive do not report per-page size statistics beyond their presence; per-page level histograms have no display.
