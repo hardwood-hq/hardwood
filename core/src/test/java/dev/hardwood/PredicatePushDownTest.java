@@ -287,10 +287,10 @@ class PredicatePushDownTest {
                 assertThat(address.toString()).isEqualTo("PqStruct{city=Boston}");
                 assertThatThrownBy(() -> address.getFieldName(1))
                         .isInstanceOf(IndexOutOfBoundsException.class)
-                        .hasMessage("Field index 1 is out of bounds for a struct of 1 fields");
+                        .hasMessage("[filter_pushdown_nested.parquet] Field index 1 is out of bounds for a struct of 1 fields");
                 assertThatThrownBy(() -> address.getInt(1))
                         .isInstanceOf(IndexOutOfBoundsException.class)
-                        .hasMessage("Field index 1 is out of bounds for a struct of 1 fields");
+                        .hasMessage("[filter_pushdown_nested.parquet] Field index 1 is out of bounds for a struct of 1 fields");
             }
         }
     }
