@@ -72,6 +72,7 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
                 .isEqualTo(EVALUATED);
         assertThat(event.getLong("recordsKept")).isEqualTo(KEPT);
         assertThat(event.getLong("recordsSkipped")).isEqualTo(EVALUATED - KEPT);
+        assertThat(event.getString("predicate")).isEqualTo("gt(id, ?)");
     }
 
     @Test
@@ -99,6 +100,9 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
                 .as("the label's own statistics leave one row group, and all 100 of its"
                         + " records are evaluated one at a time")
                 .isEqualTo(100);
+        assertThat(event.getString("predicate"))
+                .as("the literal 'rg2_150' and the bounds must not reach the recording")
+                .isEqualTo("or(and(eq(label, ?), gt(id, ?)), and(eq(label, ?), lt(id, ?)))");
     }
 
     @Test
@@ -122,6 +126,9 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
         assertThat(event.getLong("totalRecords")).isEqualTo(6);
         assertThat(event.getLong("recordsKept")).isEqualTo(4);
         assertThat(event.getLong("recordsSkipped")).isEqualTo(2);
+        assertThat(event.getString("predicate"))
+                .as("a nested leaf renders as its dot-separated field path")
+                .isEqualTo("gt(address.zip, ?)");
     }
 
     @Test
@@ -143,6 +150,7 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
         assertThat(event.getLong("totalRecords")).isEqualTo(EVALUATED);
         assertThat(event.getLong("recordsKept")).isEqualTo(KEPT);
         assertThat(event.getLong("recordsSkipped")).isEqualTo(EVALUATED - KEPT);
+        assertThat(event.getString("predicate")).isEqualTo("gt(id, ?)");
     }
 
     @Test
@@ -166,6 +174,7 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
         for (RecordedEvent event : events) {
             assertThat(event.getLong("totalRecords")).isEqualTo(EVALUATED);
             assertThat(event.getLong("recordsKept")).isEqualTo(KEPT);
+            assertThat(event.getString("predicate")).isEqualTo("gt(id, ?)");
         }
     }
 
