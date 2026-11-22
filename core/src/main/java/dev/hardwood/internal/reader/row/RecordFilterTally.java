@@ -7,7 +7,10 @@
  */
 package dev.hardwood.internal.reader.row;
 
+import dev.hardwood.internal.predicate.PredicateRenderer;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.jfr.RecordFilterEvent;
+import dev.hardwood.schema.FileSchema;
 
 /// Accumulates the outcome of record-level predicate evaluation and emits one
 /// [RecordFilterEvent] per file.
@@ -31,6 +34,18 @@ public final class RecordFilterTally {
     private String file;
     private long evaluated;
     private long kept;
+    /// The read's filter and the schema it was resolved against, for the predicate
+    /// rendering; both `null` for an unfiltered read. Rendered once, on the first
+    /// emit behind the event's `isEnabled()`, and cached for the read.
+    private ResolvedPredicate filter;
+    private FileSchema schema;
+    private String predicateDescription;
+
+    /// Hands the read's filter to the tally so its events can name the predicate.
+    public void withFilter(ResolvedPredicate filter, FileSchema schema) {
+        this.filter = filter;
+        this.schema = schema;
+    }
 
     /// Attributes subsequent counts to `fileName`, emitting the counts gathered
     /// for the previous file. Idempotent for repeated calls naming the same file,
@@ -72,6 +87,12 @@ public final class RecordFilterTally {
         event.totalRecords = evaluated;
         event.recordsKept = kept;
         event.recordsSkipped = evaluated - kept;
+        if (event.isEnabled() && filter != null) {
+            if (predicateDescription == null) {
+                predicateDescription = PredicateRenderer.render(filter, schema);
+            }
+            event.predicate = predicateDescription;
+        }
         event.commit();
         evaluated = 0;
         kept = 0;
