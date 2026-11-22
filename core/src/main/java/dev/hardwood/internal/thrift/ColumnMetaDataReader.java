@@ -130,7 +130,7 @@ public class ColumnMetaDataReader {
                     break;
                 case 13: // encoding_stats (optional list<PageEncodingStats>)
                     if (reader.acceptField(header, Codes.LIST)) {
-                        encodingStats = PageEncodingStatsReader.read(reader);
+                        encodingStats = reader.encodingStatsCache().next(reader);
                     }
                     break;
                 case 14: // bloom_filter_offset (optional i64)
