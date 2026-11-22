@@ -81,7 +81,7 @@ Tests: `MultiFileRowReaderTest`, `FileMetadataCacheTest`, `ParentCloseTest`, `Pa
 |---|---|---|
 | `open()` | Maps the whole file read-only once, then closes the channel | Keeps the `FileChannel` open; maps nothing |
 | `readRange` | A zero-copy slice of the whole-file mapping | Maps exactly `[offset, offset + length)` read-only and returns that mapping |
-| `close()` | Nothing to release; the mapping is released by the GC | Closes the channel; mappings already returned stay valid until the GC releases them |
+| `close()` | Unmaps the whole-file mapping | Closes the channel and unmaps every mapping returned so far |
 | Interruptible | No: reads touch mapped memory only | Yes: every read is a `FileChannel.map` call |
 
 In per-region mode there are no fixed regions. Each read is its own mapping at a `long` position, so a range that crosses the 2 GB mark, or starts beyond it, is one mapping and is never assembled from pieces. `FileChannel.map` accepts a position that is not page-aligned. Many reads of one file each create a mapping; nothing caches them.
@@ -90,7 +90,7 @@ In per-region mode there are no fixed regions. Each read is its own mapping at a
 
 `name()` is the path's file name, not the full path. Each mapping emits a `FileMappingEvent` with the file, offset and size: once per file in whole-file mode, once per read in per-region mode.
 
-Nothing unmaps explicitly. Mapped address space and, on Windows, the lock on the file persist after `close()` until the GC collects the buffers.
+`close()` unmaps every mapping explicitly, through `sun.misc.Unsafe.invokeCleaner` where the runtime exposes it (falling back to the GC where it does not). Mapped address space is released at `close()`, and on Windows the lock on the file with it. Buffers handed out by `readRange` and `sliceHeld` must not be used after `close()`.
 
 **Cold page cache.** A mapped file counts as in memory: its ranges are sliced on whichever thread asks, so scans and decodes read its pages directly on the context's pool. Where a page is not in the page cache, the first touch faults on the thread making it, a pool thread or, on a context of zero threads, the thread driving the read. The read gives the kernel no read-ahead hint and copies no range of a mapped file. A fault costs the kernel's work of loading the page, CPU time that lands on the faulting thread wherever the load happens, and the disk transfer, which the pool's other threads overlap with their decodes. The read's lock parses no page header of a mapped file, so a page's first touch stalls one thread, not the read ([VALUE_DECODE.md](VALUE_DECODE.md#page-headers)).
 
@@ -134,6 +134,6 @@ Tests: `MappedInputFileLargeFileTest`, `ChunkSizeTest`, `CoalescedRequestsTest`.
 
 ## Boundaries
 
-- Mappings are released only by the GC, never at `close()` (#199).
+- `close()` unmaps every mapping explicitly; buffers handed out must not be used after `close()` (#199).
 - In-memory and range-backed files are limited to 2 GB per file (#501; the range-backed case is in [S3_STORAGE.md](S3_STORAGE.md#rangebackedinputfile)).
 - `readRange` does not guarantee a read-only buffer; the in-memory backend can hand out writable views of the user's buffer (#503).
