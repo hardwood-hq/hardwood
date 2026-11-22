@@ -18,6 +18,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.IntFunction;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.row.TopLevelFieldMap.FieldDesc.ListOf;
@@ -61,6 +62,12 @@ final class PqListImpl implements PqList {
         this.start = start;
         this.end = end;
         this.subLevel = subLevel;
+    }
+
+    /// The `[file] ` prefix for caller-mistake messages, following
+    /// [FlatRowReader] and [ColumnReader]. Empty when the file is unknown.
+    private String prefix() {
+        return ExceptionContext.filePrefix(batch.fileName);
     }
 
     // ==================== Factory Methods ====================
@@ -432,7 +439,7 @@ final class PqListImpl implements PqList {
         int valueIdx = start + index;
         TopLevelFieldMap.FieldDesc elementDesc = listDesc.elementDesc();
         if (!(elementDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
-            throw new IllegalArgumentException("Element is not a struct");
+            throw new IllegalArgumentException(prefix() + "Element is not a struct");
         }
         if (isStructElementNull(structDesc, valueIdx)) {
             return null;
@@ -452,7 +459,7 @@ final class PqListImpl implements PqList {
 
     private PqList createInnerGenericList(int index) {
         if (!(elementSchema instanceof SchemaNode.GroupNode group) || !group.isList()) {
-            throw new IllegalArgumentException("Element is not a list");
+            throw new IllegalArgumentException(prefix() + "Element is not a list");
         }
         // For nested lists (list<list<...>>), the inner list needs its own descriptor so
         // that subsequent `.structs()` / `.maps()` calls resolve the correct element
@@ -494,7 +501,7 @@ final class PqListImpl implements PqList {
 
     private PqMap createInnerMap(int index) {
         if (!(elementSchema instanceof SchemaNode.GroupNode group) || !group.isMap()) {
-            throw new IllegalArgumentException("Element is not a map");
+            throw new IllegalArgumentException(prefix() + "Element is not a map");
         }
         int valueIdx = start + index;
         TopLevelFieldMap.FieldDesc elementDesc = listDesc.elementDesc();
@@ -510,17 +517,17 @@ final class PqListImpl implements PqList {
     private PqVariant createInnerVariant(int index) {
         TopLevelFieldMap.FieldDesc elementDesc = listDesc.elementDesc();
         if (!(elementDesc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
-            throw new IllegalArgumentException("Element is not a variant");
+            throw new IllegalArgumentException(prefix() + "Element is not a variant");
         }
         if (variantDesc.root().typed() != null) {
             // Shredded variants in repeated contexts need position-aware
             // reassembly (tracked in hardwood#467).
             throw new UnsupportedOperationException(
-                    "Shredded Variant inside a list element is not yet supported");
+                    prefix() + "Shredded Variant inside a list element is not yet supported");
         }
         if (variantDesc.metadataCol() < 0) {
             throw new IllegalStateException(
-                    "Variant list element requires its 'metadata' child in the projection");
+                    prefix() + "Variant list element requires its 'metadata' child in the projection");
         }
         int valueIdx = start + index;
         if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
@@ -530,7 +537,7 @@ final class PqListImpl implements PqList {
         int valueCol = variantDesc.valueCol();
         if (valueCol < 0) {
             throw new IllegalStateException(
-                    "Variant list element requires its 'value' child in the projection");
+                    prefix() + "Variant list element requires its 'value' child in the projection");
         }
         byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
         try {
@@ -584,7 +591,7 @@ final class PqListImpl implements PqList {
 
     private void checkBounds(int index) {
         if (index < 0 || index >= size()) {
-            throw new IndexOutOfBoundsException("Index " + index + " out of range [0, " + size() + ")");
+            throw new IndexOutOfBoundsException(prefix() + "Index " + index + " out of range [0, " + size() + ")");
         }
     }
 
