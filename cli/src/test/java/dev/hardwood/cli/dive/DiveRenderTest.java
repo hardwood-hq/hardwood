@@ -362,6 +362,83 @@ class DiveRenderTest {
     }
 
     @Test
+    void dataPreviewTitleNamesTheCursorRowGroup() throws Exception {
+        // filter_pushdown_int.parquet: 3 row groups of 100 rows, id 1-300.
+        Path file = TestResources.path("/filter_pushdown_int.parquet");
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            RenderHarness.RenderedFrame first = RenderHarness.render(new Rect(0, 0, 120, 25),
+                    DataPreviewScreen.initialState(m, 20), m);
+            assertThat(first.contains(" Data preview (rows 1–20 of 300 · RG 1 of 3 · cols 1–3 of 3) "))
+                    .as("the title names the row group the loaded rows are in")
+                    .isTrue();
+
+            // stateAt pages by the observed viewport stride, so only the
+            // group — not the exact end row — is pinned here.
+            RenderHarness.RenderedFrame second = RenderHarness.render(new Rect(0, 0, 120, 25),
+                    DataPreviewScreen.stateAt(m, 100), m);
+            assertThat(second.contains("rows 101–")).isTrue();
+            assertThat(second.contains("RG 2 of 3")).isTrue();
+        }
+    }
+
+    @Test
+    void dataPreviewTitleNamesRowGroupRangeWhenWindowStraddlesABoundary() throws Exception {
+        // Step the cursor to row 100 with a 10-row page: the window slides
+        // to rows 91-100, straddling the RG 1 / RG 2 boundary.
+        Path file = TestResources.path("/filter_pushdown_int.parquet");
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(DataPreviewScreen.initialState(m, 10));
+            for (int i = 0; i < 100; i++) {
+                assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), m, stack)).isTrue();
+            }
+            ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
+            assertThat(state.firstRow() + state.selectedRow()).isEqualTo(100);
+
+            RenderHarness.RenderedFrame frame = RenderHarness.render(new Rect(0, 0, 120, 25), state, m);
+            assertThat(frame.contains("RG 1–2 of 3"))
+                    .as("a window over two groups names the range, not one of them")
+                    .isTrue();
+        }
+    }
+
+    @Test
+    void dataPreviewBracketKeysMoveBetweenRowGroups() throws Exception {
+        Path file = TestResources.path("/filter_pushdown_int.parquet");
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(DataPreviewScreen.initialState(m, 20));
+            KeyEvent next = new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, ']');
+            KeyEvent prev = new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '[');
+
+            assertThat(RenderHarness.keybarFor(stack.top(), m)).contains("[[/]] row group");
+
+            assertThat(DataPreviewScreen.handle(next, m, stack)).isTrue();
+            ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
+            assertThat(state.firstRow() + state.selectedRow()).isEqualTo(100);
+            assertThat(RenderHarness.render(new Rect(0, 0, 120, 25), state, m)
+                    .contains("RG 2 of 3")).isTrue();
+
+            assertThat(DataPreviewScreen.handle(next, m, stack)).isTrue();
+            state = (ScreenState.DataPreview) stack.top();
+            assertThat(state.firstRow() + state.selectedRow()).isEqualTo(200);
+            assertThat(DataPreviewScreen.handle(next, m, stack))
+                    .as("already in the last group: nowhere to go")
+                    .isFalse();
+
+            assertThat(DataPreviewScreen.handle(prev, m, stack)).isTrue();
+            state = (ScreenState.DataPreview) stack.top();
+            assertThat(state.firstRow() + state.selectedRow()).isEqualTo(100);
+            assertThat(DataPreviewScreen.handle(prev, m, stack)).isTrue();
+            state = (ScreenState.DataPreview) stack.top();
+            assertThat(state.firstRow() + state.selectedRow()).isZero();
+            assertThat(DataPreviewScreen.handle(prev, m, stack))
+                    .as("already in the first group: nowhere to go")
+                    .isFalse();
+        }
+    }
+
+    @Test
     void recordModalTitleCountsRowsFromZero() {
         NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
         stack.push(DataPreviewScreen.initialState(model, 20));
