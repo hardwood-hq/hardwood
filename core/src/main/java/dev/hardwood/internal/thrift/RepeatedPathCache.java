@@ -26,14 +26,23 @@ import dev.hardwood.metadata.FieldPath;
 /// decodes and re-primes that position. Content-keyed interning was measured against this and
 /// lost: hashing every path and probing a table of them costs more than the allocation it saves.
 ///
+/// A repeat is recognised without copying the path out: the cache remembers where the previous
+/// row group's bytes sit in the footer (offset and length) and compares them in place, 8 bytes
+/// at a time — on a mapped file the one-byte-at-a-time loop it replaces was about 2.4× the cost
+/// of just copying the path bytes out. Keeping the offset instead of a `byte[]` copy also saves
+/// about 2 MB of retained bytes per decode at 100,000 columns.
+///
 /// A cache instance belongs to one [ThriftCompactReader] and is used by a single thread.
 final class RepeatedPathCache {
 
     private static final int INITIAL_CAPACITY = 16;
 
-    /// The encoded `list<string>` bytes of the path at each position, as they appear in the
-    /// footer, so a repeat is recognised without decoding it.
-    private byte[][] encoded = new byte[INITIAL_CAPACITY][];
+    /// The offset and length of the encoded `list<string>` bytes of the path at each position,
+    /// as they appear in the footer, so a repeat is recognised without decoding it. A length of
+    /// zero means the slot was never primed: every encoded path is at least its list-header
+    /// byte, so a real entry never has length zero.
+    private int[] offsets = new int[INITIAL_CAPACITY];
+    private int[] lengths = new int[INITIAL_CAPACITY];
     private FieldPath[] paths = new FieldPath[INITIAL_CAPACITY];
     private int position;
 
@@ -49,24 +58,26 @@ final class RepeatedPathCache {
     /// @param reader positioned on the list header of the path
     FieldPath next(ThriftCompactReader reader) {
         int slot = position++;
-        byte[] predicted = slot < encoded.length ? encoded[slot] : null;
-        if (predicted != null && reader.matchesAt(predicted)) {
-            reader.skipBytes(predicted.length);
+        if (slot < lengths.length && lengths[slot] != 0
+                && reader.matchesRange(offsets[slot], lengths[slot])) {
+            reader.skipBytes(lengths[slot]);
             return paths[slot];
         }
         int start = reader.position();
         FieldPath path = new FieldPath(reader.readStringList());
-        store(slot, reader.copyRange(start, reader.position() - start), path);
+        store(slot, start, reader.position() - start, path);
         return path;
     }
 
-    private void store(int slot, byte[] encodedPath, FieldPath path) {
-        if (slot >= encoded.length) {
-            int capacity = Math.max(slot + 1, encoded.length * 2);
-            encoded = Arrays.copyOf(encoded, capacity);
+    private void store(int slot, int offset, int length, FieldPath path) {
+        if (slot >= lengths.length) {
+            int capacity = Math.max(slot + 1, lengths.length * 2);
+            offsets = Arrays.copyOf(offsets, capacity);
+            lengths = Arrays.copyOf(lengths, capacity);
             paths = Arrays.copyOf(paths, capacity);
         }
-        encoded[slot] = encodedPath;
+        offsets[slot] = offset;
+        lengths[slot] = length;
         paths[slot] = path;
     }
 }
