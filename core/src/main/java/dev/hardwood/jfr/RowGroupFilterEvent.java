@@ -45,4 +45,9 @@ public class RowGroupFilterEvent extends Event {
     @Label("Fully Matching Row Groups")
     @Description("Kept row groups whose statistics prove every row matches the predicate")
     public int rowGroupsFullyMatching;
+
+    @Label("Predicate")
+    @Description("The filter predicate as a structural rendering with literals elided, "
+            + "e.g. and(gt(id, ?), eq(label, ?)); null when the read carries no filter")
+    public String predicate;
 }
