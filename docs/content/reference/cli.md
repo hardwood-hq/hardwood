@@ -440,7 +440,8 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
   dictionary flag
 - **Column chunk detail** — facts pane grouped into Identity, Storage, Content and Layout, whose
   cursor passes over the group headings, plus drill menu; `l` adds the repetition and definition level histograms, each level named after
-  the schema node it belongs to
+  the schema node it belongs to; Storage also shows the data pages' encoding mix, so a dictionary
+  abandoned partway through the chunk is visible at a glance
 - **Pages** — `Enter` opens the full page header, including inline statistics when the chunk
   has no column index
 - **Column index**
