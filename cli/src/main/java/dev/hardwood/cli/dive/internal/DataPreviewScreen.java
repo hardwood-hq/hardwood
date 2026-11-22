@@ -196,6 +196,24 @@ public final class DataPreviewScreen {
             stack.replaceTop(moveTo(state, total - 1, model, total, ScrollBias.BOTTOM));
             return true;
         }
+        // `]` / `[` move the cursor to the first row of the next / previous row
+        // group, so a reader walking the groups — checking a clustered
+        // column's sort order holds across them, say — steps between them
+        // instead of paging blind. At the last / first group there is nowhere
+        // to go, so the key does nothing.
+        if (event.code() == KeyCode.CHAR && (event.character() == ']' || event.character() == '[')
+                && !event.hasCtrl() && !event.hasAlt()) {
+            if (state.rows().isEmpty()) {
+                return false;
+            }
+            int current = model.rowGroupOf(state.firstRow() + state.selectedRow());
+            int target = event.character() == ']' ? current + 1 : current - 1;
+            if (target < 0 || target >= model.rowGroupCount()) {
+                return false;
+            }
+            stack.replaceTop(moveTo(state, model.firstRowOf(target), model, total, ScrollBias.TOP));
+            return true;
+        }
         // Toggle logical-type rendering. Modifier-free `t` (avoid clobbering
         // typed text in any future search-mode here).
         if (event.code() == KeyCode.CHAR && event.character() == 't'
@@ -278,8 +296,14 @@ public final class DataPreviewScreen {
         String rowRange = total == 0
                 ? "no rows"
                 : Fmt.fmt("rows %,d–%,d of %,d", state.firstRow() + 1, lastRow, total);
-        String title = Fmt.fmt(" Data preview (%s · cols %,d–%,d%s of %,d%s) ",
-                rowRange, state.columnScroll() + 1, window.end(), clipMark, columnCount, typeMode);
+        // The row groups the loaded rows span: one group in the common case,
+        // a range where the window straddles a boundary. The cursor's group is
+        // inside the range either way, so stepping across a boundary updates it.
+        String rowGroups = total == 0 || state.rows().isEmpty()
+                ? ""
+                : " · " + rowGroupRange(model, state);
+        String title = Fmt.fmt(" Data preview (%s%s · cols %,d–%,d%s of %,d%s) ",
+                rowRange, rowGroups, state.columnScroll() + 1, window.end(), clipMark, columnCount, typeMode);
 
         Block block = Block.builder()
                 .title(title)
@@ -310,6 +334,18 @@ public final class DataPreviewScreen {
             buffer.setStyle(area, Theme.dim());
             renderRecordModal(buffer, area, model, state);
         }
+    }
+
+    /// The row groups the loaded rows span, as `RG 1 of 3`, or `RG 1–2 of 3`
+    /// where the window straddles a boundary. Group numbers count from 1, as
+    /// every list title does.
+    private static String rowGroupRange(ParquetModel model, ScreenState.DataPreview state) {
+        int first = model.rowGroupOf(state.firstRow());
+        int last = model.rowGroupOf(state.firstRow() + state.rows().size() - 1);
+        int total = model.rowGroupCount();
+        return first == last
+                ? Fmt.fmt("RG %,d of %,d", first + 1, total)
+                : Fmt.fmt("RG %,d–%,d of %,d", first + 1, last + 1, total);
     }
 
     /// The style of field `field`'s value in the record modal: `Theme.error()` where it holds a
@@ -555,6 +591,7 @@ public final class DataPreviewScreen {
                 .add(canColumnScroll, "[←→] columns")
                 .add(canPage, "[PgDn/PgUp or Shift+↓↑] page")
                 .add(canPage, "[g/G] start/end")
+                .add(model.rowGroupCount() > 1, "[[/]] row group")
                 .add(anyLogical, "[t] logical types")
                 .add(total > 1, "[:] jump to row")
                 .add(true, "[Esc] back")
