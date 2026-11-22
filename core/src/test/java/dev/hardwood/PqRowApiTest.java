@@ -20,6 +20,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.reader.row.NestedRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqDoubleList;
@@ -104,6 +105,26 @@ public class PqRowApiTest {
             assertThatThrownBy(rowReader::next)
                     .isInstanceOf(NoSuchElementException.class)
                     .hasMessage("No row available. Call hasNext() first.");
+        }
+    }
+
+    @Test
+    void unguardedNextPastEndThrowsForNestedReaderWithFileName() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_lists_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.rowReader()) {
+            assertThat(rowReader).isInstanceOf(NestedRowReader.class);
+
+            while (rowReader.hasNext()) {
+                rowReader.next();
+            }
+
+            // A list column keeps the read on the nested reader, whose
+            // caller-mistake messages name the file (#1156).
+            assertThatThrownBy(rowReader::next)
+                    .isInstanceOf(NoSuchElementException.class)
+                    .hasMessage("[primitive_lists_test.parquet] No row available. Call hasNext() first.");
         }
     }
 
