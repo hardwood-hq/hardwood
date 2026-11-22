@@ -916,14 +916,17 @@ class DiveRenderTest {
         }
     }
 
-    /// Collapsed is the default: the derived rows are the summary worth
-    /// seeing at a glance, and the pane does not scroll.
+    /// The `Size statistics` row is dropped when statistics are present: the
+    /// drill menu already shows the page count and whether the column and
+    /// offset indexes exist, so the row would restate it. Collapsed is the
+    /// default: the derived rows are the summary worth seeing at a glance, and
+    /// the pane does not scroll.
     @Test
-    void columnChunkDetailShowsDerivedSizeStatisticsWithLevelsCollapsed() throws Exception {
+    void columnChunkDetailDropsTheSizeStatisticsRowWhenPresent() throws Exception {
         RenderHarness.RenderedFrame frame = renderSizeStatistics("websites.list.element", false);
 
-        assertThat(frame.contains("Size statistics")).isTrue();
-        assertThat(frame.contains("chunk only")).isTrue();
+        assertThat(frame.contains("Size statistics")).isFalse();
+        assertThat(frame.contains("chunk only")).isFalse();
         assertThat(frame.contains("Records")).isTrue();
         assertThat(frame.contains("per record")).isTrue();
         assertThat(frame.contains("[l] to show")).isTrue();
