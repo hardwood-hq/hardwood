@@ -1017,6 +1017,118 @@ class DiveStateTest {
     }
 
     @Test
+    void columnChunksSlashEntersSearchMode() {
+        NavigationStack stack = rooted(new ScreenState.ColumnChunks(0, 0));
+
+        ColumnChunksScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
+
+        assertThat(((ScreenState.ColumnChunks) stack.top()).searching()).isTrue();
+    }
+
+    @Test
+    void columnChunksSearchAppendsCharsToFilter() {
+        NavigationStack stack = rooted(new ScreenState.ColumnChunks(0, 0, 0, "", true));
+
+        ColumnChunksScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'v'), model, stack);
+        ColumnChunksScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'a'), model, stack);
+        ColumnChunksScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'l'), model, stack);
+
+        assertThat(((ScreenState.ColumnChunks) stack.top()).filter()).isEqualTo("val");
+    }
+
+    @Test
+    void columnChunksSearchEscClearsFilter() {
+        NavigationStack stack = rooted(new ScreenState.ColumnChunks(0, 0, 0, "val", true));
+
+        ColumnChunksScreen.handle(key(KeyCode.ESCAPE), model, stack);
+
+        ScreenState.ColumnChunks top = (ScreenState.ColumnChunks) stack.top();
+        assertThat(top.searching()).isFalse();
+        assertThat(top.filter()).isEmpty();
+    }
+
+    @Test
+    void columnChunksSearchEnterDrillsIntoFilteredColumn() {
+        // Filter narrows to "value" (column 1 in the fixture), then pressing Enter
+        // while not in search-edit mode drills into that chunk's detail screen.
+        NavigationStack stack = rooted(new ScreenState.ColumnChunks(0, 0, 0, "value", false));
+
+        ColumnChunksScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunkDetail.class);
+        assertThat(((ScreenState.ColumnChunkDetail) stack.top()).columnIndex()).isEqualTo(1);
+    }
+
+    @Test
+    void columnChunksSearchWithNoMatchEnterIsNoop() {
+        NavigationStack stack = rooted(new ScreenState.ColumnChunks(0, 0, 0, "zzz", false));
+
+        ColumnChunksScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunks.class);
+        assertThat(stack.depth()).isEqualTo(2);
+    }
+
+    @Test
+    void columnAcrossRowGroupsSlashEntersSearchMode() {
+        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0, true));
+
+        ColumnAcrossRowGroupsScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
+
+        assertThat(((ScreenState.ColumnAcrossRowGroups) stack.top()).searching()).isTrue();
+    }
+
+    @Test
+    void columnAcrossRowGroupsSearchAppendsCharsToFilter() {
+        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0, "", true));
+
+        ColumnAcrossRowGroupsScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '9'), model, stack);
+
+        assertThat(((ScreenState.ColumnAcrossRowGroups) stack.top()).filter()).isEqualTo("9");
+    }
+
+    @Test
+    void columnAcrossRowGroupsSearchEscClearsFilter() {
+        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0, "9", true));
+
+        ColumnAcrossRowGroupsScreen.handle(key(KeyCode.ESCAPE), model, stack);
+
+        ScreenState.ColumnAcrossRowGroups top = (ScreenState.ColumnAcrossRowGroups) stack.top();
+        assertThat(top.searching()).isFalse();
+        assertThat(top.filter()).isEmpty();
+    }
+
+    @Test
+    void columnAcrossRowGroupsSearchEnterDrillsIntoFilteredRowGroup() {
+        // `id` in column_index_pushdown.parquet is sorted 0..9999, so the
+        // filter "9" matches the row group's max and Enter drills into it.
+        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0, "9", false));
+
+        ColumnAcrossRowGroupsScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunkDetail.class);
+        ScreenState.ColumnChunkDetail top = (ScreenState.ColumnChunkDetail) stack.top();
+        assertThat(top.rowGroupIndex()).isZero();
+        assertThat(top.columnIndex()).isZero();
+    }
+
+    @Test
+    void columnAcrossRowGroupsSearchWithNoMatchEnterIsNoop() {
+        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0, "zzz", false));
+
+        ColumnAcrossRowGroupsScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnAcrossRowGroups.class);
+        assertThat(stack.depth()).isEqualTo(2);
+    }
+
+    @Test
     void schemaRightOnPrimitiveIsNoop() {
         NavigationStack stack = rooted(ScreenState.Schema.initial());
 
