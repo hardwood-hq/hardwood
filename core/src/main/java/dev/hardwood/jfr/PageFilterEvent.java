@@ -60,4 +60,9 @@ public class PageFilterEvent extends Event {
     @Label("Pages Skipped")
     @Description("Number of pages skipped by the filter")
     public int pagesSkipped;
+
+    @Label("Predicate")
+    @Description("The filter predicate as a structural rendering with literals elided, "
+            + "e.g. and(gt(id, ?), eq(label, ?)); null when the read carries no filter")
+    public String predicate;
 }
