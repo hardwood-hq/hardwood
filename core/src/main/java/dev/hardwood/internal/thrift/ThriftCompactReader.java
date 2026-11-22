@@ -178,6 +178,24 @@ public class ThriftCompactReader {
         return bytes;
     }
 
+    /// A binary value's bytes, located but not copied: the offset of its first payload byte
+    /// and its length, for a caller that skips the value now and copies it later, only if
+    /// it turns out to be needed.
+    record BinaryRange(int offset, int length) {
+    }
+
+    /// Skip a binary value without copying it, returning where its bytes sit so the caller
+    /// can copy them later with [#copyRange] if it decides it needs them after all. The
+    /// declared length is validated against the bytes still in the buffer exactly as
+    /// [#readBinary] validates it, so a corrupt length fails here, at the skip, rather
+    /// than silently desyncing the stream.
+    BinaryRange skipBinary() {
+        int length = checkedBinaryLength(readVarint());
+        int offset = position();
+        skipBytes(length);
+        return new BinaryRange(offset, length);
+    }
+
     /// Returns a zero-copy, read-only, little-endian view of the next `length` bytes and advances
     /// past them. The returned buffer shares storage with this reader's buffer (no copy), so for a
     /// memory-mapped input it stays backed by the mapped file.
