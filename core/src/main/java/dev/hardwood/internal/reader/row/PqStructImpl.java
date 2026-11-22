@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BinaryValueTest;
 import dev.hardwood.internal.variant.PqVariantImpl;
@@ -62,6 +63,12 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         this.desc = desc;
         this.rowIndex = rowIndex;
         this.valueIndex = valueIndex;
+    }
+
+    /// The `[file] ` prefix for caller-mistake messages, following
+    /// [FlatRowReader] and [ColumnReader]. Empty when the file is unknown.
+    private String prefix() {
+        return ExceptionContext.filePrefix(batch.fileName);
     }
 
     private int resolveValueIndex(int projCol) {
@@ -355,7 +362,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
     private TopLevelFieldMap.FieldDesc childAt(int fieldIndex) {
         TopLevelFieldMap.FieldDesc[] children = desc.children();
         if (fieldIndex < 0 || fieldIndex >= children.length) {
-            throw new IndexOutOfBoundsException("Field index " + fieldIndex
+            throw new IndexOutOfBoundsException(prefix() + "Field index " + fieldIndex
                     + " is out of bounds for a struct of " + children.length + " fields");
         }
         return children[fieldIndex];
@@ -367,7 +374,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
+            throw new NullPointerException(prefix() + "Field '" + child.schema().name() + "' is null");
         }
         return ((int[]) batch.valueArrays[projCol])[idx];
     }
@@ -376,7 +383,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
+            throw new NullPointerException(prefix() + "Field '" + child.schema().name() + "' is null");
         }
         return ((long[]) batch.valueArrays[projCol])[idx];
     }
@@ -385,7 +392,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
+            throw new NullPointerException(prefix() + "Field '" + child.schema().name() + "' is null");
         }
         if (child.schema().type() == PhysicalType.FLOAT) {
             return ((float[]) batch.valueArrays[projCol])[idx];
@@ -398,7 +405,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
+            throw new NullPointerException(prefix() + "Field '" + child.schema().name() + "' is null");
         }
         return ((double[]) batch.valueArrays[projCol])[idx];
     }
@@ -407,7 +414,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.schema().name() + "' is null");
+            throw new NullPointerException(prefix() + "Field '" + child.schema().name() + "' is null");
         }
         return ((boolean[]) batch.valueArrays[projCol])[idx];
     }
@@ -434,7 +441,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
-            throw new IllegalStateException("Field '" + child.schema().name() + "' is null");
+            throw new IllegalStateException(prefix() + "Field '" + child.schema().name() + "' is null");
         }
         return batch.testBinary(projCol, idx, test);
     }
@@ -507,7 +514,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
     private PqVariant readVariant(TopLevelFieldMap.FieldDesc.Variant variantDesc, String fieldName) {
         if (variantDesc.metadataCol() < 0) {
             throw new IllegalStateException(
-                    "Variant column '" + fieldName + "' requires its 'metadata' child in the projection");
+                    prefix() + "Variant column '" + fieldName + "' requires its 'metadata' child in the projection");
         }
         int metaIdx = resolveValueIndex(variantDesc.metadataCol());
         if (batch.isElementNull(variantDesc.metadataCol(), metaIdx)) {
@@ -524,14 +531,14 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
             // Fail fast until list-aware reassembly is implemented.
             if (rowIndex < 0) {
                 throw new UnsupportedOperationException(
-                        "Shredded Variant inside a repeated context (list/map element) "
+                        prefix() + "Shredded Variant inside a repeated context (list/map element) "
                                 + "is not yet supported; field '" + fieldName + "'");
             }
         }
         int valueCol = variantDesc.valueCol();
         if (!shredded && valueCol < 0) {
             throw new IllegalStateException(
-                    "Variant column '" + fieldName + "' requires its 'value' child in the projection");
+                    prefix() + "Variant column '" + fieldName + "' requires its 'value' child in the projection");
         }
         try {
             if (shredded) {
@@ -554,7 +561,7 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
     private TopLevelFieldMap.FieldDesc lookupChild(String name) {
         TopLevelFieldMap.FieldDesc child = desc.getChild(name);
         if (child == null) {
-            throw new IllegalArgumentException("Field not found: " + name);
+            throw new IllegalArgumentException(prefix() + "Field not found: " + name);
         }
         return child;
     }
@@ -568,42 +575,42 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
         return primitiveOf(child, child.name());
     }
 
-    private static TopLevelFieldMap.FieldDesc.Primitive primitiveOf(
+    private TopLevelFieldMap.FieldDesc.Primitive primitiveOf(
             TopLevelFieldMap.FieldDesc child, String fieldName) {
         if (!(child instanceof TopLevelFieldMap.FieldDesc.Primitive prim)) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' is not a primitive type");
+            throw new IllegalArgumentException(prefix() + "Field '" + fieldName + "' is not a primitive type");
         }
         return prim;
     }
 
-    private static TopLevelFieldMap.FieldDesc.Struct structAt(
+    private TopLevelFieldMap.FieldDesc.Struct structAt(
             TopLevelFieldMap.FieldDesc child, String fieldName) {
         if (!(child instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' is not a struct");
+            throw new IllegalArgumentException(prefix() + "Field '" + fieldName + "' is not a struct");
         }
         return structDesc;
     }
 
-    private static TopLevelFieldMap.FieldDesc.ListOf listAt(
+    private TopLevelFieldMap.FieldDesc.ListOf listAt(
             TopLevelFieldMap.FieldDesc child, String fieldName) {
         if (!(child instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' is not a list");
+            throw new IllegalArgumentException(prefix() + "Field '" + fieldName + "' is not a list");
         }
         return listDesc;
     }
 
-    private static TopLevelFieldMap.FieldDesc.MapOf mapAt(
+    private TopLevelFieldMap.FieldDesc.MapOf mapAt(
             TopLevelFieldMap.FieldDesc child, String fieldName) {
         if (!(child instanceof TopLevelFieldMap.FieldDesc.MapOf mapDesc)) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' is not a map");
+            throw new IllegalArgumentException(prefix() + "Field '" + fieldName + "' is not a map");
         }
         return mapDesc;
     }
 
-    private static TopLevelFieldMap.FieldDesc.Variant variantAt(
+    private TopLevelFieldMap.FieldDesc.Variant variantAt(
             TopLevelFieldMap.FieldDesc child, String fieldName) {
         if (!(child instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' is not annotated as VARIANT");
+            throw new IllegalArgumentException(prefix() + "Field '" + fieldName + "' is not annotated as VARIANT");
         }
         return variantDesc;
     }
