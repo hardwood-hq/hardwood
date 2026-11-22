@@ -412,6 +412,7 @@ hardwood dive -f data.parquet
 | `l` | Toggle the repetition / definition level histograms (Column chunk detail) |
 | `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
 | `:` | Jump to a row or row group by number (Data preview, Row groups) |
+| `]` / `[` | Move the cursor to the first row of the next / previous row group (Data preview) |
 | `d` | Open the Data preview at the row group under the cursor (Row groups, Row group detail) |
 | `o` | Jump back to Overview |
 | `?` | Toggle help overlay |
@@ -451,8 +452,8 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
 - **Column-across-row-groups** — `Enter` on a Schema leaf: one row per row group with that
   column's sizes (including unencoded size), encodings and stats; drills into the chunk detail
 - **Dictionary** — `Enter` shows the full value of an entry; `/` inline search
-- **Data preview** — row values via `RowReader`, with a `#` column giving each row's position in the file, counted from 0; `←/→` scrolls the visible column window,
-  `PgDn/PgUp` flips pages; `:` jumps to a row by number; `Enter` opens a per-row modal, where the cursor stops on every line and
+- **Data preview** — row values via `RowReader`, with a `#` column giving each row's position in the file, counted from 0; the title names the row group the loaded rows are in (`RG 1 of 3`, or `RG 1–2 of 3` where the window straddles a boundary). `←/→` scrolls the visible column window,
+  `PgDn/PgUp` flips pages; `:` jumps to a row by number; `]` / `[` move to the first row of the next / previous row group; `Enter` opens a per-row modal, where the cursor stops on every line and
   `Enter` expands the field under it when its full value is not on screen
 
 <figure markdown="span">[![Dictionary screen with inline search](../assets/cli/05-dict-search.svg){ width="720" }](../assets/cli/05-dict-search.svg)<figcaption>Dictionary with <code>/</code> inline search</figcaption></figure>
