@@ -159,7 +159,7 @@ class PqStructByIndexTest {
                 addr.getStruct(2);
                 throw new AssertionError("expected IllegalArgumentException");
             } catch (IllegalArgumentException expected) {
-                assertThat(expected).hasMessage("Field 'zip' is not a struct");
+                assertThat(expected).hasMessage("[nested_struct_test.parquet] Field 'zip' is not a struct");
             }
         }
     }
