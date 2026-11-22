@@ -67,6 +67,9 @@ class PageFilterEventTest extends AbstractJfrRecorderTest {
             assertThat(event.getInt("pagesKept")).isEqualTo(1);
             assertThat(event.getInt("pagesSkipped")).isEqualTo(PAGES_PER_COLUMN - 1);
         }
+        assertThat(events).extracting(e -> e.getString("predicate"))
+                .as("both chunks report the same filter that narrowed them")
+                .containsOnly("lt(id, ?)");
     }
 
     @Test
