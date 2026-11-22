@@ -56,6 +56,7 @@ public class RowGroupReader {
                     // Chunks come in schema order, so each column's path repeats the one the
                     // previous row group held at the same position.
                     reader.pathCache().startRowGroup();
+                    reader.encodingStatsCache().startRowGroup();
                     columns = reader.readStructList(ColumnChunkReader::read);
                     seen |= 1L << fieldId;
                     break;
