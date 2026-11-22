@@ -398,8 +398,16 @@ public final class VariantShredReassembler {
         for (int i = listStart; i < listEnd; i++) {
             // Synthetic placeholder rows carry a def level below the element's
             // max def level — they mark present-but-empty lists rather than a
-            // real element. Skip them.
-            if (batch.getDefLevel(leafCol, i) < typed.elementDefLevel()) {
+            // real element. For a nested list, i addresses an outer item, not
+            // a leaf value; follow the remaining offsets before probing it.
+            int leafIdx = i;
+            int[][] multiOffsets = batch.multiOffsets[leafCol];
+            if (multiOffsets != null) {
+                for (int rep = 1; rep < multiOffsets.length; rep++) {
+                    leafIdx = batch.getLevelStart(leafCol, rep, leafIdx);
+                }
+            }
+            if (batch.getDefLevel(leafCol, leafIdx) < typed.elementDefLevel()) {
                 continue;
             }
             int snap = pos;
