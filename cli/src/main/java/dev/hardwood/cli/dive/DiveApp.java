@@ -316,6 +316,8 @@ public final class DiveApp {
             case ScreenState.DictionaryView d -> DictionaryScreen.isInInputMode(d);
             case ScreenState.Schema s -> SchemaScreen.isInInputMode(s);
             case ScreenState.ColumnIndexView c -> ColumnIndexScreen.isInInputMode(c);
+            case ScreenState.ColumnChunks c -> ColumnChunksScreen.isInInputMode(c);
+            case ScreenState.ColumnAcrossRowGroups c -> ColumnAcrossRowGroupsScreen.isInInputMode(c);
             default -> false;
         };
     }
