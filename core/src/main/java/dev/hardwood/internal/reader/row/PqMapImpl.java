@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.PhysicalType;
@@ -50,6 +51,12 @@ final class PqMapImpl implements PqMap {
         SchemaNode.GroupNode mapNode = (SchemaNode.GroupNode) mapDesc.schema();
         this.keySchema = mapNode.getMapKey();
         this.valueSchema = mapNode.getMapValue();
+    }
+
+    /// The `[file] ` prefix for caller-mistake messages, following
+    /// [FlatRowReader] and [ColumnReader]. Empty when the file is unknown.
+    private String prefix() {
+        return ExceptionContext.filePrefix(batch.fileName);
     }
 
     // ==================== Factory Methods ====================
@@ -117,7 +124,7 @@ final class PqMapImpl implements PqMap {
             public Entry get(int index) {
                 if (index < 0 || index >= size()) {
                     throw new IndexOutOfBoundsException(
-                            "Index " + index + " out of range [0, " + size() + ")");
+                            prefix() + "Index " + index + " out of range [0, " + size() + ")");
                 }
                 return new ColumnarEntry(start + index);
             }
@@ -314,7 +321,7 @@ final class PqMapImpl implements PqMap {
     private PqStructImpl structValueAt(int valueIdx) {
         TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
         if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
-            throw new IllegalArgumentException("Value is not a struct");
+            throw new IllegalArgumentException(prefix() + "Value is not a struct");
         }
         // Null check against the value column. `mapDesc.valueProjCol()` may point
         // to a leaf deeper than the struct's own primitives (e.g. a leaf inside a
@@ -345,7 +352,7 @@ final class PqMapImpl implements PqMap {
     private PqList listValueAt(int valueIdx) {
         TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
         if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
-            throw new IllegalArgumentException("Value is not a list");
+            throw new IllegalArgumentException(prefix() + "Value is not a list");
         }
         return PqListImpl.createGenericList(batch, listDesc, -1, valueIdx);
     }
@@ -353,7 +360,7 @@ final class PqMapImpl implements PqMap {
     private PqMap mapValueAt(int valueIdx) {
         TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
         if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf innerMapDesc)) {
-            throw new IllegalArgumentException("Value is not a map");
+            throw new IllegalArgumentException(prefix() + "Value is not a map");
         }
         return PqMapImpl.create(batch, innerMapDesc, -1, valueIdx);
     }
@@ -361,18 +368,18 @@ final class PqMapImpl implements PqMap {
     private PqVariant variantValueAt(int valueIdx) {
         TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
         if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
-            throw new IllegalArgumentException("Value is not a variant");
+            throw new IllegalArgumentException(prefix() + "Value is not a variant");
         }
         if (variantDesc.root().typed() != null) {
             // Shredded variants in repeated contexts need position-aware
             // reassembly (tracked in hardwood#467); the unshredded path
             // below works today.
             throw new UnsupportedOperationException(
-                    "Shredded Variant inside a map value is not yet supported");
+                    prefix() + "Shredded Variant inside a map value is not yet supported");
         }
         if (variantDesc.metadataCol() < 0) {
             throw new IllegalStateException(
-                    "Variant map value requires its 'metadata' child in the projection");
+                    prefix() + "Variant map value requires its 'metadata' child in the projection");
         }
         if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
             return null;
@@ -381,7 +388,7 @@ final class PqMapImpl implements PqMap {
         int valueCol = variantDesc.valueCol();
         if (valueCol < 0) {
             throw new IllegalStateException(
-                    "Variant map value requires its 'value' child in the projection");
+                    prefix() + "Variant map value requires its 'value' child in the projection");
         }
         byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
         try {
@@ -540,7 +547,7 @@ final class PqMapImpl implements PqMap {
         public int getIntKey() {
             int keyProjCol = mapDesc.keyProjCol();
             if (batch.isElementNull(keyProjCol, valueIdx)) {
-                throw new NullPointerException("Key is null");
+                throw new NullPointerException(prefix() + "Key is null");
             }
             return ((int[]) batch.valueArrays[keyProjCol])[valueIdx];
         }
@@ -549,7 +556,7 @@ final class PqMapImpl implements PqMap {
         public long getLongKey() {
             int keyProjCol = mapDesc.keyProjCol();
             if (batch.isElementNull(keyProjCol, valueIdx)) {
-                throw new NullPointerException("Key is null");
+                throw new NullPointerException(prefix() + "Key is null");
             }
             return ((long[]) batch.valueArrays[keyProjCol])[valueIdx];
         }
@@ -592,7 +599,7 @@ final class PqMapImpl implements PqMap {
         public int getIntValue() {
             int valueProjCol = mapDesc.valueProjCol();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
-                throw new NullPointerException("Value is null");
+                throw new NullPointerException(prefix() + "Value is null");
             }
             return ((int[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
@@ -601,7 +608,7 @@ final class PqMapImpl implements PqMap {
         public long getLongValue() {
             int valueProjCol = mapDesc.valueProjCol();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
-                throw new NullPointerException("Value is null");
+                throw new NullPointerException(prefix() + "Value is null");
             }
             return ((long[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
@@ -610,7 +617,7 @@ final class PqMapImpl implements PqMap {
         public float getFloatValue() {
             int valueProjCol = mapDesc.valueProjCol();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
-                throw new NullPointerException("Value is null");
+                throw new NullPointerException(prefix() + "Value is null");
             }
             SchemaNode.PrimitiveNode primitive = requirePrimitiveValue();
             if (primitive.type() != PhysicalType.FLOAT) {
@@ -626,7 +633,7 @@ final class PqMapImpl implements PqMap {
         public double getDoubleValue() {
             int valueProjCol = mapDesc.valueProjCol();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
-                throw new NullPointerException("Value is null");
+                throw new NullPointerException(prefix() + "Value is null");
             }
             return ((double[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
@@ -635,7 +642,7 @@ final class PqMapImpl implements PqMap {
         public boolean getBooleanValue() {
             int valueProjCol = mapDesc.valueProjCol();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
-                throw new NullPointerException("Value is null");
+                throw new NullPointerException(prefix() + "Value is null");
             }
             return ((boolean[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
