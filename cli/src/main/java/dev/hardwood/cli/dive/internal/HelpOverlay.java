@@ -69,7 +69,7 @@ public final class HelpOverlay {
         lines.addAll(kv("e / c", "expand / collapse all groups", descBudget));
         lines.add(Line.empty());
         lines.add(Line.from(new Span("Inline search", Theme.accent().bold())));
-        lines.addAll(kv("/", "enter filter mode (Schema, Column index, Dictionary)", descBudget));
+        lines.addAll(kv("/", "enter filter mode (Schema, Column index, Dictionary, Column chunks, Column-across-RGs)", descBudget));
         lines.addAll(kv("Enter", "commit filter", descBudget));
         lines.addAll(kv("Esc", "clear filter", descBudget));
         lines.add(Line.empty());
