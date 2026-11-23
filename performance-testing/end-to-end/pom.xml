@@ -20,39 +20,14 @@
   <artifactId>hardwood-performance-testing-end-to-end</artifactId>
 
   <name>Hardwood End-to-End Performance Tests</name>
-  <description>Performance comparison tests between Hardwood and parquet-java</description>
+  <description>Allocation-profiling, filtering and latency tests of Hardwood's read path</description>
 
   <dependencies>
-    <!--
-      Not used by any code here. Declared so the reactor builds the fixtures before these tests
-      run: they read them out of `../test-data-setup/target` by relative path, which the reactor
-      cannot see when ordering modules, so under `-T` there is otherwise nothing stopping the two
-      running at once. Being listed after it in <modules> ordered them only while the build was
-      serial.
-    -->
-    <dependency>
-      <groupId>dev.hardwood</groupId>
-      <artifactId>hardwood-performance-testing-test-data-setup</artifactId>
-      <version>${project.version}</version>
-      <scope>test</scope>
-    </dependency>
-
     <!-- Hardwood (module under test) -->
     <dependency>
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-core</artifactId>
     </dependency>
-    <dependency>
-      <groupId>dev.hardwood</groupId>
-      <artifactId>hardwood-s3</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>dev.hardwood</groupId>
-      <artifactId>hardwood-test-support</artifactId>
-      <scope>test</scope>
-    </dependency>
-
 
     <!-- Compression libraries needed for test files -->
     <dependency>

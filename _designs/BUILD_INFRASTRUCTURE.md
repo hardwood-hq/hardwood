@@ -5,7 +5,7 @@ Covers the quality and packaging infrastructure of Hardwood's Maven build: the `
 Related documents:
 
 - [TESTING.md](../TESTING.md): the test suites and how they are split between Surefire and Failsafe
-- [PERFORMANCE.md](../PERFORMANCE.md): the performance tests
+- [PERFORMANCE.md](../PERFORMANCE.md): the in-tree benchmarks and where benchmark results are published
 - [NATIVE_BUILD.md](../NATIVE_BUILD.md): the GraalVM native CLI build
 - [DOCUMENTATION.md](DOCUMENTATION.md): the documentation site, the prose check and the API change reports
 
@@ -56,7 +56,6 @@ The license check runs once for the whole tree (`aggregate`) from the root, with
 | Local `./mvnw verify` | Yes |
 | PR and main CI: the step that builds a job's own modules | Yes |
 | PR and main CI: the dependency step of each job | No (`-Dquick`) |
-| `performance.yml` install step | Yes |
 | Release (`release.sh`: `release:prepare` and `release:perform`) | No: `preparationGoals` and `arguments` carry `-Dquick` |
 | Native CLI packaging (`cli-early-access.yml`, `release-cli.yml`) | Yes |
 
@@ -117,15 +116,14 @@ The cache restores the local repository of an earlier run, including the `dev.ha
 ### Cache keys
 
 - The key is `maven-<os>-<job>-<hash of all pom.xml>`, with fallbacks to the same job under any POM hash, then to related jobs, then to any Maven cache.
-- `main-build.yml` saves its caches (`actions/cache`). `pr-build.yml` only restores them (`actions/cache/restore`): a pull request can restore caches saved on its own ref or on `main`, and a cache saved by a PR would serve only re-runs of that PR while taking space from `main`'s caches and the performance datasets.
+- `main-build.yml` saves its caches (`actions/cache`). `pr-build.yml` only restores them (`actions/cache/restore`): a pull request can restore caches saved on its own ref or on `main`, and a cache saved by a PR would serve only re-runs of that PR while taking space from `main`'s caches.
 - Every PR job therefore has a counterpart in `main-build.yml` under the same job name that resolves at least the same dependencies. The PR-only `predicate-audit` job falls back to the `build-modules` cache, which is why `build-modules` compiles `predicate-audit` on `main` as well. A job added to `pr-build.yml` needs such a counterpart, or every run downloads what the cache lacks.
-- The Maven distribution that `./mvnw` unpacks has a cache of its own, keyed `maven-wrapper-<os>-<hash of .mvn/wrapper/maven-wrapper.properties>` and shared by every job, so the distribution is downloaded only when the wrapper properties change. `main-build.yml` and `performance.yml` restore and save it, `pr-build.yml` only restores it, and the Graal packaging jobs of `release-cli.yml` and `cli-early-access.yml`, whose `setup-graalvm` caches only the repository, restore and save it per OS. Jobs that set up their JDK with `setup-java`'s `cache: maven` get an equivalent cache, under that action's own key.
+- The Maven distribution that `./mvnw` unpacks has a cache of its own, keyed `maven-wrapper-<os>-<hash of .mvn/wrapper/maven-wrapper.properties>` and shared by every job, so the distribution is downloaded only when the wrapper properties change. `main-build.yml` restores and saves it, `pr-build.yml` only restores it, and the Graal packaging jobs of `release-cli.yml` and `cli-early-access.yml`, whose `setup-graalvm` caches only the repository, restore and save it per OS. Jobs that set up their JDK with `setup-java`'s `cache: maven` get an equivalent cache, under that action's own key.
 
 The closure is not offline: a cache miss or a changed POM resolves third-party artifacts from Maven Central during the run.
 
 ### Other workflows
 
-- `performance.yml` installs `hardwood-error-prone-checks`, `core`, `avro`, `s3` and `aws-auth` with `-am` under `qa`, then runs the performance tests with `-amd`. It keeps its own Maven cache.
 - `cli-early-access.yml` runs a full `clean install` in one job, uploads `~/.m2/repository/dev/hardwood` as a workflow artifact, and the per-OS native packaging jobs download it. This is the one workflow whose jobs pass Hardwood artifacts between each other.
 - `release-cli.yml` builds each native package from the release tag with `-pl :hardwood-error-prone-checks,:hardwood-cli -am`.
 - `release.yml` runs `release.sh` (see [RELEASING.md](../RELEASING.md)).

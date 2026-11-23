@@ -50,8 +50,7 @@ import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
 
 /// Encodes a flat, taxi-shaped fixture through Hardwood's columnar and row write APIs and
-/// parquet-java's record writer, the write-side counterpart of the read path's
-/// `FlatPerformanceTest`.
+/// parquet-java's record writer.
 ///
 /// | Contender | API |
 /// |-----------|-----|
