@@ -181,6 +181,17 @@ public final class VariantValueEncoder {
 
     // ==================== Array & object framing ====================
 
+    /// Returns the number of bytes [#writeArray] writes for `elements`: the
+    /// header, the element count, the offset table and the payload.
+    public static int arraySize(byte[][] elements) {
+        int n = elements.length;
+        int totalValueBytes = 0;
+        for (byte[] e : elements) {
+            totalValueBytes += e.length;
+        }
+        return 1 + (n > 0xFF ? 4 : 1) + (n + 1) * minUnsignedWidth(totalValueBytes) + totalValueBytes;
+    }
+
     /// Writes an ARRAY header (basic_type=3) plus num_elements + offset table,
     /// given the element byte ranges already materialized in `elementBytes`.
     /// Returns the new `pos`.
