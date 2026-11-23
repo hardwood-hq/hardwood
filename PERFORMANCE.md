@@ -5,6 +5,23 @@
 - The [benchmark history](https://hardwood.dev/hardwood-benchmark-results/) charts the nightly regression runs of `main` on a dedicated bare-metal machine, one series per benchmark contender.
 - [hardwood-benchmarks](https://github.com/hardwood-hq/hardwood-benchmarks) holds the end-to-end benchmarks behind those runs and the comparisons against parquet-java, Arrow and other engines. Its `publications/` directory archives the runs behind each published result.
 
+### Smoke-Testing a Change
+
+A brief full-scan check of a local change times Hardwood's column reader and indexed row reader over one month of NYC taxi data with `run-flat.sh` from hardwood-benchmarks, which builds against the `1.1.0-SNAPSHOT` in the local Maven repository:
+
+```shell
+# in this repository: install the snapshot
+./mvnw -pl core -am install -Dquick
+
+# in hardwood-benchmarks: check results against parquet-java, then time the two contenders
+./run-flat.sh --gate --start 2025-01 --end 2025-01
+./run-flat.sh --start 2025-01 --end 2025-01 \
+  --include 'hardwoodColumnar|hardwoodRowReaderIndexed' \
+  --warmup 1 --meas 1 --forks 1 --no-pin
+```
+
+The first run downloads the month into `target/tlc-trip-record-data` of hardwood-benchmarks; `--data-dir` points it at a directory that `./mvnw clean` does not remove. `./run-flat.sh --help` lists the other flags.
+
 ## In-Tree Benchmarks
 
 The benchmarks in this repository measure individual costs of the read and write paths, many of them through `dev.hardwood.internal` classes that hardwood-benchmarks cannot reach. They are built only under `-Pperformance-test`.
