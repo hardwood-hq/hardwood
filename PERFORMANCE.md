@@ -2,6 +2,10 @@
 
 ## Benchmark Results
 
+The [benchmark history](https://hardwood.dev/hardwood-benchmark-results/) charts nightly
+regression runs of `main` from [hardwood-benchmarks](https://github.com/hardwood-hq/hardwood-benchmarks).
+The results below are one-off runs.
+
 ### Flat Files
 
 These are the results from parsing files of the NYC Yellow Taxi Trip data set (subset 2016-01 to 2025-11, ~9.2GB overall, ~650M rows),
