@@ -15,63 +15,72 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0.CR1 (unreleased)
 
+[API changes](/api-changes/1.1.0.CR1/)
+
+Highlights of this release:
+
+- Writing to S3 and parallel writes
+    - `S3Source.outputFile(...)` streams a file to S3 as a multipart upload while it is written, uploading parts in the background; nothing is visible at the key until the writer closes
+    - A row group's column chunks are encoded and compressed in parallel on the pool of a `HardwoodContext`, passed to `ParquetFileWriter.create(...)`; the file is byte-identical whichever thread encoded what
+- Further writer additions
+    - Compression levels for `ZSTD`, `GZIP`, `BROTLI` and `LZ4_RAW`, as in `Compression.zstd().level(9)`
+    - `sortingColumns` declares and enforces the row order, recorded as `sorting_columns`
+    - `DATA_PAGE_V2` pages on request, and `SizeStatistics` with level histograms, so Hardwood and other readers can prune `isNull` and `isNotNull` on groups in files Hardwood wrote
+    - `StructBuilder.setValue` takes a value in the form `getValue` returns, so rows copy without switching on field types
+- New format features
+    - ALP-encoded `FLOAT` and `DOUBLE` columns are read, and written with `ColumnEncoding.ALP`
+    - The `FILE` logical type: a group referencing inline or external bytes is read as a validated `PqFile` and written with `setFile` and `addFile`
+    - Field ids (`field_id`, used by Iceberg, Delta Lake and DuckLake) are exposed on `ColumnSchema` and `SchemaNode`, kept when a file is rewritten with a schema read from another, and set through `FileSchema.Builder`
+    - `INT96` columns declaring `INT96_TIMESTAMP_ORDER` are pruned by their statistics
+- A read's CPU work runs on its `HardwoodContext`'s pool and its I/O on virtual threads: `HardwoodContext.create(n)` bounds all decoding to `n` threads, and prefetches and footer loads no longer use the JVM's common pool
+- Faster remote reads
+    - An S3 object of up to 256 KiB is read in the one request that opens it; for a larger file the footer and page index come with that request
+    - A multi-file read opens the next files ahead, fetching their footers and first data while it reads earlier ones, and holds only the footers of the files it is reading
+    - Requests are cut at 16 MiB so decoding starts after the first one arrives, and a range read whose connection fails midway re-requests only the missing bytes
+    - `S3Source.Builder.anonymous()` reads public buckets with unsigned requests
+- Faster local reads: uncompressed `PLAIN` fixed-width values are read where they lie in the page, row readers projecting only top-level primitives and non-repeated structs take the flat path, and no humongous G1 objects are allocated for batches, dictionaries or decompressed pages on heaps below 4 GB
+- Correctness fixes
+    - A read that can no longer make progress, or whose decode runs out of heap, fails instead of hanging
+    - `DATA_PAGE` levels in the deprecated `BIT_PACKED` encoding are read correctly instead of yielding wrong nulls and nesting
+    - Shredded Variants: arrays with null or empty shredded objects read correctly, rows setting both `value` and `typed_value` for a non-object are rejected, and an unsupported spec version is refused
+    - `getValue` on `INT(8)` and `INT(16)` refuses a stored value outside the annotation's range instead of returning its low bits
+    - Sibling fields sharing a name are each reachable by index, and lookups by that name no longer silently pick one of them
+    - Creating a writer on an `OutputFile` another writer has used fails instead of overwriting the published file
+    - In a GraalVM native image, read failures keep the exception type they have on the JVM
+- CLI
+    - `--log-file` captures Hardwood's detailed logging, such as the byte ranges an S3 read fetches, for every command that reads a file
+    - S3 reads fall back to unsigned requests when no credentials are configured
+    - `print` and `convert` report how many rows they wrote when a read fails part-way
+    - BSON values render as bytes, and `print`, `convert` and `dive` render every value the same way
+
 **Breaking Changes:**
 
-- The native CLI is no longer published for macOS on Intel; on those machines the CLI runs from the Docker image ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
-- `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()`; `buffer().remaining()` gives the file's length ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
-- `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, the getter `codec()` by `compression()`, and `WriterConfig.DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
-- `FileSchema.Builder` sets the logical type and type length of a primitive leaf in a `FileSchema.PrimitiveBuilder` lambda, for example `primitive("name", BYTE_ARRAY, REQUIRED, col -> col.logicalType(LogicalType.string()))`. The overloads that took a `typeLength` or a `LogicalType` are removed ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
-- `FileSchema.Builder.addColumn(...)` and `FileSchema.StructBuilder.addColumn(...)` are renamed to `primitive(...)`, the name `FileSchema.ElementBuilder` uses ([#1883](https://github.com/hardwood-hq/hardwood/issues/1883))
-- `ColumnSchema` and `SchemaNode.GroupNode` have a last record component `fieldId`. Their constructors and record patterns take the new component, and two schemas that differ only in field ids are no longer equal ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
-- `SchemaNode.PrimitiveNode` has the single record component `column`, the leaf's `ColumnSchema`; its other accessors read from that column and remain ([#1892](https://github.com/hardwood-hq/hardwood/issues/1892))
+- `ColumnReader.getBinaryValues()` returns a `BinaryValues` giving each value as a window (`buffer(i)`, `start(i)`, `end(i)`), and `getBinaryStarts()` and `getBinaryEnds()` are removed ([#1578](https://github.com/hardwood-hq/hardwood/issues/1578))
+- `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, `codec()` by `compression()`, and `DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
+- `FileSchema.Builder` and `StructBuilder` declare leaves with `primitive(...)` instead of `addColumn(...)`, and set a leaf's logical type and type length in a `PrimitiveBuilder` lambda, as in `primitive("name", BYTE_ARRAY, REQUIRED, col -> col.logicalType(LogicalType.string()))`; the overloads taking a `typeLength` or `LogicalType` are removed ([#957](https://github.com/hardwood-hq/hardwood/issues/957), [#1883](https://github.com/hardwood-hq/hardwood/issues/1883))
+- `ColumnSchema` and `SchemaNode.GroupNode` take a last record component `fieldId`, so schemas differing only in field ids are no longer equal; `SchemaNode.PrimitiveNode` has the single component `column` ([#957](https://github.com/hardwood-hq/hardwood/issues/957), [#1892](https://github.com/hardwood-hq/hardwood/issues/1892))
+- `LogicalType.nullType()` is renamed to `unknown()`, and the annotation prints as `UNKNOWN` ([#1890](https://github.com/hardwood-hq/hardwood/issues/1890))
+- `LogicalType` permits the new `FileType`, and `Encoding` and `ColumnEncoding` have the new constant `ALP`; an exhaustive `switch` over them needs a case for each ([#1413](https://github.com/hardwood-hq/hardwood/issues/1413), [#581](https://github.com/hardwood-hq/hardwood/issues/581))
+- A lookup by a name that several sibling fields share, such as `getColumn(String)`, `FileSchema.getField` or a row accessor, throws `IllegalArgumentException` instead of returning the first or last match; a projection by such a name selects all of them ([#1744](https://github.com/hardwood-hq/hardwood/issues/1744))
+- The writer refuses `setString` on a `BYTE_ARRAY` column without a `STRING` annotation (use `setBinary`), and `FileSchema.Builder` and `FileSchema.fromSchemaElements` refuse null arguments, sibling fields of one name and annotations a field cannot carry where they are declared ([#1890](https://github.com/hardwood-hq/hardwood/issues/1890))
+- A `LIST`, `MAP` or `FILE` shape the format forbids, including a `MAP` with an optional or missing key, fails with `IllegalArgumentException` instead of `UnsupportedOperationException`, and a schema without columns with `UnsupportedOperationException` ([#1899](https://github.com/hardwood-hq/hardwood/issues/1899))
+- `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()` ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
+- The native CLI is no longer published for macOS on Intel; use the Docker image there ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
 
 **Deprecations:**
 
 - `HardwoodContext.executor()` is deprecated for removal in the next major release, without a replacement ([#1581](https://github.com/hardwood-hq/hardwood/issues/1581))
-- The `dev.hardwood.jfr.PrefetchMissEvent` class is deprecated for removal in the next major release; Hardwood never emits the event, and `dev.hardwood.BatchWait` reports the consumer's stalls ([#1042](https://github.com/hardwood-hq/hardwood/issues/1042))
+- `dev.hardwood.jfr.PrefetchMissEvent` is deprecated for removal in the next major release; Hardwood never emits it, and `dev.hardwood.BatchWait` reports the consumer's stalls ([#1042](https://github.com/hardwood-hq/hardwood/issues/1042))
 
 **Security:**
 
-- The native CLI is built with GraalVM CE 25 Innovation releases and embeds JDK 25.0.4.1 ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
-- CLI releases publish `checksums_sha256.txt` and build provenance attestations for the archives and the Docker image, verifiable with `gh attestation verify` ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
-- The CLI Docker image is based on Fedora 44 ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
-- A crafted file cannot make a read allocate without bound: a size, count or length its bytes cannot back fails the read with `ParquetReadException` before anything is allocated from it ([#610](https://github.com/hardwood-hq/hardwood/issues/610), [#1644](https://github.com/hardwood-hq/hardwood/issues/1644), [#1685](https://github.com/hardwood-hq/hardwood/issues/1685))
+- A crafted file cannot make a read allocate without bound or fail with an unchecked JDK exception: a size, count, length or level its bytes cannot back fails the read with `ParquetReadException` before anything is allocated from it, and a page larger than the read's memory limit fails before it is decoded or fetched. The footer and page-header decoding are fuzzed ([#610](https://github.com/hardwood-hq/hardwood/issues/610), [#1644](https://github.com/hardwood-hq/hardwood/issues/1644), [#1685](https://github.com/hardwood-hq/hardwood/issues/1685), [#1715](https://github.com/hardwood-hq/hardwood/issues/1715), [#1842](https://github.com/hardwood-hq/hardwood/issues/1842))
+- An S3 read fails when the object was replaced since the file was opened, and a response body that stalls for `requestTimeout` is retried instead of blocking the read ([#1686](https://github.com/hardwood-hq/hardwood/issues/1686), [#1393](https://github.com/hardwood-hq/hardwood/issues/1393))
+- The native CLI is built with GraalVM CE 25 and embeds JDK 25.0.4.1, the Docker image is based on Fedora 44, and CLI releases publish `checksums_sha256.txt` and build provenance attestations, verifiable with `gh attestation verify` ([#1607](https://github.com/hardwood-hq/hardwood/issues/1607))
 
-**Improvements:**
+See the [1.1.0.CR1 milestone](https://github.com/hardwood-hq/hardwood/milestone/10?closed=1) on GitHub for the full list of resolved issues.
 
-- A Variant whose `metadata` does not decode, or whose shredded columns do not reassemble, when it is read names its column in the message, besides the file ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
-- A multi-file read of files not in memory, such as files on S3, opens several files ahead, fetching their footers and first data while it reads earlier files ([#1665](https://github.com/hardwood-hq/hardwood/issues/1665))
-- An S3 object of up to 256 KiB is read in the one request that opens it, and the footer and page index of a larger file come with that request ([#1399](https://github.com/hardwood-hq/hardwood/issues/1399))
-- A multi-file read holds the footers of the files it is reading rather than of every file it has read ([#1662](https://github.com/hardwood-hq/hardwood/issues/1662))
-- `AbstractOutputFile` is a base for implementing `OutputFile` that enforces its lifecycle; the bundled outputs extend it ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
-- A row reader projecting structs that hold no list, map or variant reads them without decoding nested records, as it reads top-level columns ([#475](https://github.com/hardwood-hq/hardwood/issues/475))
-- Row readers resolve most field names passed as string literals, or taken from the file's schema, by comparing references rather than characters ([#681](https://github.com/hardwood-hq/hardwood/issues/681))
-- `Compression` sets the writer's compression level for `ZSTD`, `GZIP`, `BROTLI` and `LZ4_RAW`, as in `Compression.zstd().level(9)` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
-- `WriterConfig.Builder.sortingColumns` declares the order rows are sorted in; each row group records it as `sorting_columns`, and a row out of that order fails the write ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
-- `WriterConfig.Builder.dataPageVersion(DataPageVersion.V2)` writes every data page as `DATA_PAGE_V2` ([#1820](https://github.com/hardwood-hq/hardwood/issues/1820))
-- `StructBuilder.setValue` writes a field from a value in the form `getValue` returns, so rows can be copied without switching on field types ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
-- A filtered `ColumnReader` or `ColumnReaders` returns no batch without rows: `nextBatch()` passes over the batches the filter keeps no row of ([#1815](https://github.com/hardwood-hq/hardwood/issues/1815))
-- The field id of each schema element (`field_id`, used by Iceberg, Delta Lake and DuckLake) is available as `ColumnSchema.fieldId()` and `SchemaNode.fieldId()`. A file written with a schema read from another file keeps the field ids, and `FileSchema.Builder` can set them ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
-
-**Bug fixes:**
-
-- A read whose decode runs out of heap raises the `OutOfMemoryError` to its caller instead of hanging ([#1841](https://github.com/hardwood-hq/hardwood/issues/1841))
-- A page storing more bytes than the read's memory limit fails the read with `ParquetReadException` before it is decoded, and before it is fetched where the file's page index locates it, instead of running out of heap or, on S3, direct memory ([#1842](https://github.com/hardwood-hq/hardwood/issues/1842))
-- A shredded Variant row that sets both `value` and `typed_value` for a value that is not an object fails the read with `ParquetReadException`, instead of reading `typed_value` and dropping `value` ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
-- An array element of a shredded Variant whose shredded object is null reads its `value`, such as a Variant `NULL`, instead of failing the read ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
-- An array element of a shredded Variant whose shredded object is present with no fields set reads as an empty object instead of Variant `NULL` ([#315](https://github.com/hardwood-hq/hardwood/issues/315))
-- An S3 response body that sends no bytes for `requestTimeout` fails its request, which is retried, instead of blocking the read without bound ([#1393](https://github.com/hardwood-hq/hardwood/issues/1393))
-- An S3 read fails with `ParquetReadException` when the object was replaced since the file was opened, and opening an S3 file fails when the endpoint ignores the `Range` header of an object larger than the open-time tail ([#1686](https://github.com/hardwood-hq/hardwood/issues/1686))
-- An S3 range read whose connection fails midway re-requests only the bytes not yet received, within the retry budget ([#1666](https://github.com/hardwood-hq/hardwood/issues/1666))
-- Creating a writer on an `OutputFile` another writer has used fails, instead of a local `OutputFile` publishing over the first writer's file ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
-- On heaps below 4 GB, a read allocates no humongous G1 object for a batch of an `INT64`, `DOUBLE` or list column, for the dictionary of a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column, or for a page decompressed with Brotli or with LZ4 in the Hadoop format ([#1497](https://github.com/hardwood-hq/hardwood/issues/1497))
-- A `DATA_PAGE` whose repetition or definition levels are in the deprecated `BIT_PACKED` encoding is read correctly, instead of failing or returning wrong nulls and nesting ([#569](https://github.com/hardwood-hq/hardwood/issues/569))
-- A read of a malformed file fails with `ParquetReadException` naming what is wrong, instead of an `ArrayIndexOutOfBoundsException`, `NullPointerException` or `IllegalStateException`, a stalled read or a wrong answer ([#1715](https://github.com/hardwood-hq/hardwood/issues/1715), [#1685](https://github.com/hardwood-hq/hardwood/issues/1685), [#1630](https://github.com/hardwood-hq/hardwood/issues/1630))
-- A repetition or definition level above its column's maximum fails the read with `ParquetReadException`, instead of reading as a null or a value in no list ([#1685](https://github.com/hardwood-hq/hardwood/issues/1685))
-- A read of a Variant column whose annotation declares a specification version other than 1 fails with `UnsupportedOperationException`, instead of decoding the column as version 1 ([#777](https://github.com/hardwood-hq/hardwood/issues/777))
-- `getValue` on an `INT(8)` or `INT(16)` column fails with `ParquetReadException` on a stored value outside the annotation's range instead of returning its low bits ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
-- `hardwood print` and `dive` show a value outside its `INT(8)` or `INT(16)` range, or a `TIME` outside a day, as a marker, and `hardwood convert` fails on it ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
-- In a GraalVM native image, a read failure keeps the exception type it has on the JVM instead of losing it; an exception of the application's own type, such as one a `MetadataSource` throws, reaches the caller as the cause of a `RuntimeException` naming the file, on the JVM and in a native image ([#1803](https://github.com/hardwood-hq/hardwood/issues/1803))
+Thank you to all contributors to this release: [Alex Sorokoumov](https://github.com/Gerrrr), [André Rouél](https://github.com/arouel), [Arnab Nandy](https://github.com/arnabnandy7), [Chandan Dhamande](https://github.com/nitrogen404), [Fawzi Essam](https://github.com/iifawzi), [Gunnar Morling](https://github.com/gunnarmorling), [Jeronimo López](https://github.com/jerolba), [Manish](https://github.com/mghildiy), [Matt Van Horn](https://github.com/mvanhorn), [Matthew Mullett](https://github.com/25mattm), [Omar Abdelmawgoud](https://github.com/OmarAbdelmawgoud5), [ommkd](https://github.com/ommkd), [Perfloop Agent](https://github.com/perfloop-agent), [Rion Williams](https://github.com/rionmonster).
 
 ## 1.1.0.Beta3 (2026-10-21)
 
