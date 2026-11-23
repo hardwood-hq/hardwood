@@ -11,7 +11,7 @@ Hardwood gives applications fast and efficient support for reading and writing P
 It is built to be:
 
 * **Light-weight**: Zero transitive dependencies beyond optional compression libraries (Snappy, ZSTD, LZ4, Brotli)
-* **Fast**: Hardwood aims to be the fastest Parquet reader and writer for the JVM — see the [read benchmarks](PERFORMANCE.md)
+* **Fast**: Hardwood aims to be the fastest Parquet reader and writer for the JVM — see the [benchmark history](https://hardwood.dev/hardwood-benchmark-results/) and [hardwood-benchmarks](https://github.com/hardwood-hq/hardwood-benchmarks)
 * **Complete**: Read and write support for flat and nested schemas, every logical type, every primitive type in current use, and the encodings and codecs in current use, with new format additions tracked as they land
 * **Scalable**: Hardwood is multi-threaded at the core, pages are decoded in parallel, with cross-file prefetching for multi-file reads
 * **Embeddable**: The Hardwood library can be used in GraalVM native binaries; WASM support coming soon ([preview](https://hardwood.dev/experiments/dive-web/))
@@ -94,7 +94,7 @@ See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide fo
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture, key design decisions, module layout, and a map of the design documents in `_designs/`. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: workflow, commit format, PR expectations. |
 | [NATIVE_BUILD.md](NATIVE_BUILD.md) | How the GraalVM native CLI build works. |
-| [PERFORMANCE.md](PERFORMANCE.md) | Benchmark results and how to run performance tests. |
+| [PERFORMANCE.md](PERFORMANCE.md) | Where benchmark results are published, and how to run the in-tree benchmarks. |
 | [TESTING.md](TESTING.md) | How the automated tests are organised and run, plus manual testing recipes (e.g. S3 via s3proxy). |
 | [RELEASING.md](RELEASING.md) | Release process. |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability. |
@@ -223,7 +223,7 @@ The script writes a unified `target/japicmp/api-report.diff` (text) and `target/
 
 ## Performance
 
-See [PERFORMANCE.md](PERFORMANCE.md) for benchmark results and instructions on running performance tests.
+See [PERFORMANCE.md](PERFORMANCE.md) for where benchmark results are published and how to run the in-tree benchmarks.
 
 ---
 

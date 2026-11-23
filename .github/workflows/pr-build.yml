@@ -51,8 +51,7 @@ concurrency:
 #
 # Jobs restore the Maven cache but never save it. A pull request can restore only
 # caches saved on its own ref or on `main`, so a cache saved here serves re-runs of
-# this one pull request and takes up space that `main`'s caches and the performance
-# test datasets need. `main-build.yml` saves a cache under each job name used here,
+# this one pull request and takes up space that `main`'s caches need. `main-build.yml` saves a cache under each job name used here,
 # and a job restores the one saved under its own name first. A job added here needs
 # a counterpart there that resolves the same dependencies, or every run of it
 # downloads what the cache is missing.

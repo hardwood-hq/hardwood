@@ -49,8 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///     -Dtest=FlatStructPerformanceTest -Dperf.contenders=HARDWOOD_ROW_READER_NAMED -Dperf.runs=5
 class FlatStructPerformanceTest {
 
-    private static final Path DATA_FILE = Path.of(
-            "../test-data-setup/target/flat-struct-perf-data/flat_struct_perf.parquet");
+    private static final Path DATA_FILE = Path.of("target/flat_struct_perf.parquet");
     private static final int ROWS = 10_000_000;
     private static final int WARMUPS = 3;
     private static final int DEFAULT_RUNS = 5;

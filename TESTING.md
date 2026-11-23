@@ -25,10 +25,7 @@ Three prerequisites put a test in the `integration-test` phase:
 
 Everything else is a unit test. Reading a fixture from `src/test/resources` is not an external prerequisite.
 
-Two sets of tests meet one of those prerequisites and are still named `*Test`, because they are separated by module rather than by phase:
-
-- `integration-test` (`hardwood-integration-test`) tests `hardwood-core` as a dependency. It is part of the default reactor, so `./mvnw verify` runs it on the build JDK. CI runs it on its own, against `hardwood-core` installed from an earlier step, on the Java 21 baseline the JAR claims to support and across libdeflate and Vector API availability. It needs no daemon and no binary, and `-DskipITs` does not skip it.
-- `performance-testing/end-to-end` reaches S3 through s3proxy in `FlatS3PerformanceTest`. The module builds only under `-Pperformance-test`, and the `performance.yml` workflow picks the benchmarks to run with `-Dtest=` filters, which Surefire honours and Failsafe does not. Under that profile `-DskipITs` therefore leaves this S3-backed test running.
+One set of tests meets one of those prerequisites and is still named `*Test`, because it is separated by module rather than by phase: `integration-test` (`hardwood-integration-test`) tests `hardwood-core` as a dependency. It is part of the default reactor, so `./mvnw verify` runs it on the build JDK. CI runs it on its own, against `hardwood-core` installed from an earlier step, on the Java 21 baseline the JAR claims to support and across libdeflate and Vector API availability. It needs no daemon and no binary, and `-DskipITs` does not skip it.
 
 ### Build wiring
 
