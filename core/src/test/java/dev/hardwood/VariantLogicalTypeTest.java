@@ -10,14 +10,20 @@ package dev.hardwood;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.FileSchema;
@@ -92,6 +98,91 @@ class VariantLogicalTypeTest {
 
             assertThat(rowReader.hasNext()).isFalse();
         }
+    }
+
+    @Test
+    void emptyOuterShreddedArraysNeitherGainNorTakeElements() throws IOException {
+        Path file = Paths.get("src/test/resources/variant_nested_array_test.parquet");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            PqVariantArray first = rowReader.getVariant("var").asArray();
+            assertThat(first.size()).isEqualTo(1);
+            assertThat(first.get(0).asArray().size()).isEqualTo(2);
+
+            rowReader.next();
+            assertThat(rowReader.getVariant("var").asArray().size()).isZero();
+
+            rowReader.next();
+            PqVariantArray third = rowReader.getVariant("var").asArray();
+            assertThat(third.size()).isEqualTo(1);
+            assertThat(third.get(0).asArray().size()).isEqualTo(1);
+            assertThat(third.get(0).asArray().get(0).asBoolean()).isTrue();
+
+            rowReader.next();
+            assertThat(rowReader.getVariant("var").asArray().size()).isZero();
+
+            rowReader.next();
+            PqVariantArray fifth = rowReader.getVariant("var").asArray();
+            assertThat(fifth.size()).isEqualTo(1);
+            assertThat(fifth.get(0).isNull()).isTrue();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"deep", "inner", "outer"})
+    void nestedArrayDepthAndFraming(String column) throws IOException {
+        Path file = Paths.get("src/test/resources/variant_nested_array_boundaries.parquet");
+        // Each column gets a fresh reassembler: growth for one case must not
+        // hide a missing reservation in another.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rowReader = fileReader.rowReader()) {
+            List<?> first = column.equals("deep")
+                    ? List.of(List.of(List.of(true), List.of(true))) : List.of(List.of(true, true));
+            List<?> last = switch (column) {
+                case "deep" -> List.of(List.of(List.of(true), List.of(false), List.of(true), List.of(false), List.of(true)));
+                case "inner" -> List.of(Collections.nCopies(200, true));
+                default -> Collections.nCopies(64, List.of());
+            };
+            for (List<?> expected : List.of(first, List.of(), last)) {
+                rowReader.next();
+                assertThat(arrayContents(rowReader.getVariant(column))).isEqualTo(expected);
+            }
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void nestedArrayObjectPresenceUsesItsOwnLeaf() throws IOException {
+        Path file = Paths.get("src/test/resources/variant_nested_array_boundaries.parquet");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            PqVariantObject first = rowReader.getVariant("objects").asArray().get(0).asObject();
+            assertThat(first.getArray("a").size()).isEqualTo(2);
+            rowReader.next();
+            assertThat(rowReader.getVariant("objects").asArray().size()).isZero();
+            rowReader.next();
+            PqVariantArray last = rowReader.getVariant("objects").asArray();
+            assertThat(last.size()).isEqualTo(3);
+            assertThat(last.get(0).asObject().getFieldCount()).isZero();
+            assertThat(last.get(1).asObject().getArray("a").size()).isZero();
+            assertThat(last.get(2).isNull()).isTrue();
+        }
+    }
+
+    private static Object arrayContents(PqVariant value) {
+        if (value.isNull()) {
+            return null;
+        }
+        if (value.type() != VariantType.ARRAY) {
+            return value.asBoolean();
+        }
+        List<Object> result = new ArrayList<>();
+        for (PqVariant item : value.asArray()) {
+            result.add(arrayContents(item));
+        }
+        return result;
     }
 
     /// Reads a real fixture whose Variant metadata dictionary is large enough to
