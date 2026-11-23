@@ -138,6 +138,17 @@ class BinaryStatisticsCollectorTest {
         assertThat(statistics.minValue()).isEqualTo(empty);
         assertThat(statistics.maxValue()).isEqualTo(allOnes);
 
+        // In the reverse order, the longer value extends the maximum on its tied prefix.
+        BinaryStatisticsCollector lengthDecidedMax = collector();
+        lengthDecidedMax.accept(eightZeros, 0, eightZeros.length);
+        statistics = lengthDecidedMax.toStatistics();
+        assertThat(statistics.minValue()).isEqualTo(eightZeros);
+        assertThat(statistics.maxValue()).isEqualTo(eightZeros);
+        lengthDecidedMax.accept(nineZeros, 0, nineZeros.length);
+        statistics = lengthDecidedMax.toStatistics();
+        assertThat(statistics.minValue()).isEqualTo(eightZeros);
+        assertThat(statistics.maxValue()).isEqualTo(nineZeros);
+
         // Equal eight-byte prefixes leave the tail to decide both bounds.
         BinaryStatisticsCollector equalPrefix = collector();
         equalPrefix.accept(prefixedHigh, 0, prefixedHigh.length);
