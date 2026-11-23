@@ -16,7 +16,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.YearMonth;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -32,9 +31,14 @@ public final class TaxiDataDownloader {
 
     private static final String BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/";
 
-    public static final YearMonth DEFAULT_START = YearMonth.of(2016, 1);
-    public static final YearMonth DEFAULT_END = YearMonth.of(2025, 12);
-    public static final Path DATA_DIR = Path.of("target/tlc-trip-record-data");
+    /// The months whose files are read: by the JMH benchmarks (`AvroRowReaderBenchmark`,
+    /// `MemoryMapBenchmark`, `PageHandlingBenchmark`) and by `tools/simple-datagen.py`, which cuts
+    /// `yellow_tripdata_sample.parquet` from 2025-01.
+    static final List<YearMonth> MONTHS = List.of(
+            YearMonth.of(2016, 1),
+            YearMonth.of(2016, 3),
+            YearMonth.of(2025, 1),
+            YearMonth.of(2025, 5));
 
     /// Total attempts per file before giving up (1 initial try + retries).
     private static final int MAX_ATTEMPTS = 5;
@@ -69,26 +73,13 @@ public final class TaxiDataDownloader {
 
     public static void main(String[] args) throws IOException {
         Path dataDir = getDataDirFromProperty();
-        YearMonth start = getStartMonth();
-        YearMonth end = getEndMonth();
-        System.out.println("Downloading taxi data from " + start + " to " + end);
-        downloadRange(dataDir, start, end);
+        System.out.println("Downloading taxi data for " + MONTHS);
+        download(dataDir, MONTHS);
         System.out.println("Download complete. Files in: " + dataDir.toAbsolutePath());
     }
 
-    public static String formatFilename(YearMonth ym) {
+    static String formatFilename(YearMonth ym) {
         return String.format("yellow_tripdata_%d-%02d.parquet", ym.getYear(), ym.getMonthValue());
-    }
-
-    public static List<Path> getAvailableFiles(YearMonth start, YearMonth end) throws IOException {
-        List<Path> files = new ArrayList<>();
-        for (YearMonth ym = start; !ym.isAfter(end); ym = ym.plusMonths(1)) {
-            Path file = DATA_DIR.resolve(formatFilename(ym));
-            if (Files.exists(file) && Files.size(file) > 0) {
-                files.add(file);
-            }
-        }
-        return files;
     }
 
     private static Path getDataDirFromProperty() {
@@ -99,23 +90,7 @@ public final class TaxiDataDownloader {
         return Path.of(property);
     }
 
-    private static YearMonth getStartMonth() {
-        String property = System.getProperty("perf.start");
-        if (property == null || property.isBlank()) {
-            return DEFAULT_START;
-        }
-        return YearMonth.parse(property);
-    }
-
-    private static YearMonth getEndMonth() {
-        String property = System.getProperty("perf.end");
-        if (property == null || property.isBlank()) {
-            return DEFAULT_END;
-        }
-        return YearMonth.parse(property);
-    }
-
-    private static void downloadRange(Path dataDir, YearMonth start, YearMonth end) throws IOException {
+    private static void download(Path dataDir, List<YearMonth> months) throws IOException {
         Files.createDirectories(dataDir);
         HttpClient client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -124,7 +99,7 @@ public final class TaxiDataDownloader {
         Sleeper sleeper = Thread::sleep;
 
         boolean firstDownload = true;
-        for (YearMonth ym = start; !ym.isAfter(end); ym = ym.plusMonths(1)) {
+        for (YearMonth ym : months) {
             String filename = formatFilename(ym);
             Path target = dataDir.resolve(filename);
             if (Files.exists(target)) {
