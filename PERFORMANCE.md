@@ -17,10 +17,10 @@ A brief full-scan check of a local change times Hardwood's column reader and ind
 ./run-flat.sh --gate --start 2025-01 --end 2025-01
 ./run-flat.sh --start 2025-01 --end 2025-01 \
   --include 'hardwoodColumnar|hardwoodRowReaderIndexed' \
-  --warmup 1 --meas 1 --forks 1 --no-pin
+  --warmup 3 --meas 5 --forks 1 --no-pin
 ```
 
-The first run downloads the month into `target/tlc-trip-record-data` of hardwood-benchmarks; `--data-dir` points it at a directory that `./mvnw clean` does not remove. `./run-flat.sh --help` lists the other flags.
+Each operation scans every column of every file in the `--start`/`--end` window, which must lie within 2025. The script prints per contender `ms/op` (the wall time of one scan), `M rows/s` and the compressed MB/s read. The first run downloads the month into `target/tlc-trip-record-data` of hardwood-benchmarks; `--data-dir` points it at a directory that `./mvnw clean` does not remove. `./run-flat.sh --help` lists the other flags.
 
 ## In-Tree Benchmarks
 
