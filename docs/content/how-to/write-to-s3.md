@@ -50,4 +50,4 @@ S3Source source = S3Source.builder()
 
 ## Clean up after a failed write
 
-A writer that fails, or that `abort()` discards, aborts its upload, so nothing appears at the key. Add a lifecycle rule for incomplete multipart uploads to the bucket, so that the parts of an upload that could not be aborted (for instance because the process ended) are removed. [S3 Reference](../reference/s3.md#writing) lists the requests, limits and failure behavior.
+A writer that fails, or that `abort()` discards, aborts its upload, so nothing appears at the key. Add a [lifecycle rule for incomplete multipart uploads](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpu-abort-incomplete-mpu-lifecycle-config.html) to the bucket, so that the parts of an upload that could not be aborted (for instance because the process ended) are removed. [S3 Reference](../reference/s3.md#writing) lists the requests, limits and failure behavior.
