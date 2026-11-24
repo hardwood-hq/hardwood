@@ -155,12 +155,12 @@ if [[ "${BASE_BRANCH}" == "main" ]]; then
   git commit -m "[release] Restore CLI download link for dev docs"
 fi
 
-git push -u origin "release/${RELEASE_VERSION}"
 # Push the tag created by release:prepare so JReleaser finds it on the release
 # commit. Without this, JReleaser doesn't see a tag on GitHub and creates one
 # at the release branch's HEAD (the dev-bump commit), which would land the tag
-# on the wrong commit.
-git push origin "${RELEASE_TAG}"
+# on the wrong commit. The push is atomic: if the remote rejects either ref,
+# neither lands, and a rerun doesn't first have to delete a pushed branch.
+git push --atomic -u origin "release/${RELEASE_VERSION}" "${RELEASE_TAG}"
 
 # -- Publish to Maven Central ------------------------------------------------
 
