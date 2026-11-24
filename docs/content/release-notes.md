@@ -13,7 +13,7 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
-## 1.1.0.CR1 (unreleased)
+## 1.1.0.CR1 (2026-11-24)
 
 [API changes](/api-changes/1.1.0.CR1/)
 
