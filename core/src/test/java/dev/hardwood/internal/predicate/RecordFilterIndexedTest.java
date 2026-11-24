@@ -21,6 +21,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -166,31 +167,31 @@ class RecordFilterIndexedTest {
     }
 
     private static FileSchema twoLongSchema(String n1, String n2) {
-        SchemaElement root = SchemaElement.root("root", 2);
-        SchemaElement c1 = SchemaElement.primitive(n1, PhysicalType.INT64, RepetitionType.OPTIONAL);
-        SchemaElement c2 = SchemaElement.primitive(n2, PhysicalType.INT64, RepetitionType.OPTIONAL);
+        SchemaElement root = SchemaElements.root("root", 2);
+        SchemaElement c1 = SchemaElements.primitive(n1, PhysicalType.INT64, RepetitionType.OPTIONAL);
+        SchemaElement c2 = SchemaElements.primitive(n2, PhysicalType.INT64, RepetitionType.OPTIONAL);
         return FileSchema.fromSchemaElements(List.of(root, c1, c2));
     }
 
     private static FileSchema twoIntSchema(String n1, String n2) {
-        SchemaElement root = SchemaElement.root("root", 2);
-        SchemaElement c1 = SchemaElement.primitive(n1, PhysicalType.INT32, RepetitionType.OPTIONAL);
-        SchemaElement c2 = SchemaElement.primitive(n2, PhysicalType.INT32, RepetitionType.OPTIONAL);
+        SchemaElement root = SchemaElements.root("root", 2);
+        SchemaElement c1 = SchemaElements.primitive(n1, PhysicalType.INT32, RepetitionType.OPTIONAL);
+        SchemaElement c2 = SchemaElements.primitive(n2, PhysicalType.INT32, RepetitionType.OPTIONAL);
         return FileSchema.fromSchemaElements(List.of(root, c1, c2));
     }
 
     private static FileSchema twoDoubleSchema(String n1, String n2) {
-        SchemaElement root = SchemaElement.root("root", 2);
-        SchemaElement c1 = SchemaElement.primitive(n1, PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
-        SchemaElement c2 = SchemaElement.primitive(n2, PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
+        SchemaElement root = SchemaElements.root("root", 2);
+        SchemaElement c1 = SchemaElements.primitive(n1, PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
+        SchemaElement c2 = SchemaElements.primitive(n2, PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
         return FileSchema.fromSchemaElements(List.of(root, c1, c2));
     }
 
     private static FileSchema threeLongSchema(String n1, String n2, String n3) {
-        SchemaElement root = SchemaElement.root("root", 3);
-        SchemaElement c1 = SchemaElement.primitive(n1, PhysicalType.INT64, RepetitionType.OPTIONAL);
-        SchemaElement c2 = SchemaElement.primitive(n2, PhysicalType.INT64, RepetitionType.OPTIONAL);
-        SchemaElement c3 = SchemaElement.primitive(n3, PhysicalType.INT64, RepetitionType.OPTIONAL);
+        SchemaElement root = SchemaElements.root("root", 3);
+        SchemaElement c1 = SchemaElements.primitive(n1, PhysicalType.INT64, RepetitionType.OPTIONAL);
+        SchemaElement c2 = SchemaElements.primitive(n2, PhysicalType.INT64, RepetitionType.OPTIONAL);
+        SchemaElement c3 = SchemaElements.primitive(n3, PhysicalType.INT64, RepetitionType.OPTIONAL);
         return FileSchema.fromSchemaElements(List.of(root, c1, c2, c3));
     }
 

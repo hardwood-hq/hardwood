@@ -17,12 +17,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
@@ -236,21 +236,21 @@ class HeldRowValuesTest {
     @Test
     void variantsHeldAcrossBatchesKeepTheirOwnValue() throws IOException {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 3),
-                SchemaElement.group("v", RepetitionType.REQUIRED, 2, LogicalType.variant(1)),
-                SchemaElement.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
-                SchemaElement.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
-                SchemaElement.group("vs", RepetitionType.REQUIRED, 1, LogicalType.list()),
-                SchemaElement.group("list", RepetitionType.REPEATED, 1),
-                SchemaElement.group("element", RepetitionType.REQUIRED, 2, LogicalType.variant(1)),
-                SchemaElement.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
-                SchemaElement.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
-                SchemaElement.group("vm", RepetitionType.REQUIRED, 1, LogicalType.map()),
-                SchemaElement.group("key_value", RepetitionType.REPEATED, 2),
-                SchemaElement.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string()),
-                SchemaElement.group("value", RepetitionType.REQUIRED, 2, LogicalType.variant(1)),
-                SchemaElement.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
-                SchemaElement.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 3),
+                SchemaElements.group("v", RepetitionType.REQUIRED, 2, LogicalType.variant(1)),
+                SchemaElements.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElements.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElements.group("vs", RepetitionType.REQUIRED, 1, LogicalType.list()),
+                SchemaElements.group("list", RepetitionType.REPEATED, 1),
+                SchemaElements.group("element", RepetitionType.REQUIRED, 2, LogicalType.variant(1)),
+                SchemaElements.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElements.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElements.group("vm", RepetitionType.REQUIRED, 1, LogicalType.map()),
+                SchemaElements.group("key_value", RepetitionType.REPEATED, 2),
+                SchemaElements.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string()),
+                SchemaElements.group("value", RepetitionType.REQUIRED, 2, LogicalType.variant(1)),
+                SchemaElements.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElements.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)));
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,
                 WriterConfig.builder().rowGroupTargetRows(ROW_GROUP_ROWS).build())) {

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
@@ -1022,10 +1023,10 @@ class SchemaCommandTest implements SchemaCommandContract {
     /// `key_value` carries only the required `key`.
     private static FileSchema keyOnlyMapSchema() {
         List<SchemaElement> elements = List.of(
-                SchemaElement.group("schema", RepetitionType.REQUIRED, 1),
+                SchemaElements.group("schema", RepetitionType.REQUIRED, 1),
                 new SchemaElement("tags", null, null, RepetitionType.OPTIONAL, 1, ConvertedType.MAP,
                         null, null, null, new LogicalType.MapType()),
-                SchemaElement.group("key_value", RepetitionType.REPEATED, 1),
+                SchemaElements.group("key_value", RepetitionType.REPEATED, 1),
                 new SchemaElement("key", PhysicalType.BYTE_ARRAY, null, RepetitionType.REQUIRED, null,
                         ConvertedType.UTF8, null, null, null, new LogicalType.StringType()));
         return FileSchema.fromSchemaElements(elements);

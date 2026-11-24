@@ -12,6 +12,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.CapturedWarnings;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.LeafAnnotation;
@@ -91,13 +92,13 @@ class DroppedAnnotationTest {
     @Test
     void aGroupWhoseAnnotationIsDroppedStillReadsAsTheLegacyMapItsChildMakesIt() {
         List<SchemaElement> elements = List.of(
-                SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1),
+                SchemaElements.group(ROOT, RepetitionType.REQUIRED, 1),
                 new SchemaElement("m", null, null, RepetitionType.OPTIONAL, 1, null, null, null, null,
                         LogicalType.string()),
                 new SchemaElement("key_value", null, null, RepetitionType.REPEATED, 2,
                         ConvertedType.MAP_KEY_VALUE, null, null, null, null),
-                SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL));
+                SchemaElements.primitive("key", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL));
 
         SchemaNode.GroupNode map = (SchemaNode.GroupNode) FileSchema.fromSchemaElements(
                 UnreadableAnnotations.drop(BareRepeatedGroups.dropAnnotations(elements))).getRootNode().children().getFirst();
@@ -132,10 +133,10 @@ class DroppedAnnotationTest {
 
     /// A struct-shaped group holding one required `INT32`, annotated as given.
     private static SchemaNode.GroupNode group(LogicalType annotation, ConvertedType converted) {
-        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        SchemaElement root = SchemaElements.group(ROOT, RepetitionType.REQUIRED, 1);
         SchemaElement group = new SchemaElement("g", null, null, RepetitionType.OPTIONAL, 1, converted,
                 null, null, null, annotation);
-        SchemaElement leaf = SchemaElement.primitive(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED);
+        SchemaElement leaf = SchemaElements.primitive(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED);
         return (SchemaNode.GroupNode) FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, group, leaf)))
                 .getRootNode().children().getFirst();
     }
@@ -146,7 +147,7 @@ class DroppedAnnotationTest {
     }
 
     private static LogicalType annotationOf(SchemaElement leaf) {
-        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        SchemaElement root = SchemaElements.group(ROOT, RepetitionType.REQUIRED, 1);
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, leaf))).getColumn(COLUMN).logicalType();
     }
 }

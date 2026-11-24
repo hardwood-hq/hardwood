@@ -16,9 +16,9 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 
-import static dev.hardwood.metadata.SchemaElement.group;
-import static dev.hardwood.metadata.SchemaElement.primitive;
-import static dev.hardwood.metadata.SchemaElement.root;
+import static dev.hardwood.internal.metadata.SchemaElements.group;
+import static dev.hardwood.internal.metadata.SchemaElements.primitive;
+import static dev.hardwood.internal.metadata.SchemaElements.root;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 

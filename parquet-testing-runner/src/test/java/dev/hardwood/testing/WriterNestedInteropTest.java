@@ -27,10 +27,10 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnBatch;
@@ -747,9 +747,9 @@ class WriterNestedInteropTest {
     @Test
     void legacyTwoLevelListWithALeafEntry(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("nested", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.root("nested", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         // Row 0: [1,2]; row 1: []; row 2: [3,4,5].
         List<Group> rows = writeAndRead(dir, schema, batch -> batch
@@ -767,11 +767,11 @@ class WriterNestedInteropTest {
     @Test
     void legacyTwoLevelListOfStructs(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("nested", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.group("element", RepetitionType.REPEATED, 2),
-                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.root("nested", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.group("element", RepetitionType.REPEATED, 2),
+                SchemaElements.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         // Row 0: [{1,10},{2,20}]; row 1: [{3,30}].
         List<Group> rows = writeAndRead(dir, schema, batch -> batch

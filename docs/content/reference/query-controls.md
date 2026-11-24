@@ -166,7 +166,7 @@ malformed sequence with U+FFFD, so the string it returns for such a row does not
 such a row with its `byte[]`.
 
 An `INTERVAL` column's other literal is the `PqInterval` that [`getInterval`](accessors.md)
-returns, for example `new PqInterval(0, 1, 3_600_000)`. Each of its three components is stored
+returns, for example `PqInterval.of(0, 1, 3_600_000)`. Each of its three components is stored
 as an unsigned 32-bit value.
 
 Every factory rejects a null column name or literal, and `and`, `or` and `not` a null child, with a

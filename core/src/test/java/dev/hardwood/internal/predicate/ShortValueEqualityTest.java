@@ -15,6 +15,7 @@ import java.util.function.IntUnaryOperator;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
@@ -25,7 +26,6 @@ import dev.hardwood.internal.reader.batch.BinaryBatchValuesFixtures;
 import dev.hardwood.internal.reader.batch.FlatBatch;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.schema.FileSchema;
 
@@ -182,8 +182,8 @@ class ShortValueEqualityTest {
     }
 
     private static FileSchema stringSchema() {
-        return FileSchema.fromSchemaElements(List.of(SchemaElement.root("root", 1),
-                SchemaElement.primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)));
+        return FileSchema.fromSchemaElements(List.of(SchemaElements.root("root", 1),
+                SchemaElements.primitive("s", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)));
     }
 
     private static ColumnBatchMatcher compile(ResolvedPredicate predicate, FileSchema schema) {

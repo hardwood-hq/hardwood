@@ -21,4 +21,19 @@ package dev.hardwood.row;
 /// @param months       number of months (unsigned 32-bit, range 0–4,294,967,295)
 /// @param days         number of days (unsigned 32-bit, range 0–4,294,967,295)
 /// @param milliseconds number of milliseconds (unsigned 32-bit, range 0–4,294,967,295)
-public record PqInterval(long months, long days, long milliseconds) {}
+public record PqInterval(long months, long days, long milliseconds) {
+
+    /// Creates an interval, such as a value for `setInterval` or a filter literal for an
+    /// `INTERVAL` column.
+    ///
+    /// The components are taken as given. A component outside `[0, 4_294_967_295]` cannot be
+    /// stored: the writer refuses it, and as a filter literal it equals no stored value.
+    ///
+    /// @param months       number of months
+    /// @param days         number of days
+    /// @param milliseconds number of milliseconds
+    /// @return the interval
+    public static PqInterval of(long months, long days, long milliseconds) {
+        return new PqInterval(months, days, milliseconds);
+    }
+}

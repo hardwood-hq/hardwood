@@ -18,6 +18,7 @@ import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
@@ -199,9 +200,9 @@ class FileReferenceValidationTest {
     @Test
     void aRequiredChildFailsTheOpen() throws IOException {
         assertMalformed(List.of(
-                        SchemaElement.root("schema", 1),
-                        SchemaElement.group("photo", RepetitionType.OPTIONAL, 1, LogicalType.file()),
-                        SchemaElement.primitive("uri", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        SchemaElements.root("schema", 1),
+                        SchemaElements.group("photo", RepetitionType.OPTIONAL, 1, LogicalType.file()),
+                        SchemaElements.primitive("uri", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                                 LogicalType.string())),
                 "FILE group 'photo' child 'uri' must be an OPTIONAL BYTE_ARRAY annotated STRING, "
                         + "found REQUIRED BYTE_ARRAY annotated STRING");
@@ -229,9 +230,9 @@ class FileReferenceValidationTest {
     @Test
     void anEmptyGroupOpensAndEachValueFailsOnRead() throws IOException {
         FileSchema plain = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 2),
-                SchemaElement.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.group("photo", RepetitionType.OPTIONAL, 0)));
+                SchemaElements.root("schema", 2),
+                SchemaElements.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.group("photo", RepetitionType.OPTIONAL, 0)));
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, plain)) {
             writer.rowWriter().writeRow(row -> row.setInt("id", 1));
@@ -276,14 +277,14 @@ class FileReferenceValidationTest {
 
     private static List<SchemaElement> group(String name, SchemaElement... children) {
         List<SchemaElement> elements = new ArrayList<>();
-        elements.add(SchemaElement.root("schema", 1));
-        elements.add(SchemaElement.group(name, RepetitionType.OPTIONAL, children.length, LogicalType.file()));
+        elements.add(SchemaElements.root("schema", 1));
+        elements.add(SchemaElements.group(name, RepetitionType.OPTIONAL, children.length, LogicalType.file()));
         elements.addAll(List.of(children));
         return elements;
     }
 
     private static SchemaElement leaf(String name, PhysicalType type, LogicalType annotation) {
-        return SchemaElement.primitive(name, type, RepetitionType.OPTIONAL, annotation);
+        return SchemaElements.primitive(name, type, RepetitionType.OPTIONAL, annotation);
     }
 
     private static void assertInvalid(ThrowingCallable read, String path) {

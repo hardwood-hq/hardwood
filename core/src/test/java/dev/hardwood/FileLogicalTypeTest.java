@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.LogicalType;
@@ -305,10 +306,10 @@ class FileLogicalTypeTest {
         // A FILE group declaring only the children an external reference needs, as a schema read
         // from a file can.
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("photo", RepetitionType.OPTIONAL, 2, LogicalType.file()),
-                SchemaElement.primitive("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()),
-                SchemaElement.primitive("content_type", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("photo", RepetitionType.OPTIONAL, 2, LogicalType.file()),
+                SchemaElements.primitive("uri", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()),
+                SchemaElements.primitive("content_type", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         LogicalType.string())));
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -492,9 +493,9 @@ class FileLogicalTypeTest {
     @Test
     void theWriterRefusesAnEmptyFileGroup() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 2),
-                SchemaElement.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.group("photo", RepetitionType.OPTIONAL, 0, LogicalType.file())));
+                SchemaElements.root("schema", 2),
+                SchemaElements.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.group("photo", RepetitionType.OPTIONAL, 0, LogicalType.file())));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)

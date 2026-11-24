@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.schema.LeafAnnotation;
@@ -271,7 +272,8 @@ public class FileSchema {
     }
 
     /// Reconstructs a schema from the depth-first [SchemaElement] list a footer carries: the root,
-    /// then each group followed by as many descendants as its `numChildren` counts.
+    /// then each group followed by as many descendants as its `numChildren` counts. An element
+    /// without a repetition is read as `REQUIRED` at the root and `OPTIONAL` elsewhere.
     ///
     /// @throws IllegalArgumentException if the list is empty, its root is not a group, its child
     ///         counts do not describe exactly the elements it holds, a primitive declares
@@ -747,7 +749,7 @@ public class FileSchema {
                 throw new UnsupportedOperationException("Schema must have at least one column");
             }
             List<SchemaElement> elements = new ArrayList<>();
-            elements.add(SchemaElement.group(name, RepetitionType.REQUIRED, content.children.size()));
+            elements.add(SchemaElements.group(name, RepetitionType.REQUIRED, content.children.size()));
             flatten(content.children, elements);
             requireNoAnnotationDropped(elements);
             return fromSchemaElements(elements);
@@ -1277,13 +1279,13 @@ public class FileSchema {
                 case BuilderList list -> {
                     out.add(groupElement(list.name(), list.repetition(), 1, ConvertedType.LIST, LogicalType.list(),
                             list.fieldId()));
-                    out.add(SchemaElement.group("list", RepetitionType.REPEATED, 1));
+                    out.add(SchemaElements.group("list", RepetitionType.REPEATED, 1));
                     flatten(List.of(list.element()), out);
                 }
                 case BuilderMap map -> {
                     out.add(groupElement(map.name(), map.repetition(), 1, ConvertedType.MAP, LogicalType.map(),
                             map.fieldId()));
-                    out.add(SchemaElement.group("key_value", RepetitionType.REPEATED, 2));
+                    out.add(SchemaElements.group("key_value", RepetitionType.REPEATED, 2));
                     out.add(leafElement(map.key()));
                     flatten(List.of(map.value()), out);
                 }

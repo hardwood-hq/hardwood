@@ -20,6 +20,7 @@ import java.util.function.IntUnaryOperator;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.predicate.matcher.ints.IntInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtBatchMatcher;
@@ -176,7 +177,7 @@ class BatchFilterCompilerTest {
     }
 
     private static FileSchema schema(SchemaElement... columns) {
-        SchemaElement root = SchemaElement.root("root", columns.length);
+        SchemaElement root = SchemaElements.root("root", columns.length);
         SchemaElement[] elements = new SchemaElement[columns.length + 1];
         elements[0] = root;
         System.arraycopy(columns, 0, elements, 1, columns.length);
@@ -184,7 +185,7 @@ class BatchFilterCompilerTest {
     }
 
     private static SchemaElement leaf(String name, PhysicalType type) {
-        return SchemaElement.primitive(name, type, RepetitionType.OPTIONAL);
+        return SchemaElements.primitive(name, type, RepetitionType.OPTIONAL);
     }
 
     private static FileSchema longDoubleSchema() {
@@ -317,7 +318,7 @@ class BatchFilterCompilerTest {
     void binaryLeafInInstantOrder_isEligible() {
         byte[] instant = new byte[12];
         assertInstantOrderCompiles(schema(leaf("ts", PhysicalType.INT96)), instant, Comparison.INT96_INSTANT);
-        assertInstantOrderCompiles(schema(SchemaElement.fixedLengthPrimitive("ts", 12, RepetitionType.OPTIONAL)),
+        assertInstantOrderCompiles(schema(SchemaElements.fixedLengthPrimitive("ts", 12, RepetitionType.OPTIONAL)),
                 instant, Comparison.FIXED_TIMESTAMP);
     }
 
@@ -382,7 +383,7 @@ class BatchFilterCompilerTest {
             // siblings run on a partial conjunction.
             FileSchema schema = schema(
                     leaf("id", PhysicalType.INT64),
-                    SchemaElement.fixedLengthPrimitive("half", 2, RepetitionType.OPTIONAL));
+                    SchemaElements.fixedLengthPrimitive("half", 2, RepetitionType.OPTIONAL));
             ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
                     new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
                     new ResolvedPredicate.Float16Predicate(1, Operator.EQ, 1.5f)));
@@ -393,9 +394,9 @@ class BatchFilterCompilerTest {
         void leafOnNonTopLevelPath_returnsNull() {
             // A nested struct: root -> nest (group, 1 child) -> id (INT64).
             // The leaf column has fieldPath ["nest", "id"] — not top-level.
-            SchemaElement root = SchemaElement.root("root", 1);
-            SchemaElement nest = SchemaElement.group("nest", RepetitionType.OPTIONAL, 1);
-            SchemaElement id = SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
+            SchemaElement root = SchemaElements.root("root", 1);
+            SchemaElement nest = SchemaElements.group("nest", RepetitionType.OPTIONAL, 1);
+            SchemaElement id = SchemaElements.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
             FileSchema schema = FileSchema.fromSchemaElements(List.of(root, nest, id));
             ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity(), false));
@@ -428,9 +429,9 @@ class BatchFilterCompilerTest {
 
         /// root -> nest (group of `nestRepetition`) -> id (optional INT64).
         private static FileSchema nestedId(RepetitionType nestRepetition) {
-            SchemaElement root = SchemaElement.root("root", 1);
-            SchemaElement nest = SchemaElement.group("nest", nestRepetition, 1);
-            SchemaElement id = SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
+            SchemaElement root = SchemaElements.root("root", 1);
+            SchemaElement nest = SchemaElements.group("nest", nestRepetition, 1);
+            SchemaElement id = SchemaElements.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
             return FileSchema.fromSchemaElements(List.of(root, nest, id));
         }
 

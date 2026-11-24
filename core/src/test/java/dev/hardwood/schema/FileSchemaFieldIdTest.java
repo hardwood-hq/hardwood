@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -265,7 +266,7 @@ class FileSchemaFieldIdTest {
     @Test
     void droppedAnnotationKeepsTheFieldIdOfABareRepeatedGroup() {
         List<SchemaElement> elements = List.of(
-                SchemaElement.root("schema", 1),
+                SchemaElements.root("schema", 1),
                 new SchemaElement("r", null, null, RepetitionType.REPEATED, 1, null, null, null, 5,
                         LogicalType.list()),
                 new SchemaElement("x", PhysicalType.INT32, null, RepetitionType.REQUIRED, null, null, null, null, 6,
