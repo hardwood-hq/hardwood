@@ -27,6 +27,7 @@ Highlights of this release:
     - `sortingColumns` declares and enforces the row order, recorded as `sorting_columns`
     - `DATA_PAGE_V2` pages on request, and `SizeStatistics` with level histograms, so Hardwood and other readers can prune `isNull` and `isNotNull` on groups in files Hardwood wrote
     - `StructBuilder.setValue` takes a value in the form `getValue` returns, so rows copy without switching on field types
+    - `PqInterval.of(months, days, milliseconds)` creates an `INTERVAL` value for `setInterval` and filter literals
 - New format features
     - ALP-encoded `FLOAT` and `DOUBLE` columns are read, and written with `ColumnEncoding.ALP`
     - The `FILE` logical type: a group referencing inline or external bytes is read as a validated `PqFile` and written with `setFile` and `addFile`
@@ -55,17 +56,26 @@ Highlights of this release:
 
 **Breaking Changes:**
 
-- `ColumnReader.getBinaryValues()` returns a `BinaryValues` giving each value as a window (`buffer(i)`, `start(i)`, `end(i)`), and `getBinaryStarts()` and `getBinaryEnds()` are removed ([#1578](https://github.com/hardwood-hq/hardwood/issues/1578))
-- `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, `codec()` by `compression()`, and `DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
-- `FileSchema.Builder` and `StructBuilder` declare leaves with `primitive(...)` instead of `addColumn(...)`, and set a leaf's logical type and type length in a `PrimitiveBuilder` lambda, as in `primitive("name", BYTE_ARRAY, REQUIRED, col -> col.logicalType(LogicalType.string()))`; the overloads taking a `typeLength` or `LogicalType` are removed ([#957](https://github.com/hardwood-hq/hardwood/issues/957), [#1883](https://github.com/hardwood-hq/hardwood/issues/1883))
-- `ColumnSchema` and `SchemaNode.GroupNode` take a last record component `fieldId`, so schemas differing only in field ids are no longer equal; `SchemaNode.PrimitiveNode` has the single component `column` ([#957](https://github.com/hardwood-hq/hardwood/issues/957), [#1892](https://github.com/hardwood-hq/hardwood/issues/1892))
-- `LogicalType.nullType()` is renamed to `unknown()`, and the annotation prints as `UNKNOWN` ([#1890](https://github.com/hardwood-hq/hardwood/issues/1890))
-- `LogicalType` permits the new `FileType`, and `Encoding` and `ColumnEncoding` have the new constant `ALP`; an exhaustive `switch` over them needs a case for each ([#1413](https://github.com/hardwood-hq/hardwood/issues/1413), [#581](https://github.com/hardwood-hq/hardwood/issues/581))
+- The experimental method `ColumnReader.getBinaryValues()` returns a `BinaryValues` giving each value as a window (`buffer(i)`, `start(i)`, `end(i)`) instead of a `byte[]` ([#1578](https://github.com/hardwood-hq/hardwood/issues/1578))
+- `ColumnSchema` and `SchemaNode.GroupNode` take a last record component `fieldId`, so schemas differing only in field ids are no longer equal; `SchemaNode.PrimitiveNode` has the single component `column`, and its other accessors remain ([#957](https://github.com/hardwood-hq/hardwood/issues/957), [#1892](https://github.com/hardwood-hq/hardwood/issues/1892))
+- `LogicalType` permits the new `FileType`, and `Encoding` has the new constant `ALP`; an exhaustive `switch` over them needs a case for each ([#1413](https://github.com/hardwood-hq/hardwood/issues/1413), [#581](https://github.com/hardwood-hq/hardwood/issues/581))
 - A lookup by a name that several sibling fields share, such as `getColumn(String)`, `FileSchema.getField` or a row accessor, throws `IllegalArgumentException` instead of returning the first or last match; a projection by such a name selects all of them ([#1744](https://github.com/hardwood-hq/hardwood/issues/1744))
-- The writer refuses `setString` on a `BYTE_ARRAY` column without a `STRING` annotation (use `setBinary`), and `FileSchema.Builder` and `FileSchema.fromSchemaElements` refuse null arguments, sibling fields of one name and annotations a field cannot carry where they are declared ([#1890](https://github.com/hardwood-hq/hardwood/issues/1890))
-- A `LIST`, `MAP` or `FILE` shape the format forbids, including a `MAP` with an optional or missing key, fails with `IllegalArgumentException` instead of `UnsupportedOperationException`, and a schema without columns with `UnsupportedOperationException` ([#1899](https://github.com/hardwood-hq/hardwood/issues/1899))
-- `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()` ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
+- `FileSchema.fromSchemaElements` refuses an element list whose child counts do not describe its elements, a primitive element that declares children, and annotations a field cannot carry ([#1890](https://github.com/hardwood-hq/hardwood/issues/1890))
 - The native CLI is no longer published for macOS on Intel; use the Docker image there ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
+
+**Changes to 1.1 preview API:**
+
+Code written against 1.1.0.Beta1 to Beta3 needs the following changes in addition to the Breaking Changes above; the [API changes](/api-changes/1.1.0.CR1/) list every signature.
+
+- `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, `codec()` by `compression()`, and `DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
+- `FileSchema.Builder` and `StructBuilder` declare leaves with `primitive(...)` instead of `addColumn(...)`, and `Builder`, `StructBuilder` and `ElementBuilder` set a leaf's or map key's logical type and type length in a `PrimitiveBuilder` lambda, as in `primitive("name", BYTE_ARRAY, REQUIRED, col -> col.logicalType(LogicalType.string()))`; the `primitive(...)` and `map(...)` overloads taking a `typeLength` or `LogicalType` are removed ([#957](https://github.com/hardwood-hq/hardwood/issues/957), [#1883](https://github.com/hardwood-hq/hardwood/issues/1883))
+- The `SchemaElement` factories `root`, `group`, `primitive` and `fixedLengthPrimitive` are removed; build a schema with `FileSchema.builder(...)` ([#1951](https://github.com/hardwood-hq/hardwood/issues/1951))
+- `LogicalType.nullType()` is renamed to `unknown()` ([#1890](https://github.com/hardwood-hq/hardwood/issues/1890))
+- The writer refuses `setString` on a `BYTE_ARRAY` column without a `STRING` annotation (use `setBinary`), and `FileSchema.Builder` refuses null arguments, sibling fields of one name and annotations a field cannot carry where they are declared ([#1890](https://github.com/hardwood-hq/hardwood/issues/1890))
+- A `LIST`, `MAP` or `FILE` shape the format forbids, including a `MAP` with an optional or missing key, fails with `IllegalArgumentException` instead of `UnsupportedOperationException`, and a schema without columns with `UnsupportedOperationException` ([#1899](https://github.com/hardwood-hq/hardwood/issues/1899))
+- `ColumnEncoding` has the new constant `ALP`; an exhaustive `switch` over it needs a case for it ([#581](https://github.com/hardwood-hq/hardwood/issues/581))
+- `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()` ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
+- `ColumnReader.getBinaryStarts()` and `getBinaryEnds()` are removed; `getBinaryValues()` gives each value's `buffer(i)`, `start(i)` and `end(i)` ([#1578](https://github.com/hardwood-hq/hardwood/issues/1578))
 
 **Deprecations:**
 
@@ -80,7 +90,7 @@ Highlights of this release:
 
 See the [1.1.0.CR1 milestone](https://github.com/hardwood-hq/hardwood/milestone/10?closed=1) on GitHub for the full list of resolved issues.
 
-Thank you to all contributors to this release: [Alex Sorokoumov](https://github.com/Gerrrr), [André Rouél](https://github.com/arouel), [Arnab Nandy](https://github.com/arnabnandy7), [Chandan Dhamande](https://github.com/nitrogen404), [Fawzi Essam](https://github.com/iifawzi), [Gunnar Morling](https://github.com/gunnarmorling), [Jeronimo López](https://github.com/jerolba), [Manish](https://github.com/mghildiy), [Matt Van Horn](https://github.com/mvanhorn), [Matthew Mullett](https://github.com/25mattm), [Omar Abdelmawgoud](https://github.com/OmarAbdelmawgoud5), [ommkd](https://github.com/ommkd), [Perfloop Agent](https://github.com/perfloop-agent), [Rion Williams](https://github.com/rionmonster).
+Thank you to all contributors to this release: [Alex Petrov](https://github.com/ifesdjeen), [Alex Sorokoumov](https://github.com/Gerrrr), [André Rouél](https://github.com/arouel), [Arnab Nandy](https://github.com/arnabnandy7), [Chandan Dhamande](https://github.com/nitrogen404), [Fawzi Essam](https://github.com/iifawzi), [Gunnar Morling](https://github.com/gunnarmorling), [Jeronimo López](https://github.com/jerolba), [Manish](https://github.com/mghildiy), [Matt Van Horn](https://github.com/mvanhorn), [Matthew Mullett](https://github.com/25mattm), [Omar Abdelmawgoud](https://github.com/OmarAbdelmawgoud5), [ommkd](https://github.com/ommkd), [Perfloop Agent](https://github.com/perfloop-agent), [Rion Williams](https://github.com/rionmonster).
 
 ## 1.1.0.Beta3 (2026-10-21)
 
