@@ -40,19 +40,6 @@ RUN microdnf install -y --nodocs \
       python3-pip \
     && microdnf clean all
 
-# Distrust the two roots that chain to eMudhra's compromised intermediates
-# (https://emudhra.we-have-a-problem.com/). Fedora drops them in
-# ca-certificates 2026.2.92; this blocklist covers images built before that
-# version reaches the stable repository.
-RUN d=/etc/pki/ca-trust/source/blocklist \
-    && trust extract --overwrite --format=pem-bundle \
-         --filter='pkcs11:object=Comodo%20AAA%20Services%20root;type=cert' \
-         "$d/Comodo_AAA_Services_root.pem" \
-    && trust extract --overwrite --format=pem-bundle \
-         --filter='pkcs11:object=emSign%20ECC%20Root%20CA%20-%20G3;type=cert' \
-         "$d/emSign_ECC_Root_CA_-_G3.pem" \
-    && update-ca-trust
-
 # `gh stack`, the official extension, registers existing pull requests as a GitHub stack
 # (`gh stack link <pr>...`), which `gh` itself cannot do. It installs under /root/.local/share
 # rather than the mounted config volume, so it has to be baked in. Pinned because the extension is
@@ -77,17 +64,33 @@ RUN case "$(uname -m)" in \
     && rm "$archive" \
     && actionlint -version
 
-# Install SDKMAN and Java 25 (Temurin). The GA build (25-tem) can leave a virtual thread parked
-# forever under timed blocking-queue waits (JDK-8369227, fixed in 25.0.3), which hangs readers (#1230).
-ENV SDKMAN_DIR="/root/.sdkman"
-RUN curl -s "https://get.sdkman.io" | bash \
-    && bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && sdk install java 25.0.4-tem"
+# Install Java 25 (Temurin). The GA build can leave a virtual thread parked forever under timed
+# blocking-queue waits (JDK-8369227, fixed in 25.0.3), which hangs readers (#1230).
+# SDKMAN does not list Temurin 25.0.5.1 for linuxarm64 yet, so the JDK comes straight from the
+# Adoptium release, pinned by version and SHA-256. Switch back to SDKMAN once it does:
+# ENV SDKMAN_DIR="/root/.sdkman"
+# RUN curl -s "https://get.sdkman.io" | bash \
+#     && bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && sdk install java 25.0.5.1+2-tem"
+# ENV JAVA_HOME="$SDKMAN_DIR/candidates/java/current"
+ARG TEMURIN_VERSION=25.0.5.1+2
+ARG TEMURIN_SHA256_X86_64=760f91b22c3efc9bd1b64ff950598231be82928cc807e30691a0e7a2995a62c0
+ARG TEMURIN_SHA256_AARCH64=c37879e0d08eeb1baa69fcbb7758cd455b7b1c0ceab1e2a136ccb1713c530984
+ENV JAVA_HOME="/opt/java/temurin-25"
+RUN case "$(uname -m)" in \
+      x86_64) arch=x64 sha256="$TEMURIN_SHA256_X86_64" ;; \
+      aarch64) arch=aarch64 sha256="$TEMURIN_SHA256_AARCH64" ;; \
+      *) echo "No Temurin build for $(uname -m)" >&2; exit 1 ;; \
+    esac \
+    && archive="/tmp/temurin.tar.gz" \
+    && curl -fsSL -o "$archive" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-${TEMURIN_VERSION/+/%2B}/OpenJDK25U-jdk_${arch}_linux_hotspot_${TEMURIN_VERSION/+/_}.tar.gz" \
+    && echo "$sha256  $archive" | sha256sum -c - \
+    && mkdir -p "$JAVA_HOME" \
+    && tar -xzf "$archive" -C "$JAVA_HOME" --strip-components=1 \
+    && rm "$archive"
 # Temurin ships its own cacerts; point it at the system trust store so the JDK
 # follows the same distrust decisions as curl, git and Python.
-RUN ln -sf /etc/pki/ca-trust/extracted/java/cacerts \
-      "$(readlink -f "$SDKMAN_DIR/candidates/java/current")/lib/security/cacerts"
-ENV PATH="$SDKMAN_DIR/candidates/java/current/bin:$PATH"
-ENV JAVA_HOME="$SDKMAN_DIR/candidates/java/current"
+RUN ln -sf /etc/pki/ca-trust/extracted/java/cacerts "$JAVA_HOME/lib/security/cacerts"
+ENV PATH="$JAVA_HOME/bin:$PATH"
 
 # Install the Hardwood CLI from a tagged GitHub release. The tarball ships the
 # native binary alongside a lib/ of codec .so files it resolves relative to its
