@@ -11,6 +11,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.metadata.ConvertedType;
@@ -57,7 +58,7 @@ class FileSchemaConvertedTypeTest {
     /// while the union member on the same column is kept, and wins over a legacy annotation beside it.
     @Test
     void aLegacyTimestampOnTwelveBytesIsDroppedButTheUnionMemberIsKept() {
-        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        SchemaElement root = SchemaElements.group(ROOT, RepetitionType.REQUIRED, 1);
         LogicalType timestamp = LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS);
 
         SchemaElement legacyOnly = new SchemaElement(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
@@ -96,7 +97,7 @@ class FileSchemaConvertedTypeTest {
 
     private static ColumnSchema resolveColumn(PhysicalType type, Integer typeLength, ConvertedType convertedType,
                                               LogicalType logicalType) {
-        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        SchemaElement root = SchemaElements.group(ROOT, RepetitionType.REQUIRED, 1);
         SchemaElement leaf = new SchemaElement(
                 COLUMN, type, typeLength, RepetitionType.OPTIONAL, null, convertedType, null, null, null, logicalType);
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, leaf))).getColumn(COLUMN);
@@ -110,7 +111,7 @@ class FileSchemaConvertedTypeTest {
 
     private static ColumnSchema resolveColumn(
             PhysicalType type, ConvertedType convertedType, Integer scale, Integer precision) {
-        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        SchemaElement root = SchemaElements.group(ROOT, RepetitionType.REQUIRED, 1);
         SchemaElement leaf = new SchemaElement(
                 COLUMN, type, null, RepetitionType.OPTIONAL, null, convertedType, scale, precision, null, null);
         FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, leaf)));
@@ -246,7 +247,7 @@ class FileSchemaConvertedTypeTest {
 
     @Test
     void modernLogicalTypeWinsOverConvertedType() {
-        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        SchemaElement root = SchemaElements.group(ROOT, RepetitionType.REQUIRED, 1);
         // converted_type=UTF8, but logical type is explicitly an Int, logical type must win.
         LogicalType.IntType modern = LogicalType.intType(32, false);
         SchemaElement leaf = new SchemaElement(

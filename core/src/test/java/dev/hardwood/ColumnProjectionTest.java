@@ -14,12 +14,12 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.reader.row.FlatRowReader;
 import dev.hardwood.internal.reader.row.NestedRowReader;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -129,9 +129,9 @@ public class ColumnProjectionTest {
     @Test
     void testDottedGroupNameIsReachableByItsPath() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("acme.address", RepetitionType.OPTIONAL, 1),
-                SchemaElement.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("acme.address", RepetitionType.OPTIONAL, 1),
+                SchemaElements.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)));
 
         assertThat(ProjectedSchema.create(schema, ColumnProjection.columns("acme.address.city"))
                 .getProjectedColumnCount()).isEqualTo(1);

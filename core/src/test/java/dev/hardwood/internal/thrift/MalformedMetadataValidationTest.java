@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.EncryptedFileException;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
@@ -314,7 +315,7 @@ class MalformedMetadataValidationTest {
     @Test
     void schemaElementPastTheRootsLastDescendantRejected() {
         byte[] footer = footerOfSchema(
-                SchemaElement.root("root", 1),
+                SchemaElements.root("root", 1),
                 leaf("a"),
                 leaf("b"));
 
@@ -328,8 +329,8 @@ class MalformedMetadataValidationTest {
     @Test
     void schemaEndingBeforeAGroupsChildrenRejected() {
         byte[] footer = footerOfSchema(
-                SchemaElement.root("root", 2),
-                SchemaElement.group("g", RepetitionType.OPTIONAL, 3),
+                SchemaElements.root("root", 2),
+                SchemaElements.group("g", RepetitionType.OPTIONAL, 3),
                 leaf("a"));
 
         assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
@@ -340,7 +341,7 @@ class MalformedMetadataValidationTest {
     @Test
     void primitiveDeclaringChildrenRejected() {
         byte[] footer = footerOfSchema(
-                SchemaElement.root("root", 1),
+                SchemaElements.root("root", 1),
                 new SchemaElement("a", PhysicalType.INT32, null, RepetitionType.REQUIRED, 2, null, null, null, null,
                         null));
 
@@ -563,7 +564,7 @@ class MalformedMetadataValidationTest {
     }
 
     private static SchemaElement leaf(String name) {
-        return SchemaElement.primitive(name, PhysicalType.INT32, RepetitionType.OPTIONAL);
+        return SchemaElements.primitive(name, PhysicalType.INT32, RepetitionType.OPTIONAL);
     }
 
     private static byte[] footerOfSchema(SchemaElement... schema) {

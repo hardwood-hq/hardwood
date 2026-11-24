@@ -27,6 +27,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.metadata.ConvertedType;
@@ -989,49 +990,49 @@ class FilterPredicateResolverTest {
     }
 
     static Stream<Arguments> nullPredicateOnACollectionIsAnsweredAsAGroup() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement key = SchemaElement.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
-        SchemaElement value = SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement key = SchemaElements.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
+        SchemaElement value = SchemaElements.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL);
 
         return Stream.of(
                 Arguments.of("two-level list of a primitive", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
-                        SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)), 1, 2),
+                        SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)), 1, 2),
                 Arguments.of("two-level list, element group of several fields", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
-                        SchemaElement.group("element", RepetitionType.REPEATED, 2),
-                        SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
-                        SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
+                        SchemaElements.group("element", RepetitionType.REPEATED, 2),
+                        SchemaElements.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
+                        SchemaElements.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
                 Arguments.of("two-level list of lists", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
-                        SchemaElement.group("element", RepetitionType.REPEATED, 1),
-                        SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REPEATED)), 1, 3),
+                        SchemaElements.group("element", RepetitionType.REPEATED, 1),
+                        SchemaElements.primitive("x", PhysicalType.INT32, RepetitionType.REPEATED)), 1, 3),
                 Arguments.of("two-level list, element named array", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
-                        SchemaElement.group("array", RepetitionType.REPEATED, 1),
-                        SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
+                        SchemaElements.group("array", RepetitionType.REPEATED, 1),
+                        SchemaElements.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
                 Arguments.of("two-level list, element named c_tuple", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
-                        SchemaElement.group("c_tuple", RepetitionType.REPEATED, 1),
-                        SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
+                        SchemaElements.group("c_tuple", RepetitionType.REPEATED, 1),
+                        SchemaElements.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
                 Arguments.of("three-level list under other names", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
-                        SchemaElement.group("bag", RepetitionType.REPEATED, 1),
-                        SchemaElement.primitive("item", PhysicalType.INT32, RepetitionType.OPTIONAL)), 1, 3),
+                        SchemaElements.group("bag", RepetitionType.REPEATED, 1),
+                        SchemaElements.primitive("item", PhysicalType.INT32, RepetitionType.OPTIONAL)), 1, 3),
                 // Never absent, so its IS NULL splits the histogram at level 0: no bucket below.
                 Arguments.of("required two-level list", List.of(root,
                         legacyGroup("c", RepetitionType.REQUIRED, 1, ConvertedType.LIST),
-                        SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)), 0, 1),
+                        SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)), 0, 1),
                 Arguments.of("map", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.MAP),
-                        SchemaElement.group("key_value", RepetitionType.REPEATED, 2), key, value), 1, 2),
+                        SchemaElements.group("key_value", RepetitionType.REPEATED, 2), key, value), 1, 2),
                 Arguments.of("map whose repeated group is marked MAP_KEY_VALUE", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.MAP),
                         legacyGroup("map", RepetitionType.REPEATED, 2, ConvertedType.MAP_KEY_VALUE), key, value),
                         1, 2),
                 Arguments.of("map marked MAP_KEY_VALUE itself", List.of(root,
                         legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.MAP_KEY_VALUE),
-                        SchemaElement.group("map", RepetitionType.REPEATED, 2), key, value), 1, 2));
+                        SchemaElements.group("map", RepetitionType.REPEATED, 2), key, value), 1, 2));
     }
 
     @Test
@@ -1040,9 +1041,9 @@ class FilterPredicateResolverTest {
         // level, so the two share one and the predicate takes the leaf's path. It may: `a` is not
         // repeated, writes one entry per row, and is null exactly where `c` is absent.
         FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
-                SchemaElement.root("root", 1),
-                SchemaElement.group("c", RepetitionType.OPTIONAL, 1),
-                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))));
+                SchemaElements.root("root", 1),
+                SchemaElements.group("c", RepetitionType.OPTIONAL, 1),
+                SchemaElements.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED))));
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("c"), schema))
                 .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 1, 1));
@@ -1178,7 +1179,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveIntersectsOnAColumnWhoseGeospatialAnnotationWasDroppedThrows() {
         FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
-                SchemaElement.root("root", 1),
+                SchemaElements.root("root", 1),
                 new SchemaElement("loc", PhysicalType.INT64, null, RepetitionType.OPTIONAL,
                         null, null, null, null, null, LogicalType.geometry(null)))));
 
@@ -1207,7 +1208,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveNotOverACompoundHoldingIntersectsThrows() {
         FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
-                SchemaElement.root("root", 2),
+                SchemaElements.root("root", 2),
                 new SchemaElement("loc", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL,
                         null, null, null, null, null, LogicalType.geometry("OGC:CRS84")),
                 new SchemaElement("id", PhysicalType.INT32, null, RepetitionType.OPTIONAL,
@@ -1430,7 +1431,7 @@ class FilterPredicateResolverTest {
     /// `optional group v (VARIANT) { required binary metadata; optional binary value; }`
     private static FileSchema variantSchema() {
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
-                SchemaElement.root("root", 1),
+                SchemaElements.root("root", 1),
                 new SchemaElement("v", null, null, RepetitionType.OPTIONAL, 2, null, null, null,
                         null, LogicalType.variant(1)),
                 new SchemaElement("metadata", PhysicalType.BYTE_ARRAY, null, RepetitionType.REQUIRED,
@@ -1443,7 +1444,7 @@ class FilterPredicateResolverTest {
     /// optional group typed_value { optional int32 age; } }`
     private static FileSchema shreddedVariantSchema() {
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
-                SchemaElement.root("root", 1),
+                SchemaElements.root("root", 1),
                 new SchemaElement("v", null, null, RepetitionType.OPTIONAL, 3, null, null, null,
                         null, LogicalType.variant(1)),
                 new SchemaElement("metadata", PhysicalType.BYTE_ARRAY, null, RepetitionType.REQUIRED,
@@ -1950,7 +1951,7 @@ class FilterPredicateResolverTest {
 
     private static FileSchema schemaWithLogicalType(String columnName, PhysicalType type,
             Integer typeLength, LogicalType logicalType) {
-        SchemaElement root = SchemaElement.root("root", 1);
+        SchemaElement root = SchemaElements.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, typeLength, RepetitionType.REQUIRED,
                 null, null, null, null, null, logicalType);
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, col)));
@@ -1958,7 +1959,7 @@ class FilterPredicateResolverTest {
 
     private static FileSchema schemaWithConvertedType(String columnName, PhysicalType type,
             ConvertedType convertedType) {
-        SchemaElement root = SchemaElement.root("root", 1);
+        SchemaElement root = SchemaElements.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, null, RepetitionType.REQUIRED,
                 null, convertedType, null, null, null, null);
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, col)));
@@ -1966,7 +1967,7 @@ class FilterPredicateResolverTest {
 
     private static FileSchema schemaWithRepeatedColumn(String columnName, PhysicalType type,
             Integer typeLength, LogicalType logicalType) {
-        SchemaElement root = SchemaElement.root("root", 1);
+        SchemaElement root = SchemaElements.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, typeLength, RepetitionType.REPEATED,
                 null, null, null, null, null, logicalType);
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(root, col)));

@@ -16,10 +16,10 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
@@ -275,11 +275,11 @@ class AmbiguousFieldNameTest {
     @Test
     void columnarWriterRefusesAnAmbiguousStructPath() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("m", 2),
-                SchemaElement.group("t", RepetitionType.OPTIONAL, 1),
-                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.group("t", RepetitionType.OPTIONAL, 1),
-                SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.root("m", 2),
+                SchemaElements.group("t", RepetitionType.OPTIONAL, 1),
+                SchemaElements.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.group("t", RepetitionType.OPTIONAL, 1),
+                SchemaElements.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.struct("t",

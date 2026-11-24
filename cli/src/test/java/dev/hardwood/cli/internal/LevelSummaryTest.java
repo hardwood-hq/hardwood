@@ -14,13 +14,13 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.TestResources;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ParquetFileReader;
@@ -241,8 +241,8 @@ class LevelSummaryTest {
     @Test
     void unannotatedRepeatedFieldLabelsTheEmptyBucketWithItsOwnName() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.group("root", RepetitionType.REQUIRED, 1),
-                SchemaElement.primitive("tags", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.group("root", RepetitionType.REQUIRED, 1),
+                SchemaElements.primitive("tags", PhysicalType.INT32, RepetitionType.REPEATED)));
         ColumnSchema tags = column(schema, "tags");
 
         assertThat(LevelSummary.definitionLabels(schema, tags))

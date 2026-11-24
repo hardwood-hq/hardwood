@@ -12,13 +12,14 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
-import static dev.hardwood.metadata.SchemaElement.*;
+import static dev.hardwood.internal.metadata.SchemaElements.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -72,10 +73,10 @@ class AvroNamesTest {
     @Test
     void preservesQualifiedRootAndBuildsDescendantNamespace() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("acme.row", 1),
-                SchemaElement.group("acme", RepetitionType.OPTIONAL, 1),
-                SchemaElement.group("row", RepetitionType.OPTIONAL, 1),
-                SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.root("acme.row", 1),
+                SchemaElements.group("acme", RepetitionType.OPTIONAL, 1),
+                SchemaElements.group("row", RepetitionType.OPTIONAL, 1),
+                SchemaElements.primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED)));
         AvroNames names = AvroNames.forSchema(schema);
         SchemaNode.GroupNode root = schema.getRootNode();
         SchemaNode.GroupNode child = (SchemaNode.GroupNode) root.children().getFirst();
@@ -115,8 +116,8 @@ class AvroNamesTest {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 root("schema", 1),
                 group("holder", RepetitionType.OPTIONAL, 2),
-                SchemaElement.primitive("dup", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.primitive("dup", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.primitive("dup", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.primitive("dup", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         assertThatThrownBy(() -> AvroNames.forSchema(schema))
                 .isInstanceOf(UnsupportedOperationException.class)

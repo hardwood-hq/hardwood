@@ -25,7 +25,7 @@ import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
-import static dev.hardwood.metadata.SchemaElement.*;
+import static dev.hardwood.internal.metadata.SchemaElements.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 

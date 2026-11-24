@@ -15,11 +15,11 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
@@ -180,11 +180,11 @@ class DottedColumnNameTest {
     @Test
     void rejectsALeafPathThatIsAlsoAGroupPath() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 2),
-                SchemaElement.primitive("a.b", PhysicalType.INT64, RepetitionType.REQUIRED),
-                SchemaElement.group("a", RepetitionType.REQUIRED, 1),
-                SchemaElement.group("b", RepetitionType.REQUIRED, 1),
-                SchemaElement.primitive("c", PhysicalType.INT64, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 2),
+                SchemaElements.primitive("a.b", PhysicalType.INT64, RepetitionType.REQUIRED),
+                SchemaElements.group("a", RepetitionType.REQUIRED, 1),
+                SchemaElements.group("b", RepetitionType.REQUIRED, 1),
+                SchemaElements.primitive("c", PhysicalType.INT64, RepetitionType.REQUIRED)));
 
         assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("a.b")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -250,8 +250,8 @@ class DottedColumnNameTest {
     @Test
     void looksUpAFieldPathByItsElements() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.primitive("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.primitive("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)));
 
         assertThat(schema.getColumn("a.b").columnIndex()).isZero();
         assertThatThrownBy(() -> schema.getColumn(FieldPath.of("a", "b")))

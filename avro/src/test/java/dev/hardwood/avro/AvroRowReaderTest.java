@@ -38,6 +38,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.avro.internal.AvroPlanNode;
 import dev.hardwood.avro.internal.AvroSchemaConverter;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.reader.row.FileAwareRowReader;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -235,8 +236,8 @@ class AvroRowReaderTest {
 
     @Test
     void wrongFixedWidthNamesRootField() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement value = SchemaElement.fixedLengthPrimitive("value", 4, RepetitionType.REQUIRED);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement value = SchemaElements.fixedLengthPrimitive("value", 4, RepetitionType.REQUIRED);
         FileSchema schema = FileSchema.fromSchemaElements(List.of(root, value));
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
         RowReader rows = proxy(RowReader.class, values(
@@ -277,8 +278,8 @@ class AvroRowReaderTest {
 
     @Test
     void nonNullValueForNullLogicalTypeFailsAtRootField() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement value = SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement value = SchemaElements.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
                 unknown());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(root, value));
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
@@ -363,8 +364,8 @@ class AvroRowReaderTest {
     /// step cannot use.
     @Test
     void wrongRawTypeForUnsignedIntNamesRootField() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement count = SchemaElement.primitive("count", PhysicalType.INT32, RepetitionType.REQUIRED,
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement count = SchemaElements.primitive("count", PhysicalType.INT32, RepetitionType.REQUIRED,
                 intType(32, false));
         FileSchema schema = FileSchema.fromSchemaElements(List.of(root, count));
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
@@ -1890,23 +1891,23 @@ class AvroRowReaderTest {
     }
 
     private static FileSchema primitiveSchema(String name, PhysicalType type, RepetitionType repetition) {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement value = SchemaElement.primitive(name, type, repetition);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement value = SchemaElements.primitive(name, type, repetition);
         return FileSchema.fromSchemaElements(List.of(root, value));
     }
 
     private static FileSchema nestedPrimitiveSchema() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement struct = SchemaElement.group("record", RepetitionType.REQUIRED, 1);
-        SchemaElement value = SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement struct = SchemaElements.group("record", RepetitionType.REQUIRED, 1);
+        SchemaElement value = SchemaElements.primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED);
         return FileSchema.fromSchemaElements(List.of(root, struct, value));
     }
 
     private static FileSchema listStringSchema() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement listGroup = SchemaElement.group("items", RepetitionType.REQUIRED, 1, list());
-        SchemaElement repeated = SchemaElement.group("list", RepetitionType.REPEATED, 1);
-        SchemaElement element = SchemaElement.primitive("element", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement listGroup = SchemaElements.group("items", RepetitionType.REQUIRED, 1, list());
+        SchemaElement repeated = SchemaElements.group("list", RepetitionType.REPEATED, 1);
+        SchemaElement element = SchemaElements.primitive("element", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
                 string());
         return FileSchema.fromSchemaElements(List.of(root, listGroup, repeated, element));
     }
@@ -1914,30 +1915,30 @@ class AvroRowReaderTest {
     /// `list<null>` — every element is null in a well-formed file, so the `NULL` arm of
     /// the element switch is only reachable when the accessors and the plan disagree.
     private static FileSchema listOfNullSchema() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement listGroup = SchemaElement.group("nulls", RepetitionType.REQUIRED, 1, list());
-        SchemaElement repeated = SchemaElement.group("list", RepetitionType.REPEATED, 1);
-        SchemaElement element = SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL, unknown());
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement listGroup = SchemaElements.group("nulls", RepetitionType.REQUIRED, 1, list());
+        SchemaElement repeated = SchemaElements.group("list", RepetitionType.REPEATED, 1);
+        SchemaElement element = SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL, unknown());
         return FileSchema.fromSchemaElements(List.of(root, listGroup, repeated, element));
     }
 
     /// `map<string, null>` — the map counterpart of [#listOfNullSchema].
     private static FileSchema mapOfNullSchema() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement mapGroup = SchemaElement.group("attributes", RepetitionType.REQUIRED, 1, map());
-        SchemaElement keyValue = SchemaElement.group("key_value", RepetitionType.REPEATED, 2);
-        SchemaElement key = SchemaElement.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, string());
-        SchemaElement value = SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement mapGroup = SchemaElements.group("attributes", RepetitionType.REQUIRED, 1, map());
+        SchemaElement keyValue = SchemaElements.group("key_value", RepetitionType.REPEATED, 2);
+        SchemaElement key = SchemaElements.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, string());
+        SchemaElement value = SchemaElements.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
                 unknown());
         return FileSchema.fromSchemaElements(List.of(root, mapGroup, keyValue, key, value));
     }
 
     private static FileSchema mapStringSchema() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement mapGroup = SchemaElement.group("attributes", RepetitionType.REQUIRED, 1, map());
-        SchemaElement keyValue = SchemaElement.group("key_value", RepetitionType.REPEATED, 2);
-        SchemaElement key = SchemaElement.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, string());
-        SchemaElement value = SchemaElement.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, string());
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement mapGroup = SchemaElements.group("attributes", RepetitionType.REQUIRED, 1, map());
+        SchemaElement keyValue = SchemaElements.group("key_value", RepetitionType.REPEATED, 2);
+        SchemaElement key = SchemaElements.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, string());
+        SchemaElement value = SchemaElements.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, string());
         return FileSchema.fromSchemaElements(List.of(root, mapGroup, keyValue, key, value));
     }
 

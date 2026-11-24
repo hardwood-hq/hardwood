@@ -22,6 +22,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -475,15 +476,15 @@ class RecordFilterCompilerTest {
     }
 
     private static FileSchema schema(String name, PhysicalType type) {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement col = SchemaElement.primitive(name, type, RepetitionType.OPTIONAL);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement col = SchemaElements.primitive(name, type, RepetitionType.OPTIONAL);
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 
     private static FileSchema twoIntSchema(String name1, String name2) {
-        SchemaElement root = SchemaElement.root("root", 2);
-        SchemaElement col1 = SchemaElement.primitive(name1, PhysicalType.INT32, RepetitionType.REQUIRED);
-        SchemaElement col2 = SchemaElement.primitive(name2, PhysicalType.INT32, RepetitionType.REQUIRED);
+        SchemaElement root = SchemaElements.root("root", 2);
+        SchemaElement col1 = SchemaElements.primitive(name1, PhysicalType.INT32, RepetitionType.REQUIRED);
+        SchemaElement col2 = SchemaElements.primitive(name2, PhysicalType.INT32, RepetitionType.REQUIRED);
         return FileSchema.fromSchemaElements(List.of(root, col1, col2));
     }
 

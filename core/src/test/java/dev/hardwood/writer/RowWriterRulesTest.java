@@ -17,11 +17,11 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.writer.RowPlan;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
@@ -371,9 +371,9 @@ class RowWriterRulesTest {
     @Test
     void aLegacyTwoLevelListIsWritableColumnarAndRejectedByTheRowView() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
@@ -397,11 +397,11 @@ class RowWriterRulesTest {
     @Test
     void aLegacyTwoLevelListOfStructsIsRejectedByTheRowView() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.group("element", RepetitionType.REPEATED, 2),
-                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.group("element", RepetitionType.REPEATED, 2),
+                SchemaElements.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
@@ -422,9 +422,9 @@ class RowWriterRulesTest {
     @Test
     void twoFieldsOfOneNameAreRejectedUpFront() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 2),
-                SchemaElement.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL)));
+                SchemaElements.root("schema", 2),
+                SchemaElements.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
@@ -437,10 +437,10 @@ class RowWriterRulesTest {
     @Test
     void twoFieldsOfOneNameInsideANestedStructAreRejectedUpFront() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("address", RepetitionType.OPTIONAL, 2),
-                SchemaElement.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
-                SchemaElement.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("address", RepetitionType.OPTIONAL, 2),
+                SchemaElements.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElements.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)

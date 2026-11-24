@@ -5,22 +5,27 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.metadata;
+package dev.hardwood.internal.metadata;
 
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ConvertedType;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.FileSchema;
 
-import static dev.hardwood.metadata.SchemaElement.fixedLengthPrimitive;
-import static dev.hardwood.metadata.SchemaElement.group;
-import static dev.hardwood.metadata.SchemaElement.primitive;
-import static dev.hardwood.metadata.SchemaElement.root;
+import static dev.hardwood.internal.metadata.SchemaElements.fixedLengthPrimitive;
+import static dev.hardwood.internal.metadata.SchemaElements.group;
+import static dev.hardwood.internal.metadata.SchemaElements.primitive;
+import static dev.hardwood.internal.metadata.SchemaElements.root;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class SchemaElementFactoryTest {
+class SchemaElementsTest {
 
     @Test
     void groupEqualsCanonicalConstruction() {

@@ -11,10 +11,10 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -121,10 +121,10 @@ class SchemaPathResolverTest {
     /// `optional group v (VARIANT) { required binary metadata; optional binary value;
     /// optional group typed_value { optional int32 age; } }`
     private static final FileSchema VARIANT_SCHEMA = FileSchema.fromSchemaElements(List.of(
-            SchemaElement.root("root", 1),
-            SchemaElement.group("v", RepetitionType.OPTIONAL, 3, LogicalType.variant(1)),
-            SchemaElement.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
-            SchemaElement.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL),
-            SchemaElement.group("typed_value", RepetitionType.OPTIONAL, 1),
-            SchemaElement.primitive("age", PhysicalType.INT32, RepetitionType.OPTIONAL)));
+            SchemaElements.root("root", 1),
+            SchemaElements.group("v", RepetitionType.OPTIONAL, 3, LogicalType.variant(1)),
+            SchemaElements.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+            SchemaElements.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL),
+            SchemaElements.group("typed_value", RepetitionType.OPTIONAL, 1),
+            SchemaElements.primitive("age", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 }

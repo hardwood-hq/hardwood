@@ -25,6 +25,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -108,8 +109,8 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsRepeatedLeaf() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
@@ -125,8 +126,8 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsRequiredUnknownColumnFromElements() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.primitive("nothing", PhysicalType.INT32, RepetitionType.REQUIRED,
+                SchemaElements.root("schema", 1),
+                SchemaElements.primitive("nothing", PhysicalType.INT32, RepetitionType.REQUIRED,
                         LogicalType.unknown())));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
@@ -140,8 +141,8 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsGeographyOfAnUnknownAlgorithmFromElements() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.primitive("area", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                SchemaElements.root("schema", 1),
+                SchemaElements.primitive("area", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         LogicalType.geography(null, LogicalType.EdgeInterpolationAlgorithm.UNKNOWN))));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
@@ -156,7 +157,7 @@ class WriterSchemaShapeTest {
     @ValueSource(ints = { 0, -1 })
     void rejectsFixedLenByteArrayWithoutAWidthFromElements(Integer typeLength) {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
+                SchemaElements.root("schema", 1),
                 new SchemaElement("raw", PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, RepetitionType.REQUIRED,
                         null, null, null, null, null, null)));
 
@@ -170,9 +171,9 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsRepeatedLeafInsideAStruct() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("outer", RepetitionType.REQUIRED, 1),
-                SchemaElement.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("outer", RepetitionType.REQUIRED, 1),
+                SchemaElements.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
@@ -186,9 +187,9 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsRepeatedGroupWithoutListOrMapAnnotation() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("g", RepetitionType.REPEATED, 1),
-                SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("g", RepetitionType.REPEATED, 1),
+                SchemaElements.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
@@ -219,10 +220,10 @@ class WriterSchemaShapeTest {
     @Test
     void acceptsAKeyOnlyMap() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
-                SchemaElement.group("key_value", RepetitionType.REPEATED, 1),
-                SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
+                SchemaElements.group("key_value", RepetitionType.REPEATED, 1),
+                SchemaElements.primitive("key", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThat(writer).isNotNull();
@@ -233,15 +234,15 @@ class WriterSchemaShapeTest {
     @CsvSource({ "false, false", "false, true", "true, false", "true, true" })
     void rejectsAMapWithAnOptionalKeyBeforeOpeningTheDestination(boolean nested, boolean keyOnly) {
         List<SchemaElement> elements = new ArrayList<>();
-        elements.add(SchemaElement.root("schema", 1));
+        elements.add(SchemaElements.root("schema", 1));
         if (nested) {
-            elements.add(SchemaElement.group("outer", RepetitionType.OPTIONAL, 1));
+            elements.add(SchemaElements.group("outer", RepetitionType.OPTIONAL, 1));
         }
-        elements.add(SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()));
-        elements.add(SchemaElement.group("entries", RepetitionType.REPEATED, keyOnly ? 1 : 2));
-        elements.add(SchemaElement.primitive("k", PhysicalType.INT32, RepetitionType.OPTIONAL));
+        elements.add(SchemaElements.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()));
+        elements.add(SchemaElements.group("entries", RepetitionType.REPEATED, keyOnly ? 1 : 2));
+        elements.add(SchemaElements.primitive("k", PhysicalType.INT32, RepetitionType.OPTIONAL));
         if (!keyOnly) {
-            elements.add(SchemaElement.primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL));
+            elements.add(SchemaElements.primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL));
         }
         FileSchema schema = FileSchema.fromSchemaElements(elements);
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -262,10 +263,10 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsAMapWhoseEntryHasNoFieldsBeforeOpeningTheDestination() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 2),
-                SchemaElement.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
-                SchemaElement.group("entries", RepetitionType.REPEATED, 0)));
+                SchemaElements.root("schema", 2),
+                SchemaElements.primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
+                SchemaElements.group("entries", RepetitionType.REPEATED, 0)));
         InMemoryOutputFile out = OutputFile.inMemory();
 
         assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
@@ -284,10 +285,10 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsAnAnnotatedGroupThatIsItselfRepeated() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.REPEATED, 1, LogicalType.list()),
-                SchemaElement.group("list", RepetitionType.REPEATED, 1),
-                SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.REPEATED, 1, LogicalType.list()),
+                SchemaElements.group("list", RepetitionType.REPEATED, 1),
+                SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -304,10 +305,10 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsAnAnnotatedGroupThatIsItselfRepeatedInsideAList() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.group("inner", RepetitionType.REPEATED, 1, LogicalType.list()),
-                SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.group("inner", RepetitionType.REPEATED, 1, LogicalType.list()),
+                SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -323,9 +324,9 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsAnAnnotatedGroupWhoseEntryIsNotRepeated() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -340,10 +341,10 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsAnAnnotatedGroupHoldingMoreThanItsEntry() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 2, LogicalType.list()),
-                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.OPTIONAL),
-                SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.OPTIONAL)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 2, LogicalType.list()),
+                SchemaElements.primitive("a", PhysicalType.INT32, RepetitionType.OPTIONAL),
+                SchemaElements.primitive("b", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -358,9 +359,9 @@ class WriterSchemaShapeTest {
     @Test
     void rejectsAMapWhoseEntryIsALeaf() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
-                SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
+                SchemaElements.primitive("key", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -376,9 +377,9 @@ class WriterSchemaShapeTest {
     @Test
     void acceptsALegacyTwoLevelListWithALeafEntry() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -396,11 +397,11 @@ class WriterSchemaShapeTest {
     @Test
     void acceptsALegacyTwoLevelListOfStructs() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
-                SchemaElement.group("element", RepetitionType.REPEATED, 2),
-                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
-                SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.group("element", RepetitionType.REPEATED, 2),
+                SchemaElements.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElements.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -523,8 +524,8 @@ class WriterSchemaShapeTest {
     @Test
     void anUnproducibleSchemaLeavesNothingAtTheDestination(@TempDir Path dir) throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("schema", 1),
-                SchemaElement.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
+                SchemaElements.root("schema", 1),
+                SchemaElements.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
         Path file = dir.resolve("out.parquet");
 
         assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.of(file), schema))
@@ -559,11 +560,11 @@ class WriterSchemaShapeTest {
     /// `s0` … `s{depth - 1}`, so its maximum definition level is `depth + 1`.
     private static FileSchema optionalLeafUnderOptionalStructs(int depth) {
         List<SchemaElement> elements = new ArrayList<>();
-        elements.add(SchemaElement.root("schema", 1));
+        elements.add(SchemaElements.root("schema", 1));
         for (int i = 0; i < depth; i++) {
-            elements.add(SchemaElement.group("s" + i, RepetitionType.OPTIONAL, 1));
+            elements.add(SchemaElements.group("s" + i, RepetitionType.OPTIONAL, 1));
         }
-        elements.add(SchemaElement.primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL));
+        elements.add(SchemaElements.primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL));
         return FileSchema.fromSchemaElements(elements);
     }
 

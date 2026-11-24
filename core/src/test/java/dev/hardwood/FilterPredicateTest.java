@@ -28,6 +28,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
@@ -1710,8 +1711,8 @@ class FilterPredicateTest {
     /// A schema whose column can hold nulls, for the null-count tests. A `REQUIRED` column is never
     /// null, so its null tests do not read the null count.
     private static FileSchema createOptionalIntSchema() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement col = SchemaElement.primitive("col", PhysicalType.INT32, RepetitionType.OPTIONAL);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement col = SchemaElements.primitive("col", PhysicalType.INT32, RepetitionType.OPTIONAL);
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 
@@ -1736,8 +1737,8 @@ class FilterPredicateTest {
     }
 
     private static FileSchema createUuidSchema() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement col = SchemaElement.fixedLengthPrimitive("col", 16, RepetitionType.REQUIRED, LogicalType.uuid());
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement col = SchemaElements.fixedLengthPrimitive("col", 16, RepetitionType.REQUIRED, LogicalType.uuid());
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 
@@ -1751,14 +1752,14 @@ class FilterPredicateTest {
 
     private static FileSchema createSchemaForType(PhysicalType type) {
         // Root element + one column
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement col = SchemaElement.primitive("col", type, RepetitionType.REQUIRED);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement col = SchemaElements.primitive("col", type, RepetitionType.REQUIRED);
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 
     private static FileSchema createSchemaForType(PhysicalType type, LogicalType logicalType) {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement col = SchemaElement.primitive("col", type, RepetitionType.REQUIRED, logicalType);
+        SchemaElement root = SchemaElements.root("root", 1);
+        SchemaElement col = SchemaElements.primitive("col", type, RepetitionType.REQUIRED, logicalType);
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 

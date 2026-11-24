@@ -62,7 +62,6 @@ nav:
     - S3: reference/s3.md
     - parquet-java Compat Filters: reference/parquet-java-compat.md
     - Error Handling: reference/error-handling.md
-    - SchemaElement: reference/schema-element.md
     - CLI: reference/cli.md
     - Package Structure: reference/packages.md
     - API (JavaDoc): /api/latest/

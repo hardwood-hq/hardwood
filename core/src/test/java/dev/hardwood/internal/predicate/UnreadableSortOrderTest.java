@@ -30,6 +30,7 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.MetadataSource;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.schema.UnreadableAnnotations;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
@@ -155,7 +156,7 @@ class UnreadableSortOrderTest {
     @Test
     void theBoundsOfADroppedAnnotationAreNotRead() {
         FileSchema schema = FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(
-                SchemaElement.group("root", RepetitionType.REQUIRED, 1),
+                SchemaElements.group("root", RepetitionType.REQUIRED, 1),
                 new SchemaElement("g", PhysicalType.INT64, null, RepetitionType.OPTIONAL,
                         null, null, null, null, null, LogicalType.geometry(null)))));
 

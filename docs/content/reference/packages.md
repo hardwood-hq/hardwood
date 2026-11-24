@@ -13,6 +13,12 @@
 
 Application code should import only from the packages marked **Public API**.
 
+API annotated `@Experimental`, such as `ColumnReader` and `RowWriter`, may change in any release.
+
+Always build values through the provided factory methods and builders; the canonical constructors of public records are not part of the public API. Reading a record through its accessors and matching on its type (`case LogicalType.DecimalType decimal`) are compatible like the rest of the public API. A minor release may add or restructure a record's components, keeping its accessors: code deconstructing a record (`case LogicalType.DecimalType(int precision, int scale)`) may then need adjusting, and what the record's `equals` compares changes with its components.
+
+A sealed interface may gain subtypes, and an enum constants, in a minor release. An exhaustive `switch` over one of them without a `default` branch then fails to compile until it handles the new case.
+
 | Package | Visibility | Purpose |
 |---------|-----------|---------|
 | [`dev.hardwood`](/api/latest/dev/hardwood/package-summary.html) | **Public API** | Entry point for creating readers, the `OutputFile` write destination and its `AbstractOutputFile` base, managing shared resources (thread pool, decompressor pool), and the shared `Validity` null bitmap. |

@@ -27,6 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.batch.BinaryBatchValues;
 import dev.hardwood.internal.reader.batch.BinaryBatchValuesFixtures;
@@ -866,15 +867,15 @@ class BatchMatcherOracleTest {
             this.amountNulls = amountNulls;
             this.moments = moments;
             this.momentNulls = momentNulls;
-            SchemaElement root = SchemaElement.root("root", 8);
-            SchemaElement c1 = SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
-            SchemaElement c2 = SchemaElement.primitive("value", PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
-            SchemaElement c3 = SchemaElement.primitive("tag", PhysicalType.INT32, RepetitionType.OPTIONAL);
-            SchemaElement c4 = SchemaElement.primitive("score", PhysicalType.FLOAT, RepetitionType.OPTIONAL);
-            SchemaElement c5 = SchemaElement.primitive("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL);
-            SchemaElement c6 = SchemaElement.primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL);
-            SchemaElement c7 = SchemaElement.fixedLengthPrimitive("amount", AMOUNT_WIDTH, RepetitionType.OPTIONAL);
-            SchemaElement c8 = SchemaElement.fixedLengthPrimitive("moment", MOMENT_WIDTH, RepetitionType.OPTIONAL);
+            SchemaElement root = SchemaElements.root("root", 8);
+            SchemaElement c1 = SchemaElements.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
+            SchemaElement c2 = SchemaElements.primitive("value", PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
+            SchemaElement c3 = SchemaElements.primitive("tag", PhysicalType.INT32, RepetitionType.OPTIONAL);
+            SchemaElement c4 = SchemaElements.primitive("score", PhysicalType.FLOAT, RepetitionType.OPTIONAL);
+            SchemaElement c5 = SchemaElements.primitive("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL);
+            SchemaElement c6 = SchemaElements.primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL);
+            SchemaElement c7 = SchemaElements.fixedLengthPrimitive("amount", AMOUNT_WIDTH, RepetitionType.OPTIONAL);
+            SchemaElement c8 = SchemaElements.fixedLengthPrimitive("moment", MOMENT_WIDTH, RepetitionType.OPTIONAL);
             this.schema = FileSchema.fromSchemaElements(List.of(root, c1, c2, c3, c4, c5, c6, c7, c8));
             this.projection = ProjectedSchema.create(schema, ColumnProjection.all());
         }

@@ -15,6 +15,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.SchemaElements;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -124,9 +125,9 @@ class RepeatedPathCacheTest {
 
     private static List<SchemaElement> schemaElements(List<String> paths) {
         List<SchemaElement> elements = new ArrayList<>();
-        elements.add(SchemaElement.group("schema", RepetitionType.REQUIRED, paths.size()));
+        elements.add(SchemaElements.group("schema", RepetitionType.REQUIRED, paths.size()));
         for (String path : paths) {
-            elements.add(SchemaElement.primitive(path.replace('.', '_'), PhysicalType.DOUBLE, RepetitionType.REQUIRED));
+            elements.add(SchemaElements.primitive(path.replace('.', '_'), PhysicalType.DOUBLE, RepetitionType.REQUIRED));
         }
         return elements;
     }

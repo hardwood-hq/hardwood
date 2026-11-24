@@ -54,8 +54,8 @@ import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
-import static dev.hardwood.metadata.SchemaElement.primitive;
-import static dev.hardwood.metadata.SchemaElement.root;
+import static dev.hardwood.internal.metadata.SchemaElements.primitive;
+import static dev.hardwood.internal.metadata.SchemaElements.root;
 
 /// Predicate evaluation micro-benchmark, isolated from any I/O.
 ///
