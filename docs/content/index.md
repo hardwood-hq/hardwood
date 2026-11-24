@@ -16,6 +16,7 @@ Available as a Java library and a command-line tool._
 
 !!! news "What's new"
 
+    - **2026-11-24** — [Hardwood 1.1.0.CR1](https://www.morling.dev/blog/s3-writes-parallel-encoding-alp-hardwood-1-1-0-cr1/): writing to S3, parallel encoding, ALP, a rewritten read engine
     - **2026-10-12** — [Hardwood 1.1.0.Beta2](https://www.morling.dev/blog/row-group-control-faster-s3-reads-footer-caching-hardwood-1-1-0-beta2/): row group control in the writer, faster S3 reads, footer caching
     - **2026-08-31** — [Hardwood 1.1.0.Beta1](https://www.morling.dev/blog/parquet-file-write-support-bloom-filters-improved-performance-hardwood-1-1-0-beta1/): Parquet write support, Bloom filter pruning, faster reads
     - **2026-06-25** — [Hardwood 1.0](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/): the release announcement and the story behind the project

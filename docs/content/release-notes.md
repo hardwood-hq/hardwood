@@ -15,6 +15,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0.CR1 (2026-11-24)
 
+[Announcement blog post](https://www.morling.dev/blog/s3-writes-parallel-encoding-alp-hardwood-1-1-0-cr1/) ·
 [API changes](/api-changes/1.1.0.CR1/)
 
 Highlights of this release:
