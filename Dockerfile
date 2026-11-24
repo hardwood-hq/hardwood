@@ -14,6 +14,7 @@ RUN microdnf install -y --nodocs \
       git \
       gh \
       jq \
+      openssl \
       zip \
       unzip \
       tar \
