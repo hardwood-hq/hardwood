@@ -65,7 +65,7 @@ jobs:
           persist-credentials: false
 
       - name: 'Set up Graal'
-        uses: graalvm/setup-graalvm@f70bc8032f90a104502824a54bcb94b6f01715bc  # v1.6.8 — https://github.com/graalvm/setup-graalvm/releases/tag/v1.6.8
+        uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90  # v1.6.10 — https://github.com/graalvm/setup-graalvm/releases/tag/v1.6.10
         with:
           version: '25i-latest'
           distribution: 'graalvm-community'
