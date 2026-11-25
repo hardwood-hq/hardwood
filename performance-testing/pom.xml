@@ -24,11 +24,9 @@
   <description>Performance testing modules for Hardwood</description>
 
   <properties>
-    <!-- Never published to Maven Central; these modules are only in the release
-         reactor so release:prepare rewrites their versions consistently with the
-         rest of the build. Inherited by all performance-testing submodules. Since
-         nothing here is deployed, skip Javadoc generation too — it produces no
-         published artifact and only adds a way for the release build to fail. -->
+    <!-- Never published to Maven Central. Inherited by all performance-testing
+         submodules. Since nothing here is deployed, skip Javadoc generation too:
+         it produces no published artifact. -->
     <maven.deploy.skip>true</maven.deploy.skip>
     <maven.javadoc.skip>true</maven.javadoc.skip>
   </properties>

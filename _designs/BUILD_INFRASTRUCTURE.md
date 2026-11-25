@@ -56,7 +56,7 @@ The license check runs once for the whole tree (`aggregate`) from the root, with
 | Local `./mvnw verify` | Yes |
 | PR and main CI: the step that builds a job's own modules | Yes |
 | PR and main CI: the dependency step of each job | No (`-Dquick`) |
-| Release (`release.sh`: `release:prepare` and `release:perform`) | No: `preparationGoals` and `arguments` carry `-Dquick` |
+| Release (`build` job of `release.yml`) | No: it builds with `-Dquick` |
 | Native CLI packaging (`cli-early-access.yml`, `release-cli.yml`) | Yes |
 
 Each module is verified under `qa` by exactly one CI job, the one that owns it (see [CI dependency closure](#ci-dependency-closure)). A release builds the tagged commit without `qa`; that commit's checks ran in CI when it reached `main`.
@@ -118,7 +118,7 @@ The cache restores the local repository of an earlier run, including the `dev.ha
 - The key is `maven-<os>-<job>-<hash of all pom.xml>`, with fallbacks to the same job under any POM hash, then to related jobs, then to any Maven cache.
 - `main-build.yml` saves its caches (`actions/cache`). `pr-build.yml` only restores them (`actions/cache/restore`): a pull request can restore caches saved on its own ref or on `main`, and a cache saved by a PR would serve only re-runs of that PR while taking space from `main`'s caches.
 - Every PR job therefore has a counterpart in `main-build.yml` under the same job name that resolves at least the same dependencies. The PR-only `predicate-audit` job falls back to the `build-modules` cache, which is why `build-modules` compiles `predicate-audit` on `main` as well. A job added to `pr-build.yml` needs such a counterpart, or every run downloads what the cache lacks.
-- The Maven distribution that `./mvnw` unpacks has a cache of its own, keyed `maven-wrapper-<os>-<hash of .mvn/wrapper/maven-wrapper.properties>` and shared by every job, so the distribution is downloaded only when the wrapper properties change. `main-build.yml` restores and saves it, `pr-build.yml` only restores it, and the Graal packaging jobs of `release-cli.yml` and `cli-early-access.yml`, whose `setup-graalvm` caches only the repository, restore and save it per OS. `setup-java`'s `cache: maven` caches the distribution too, but under that action's own key, which only the rarely run jobs that use it write and which is therefore usually evicted; the `release` job of `release.yml` and the `build` job of `cli-early-access.yml` restore and save the shared cache as well.
+- The Maven distribution that `./mvnw` unpacks has a cache of its own, keyed `maven-wrapper-<os>-<hash of .mvn/wrapper/maven-wrapper.properties>` and shared by every job, so the distribution is downloaded only when the wrapper properties change. `main-build.yml` restores and saves it, `pr-build.yml` only restores it, and the Graal packaging jobs of `cli-early-access.yml`, whose `setup-graalvm` caches only the repository, restore and save it per OS. `setup-java`'s `cache: maven` caches the distribution too, but under that action's own key, which only the rarely run jobs that use it write and which is therefore usually evicted; the `build` job of `cli-early-access.yml` restores and saves the shared cache as well. No job of `release.yml` or `release-cli.yml` restores a cache (see [Release jobs](#release-jobs)).
 
 The closure is not offline: a cache miss or a changed POM resolves third-party artifacts from Maven Central during the run.
 
@@ -126,7 +126,7 @@ The closure is not offline: a cache miss or a changed POM resolves third-party a
 
 - `cli-early-access.yml` runs a full `clean install` in one job, uploads `~/.m2/repository/dev/hardwood` as a workflow artifact, and the per-OS native packaging jobs download it. This is the one workflow whose jobs pass Hardwood artifacts between each other.
 - `release-cli.yml` builds each native package from the release tag with `-pl :hardwood-error-prone-checks,:hardwood-cli -am`.
-- `release.yml` runs `release.sh` (see [RELEASING.md](../RELEASING.md)).
+- `release.yml` builds, stages and smoke-tests a release when its tag is pushed, and `release-cli.yml`, run by hand on the tag, releases the CLI (see [Release jobs](#release-jobs) and [RELEASING.md](../RELEASING.md)).
 - `retag-latest-image.yml`, run by hand, points the CLI image's `latest` tag at the image of an existing release.
 - Every job that builds the native binary runs `tools/block-certificates.sh` after setting up GraalVM, and `release-cli.yml` and `cli-early-access.yml` run `NativeBinarySmokeIT.embedsEveryBlockedCertificate` against each platform's binary before uploading it (see [NATIVE_BUILD.md](../NATIVE_BUILD.md#blocked-certificates)). `release-cli.yml` builds with `install`, so that this second Maven invocation resolves the Hardwood modules from the local repository.
 
@@ -141,6 +141,7 @@ Every input the build downloads is pinned. The JDKs are pinned by major version,
 | GitHub Actions | Full commit SHA, with the release tag in a trailing comment | Dependabot, one weekly pull request for all actions |
 | Runner images | A versioned label (`ubuntu-24.04`, `windows-2025-vs2026`, `macos-26`); no `-latest` label | Hand |
 | Maven | The wrapper's `distributionUrl` and `distributionSha256Sum`; the wrapper refuses to unpack a downloaded distribution with another SHA-256; a distribution restored from the Actions cache is not checked again, and the cache is trusted as `~/.m2/repository` is | Hand, the sum taken from a distribution checked against Apache's published SHA-512 and release signature |
+| JReleaser | Version and SHA-256 of `jreleaser-tool-provider` in `release.yml`; the `stage` job refuses a download with another SHA-256 | Hand, the sum taken from a JAR whose release signature was checked |
 | Maven artifacts | Their versions in the POMs; `--strict-checksums` fails the build on an artifact whose checksum is missing or wrong | Dependabot, weekly, minor and patch updates grouped |
 | Container base images | A Fedora release tag (`fedora-minimal:44`) rather than a digest, so each build of the CLI image picks up that release's package updates | Dependabot, weekly, for the CLI image and the dev container |
 | Build JDKs | Temurin by major version through `actions/setup-java` (`java-version: '25'`, and `'21'` for the Java 21 integration tests), resolved to the latest update on each run | Floats with the releases |
@@ -150,17 +151,36 @@ The oldest glibc the Linux binary runs on, its highest `GLIBC_` symbol version i
 
 ### Token permissions
 
-Every workflow declares `permissions: contents: read`. A job that writes declares its own grant, limited to what it uses: `contents: write` to push or publish a GitHub release, `packages: write` to push the image, `issues: write` for JReleaser to close the release's milestone, and `id-token: write` with `attestations: write` to attest provenance. A reusable workflow cannot exceed its caller's grant, so the `release-cli` job of `release.yml` carries every grant the jobs of `release-cli.yml` need.
+Every workflow declares `permissions: contents: read`. A job that writes declares its own grant, limited to what it uses: `contents: write` to push or publish a GitHub release, `packages: write` to push the image, `issues: write` to close the release's milestone, and `id-token: write` with `attestations: write` to attest provenance.
+
+### Release jobs
+
+A release is a tag on a commit that carries the release version: `tools/release/release.sh` makes that commit on top of the branch to release from and pushes only the tag, so no workflow writes to git and every build of the tag builds exactly what was released.
+
+The project's Maven build loads plugins, annotation processors and test dependencies, any of which can read the job it runs in. The signing key and the Central token outlive a release and would let their holder publish any `dev.hardwood` version, so they are never in a job that runs the build. `release.yml` runs on the push of a `v*` tag (other than `v*-docs`):
+
+| Job | Runs | Holds |
+|---|---|---|
+| `build` | Checks the tag, the POM version and the release notes; `./mvnw -Dquick -Pdeployment clean deploy` into a staging directory | no secrets |
+| `stage` | `jreleaser deploy` (`tools/release/jreleaser.yml`) from JReleaser's standalone JAR, pinned by SHA-256: signs the staged files and uploads them to the Central Portal for publishing by hand | signing key, Central token |
+| `resolve` | `tools/release/smoke-test/resolve.sh`: Maven resolves the staged release from the Portal in a user's project that imports `hardwood-bom` and depends on `hardwood-core`, `hardwood-s3` and `snappy-java`, asking the Portal for `dev.hardwood` only (`repository-filter/`); a job of its own, so that it can be re-run without uploading again | Central token |
+| `smoke-test` | `tools/release/smoke-test/SmokeTest.java` on those JARs: checks the version, writes and reads a file, and sets up an S3 file without network access | no secrets |
+
+Next to the secrets run only JReleaser and, in `resolve`, Maven with the dependency plugin, which execute nothing they resolve; JReleaser's POM verification, which would download a further tool, is off. The `release` environment admits only `v*` tags and a tag ruleset limits creating them to maintainers, so the code that reaches the secrets is that of a maintainer's tag; these are repository settings, described in [RELEASING.md](../RELEASING.md), which no file in the repository enforces. The maintainer publishes or drops the deployment in the Portal, a release decision rather than a security boundary, since a Portal token can always publish.
+
+`release-cli.yml`, run by hand on the tag after publishing and apart from `release.yml`, so that nothing that run uploaded reaches it, builds the native CLI on each platform without write access and runs each archive against `tools/release/smoke-test/smoke.parquet` (`cli-smoke-test.sh`); builds and runs each architecture's image, pushed by digest only; then tags the image, attests archives and image, creates the GitHub release with the version's release notes (`release-notes.sh`, which pins the site links to the version) and closes the milestone.
+
+No job of either workflow restores a cache; the jobs that run Maven retry the wrapper's download of it instead, which checks it against its pinned SHA-256. Not protected: the artifacts themselves, since a compromised build can stage what it likes and `stage` signs it; the CLI, whose packaging runs its own Maven build; and `hardwood-avro` and `hardwood-aws-auth`, which the release neither resolves nor runs. Untested: `stage` and the publishing jobs of `release-cli.yml` run only in a release.
 
 ### Release outputs
 
 | Output | Integrity data |
 |---|---|
-| Maven Central artifacts | PGP signatures, from JReleaser |
+| Maven Central artifacts | PGP signatures, from JReleaser in the `stage` job of `release.yml` |
 | CLI archives | `checksums_sha256.txt` on the GitHub release, and a build provenance attestation for every archive it lists |
 | CLI image | A build provenance attestation for the multi-arch index digest, so it holds under every tag pointing at that digest |
 
-The attestations are created by `actions/attest-build-provenance`, kept by GitHub, and checked with `gh attestation verify`. The signing identity is the workflow file that runs the attest step: `release-cli.yml` for a release, also when `release.yml` calls it, and `cli-early-access.yml` for an early-access build. The getting-started guide tells users to check that identity with `--signer-workflow`, so moving the attest step to another workflow file breaks that command. No SBOM is published.
+The attestations are created by `actions/attest-build-provenance`, kept by GitHub, and checked with `gh attestation verify`. The signing identity is the workflow file that runs the attest step: `release-cli.yml` for a release, and `cli-early-access.yml` for an early-access build. The getting-started guide tells users to check that identity with `--signer-workflow`, so moving the attest step to another workflow file breaks that command. No SBOM is published.
 
 The dev container carries `actionlint`, which checks the workflows' syntax, expressions and `run:` scripts; CI does not run it. Untested: no check enforces that an action is pinned by SHA, that a runner label is versioned, or that a job's grant is minimal.
 
@@ -203,13 +223,13 @@ Tests: `BuildInfoTest`, `WriterFooterMetadataTest`, `HardwoodCommandTest` (cli).
 
 ### Reproducibility
 
-`project.build.outputTimestamp` in the parent POM fixes the timestamps of JAR entries; the release plugin updates it on each release. `check-buildplan` (in `qa`) rejects plugin versions known to break reproducible output. The manifest metadata is compatible with a byte-identical rebuild:
+`project.build.outputTimestamp` in the parent POM fixes the timestamps of JAR entries; `tools/release/release.sh` sets it in each release commit. `check-buildplan` (in `qa`) rejects plugin versions known to break reproducible output. The manifest metadata is compatible with a byte-identical rebuild:
 
 - `Implementation-Title` and `Implementation-Version` derive from the POM.
 - The commit SHA is a function of the commit being built. No build timestamp or host name is added; `Build-Jdk-Spec` records only the JDK's major version, so a rebuild must use the same major JDK.
 - `revisionDirty` is `false` for a clean checkout of a release tag, and the manifest does not carry it.
 
-A rebuild from a source archive without `.git` resolves `revision` to `unknown` and does not reproduce a released JAR; reproduction is from a checkout of the release tag. No CI job rebuilds and compares artifacts: reproducibility rests on the fixed timestamp, `check-buildplan` and the deterministic manifest. Untested.
+A rebuild from a source archive without `.git` resolves `revision` to `unknown` and does not reproduce a released JAR; reproduction is from a checkout of the release tag, with the release build's command, `./mvnw -Dquick -Pdeployment clean deploy`. No CI job rebuilds and compares artifacts: reproducibility rests on the fixed timestamp, `check-buildplan` and the deterministic manifest. Untested.
 
 ## Test JVM arguments
 

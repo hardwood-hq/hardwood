@@ -7,10 +7,10 @@
 #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
-# tools/contributors.py — emit the alphabetical contributor list for a release range.
+# tools/release/contributors.py — emit the alphabetical contributor list for a release range.
 #
 # Usage:
-#   tools/contributors.py <since-tag> [<until-tag>]
+#   tools/release/contributors.py <since-tag> [<until-tag>]
 #
 # With two tags, lists contributors whose commits are in (<since>, <until>].
 # With one tag, lists everyone up to and including <since> (initial release).
@@ -83,7 +83,7 @@ def login_for_email(rev_range, email, repo):
 
 def main():
     if len(sys.argv) not in (2, 3):
-        sys.exit('usage: contributors.py <since-tag> [<until-tag>]')
+        sys.exit('usage: tools/release/contributors.py <since-tag> [<until-tag>]')
     rev_range = sys.argv[1] if len(sys.argv) == 2 else f'{sys.argv[1]}..{sys.argv[2]}'
 
     repo = run(['gh', 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])

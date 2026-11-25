@@ -138,13 +138,14 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/hardwood-hq/hardwood
   # Latest released version, substituted into Maven/Gradle examples in the
-  # docs via the {{hardwood_version}} placeholder. Updated by release.sh.
+  # docs via the {{hardwood_version}} placeholder. Set by each release's
+  # pull request.
   hardwood_version: 1.1.0.CR1
   # GitHub release tag the CLI download link points at (git tag, v-prefixed).
-  # Updated by release.sh for the tagged docs build; main keeps it at the
-  # rolling early-access tag.
+  # Set on a release's v<version>-docs tag; main keeps it at the rolling
+  # early-access tag.
   cli_release_tag: 1.0-early-access
   # ghcr.io image tag the CLI docker examples pull (bare version, no v prefix —
-  # registry convention differs from the git tag). Updated by release.sh for
-  # the tagged docs build; main keeps it at the rolling early-access tag.
+  # registry convention differs from the git tag). Set on a release's
+  # v<version>-docs tag; main keeps it at the rolling early-access tag.
   cli_docker_tag: 1.0-early-access

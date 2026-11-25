@@ -1,0 +1,2 @@
+# Third-party POMs declare this snapshot repository; the release resolves no snapshots.
+none.invalid

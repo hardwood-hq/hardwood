@@ -7990,3 +7990,15 @@ pq.write_table(
 )
 print("\nGenerated field_ids_test.parquet:")
 print("  - field ids 1-10 on every declared field; none on the root, list and key_value groups")
+
+# The fixture of the CLI release smoke test (tools/release/cli-smoke-test.sh), which
+# checks its row count, row groups, schema and the first and last rows.
+smoke_rows = 100
+smoke_table = pa.table({
+    "id": pa.array(range(smoke_rows), pa.int64()),
+    "station": pa.array([f"station-{i % 7}" for i in range(smoke_rows)], pa.string()),
+    "distance": pa.array([i * 0.25 for i in range(smoke_rows)], pa.float64()),
+    "pickup": pa.array([datetime(2026, 1, 1) + timedelta(minutes=i) for i in range(smoke_rows)], pa.timestamp("us")),
+})
+pq.write_table(smoke_table, 'tools/release/smoke-test/smoke.parquet', compression='zstd', row_group_size=50)
+print("\nGenerated tools/release/smoke-test/smoke.parquet")
