@@ -1,6 +1,5 @@
 #Maven
 target/
-japicmp-report/
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
@@ -51,10 +50,6 @@ nb-configuration.xml
 __pycache__/
 docs/hooks/__pycache__/
 docs/site/
-
-# JReleaser
-out/
-release-output.log
 
 # `hardwood dive --log-file` defaults
 dive.log

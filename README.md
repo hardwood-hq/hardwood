@@ -219,7 +219,7 @@ tools/api-report.sh <PREVIOUS_VERSION> <LATER_VERSION>  # compare two published 
 
 In the default (single-argument) form the script installs the snapshot jars and compares HEAD against `<PREVIOUS_VERSION>`. With both arguments the build step is skipped and both sides are resolved from the Maven repository — useful to diff arbitrary released pairs (e.g. `Beta2` against `CR1`).
 
-The script writes a unified `target/japicmp/api-report.diff` (text) and `target/japicmp/api-report.html` (one document with a TOC linking to per-module sections). Per-module reports also land under `target/japicmp/<artifactId>/` (HTML / Markdown / XML / diff). Internal packages (`dev.hardwood.internal`) are excluded. This is run automatically during releases.
+The script writes a unified `target/japicmp/api-report.diff` (text) and `target/japicmp/api-report.html` (one document with a TOC linking to per-module sections). Per-module reports also land under `target/japicmp/<artifactId>/` (HTML / Markdown / XML / diff). Internal packages (`dev.hardwood.internal`) are excluded.
 
 ## Performance
 

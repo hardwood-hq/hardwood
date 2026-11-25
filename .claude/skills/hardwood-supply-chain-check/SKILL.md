@@ -34,7 +34,7 @@ The token also cannot push changes under `.github/workflows/` (no `workflow` sco
 
 - Every workflow has a top-level `permissions: contents: read`; each job that writes declares only what it uses (see "Token permissions" in the design). A reusable workflow cannot exceed its caller's grant.
 - Dispatch inputs and other `${{ … }}` expressions inside `run:` scripts: they belong in `env:` and are referenced as shell variables.
-- Caches in the release path: list the steps that restore a cache (`setup-java` `cache:`, `actions/cache`) in `release.yml`, `release-cli.yml` and `cli-early-access.yml`. `--strict-checksums` checks downloads, not what a cache restores, so a cache entry written by another workflow on `main` reaches the release build unchecked. Report them; dropping the cache there or recording why its writers are trusted is the maintainer's call.
+- Caches in the release path: `release.yml` and `release-cli.yml` must restore none; list the steps that restore a cache (`setup-java` `cache:`, `setup-graalvm` `cache:`, `actions/cache`) in them and in `cli-early-access.yml`. `--strict-checksums` checks downloads, not what a cache restores, so a cache entry written by another workflow on `main` reaches the release build unchecked. Report them; dropping the cache there or recording why its writers are trusted is the maintainer's call.
 - Runner labels are versioned; no `-latest`. Check GitHub's runner-images announcements for a label's deprecation date.
 
 ### 3. Maven distribution
@@ -77,7 +77,7 @@ For the latest release and the latest early-access build (`gh release download <
 - `sha256sum --ignore-missing -c checksums_sha256.txt`.
 - `gh attestation verify <archive> -R hardwood-hq/hardwood --signer-workflow hardwood-hq/hardwood/.github/workflows/release-cli.yml` (early access: `cli-early-access.yml`), and the image with `oci://ghcr.io/hardwood-hq/hardwood:<tag>`. Check that the wrong `--signer-workflow` is rejected.
 - `cli-early-access.yml` runs only on `workflow_dispatch`: changes to actions or the toolchain are not exercised in the native jobs until it runs. Start it (with the user's go) after such changes and before a release.
-- The release's milestone was closed by JReleaser.
+- The release's milestone was closed by the `publish` job of `release-cli.yml`.
 - Optional cross-check: run the OpenSSF Scorecard CLI against the repository. Its *Signed-Releases* check reads only release assets (`*.sigstore.json`, `*.intoto.jsonl`, …), so it scores GitHub-stored attestations as absent.
 
 ### 7. Repository and organisation settings
@@ -93,7 +93,7 @@ The user checks in the UI:
 - CodeQL default setup on.
 - Actions: the allowed-actions policy requires SHA pinning; default workflow permissions read-only; "Allow GitHub Actions to create and approve pull requests" off.
 - Organisation: 2FA required; secret scanning with push protection on.
-- Secrets: each PAT (`DOCS_DISPATCH_TOKEN`, `SKILLS_DISPATCH_TOKEN`) fine-grained, scoped to its one target repository, with an expiry date (report it); the release secrets (GPG key, Central token) are scoped as narrowly as the workflows allow (#1631).
+- Secrets: each PAT (`DOCS_DISPATCH_TOKEN`, `SKILLS_DISPATCH_TOKEN`) fine-grained, scoped to its one target repository, with an expiry date (report it); the release secrets (GPG key, Central token) are environment secrets of the `release` environment, whose deployment rule admits only `v*` tags; a tag ruleset limits creating `v*` tags to maintainers (`gh api repos/hardwood-hq/hardwood/rulesets`); no repository-level `JRELEASER_*` secret remains (`gh secret list`); in `release.yml` only `stage` (signing key and Central token) and `resolve` (Central token only) reference them; `stage` runs no `./mvnw` and checks the JReleaser JAR against its pinned SHA-256, and `resolve` runs Maven only through `tools/release/smoke-test/resolve.sh`; report when that JReleaser version is behind the latest release (#1631).
 
 ### 8. Dev container
 

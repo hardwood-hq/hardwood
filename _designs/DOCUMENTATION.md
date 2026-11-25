@@ -91,7 +91,7 @@ The site is built with MkDocs and the Material theme, configured in `docs/mkdocs
 | Local preview | `docs/Dockerfile` | `mkdocs serve` with live reload; usage in `README.md` |
 | SEO patch | `docs/patch-seo.sh` | Post-build canonical and `noindex` tags (see below) |
 
-The `extra` block carries the values that change per release: `hardwood_version` (the Maven coordinates in examples), `cli_release_tag` and `cli_docker_tag` (the CLI download and image). Pages refer to them only through placeholders, never as literals, so that `release.sh` can set them for the tagged docs build by editing `docs/mkdocs.yml` alone; on `main` the CLI values point at the rolling `1.0-early-access` release.
+The `extra` block carries the values that change per release: `hardwood_version` (the Maven coordinates in examples), `cli_release_tag` and `cli_docker_tag` (the CLI download and image). Pages refer to them only through placeholders, never as literals, so that a release sets them by editing `docs/mkdocs.yml` alone: `hardwood_version` in the release's pull request, the CLI values on the commit tagged `v<VERSION>-docs` the versioned docs are built from (see [RELEASING.md](../RELEASING.md#publishing-the-documentation)); on `main` the CLI values point at the rolling `1.0-early-access` release.
 
 The footer's "Built from" link names the Hardwood commit the site was built from. `git_commit.py` takes it from the `SOURCE_REF` environment variable when set, and from `git rev-parse HEAD` otherwise. The order matters: in the publish workflow the working directory is the site repository, whose `HEAD` and `GITHUB_SHA` belong to the site repository, and only `SOURCE_REF` names the Hardwood commit. Any stamp of the source commit on published output follows the same rule.
 

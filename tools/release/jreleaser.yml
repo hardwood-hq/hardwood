@@ -1,0 +1,44 @@
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
+# The `stage` job of .github/workflows/release.yml runs `jreleaser deploy` with this
+# configuration on a checkout of the release tag, passing the version as
+# JRELEASER_PROJECT_VERSION: it signs the staged artifacts and uploads them to the Central
+# Portal, where a maintainer publishes or drops the deployment.
+project:
+  name: hardwood
+  description: A minimal dependency parser for the Apache Parquet file format
+  links:
+    homepage: https://hardwood.dev/
+  license: Apache-2.0
+  authors:
+    - Gunnar Morling
+  stereotype: CLI
+  languages:
+    java:
+      groupId: dev.hardwood
+
+signing:
+  pgp:
+    active: ALWAYS
+    armored: true
+
+deploy:
+  maven:
+    mavenCentral:
+      sonatype:
+        active: ALWAYS
+        url: https://central.sonatype.com/api/v1/publisher
+        namespace: dev.hardwood
+        # Upload only (publishing type USER_MANAGED): a maintainer publishes in the Portal.
+        stage: UPLOAD
+        # Would download and run the pomchecker tool next to the release secrets; the
+        # Central Portal validates every POM of an upload itself.
+        verifyPom: false
+        stagingRepositories:
+          - target/staging-deploy

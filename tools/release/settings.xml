@@ -9,9 +9,11 @@
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <!-- The Central Portal's repository of validated deployments, from which
+       tools/release/smoke-test/resolve.sh resolves a staged release. -->
   <servers>
     <server>
-      <id>central.manual.testing</id>
+      <id>central.staging</id>
       <configuration>
         <httpHeaders>
           <property>
@@ -25,11 +27,11 @@
 
   <profiles>
     <profile>
-      <id>central.manual.testing</id>
+      <id>central.staging</id>
       <repositories>
         <repository>
-          <id>central.manual.testing</id>
-          <name>Central Testing repository</name>
+          <id>central.staging</id>
+          <name>Central Portal staged deployments</name>
           <url>https://central.sonatype.com/api/v1/publisher/deployments/download</url>
         </repository>
       </repositories>

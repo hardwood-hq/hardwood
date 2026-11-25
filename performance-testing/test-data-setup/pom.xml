@@ -38,8 +38,7 @@
   <properties>
     <!-- Whether to skip fetching the test data sets (about 1.1 GB). The quick
          profile below flips this to true so that -Dquick builds this module
-         without downloading, e.g. during release:prepare which only needs the
-         POM versions rewritten, not the performance tests run. -->
+         without downloading, e.g. in CI jobs that only compile it. -->
     <testdata.download.skip>false</testdata.download.skip>
   </properties>
 
