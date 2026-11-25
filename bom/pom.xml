@@ -71,11 +71,6 @@
         <artifactId>hardwood-avro</artifactId>
         <version>${project.version}</version>
       </dependency>
-      <dependency>
-        <groupId>dev.hardwood</groupId>
-        <artifactId>hardwood-parquet-java-compat</artifactId>
-        <version>${project.version}</version>
-      </dependency>
 
       <!-- Optional compression libraries used by hardwood-core -->
       <dependency>
