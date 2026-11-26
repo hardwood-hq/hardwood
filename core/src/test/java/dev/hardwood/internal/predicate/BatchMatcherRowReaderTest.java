@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -14,15 +15,25 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Predicate;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -96,8 +107,8 @@ class BatchMatcherRowReaderTest {
 
     @Test
     void matchAllPredicate_batchMatcherPath_returnsAllRows() throws Exception {
-        // Match-all forces the consumer through every row via the runEndExclusive
-        // fast path in hasNext — exercises scanRunEnd plus the dense iteration loop.
+        // Match-all serves every batch as one run through the plain cursor — exercises
+        // scanRunEnd plus the dense iteration loop.
         FilterPredicate filter = FilterPredicate.and(
                 FilterPredicate.gtEq("id", 0),
                 FilterPredicate.lt("price", Double.MAX_VALUE));
@@ -156,6 +167,95 @@ class BatchMatcherRowReaderTest {
 
         assertThat(expected).as("fixture must contain matching rows").isNotEmpty();
         assertThat(idsWithFilter(filter)).containsExactlyElementsOf(expected);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = { 1, 2, 3, 4, 5, 6, 7, 8, 9 })
+    void cap_endsMidRunOrAtRunEnd_yieldsTheFirstMatches(int cap) throws Exception {
+        // Runs of one, two and three matches, two of them in the same row group (rows 1..5,
+        // 6..10, 11..15): every cap ends the read inside a run or exactly at its end, after
+        // the reader handed the run to its plain cursor.
+        FilterPredicate filter = FilterPredicate.or(
+                FilterPredicate.or(
+                        FilterPredicate.and(FilterPredicate.gtEq("id", 2), FilterPredicate.ltEq("id", 3)),
+                        FilterPredicate.eq("id", 5)),
+                FilterPredicate.or(
+                        FilterPredicate.and(FilterPredicate.gtEq("id", 7), FilterPredicate.ltEq("id", 9)),
+                        FilterPredicate.and(FilterPredicate.gtEq("id", 12), FilterPredicate.ltEq("id", 13))));
+        List<Integer> matches = List.of(2, 3, 5, 7, 8, 9, 12, 13);
+
+        List<Integer> out = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE));
+             RowReader rows = reader.buildRowReader().filter(filter).head(cap).build()) {
+            assertBatchMatchers(filter, reader.getFileSchema());
+            while (rows.hasNext()) {
+                // A second hasNext() neither skips nor moves the row the reader is on.
+                assertThat(rows.hasNext()).isTrue();
+                rows.next();
+                out.add(rows.getInt("id"));
+            }
+            assertThat(rows.hasNext()).isFalse();
+        }
+
+        assertThat(out).containsExactlyElementsOf(matches.subList(0, Math.min(cap, matches.size())));
+    }
+
+    /// Two row groups, `id` 0..199 and 200..327. The string column `tag` ends every batch at
+    /// its row group, so the second batch is shorter than the first, ends at a word boundary,
+    /// and the survivor bitmap it reuses holds the first batch's bits past its last row.
+    @TempDir
+    static Path dir;
+
+    private static Path wideRunFile;
+
+    @BeforeAll
+    static void writeWideRunFile() throws IOException {
+        wideRunFile = dir.resolve("wide_runs.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .primitive("tag", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        col -> col.logicalType(new LogicalType.StringType()))
+                .build();
+        WriterConfig config = WriterConfig.builder().rowGroupTargetRows(200).build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(wideRunFile), schema, config)) {
+            for (int i = 0; i < 328; i++) {
+                final int id = i;
+                writer.rowWriter().writeRow(row -> row.setInt("id", id).setString("tag", "t" + id));
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = { 1, 54, 100, 130, 140, 141, 160, 198, 1000 })
+    void cap_endsInALaterWordOrPastStaleBits_yieldsTheFirstMatches(int cap) throws Exception {
+        // Rows 10..149 of the first batch are one run across three bitmap words. Rows 70..127 of
+        // the second batch run to its end at the end of a word, and the next word still holds
+        // the first batch's bits 128..149: the run must stop at the batch size. The leaf on `tag` matches no row; it makes the merger
+        // combine two columns into the survivor bitmap it reuses, rather than alias one column's.
+        // The caps cut the long run in its first, second and third word, at its end and just
+        // past it, and end the read inside the last run.
+        FilterPredicate filter = FilterPredicate.or(
+                FilterPredicate.and(FilterPredicate.gtEq("id", 10), FilterPredicate.lt("id", 150)),
+                FilterPredicate.or(FilterPredicate.gtEq("id", 270), FilterPredicate.eq("tag", "none")));
+        List<Integer> matches = new ArrayList<>();
+        for (int id = 10; id < 150; id++) {
+            matches.add(id);
+        }
+        for (int id = 270; id < 328; id++) {
+            matches.add(id);
+        }
+
+        List<Integer> out = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(wideRunFile));
+             RowReader rows = reader.buildRowReader().filter(filter).head(cap).build()) {
+            assertBatchMatchers(filter, reader.getFileSchema());
+            while (rows.hasNext()) {
+                rows.next();
+                out.add(rows.getInt("id"));
+            }
+        }
+
+        assertThat(out).containsExactlyElementsOf(matches.subList(0, Math.min(cap, matches.size())));
     }
 
     /// 2 rows in one row group — `amount` 123.45 and 678.90 — with `id` (INT64) and `amount`, a

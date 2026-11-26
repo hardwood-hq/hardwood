@@ -152,11 +152,15 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final PredicateView predicateView;
     private int rowIndex = -1;
     private int batchSize = 0;
-    /// The row count of the current batch while the plain cursor serves it, and `0` while
-    /// a filter does or once the read is exhausted. [#hasNext] and [#next] compare
-    /// against it and nothing else, so the row loop of an unfiltered read, or of a batch
-    /// statistics proved, compiles to a bound check: every per-batch filtering decision
-    /// stays out of line in [#hasNextSlow] and [#nextSlow].
+    /// The exclusive end of the rows the plain cursor serves: the row count of the current
+    /// batch while it serves the whole batch, the end of the current run of matching rows
+    /// while a batch-matcher filter serves the batch (between runs, the end of the last one,
+    /// which the row index has reached), and `0` while a record matcher does or once the
+    /// read is exhausted. [#hasNext] and [#next] compare against it and
+    /// nothing else, so the row loop of an unfiltered read, of a batch statistics proved,
+    /// or of a run of matches compiles to a bound check: every per-batch and per-run
+    /// filtering decision stays out of line in [#hasNextSlow] and [#nextSlow], which run
+    /// once per run rather than once per row.
     private int plainLimit;
     private boolean exhausted;
     /// Claimed by the thread that closes the reader; a closer on another thread, such as the
@@ -184,15 +188,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// relation). [#UNLIMITED] means no cap. Enforced on both filtering
     /// paths; without a filter the batch plan already capped scanned == matched rows.
     private final long maxMatchedRows;
-    /// Count of matching rows yielded so far.
+    /// Count of matching rows yielded so far, counting a run the plain cursor serves in
+    /// whole as soon as [#nextSlow] hands it over.
     private long matchedRowsYielded;
-    /// Exclusive upper bound of the current run of consecutive-1 bits in
-    /// [#combinedWords] starting at or before `rowIndex + 1`. While
-    /// `rowIndex + 1 < runEndExclusive`, [#hasNext] can advance without
-    /// invoking [#nextSetBit] — replacing per-row mask + `numberOfTrailingZeros`
-    /// with a simple bound check, which is the win for match-all-like batches.
-    /// Reset to 0 each time a new batch loads.
-    private int runEndExclusive;
+    /// The exclusive end of the run of matching rows in [#combinedWords] that starts at
+    /// [#pendingRowIndex]; [#nextSlow] hands the run to the plain cursor. Meaningful only
+    /// while a batch-matcher filter has a row pending.
+    private int pendingRunEnd;
 
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
@@ -419,17 +421,11 @@ public final class FlatRowReader implements FileAwareRowReader {
             if (pendingRowIndex >= 0) {
                 return true;
             }
-            // Fast path: still inside a known run of consecutive 1-bits — skip
-            // nextSetBit and just advance. This is the match-all/dense-batch win.
-            if (rowIndex + 1 < runEndExclusive) {
-                pendingRowIndex = rowIndex + 1;
-                return true;
-            }
             while (true) {
                 int next = nextSetBit(combinedWords, rowIndex + 1, batchSize);
                 if (next >= 0) {
                     pendingRowIndex = next;
-                    runEndExclusive = scanRunEnd(combinedWords, next, batchSize);
+                    pendingRunEnd = scanRunEnd(combinedWords, next, batchSize);
                     return true;
                 }
                 if (!loadNextBatch()) {
@@ -519,7 +515,20 @@ public final class FlatRowReader implements FileAwareRowReader {
             }
             rowIndex = pendingRowIndex;
             pendingRowIndex = -1;
-            matchedRowsYielded++;
+            if (activeMerger != null) {
+                // The rest of the run matches too: hand it to the plain cursor, up to the
+                // cap, and count it whole. A cap reached here ends the read at the run's
+                // end, where the next hasNext() is out of line again.
+                long run = pendingRunEnd - rowIndex;
+                if (maxMatchedRows != UNLIMITED) {
+                    run = Math.min(run, maxMatchedRows - matchedRowsYielded);
+                }
+                plainLimit = rowIndex + Math.toIntExact(run);
+                matchedRowsYielded += run;
+            }
+            else {
+                matchedRowsYielded++;
+            }
         }
         else {
             // Fail early on an unguarded next() past the batch: without this bound
@@ -539,9 +548,8 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// first 0-bit at or after `from`, or `limit` if every bit in `[from, limit)`
     /// is set.
     ///
-    /// Caller must have already established that bit `from` is set; this method
-    /// is used by [#hasNext] to amortize per-row `nextSetBit` calls when whole
-    /// batches (or large stretches) match
+    /// Caller must have already established that bit `from` is set; [#hasNextSlow]
+    /// uses it to find the run [#nextSlow] hands to the plain cursor.
     private static int scanRunEnd(long[] words, int from, int limit) {
         int wordIdx = from >>> 6;
         int endWord = (limit - 1) >>> 6;
@@ -1079,16 +1087,14 @@ public final class FlatRowReader implements FileAwareRowReader {
         }
         rowIndex = -1;
         plainLimit = activeMerger == null && activeMatcher == null ? batchSize : 0;
+        // pendingRowIndex is already -1 here: hasNext() only calls loadNextBatch after
+        // nextSetBit returns -1, which happens only when pendingRowIndex < 0; next() clears
+        // it before any further hasNext(); initialize() runs with the field's default -1.
         if (activeMerger != null) {
             // A proven batch has no filter-only batch to merge, and every row matches.
             combinedWords = currentRowsAlwaysMatch
                     ? ALL_MATCHING
                     : matchMerger.merge(previousBatches, batchSize);
-            // pendingRowIndex is already -1 here: hasNext() only calls loadNextBatch
-            // after nextSetBit returns -1, which happens only when pendingRowIndex < 0;
-            // next() clears it before any further hasNext(); initialize() runs with the
-            // field's default -1.
-            runEndExclusive = 0;
         }
         if (tally != null) {
             // Ahead of any record of this batch being counted, so the counts land
