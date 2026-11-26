@@ -65,7 +65,7 @@
 
   <properties>
     <auto-service.version>1.1.1</auto-service.version>
-    <error-prone.version>2.52.0</error-prone.version>
+    <error-prone.version>2.53.0</error-prone.version>
     <hadoop.version>3.5.0</hadoop.version>
     <japicmp.newVersion>${project.version}</japicmp.newVersion>
     <java.version>21</java.version>
