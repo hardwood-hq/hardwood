@@ -44,6 +44,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 — https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           submodules: 'true'
+          persist-credentials: false
 
       - name: 'Set up Java'
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880  # v6.3.0 — https://github.com/actions/setup-java/releases/tag/v6.3.0
@@ -90,6 +91,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 — https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           submodules: 'true'
+          persist-credentials: false
 
       - name: 'Pre-pull s3proxy image in background'
         # Start the image download immediately after checkout so it overlaps
@@ -157,6 +159,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 — https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           submodules: 'true'
+          persist-credentials: false
 
       - name: 'Set up Java 25'
         # To build the dependencies: core carries a `src/main/java22` source root
@@ -236,6 +239,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 — https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           submodules: 'true'
+          persist-credentials: false
 
       - name: 'Pre-pull s3proxy image in background'
         run: |
