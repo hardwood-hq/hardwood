@@ -120,6 +120,9 @@ abstract class RowRepeatedNode extends RowNode {
     }
 
     void truncate(int mark) {
+        if (mark > count) {
+            throw StagingRollback.shortOf(mark, count);
+        }
         count = mark;
         pending = 0;
     }

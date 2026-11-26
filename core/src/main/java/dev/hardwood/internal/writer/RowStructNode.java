@@ -57,6 +57,10 @@ final class RowStructNode extends RowNode implements StructBuilder {
     /// field set twice is rejected.
     private final boolean[] set;
 
+    /// How many of [#set] the active scope has set, so a scope that set every field resolves
+    /// nothing on closing.
+    private int setCount;
+
     /// Whether this is a `FILE` group, which only [#setFile] fills.
     private final boolean file;
 
@@ -97,6 +101,7 @@ final class RowStructNode extends RowNode implements StructBuilder {
         }
         active = true;
         Arrays.fill(set, false);
+        setCount = 0;
         if (nulls != null) {
             nulls.append(false);
         }
@@ -105,6 +110,9 @@ final class RowStructNode extends RowNode implements StructBuilder {
     /// Closes the scope, resolving every field the caller left unset.
     void endScope() {
         active = false;
+        if (setCount == children.length) {
+            return;
+        }
         for (int i = 0; i < children.length; i++) {
             if (!set[i]) {
                 children[i].appendNullInstance();
@@ -237,8 +245,7 @@ final class RowStructNode extends RowNode implements StructBuilder {
     }
 
     private RowLeafNode fileLeaf(int childIndex) {
-        set[childIndex] = true;
-        return (RowLeafNode) children[childIndex];
+        return (RowLeafNode) children[markSet(childIndex)];
     }
 
     // ==================== StructBuilder ====================
@@ -671,6 +678,7 @@ final class RowStructNode extends RowNode implements StructBuilder {
                     + " is already set in this record");
         }
         set[childIndex] = true;
+        setCount++;
         return childIndex;
     }
 

@@ -23,11 +23,18 @@ import dev.hardwood.writer.StructBuilder;
 ///
 /// Built once per writer and reused for the whole file. Staging is checkpointed per record
 /// and rolled back if the record fails, so a rejected value leaves the batch exactly as it
-/// was.
+/// was. A stage outside every repeated field holds one entry per record, so the number of
+/// records staged is its checkpoint; only the stages beneath a repeated field, whose entry
+/// count varies by record, record a mark of their own.
 ///
 /// The plan keeps flat arrays of every node that stages something, so checkpointing, rolling
 /// back, filling and resetting are loops over arrays rather than walks of the tree.
 public final class RowPlan {
+
+    /// What every node of the tree is built with: the schema its leaves resolve their columns
+    /// in, the policy its leaves apply, and the payload count its variable-width leaves share.
+    private record Build(FileSchema schema, PrecisionLossPolicy policy, StagedPayload payload) {
+    }
 
     /// Collects the tree's nodes by role while the plan is built.
     record Nodes(List<RowLeafNode> leaves, List<RowStructNode> structs, List<RowRepeatedNode> repeated) {
@@ -39,66 +46,84 @@ public final class RowPlan {
 
     private final RowStructNode root;
     private final LeafStage[] stages;
-    private final int[] stageMarks;
-    private final LeafStage[] variableWidthStages;
+    /// The payload staged across every variable-width leaf, kept by the leaves as they stage.
+    private final StagedPayload payload;
 
     private final RowStructNode[] structs;
     private final NullMaskStage[] structNulls;
-    private final int[] structMarks;
 
     private final RowRepeatedNode[] repeated;
-    private final int[] repeatedMarks;
-    private final int[] repeatedNullMarks;
 
     private final RowLeafNode[] leaves;
 
+    /// The stages of the leaves outside every repeated field, which hold an entry per record.
+    private final LeafStage[] perRecordStages;
+    /// The null masks of the `OPTIONAL` structs outside every repeated field.
+    private final NullMaskStage[] perRecordStructNulls;
+    /// The repeated fields nested in no other, whose offsets and null mask hold an entry per
+    /// record.
+    private final RowRepeatedNode[] outerRepeated;
+
     /// The stages of the leaves beneath a repeated field, which hold an entry per element.
     private final LeafStage[] perElementStages;
+    private final int[] perElementStageMarks;
+    /// The null masks of the `OPTIONAL` structs beneath a repeated field.
+    private final NullMaskStage[] perElementStructNulls;
+    private final int[] perElementStructMarks;
     /// The repeated fields nested in another, whose offsets and null mask hold an entry per
     /// element of the enclosing one.
     private final RowRepeatedNode[] nestedRepeated;
+    private final int[] nestedRepeatedMarks;
+    private final int[] nestedRepeatedNullMarks;
 
-    private RowPlan(RowStructNode root, Nodes nodes) {
+    /// Records staged since the last [#reset()]: the checkpoint of every per-record stage.
+    private int records;
+
+    private RowPlan(RowStructNode root, Nodes nodes, StagedPayload payload) {
         this.root = root;
+        this.payload = payload;
         this.repeated = nodes.repeated().toArray(new RowRepeatedNode[0]);
         this.leaves = nodes.leaves().toArray(new RowLeafNode[0]);
         this.stages = new LeafStage[leaves.length];
         for (int i = 0; i < leaves.length; i++) {
             stages[i] = leaves[i].stage();
         }
-        this.stageMarks = new int[stages.length];
-        List<LeafStage> variableWidth = new ArrayList<>();
-        for (LeafStage stage : stages) {
-            if (stage instanceof LeafStage.BinaryStage) {
-                variableWidth.add(stage);
-            }
-        }
-        this.variableWidthStages = variableWidth.toArray(new LeafStage[0]);
 
         this.structs = nodes.structs().toArray(new RowStructNode[0]);
         this.structNulls = new NullMaskStage[structs.length];
         for (int i = 0; i < structs.length; i++) {
             structNulls[i] = structs[i].nulls();
         }
-        this.structMarks = new int[structs.length];
 
-        this.repeatedMarks = new int[repeated.length];
-        this.repeatedNullMarks = new int[repeated.length];
-
+        List<LeafStage> perRecord = new ArrayList<>();
         List<LeafStage> perElement = new ArrayList<>();
         for (int i = 0; i < leaves.length; i++) {
-            if (beneathRepeated(leaves[i], null)) {
-                perElement.add(stages[i]);
+            (beneathRepeated(leaves[i], null) ? perElement : perRecord).add(stages[i]);
+        }
+        this.perRecordStages = perRecord.toArray(new LeafStage[0]);
+        this.perElementStages = perElement.toArray(new LeafStage[0]);
+        this.perElementStageMarks = new int[perElementStages.length];
+
+        List<NullMaskStage> perRecordNulls = new ArrayList<>();
+        List<NullMaskStage> perElementNulls = new ArrayList<>();
+        for (int i = 0; i < structs.length; i++) {
+            if (structNulls[i] != null) {
+                (beneathRepeated(structs[i], null) ? perElementNulls : perRecordNulls).add(structNulls[i]);
             }
         }
-        this.perElementStages = perElement.toArray(new LeafStage[0]);
+        this.perRecordStructNulls = perRecordNulls.toArray(new NullMaskStage[0]);
+        this.perElementStructNulls = perElementNulls.toArray(new NullMaskStage[0]);
+        this.perElementStructMarks = new int[perElementStructNulls.length];
+
+        List<RowRepeatedNode> outer = new ArrayList<>();
         List<RowRepeatedNode> nested = new ArrayList<>();
         for (RowRepeatedNode node : repeated) {
-            if (beneathRepeated(node, node)) {
-                nested.add(node);
-            }
+            (beneathRepeated(node, node) ? nested : outer).add(node);
         }
+        this.outerRepeated = outer.toArray(new RowRepeatedNode[0]);
         this.nestedRepeated = nested.toArray(new RowRepeatedNode[0]);
+        this.nestedRepeatedMarks = new int[nestedRepeated.length];
+        this.nestedRepeatedNullMarks = new int[nestedRepeated.length];
     }
 
     /// Whether `node` lies beneath one of the plan's repeated fields other than `self`, judged
@@ -120,10 +145,11 @@ public final class RowPlan {
     /// @throws UnsupportedOperationException if the schema has a shape the writer cannot
     ///         produce
     public static RowPlan build(FileSchema schema, PrecisionLossPolicy precisionLossPolicy) {
-        RowStructNode root = buildStruct(schema.getRootNode(), "", schema, false, precisionLossPolicy);
+        Build build = new Build(schema, precisionLossPolicy, new StagedPayload());
+        RowStructNode root = buildStruct(schema.getRootNode(), "", build, false);
         Nodes nodes = new Nodes();
         root.collect(nodes);
-        return new RowPlan(root, nodes);
+        return new RowPlan(root, nodes, build.payload());
     }
 
     /// Stages one record, resolving the fields the filler left unset and undoing everything
@@ -144,9 +170,21 @@ public final class RowPlan {
             root.endScope();
         }
         catch (RuntimeException e) {
-            rollback();
+            try {
+                rollback();
+            }
+            catch (IllegalStateException inconsistent) {
+                inconsistent.addSuppressed(e);
+                throw inconsistent;
+            }
             throw e;
         }
+        records++;
+    }
+
+    /// The records staged since the last [#reset()].
+    public int stagedRecords() {
+        return records;
     }
 
     /// Hands every staged column, struct mask and list offset to the batch.
@@ -164,6 +202,8 @@ public final class RowPlan {
 
     /// Returns the staging to empty, ready for the next batch.
     public void reset() {
+        records = 0;
+        payload.bytes = 0;
         for (LeafStage stage : stages) {
             stage.reset();
         }
@@ -205,58 +245,70 @@ public final class RowPlan {
     /// The staged payload of the variable-width columns, which bounds how much a batch holds
     /// beyond its record count.
     public long variableWidthBytes() {
-        long bytes = 0;
-        for (LeafStage stage : variableWidthStages) {
-            bytes += stage.variableWidthBytes();
-        }
-        return bytes;
+        return payload.bytes;
     }
 
+    /// Marks the stages beneath a repeated field. Every other stage holds [#records] entries
+    /// at this point and needs no mark. A loop over empty arrays for a schema without repeated
+    /// fields.
     private void checkpoint() {
-        for (int i = 0; i < stages.length; i++) {
-            stageMarks[i] = stages[i].count;
+        for (int i = 0; i < perElementStages.length; i++) {
+            perElementStageMarks[i] = perElementStages[i].count;
         }
-        for (int i = 0; i < structs.length; i++) {
-            structMarks[i] = structNulls[i] == null ? 0 : structNulls[i].count();
+        for (int i = 0; i < perElementStructNulls.length; i++) {
+            perElementStructMarks[i] = perElementStructNulls[i].count();
         }
-        for (int i = 0; i < repeated.length; i++) {
-            repeatedMarks[i] = repeated[i].instanceCount();
-            NullMaskStage nulls = repeated[i].nulls();
-            repeatedNullMarks[i] = nulls == null ? 0 : nulls.count();
+        for (int i = 0; i < nestedRepeated.length; i++) {
+            nestedRepeatedMarks[i] = nestedRepeated[i].instanceCount();
+            NullMaskStage nulls = nestedRepeated[i].nulls();
+            nestedRepeatedNullMarks[i] = nulls == null ? 0 : nulls.count();
         }
     }
 
     private void rollback() {
-        for (int i = 0; i < stages.length; i++) {
-            stages[i].truncate(stageMarks[i]);
+        for (LeafStage stage : perRecordStages) {
+            stage.truncate(records);
         }
-        for (int i = 0; i < structs.length; i++) {
-            if (structNulls[i] != null) {
-                structNulls[i].truncate(structMarks[i]);
-            }
-            structs[i].clearActive();
+        for (int i = 0; i < perElementStages.length; i++) {
+            perElementStages[i].truncate(perElementStageMarks[i]);
         }
-        for (int i = 0; i < repeated.length; i++) {
-            repeated[i].truncate(repeatedMarks[i]);
-            NullMaskStage nulls = repeated[i].nulls();
-            if (nulls != null) {
-                nulls.truncate(repeatedNullMarks[i]);
-            }
-            repeated[i].clearActive();
+        for (NullMaskStage nulls : perRecordStructNulls) {
+            nulls.truncate(records);
         }
+        for (int i = 0; i < perElementStructNulls.length; i++) {
+            perElementStructNulls[i].truncate(perElementStructMarks[i]);
+        }
+        for (RowStructNode struct : structs) {
+            struct.clearActive();
+        }
+        for (RowRepeatedNode node : outerRepeated) {
+            truncate(node, records, records);
+        }
+        for (int i = 0; i < nestedRepeated.length; i++) {
+            truncate(nestedRepeated[i], nestedRepeatedMarks[i], nestedRepeatedNullMarks[i]);
+        }
+    }
+
+    private static void truncate(RowRepeatedNode node, int mark, int nullMark) {
+        node.truncate(mark);
+        NullMaskStage nulls = node.nulls();
+        if (nulls != null) {
+            nulls.truncate(nullMark);
+        }
+        node.clearActive();
     }
 
     // ==================== Plan construction ====================
 
     /// Builds a struct node — the record's root, a nested struct, or a map's key/value entry.
-    private static RowStructNode buildStruct(SchemaNode.GroupNode group, String path, FileSchema schema,
-                                             boolean nullable, PrecisionLossPolicy policy) {
+    private static RowStructNode buildStruct(SchemaNode.GroupNode group, String path, Build build,
+                                             boolean nullable) {
         List<SchemaNode> children = group.children();
         RowNode[] nodes = new RowNode[children.size()];
         String[] fieldNames = new String[children.size()];
         for (int i = 0; i < children.size(); i++) {
             SchemaNode child = children.get(i);
-            nodes[i] = buildNode(child, childPath(path, child.name()), schema, policy);
+            nodes[i] = buildNode(child, childPath(path, child.name()), build);
             fieldNames[i] = child.name();
         }
         // The node builds its own name-to-index map from these, and rejects a duplicate name
@@ -264,8 +316,7 @@ public final class RowPlan {
         return new RowStructNode(path, nodes, fieldNames, nullable, group.isFile());
     }
 
-    private static RowNode buildNode(SchemaNode node, String path, FileSchema schema,
-                                     PrecisionLossPolicy policy) {
+    private static RowNode buildNode(SchemaNode node, String path, Build build) {
         return switch (node) {
             case SchemaNode.PrimitiveNode leaf -> {
                 // A REPEATED leaf reaching a struct's field or a three-level list's element is
@@ -275,14 +326,14 @@ public final class RowPlan {
                 // is producible — a legacy two-level list's entry — is refused by
                 // repeatedChild(...) before reaching here.
                 WriterSchemaShape.requireWritableLeaf(leaf, path, false);
-                yield new RowLeafNode(path, schema.getColumn(leaf.columnIndex()), policy);
+                yield new RowLeafNode(path, build.schema().getColumn(leaf.columnIndex()), build.policy(),
+                        build.payload());
             }
-            case SchemaNode.GroupNode group -> buildGroup(group, path, schema, policy);
+            case SchemaNode.GroupNode group -> buildGroup(group, path, build);
         };
     }
 
-    private static RowNode buildGroup(SchemaNode.GroupNode group, String path, FileSchema schema,
-                                      PrecisionLossPolicy policy) {
+    private static RowNode buildGroup(SchemaNode.GroupNode group, String path, Build build) {
         boolean optional = group.repetitionType() == RepetitionType.OPTIONAL;
         // Producibility — a group's own repetition, and an annotated group's entry — is settled
         // by ParquetFileWriter.create before this plan is built. Asking the same helper again
@@ -296,18 +347,18 @@ public final class RowPlan {
                 // A map's entries are a repeated struct of `key` and `value`, populated
                 // through the same builder a nested struct uses.
                 RowStructNode entry = buildStruct(repeated, childPath(path, repeated.name()),
-                        schema, false, policy);
+                        build, false);
                 return new RowMapNode(path, optional, entry);
             }
             String repeatedPath = childPath(path, repeated.name());
             SchemaNode element = listElement(repeated, repeatedPath);
             String elementPath = childPath(repeatedPath, element.name());
-            return new RowListNode(path, optional, buildNode(element, elementPath, schema, policy));
+            return new RowListNode(path, optional, buildNode(element, elementPath, build));
         }
         // Any other group is written field by field like a struct: a plain struct, a FILE group,
         // which only setFile fills, or one carrying an annotation the write path does not
         // interpret, such as VARIANT.
-        return buildStruct(group, path, schema, optional, policy);
+        return buildStruct(group, path, build, optional);
     }
 
     /// Returns the annotated group's repeated entry group. That the entry exists and is

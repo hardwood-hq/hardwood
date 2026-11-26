@@ -277,4 +277,4 @@ Tests: `WriterParallelEncodingTest`, `ParallelAppendTest` (the bound on page bod
 ## Boundaries
 
 - `writeBatch` returns once the flushed row group is written, not once it is encoded, so the next row group does not accumulate while the previous one drains (#1515).
-- The row layer costs measurably more than the columnar one for the same file, in time and in staging allocation (#1045).
+- The row layer costs measurably more time than the columnar one for the same file: it transposes each record into the column staging on the calling thread, before and not alongside the parallel append of the batch it fills (#1045).
