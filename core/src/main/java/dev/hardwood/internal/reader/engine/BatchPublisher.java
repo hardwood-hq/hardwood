@@ -85,7 +85,7 @@ final class BatchPublisher {
         }
 
         /// Makes its next batch, of `columns` columns.
-        Batch makeNext(int columns, BitSet publishable) {
+        Batch makeNext(int columns, ColumnQueue publishable) {
             int segment = firstSegment + made.size();
             long key = key(segment);
             Batch b = new Batch(key, batches.readRowsBefore() + key - base, columns);
@@ -96,11 +96,11 @@ final class BatchPublisher {
 
         /// Takes its segment `segment` into `b`: extends it to the segment's end and marks the
         /// columns that skip it.
-        void take(Batch b, int segment, BitSet publishable) {
+        void take(Batch b, int segment, ColumnQueue publishable) {
             b.extendTo(key(segment) + batches.segmentRows(segment));
             for (int c = skipped.nextSetBit(0); c >= 0; c = skipped.nextSetBit(c + 1)) {
                 b.completed(c);
-                publishable.set(c);
+                publishable.add(c);
             }
         }
 
@@ -108,6 +108,38 @@ final class BatchPublisher {
         /// extended the batch it continues.
         boolean done() {
             return madeAll() && dropped == made.size() && (!continues() || continued);
+        }
+    }
+
+    /// Columns, each held at most once, in the order they were added.
+    private static final class ColumnQueue {
+        private final int[] columns;
+        private final boolean[] held;
+        private int first;
+        private int size;
+
+        ColumnQueue(int columns) {
+            this.columns = new int[columns];
+            this.held = new boolean[columns];
+        }
+
+        void add(int column) {
+            if (!held[column]) {
+                held[column] = true;
+                columns[(first + size++) % columns.length] = column;
+            }
+        }
+
+        /// Takes the first column, `-1` where none is held.
+        int poll() {
+            if (size == 0) {
+                return -1;
+            }
+            int column = columns[first];
+            first = (first + 1) % columns.length;
+            size--;
+            held[column] = false;
+            return column;
         }
     }
 
@@ -128,7 +160,7 @@ final class BatchPublisher {
     private final long[] published;
     private final long[] opened;
     /// the columns that may publish since they last tried
-    private final BitSet publishable = new BitSet();
+    private final ColumnQueue publishable;
     /// the first batch some column has not published
     private long head;
     /// the consumer's next batch ([#recountConsumerNext()]), and the open columns whose next batch it is
@@ -146,6 +178,7 @@ final class BatchPublisher {
         this.columns = exchanges.size();
         this.published = new long[columns];
         this.opened = new long[columns];
+        this.publishable = new ColumnQueue(columns);
         recountConsumerNext();
     }
 
@@ -313,24 +346,26 @@ final class BatchPublisher {
     /// The column's `cell` is complete: its batch can be published.
     void completed(int column, BatchCell<?> cell) {
         of(column, cell).completed(column);
-        publishable.set(column);
+        publishable.add(column);
     }
 
     /// The consumer of `column` made room in its exchange, or every column may publish.
     void publishable(int column) {
-        publishable.set(column);
+        publishable.add(column);
     }
 
     void allPublishable() {
-        publishable.set(0, published.length);
+        for (int c = 0; c < columns; c++) {
+            publishable.add(c);
+        }
     }
 
     /// Publishes each column's completed batches in order as far as its exchange takes them,
     /// then its failure once it reaches it, or its end once `allBatched` and every batch is
-    /// published. `batchedTo` is the key below which every batch has been added.
+    /// published. `batchedTo` is the key below which every batch has been added. Visits only the
+    /// columns that may publish, those that become so as others publish included.
     void publish(long batchedTo, boolean allBatched) {
-        for (int c = publishable.nextSetBit(0); c >= 0; c = publishable.nextSetBit(c + 1)) {
-            publishable.clear(c);
+        for (int c = publishable.poll(); c >= 0; c = publishable.poll()) {
             if (!exchanges.get(c).isFinished()) {
                 publish(c, batchedTo, allBatched);
             }
