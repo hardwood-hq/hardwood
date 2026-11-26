@@ -22,6 +22,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.io.CountingInputFile;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -39,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class IndexWindowLifecycleTest {
 
     private static final Path FIXTURE = Path.of("src/test/resources/page_index_windows.parquet");
+    private static final Path BLOOM_FIXTURE = Path.of("src/test/resources/bloom_filter_multi_rg_dict_index_test.parquet");
     private static final int ROW_GROUPS = 12;
     private static final long DEFAULT_BUDGET = 16L * 1024 * 1024;
     private static final long ONE_ROW_GROUP_PER_WINDOW = 1;
@@ -94,6 +96,37 @@ class IndexWindowLifecycleTest {
                 .rootCause()
                 .hasMessage("injected");
         assertThat(rows).hasValue(ROWS / ROW_GROUPS);
+    }
+
+    /// A window whose first row group its Bloom filters drop fails the read at the row group that
+    /// waits for its page index, not at the dropped one.
+    ///
+    /// Uses bloom_filter_multi_rg_dict_index_test.parquet: five row groups of 200 rows, one window.
+    /// `id == 250` keeps row group 1 alone by statistics; `code == 1` lies within every row group's
+    /// range and is absent, so Bloom filters drop the other four.
+    @Test
+    void aWindowThatCannotBeFetchedFailsTheReadAtTheRowGroupWaitingForIt() throws Exception {
+        CountingInputFile file = countingFile(new FailingInputFile(InputFile.of(BLOOM_FIXTURE)) {
+            @Override
+            boolean fails() {
+                return FetchReason.current().endsWith(" indexes");
+            }
+        });
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(file);
+                    RowReader rows = reader.buildRowReader()
+                            .filter(FilterPredicate.or(FilterPredicate.eq("id", 250L), FilterPredicate.eq("code", 1)))
+                            .build()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                }
+            }
+        })
+                .isInstanceOf(IOException.class)
+                .hasMessage("[bloom_filter_multi_rg_dict_index_test.parquet] Failed to fetch metadata for row group 1")
+                .rootCause()
+                .hasMessage("injected");
     }
 
     @Test

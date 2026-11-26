@@ -150,9 +150,7 @@ final class PageTracker {
             }
         }
         for (int i = 0; i < ranges.size(); i++) {
-            if (!ranges.get(i).output().hasValue()) {
-                fetcher.fetch(u.listing().file(), ranges.get(i), key(u, ranges.get(i), keys[i]));
-            }
+            fetcher.fetch(u.listing().file(), ranges.get(i), key(u, ranges.get(i), keys[i]));
         }
         if (first != Long.MAX_VALUE) {
             for (int i = 0; i < ranges.size(); i++) {

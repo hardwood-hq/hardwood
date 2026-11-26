@@ -262,19 +262,10 @@ final class RowGroupPlanner {
         return ranges;
     }
 
-    /// Fetches those of `ranges` not held, at `u`'s key, then runs `then` once they have arrived; a
-    /// range that cannot be read fails the read at `u`.
-    private void fetch(UnitListing u, List<RangeFetch> ranges, Runnable then) {
-        request(u, ranges);
-        whenArrived(u, ranges, then);
-    }
-
-    /// Fetches those of `ranges` not held, at `u`'s key.
+    /// Fetches `ranges` at `u`'s key.
     private void request(UnitListing u, List<RangeFetch> ranges) {
         for (RangeFetch r : ranges) {
-            if (!r.output().hasValue()) {
-                fetcher.fetch(u.file(), r, u.base());
-            }
+            fetcher.fetch(u.file(), r, u.base());
         }
     }
 
@@ -356,7 +347,8 @@ final class RowGroupPlanner {
                 List<RangeFetch> more = ranges(u.file(), p.missing(), 1);
                 p.fetched().addAll(more);
                 p.fetched().sort(Comparator.comparingLong(r -> r.range().start()));
-                fetch(u, more, () -> prune(p));
+                request(u, more);
+                whenArrived(u, more, () -> prune(p));
             }
         }, t -> readFailure.failAt(u.base(), t)));
     }
@@ -388,17 +380,16 @@ final class RowGroupPlanner {
         awaitIndex(new Unit.AwaitingIndex(p.listed(), p.inputs().decoded(), events));
     }
 
-    /// `a` waits for its window's page index, which the first unit of the window to wait for it
-    /// fetches, and is planned once it has arrived.
+    /// `a` waits for its window's page index and is planned once it has arrived. The first unit of
+    /// the window to wait requests it, keyed at the window's first unit, at or below every unit
+    /// that may wait for it.
     private void awaitIndex(Unit.AwaitingIndex a) {
         set(a);
         WindowFetch w = a.listed().window();
         if (w.readIndex()) {
-            fetch(w.first(), w.index(), () -> plan(a));
+            request(w.first(), w.index());
         }
-        else {
-            whenArrived(a.listing(), w.index(), () -> plan(a));
-        }
+        whenArrived(a.listing(), w.index(), () -> plan(a));
     }
 
     /// Replaces the unit's state with `u`.
