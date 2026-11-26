@@ -41,6 +41,8 @@ final class TrackedPage {
     private boolean ready;
     /// ended once its column has placed it, which a flat page decodes after
     private final Output<Void> placement = new Output<>();
+    /// whether it is done with its ranges
+    private boolean done;
 
     TrackedPage(Unit.Batched unit, int column, long key, NeededPage page, List<RangeFetch> ranges,
                 ChunkDictionary dictionary, boolean data) {
@@ -55,6 +57,15 @@ final class TrackedPage {
 
     Unit.Batched unit() {
         return unit;
+    }
+
+    /// It is done with its ranges: returns whether it was not before. A page its column placed into
+    /// no cell is done as it is placed, while it may still wait for a range or dictionary, which can
+    /// fail it afterwards.
+    boolean finish() {
+        boolean first = !done;
+        done = true;
+        return first;
     }
 
     int column() {

@@ -105,13 +105,13 @@ Fetch and decode are bounded apart because their delays differ. A request has a 
 
 | Held | Readers | Returned |
 |---|---|---|
-| A range's bytes | its unit's tracking until its scans hold it; the pages that lie in it, a planned page from its unit's batching and a scanned one from its scan finding it; a scan until it has passed it; the batch of a flat page's last cell until every column has published it | once the last is done; a range whose last reader is done before its fetch starts is not fetched |
+| A range's bytes | its unit's tracking until its scans hold it; the pages that lie in it, a planned page from its unit's batching and a scanned one from its scan finding it, until it is decoded or fails, in its decode or in a range, dictionary or placement it waits for; a scan until it has passed it; the batch of a flat page's last cell until every column has published it | once the last is done; a range whose last reader is done before its fetch starts is not fetched |
 | A footer read ahead | its file | once the consumer passes the file |
 | A decode's task buffers, or the dictionary parses of a pruning evaluation, above `DecodeBuffers.RETAINED_BYTES` | its job | as the job ends, with its value or its failure |
 
 A range a file holds already (a file in memory, the part of a file's tail the read holds) is sliced in place and charged to neither F nor R. Decoded values count against the read's working set ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), not R. The read's close returns every charge still held.
 
-Tests: `JobSchedulerTest`, `ReadDriverTest`, `ReadYieldTest`, `PoolWaitTest`, `ShuffledTaskOrderTest`, `ZeroThreadContextTest`, `LargeDecodeTaskTest`.
+Tests: `JobSchedulerTest`, `ReadDriverTest`, `ReadYieldTest`, `PoolWaitTest`, `ShuffledTaskOrderTest`, `ZeroThreadContextTest`, `LargeDecodeTaskTest`, `PageFailureRetentionTest`.
 
 ## Decoded columns
 

@@ -41,8 +41,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// pages, and takes the pages a scan finds. A chunk's dictionary page decodes into its
 /// [ChunkDictionary], which the chunk's data pages wait for as for their ranges, and a flat page
 /// waits for its placement too. A page waits for the first of these it lacks and, woken, looks
-/// again. A range or dictionary that fails fails the read at each page waiting for it, and the
-/// lowest row wins. Used under the read's lock, except the jobs' work.
+/// again. A range or dictionary that fails fails the read at each page waiting for it, which is
+/// then done with its ranges, and the lowest row wins. Used under the read's lock, except the
+/// jobs' work.
 final class PageTracker {
 
     private final JobScheduler scheduler;
@@ -359,11 +360,11 @@ final class PageTracker {
         }
     }
 
-    /// `tracked` lacks `output`: it fails at the page where that has failed, and waits for it
-    /// otherwise.
+    /// `tracked` lacks `output`: where that has failed, the read fails at the page, which is done;
+    /// otherwise it waits for it.
     private void awaitOrFail(TrackedPage tracked, Output<?> output) {
         if (output.failure() != null) {
-            readFailure.failAt(tracked.key(), tracked.column(), output.failure());
+            failed(tracked, output.failure());
         }
         else {
             output.whenEnded(() -> decodeWhenReady(tracked));
@@ -520,7 +521,8 @@ final class PageTracker {
         }
     }
 
-    /// `tracked`'s decode failed with `t`: the read fails at the page, which is done.
+    /// `tracked` failed with `t`, in its decode or in what it waited for: the read fails at the page,
+    /// which is done.
     private void failed(TrackedPage tracked, Throwable t) {
         readFailure.failAt(tracked.key(), tracked.column(), t);
         done(tracked);
@@ -562,9 +564,11 @@ final class PageTracker {
                 columns.workingSet(tracked.column()), buffers));
     }
 
-    /// A page is done with its ranges; the last reader of each returns it.
+    /// A page is done with its ranges, once; the last reader of each returns it.
     private void done(TrackedPage tracked) {
-        fetcher.readersDone(tracked.ranges());
+        if (tracked.finish()) {
+            fetcher.readersDone(tracked.ranges());
+        }
     }
 
     /// Reports that the pages of `column` in row group `rowGroupIndex` of `file` are located:
