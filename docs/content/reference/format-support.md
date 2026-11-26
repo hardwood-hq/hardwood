@@ -12,6 +12,8 @@
 
 Hardwood reads and writes the parts of the Parquet format listed below. The [Writer reference](writer.md) and [Reader reference](reader.md) give the options and limits of each.
 
+The Parquet project's [implementation status matrix](https://parquet.apache.org/docs/file-format/implementationstatus/) lists the same support per feature next to the other Parquet implementations.
+
 Entries marked *legacy* are deprecated by the Parquet specification or kept in it for files older writers produced. Hardwood reads every legacy entry, and writes only the two-level lists a schema read from an existing file carries.
 
 ## Types
@@ -56,7 +58,7 @@ See [Encodings](writer.md#encodings) for the writer's choice of encoding and the
 | `ZSTD` | Yes | Yes |
 | `LZ4_RAW` | Yes | Yes |
 | `BROTLI` | Yes | Yes |
-| `LZ4`, with Hadoop framing (legacy) | Yes | No |
+| `LZ4`, Hadoop-framed or as raw blocks (legacy) | Yes | No |
 | `LZO` | No | No |
 
 Codecs other than `UNCOMPRESSED` and `GZIP` need their library on the classpath; see [Compression Codecs](writer.md#compression-codecs).

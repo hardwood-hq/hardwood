@@ -1,8 +1,8 @@
 # Parquet Format Coverage
 
 For every struct/union in the Parquet
-[`parquet.thrift`](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift)
-metadata definition, this table records whether Hardwood reads the field and
+[`parquet.thrift`](https://github.com/apache/parquet-format/blob/apache-parquet-format-2.14.0/src/main/thrift/parquet.thrift)
+metadata definition of parquet-format 2.14.0, this table records whether Hardwood reads the field and
 whether it acts on it.
 
 It tracks *metadata fields*. Capabilities (types, encodings, codecs, metadata
@@ -219,13 +219,10 @@ All fields (offset, compressed_page_size, first_row_index) ✅.
 ## Logical types
 
 ### LogicalType (union)
-All variants up to FILE (19) recognized ✅: STRING (1), MAP (2), LIST (3), ENUM (4), DECIMAL (5),
+All variants recognized ✅: STRING (1), MAP (2), LIST (3), ENUM (4), DECIMAL (5),
 DATE (6), TIME (7), TIMESTAMP (8), INTERVAL (9, also via `ConvertedType` 21),
 INTEGER (10), UNKNOWN/NULL (11), JSON (12), BSON (13), UUID (14), FLOAT16 (15),
 VARIANT (16), GEOMETRY (17), GEOGRAPHY (18), FILE (19).
-
-FINITE_VECTOR (20) ❌ — skipped as an unknown member with a warning; such a column reads as a list
-through its `LIST` converted type, without `num_elements` (#1804). Not written (#1837).
 
 `FileType` is read and written as an empty struct; a `FILE` group's children are validated when the
 schema is built and its values when they are read as a `PqFile` or written. No release of
