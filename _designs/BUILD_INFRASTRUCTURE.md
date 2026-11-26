@@ -151,7 +151,7 @@ The oldest glibc the Linux binary runs on, its highest `GLIBC_` symbol version i
 
 ### Token permissions
 
-Every workflow declares `permissions: contents: read`. A job that writes declares its own grant, limited to what it uses: `contents: write` to push or publish a GitHub release, `packages: write` to push the image, `issues: write` to close the release's milestone, and `id-token: write` with `attestations: write` to attest provenance.
+Every workflow declares `permissions: contents: read`. A job that writes declares its own grant, limited to what it uses: `contents: write` to push or publish a GitHub release, `packages: write` to push the image, `issues: write` to close the release's milestone, and `id-token: write` with `attestations: write` to attest provenance. Every checkout sets `persist-credentials: false`, so the job's token is not left in `.git/config` for the build to read; no job writes to git with it, and the early-access build moves its tag through the GitHub release API.
 
 ### Release jobs
 

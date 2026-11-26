@@ -12,8 +12,11 @@ name: Trigger documentation publish
 # release docs are published manually via docs-publish.yml once any post-
 # release follow-ups (blog post link, etc.) have been added.
 
+# workflow_run lends the triggering run's privileges to whatever it acts on; here the
+# trigger is a push to main, never a fork's pull request, and the job checks out and
+# downloads nothing, passing only the commit SHA on to the site repository.
 on:
-  workflow_run:
+  workflow_run:  # zizmor: ignore[dangerous-triggers]
     workflows: [Main Build]
     types: [completed]
     branches: [main]
