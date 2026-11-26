@@ -45,7 +45,7 @@ RUN microdnf install -y --nodocs \
 # (`gh stack link <pr>...`), which `gh` itself cannot do. It installs under /root/.local/share
 # rather than the mounted config volume, so it has to be baked in. Pinned because the extension is
 # young enough that its command surface is still moving.
-ARG GH_STACK_VERSION=v0.1.1
+ARG GH_STACK_VERSION=v0.3.0
 RUN gh extension install github/gh-stack --pin "$GH_STACK_VERSION"
 
 # actionlint checks the GitHub workflows, running ShellCheck over their `run:` scripts. Fedora
@@ -64,6 +64,23 @@ RUN case "$(uname -m)" in \
     && tar -xzf "$archive" -C /usr/local/bin actionlint \
     && rm "$archive" \
     && actionlint -version
+
+# zizmor finds what actionlint does not in the workflows: template injection, cache poisoning,
+# persisted credentials, excessive permissions. The release archive is pinned by version and SHA-256.
+ARG ZIZMOR_VERSION=1.33.1
+ARG ZIZMOR_SHA256_X86_64=3e6a301c7a820a2501915f5a9de8c0486da82bdec7965f068477538a98743d43
+ARG ZIZMOR_SHA256_AARCH64=aa487c792a7cbbe86e4f8dccd3b66de33b3b51813c090aaa0842d7ea08a3fc35
+RUN case "$(uname -m)" in \
+      x86_64) sha256="$ZIZMOR_SHA256_X86_64" ;; \
+      aarch64) sha256="$ZIZMOR_SHA256_AARCH64" ;; \
+      *) echo "No zizmor build for $(uname -m)" >&2; exit 1 ;; \
+    esac \
+    && archive="/tmp/zizmor.tar.gz" \
+    && curl -fsSL -o "$archive" "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-$(uname -m)-unknown-linux-gnu.tar.gz" \
+    && echo "$sha256  $archive" | sha256sum -c - \
+    && tar -xzf "$archive" -C /usr/local/bin zizmor \
+    && rm "$archive" \
+    && zizmor --version
 
 # Install Java 25 (Temurin). The GA build can leave a virtual thread parked forever under timed
 # blocking-queue waits (JDK-8369227, fixed in 25.0.3), which hangs readers (#1230).
@@ -95,11 +112,22 @@ ENV PATH="$JAVA_HOME/bin:$PATH"
 
 # Install the Hardwood CLI from a tagged GitHub release. The tarball ships the
 # native binary alongside a lib/ of codec .so files it resolves relative to its
-# real path, so keep them together under /opt and symlink only the launcher.
-ARG HARDWOOD_CLI_VERSION=1.0.1.Final
+# real path, so keep them together under /opt and symlink only the launcher. The archive is pinned
+# by version and SHA-256, the sums taken from the release's checksums_sha256.txt.
+ARG HARDWOOD_CLI_VERSION=1.1.0.CR1
+ARG HARDWOOD_CLI_SHA256_X86_64=cbae1eb81e19076158a0761ac12ed7191634d68d2ba487ae9380823da72b3b4f
+ARG HARDWOOD_CLI_SHA256_AARCH64=8d93281b48b9b85a672f230046f605426576faac89f27fcfa16dfcd3a1b7edb5
 RUN arch="$(uname -m)" \
-    && url="https://github.com/hardwood-hq/hardwood/releases/download/v${HARDWOOD_CLI_VERSION}/hardwood-cli-${HARDWOOD_CLI_VERSION}-linux-${arch}.tar.gz" \
-    && curl -fsSL "$url" | tar -xz -C /opt \
+    && case "$arch" in \
+      x86_64) sha256="$HARDWOOD_CLI_SHA256_X86_64" ;; \
+      aarch64) sha256="$HARDWOOD_CLI_SHA256_AARCH64" ;; \
+      *) echo "No Hardwood CLI build for $arch" >&2; exit 1 ;; \
+    esac \
+    && archive="/tmp/hardwood-cli.tar.gz" \
+    && curl -fsSL -o "$archive" "https://github.com/hardwood-hq/hardwood/releases/download/v${HARDWOOD_CLI_VERSION}/hardwood-cli-${HARDWOOD_CLI_VERSION}-linux-${arch}.tar.gz" \
+    && echo "$sha256  $archive" | sha256sum -c - \
+    && tar -xzf "$archive" -C /opt \
+    && rm "$archive" \
     && ln -s "/opt/hardwood-cli-${HARDWOOD_CLI_VERSION}-linux-${arch}/bin/hardwood" /usr/local/bin/hardwood \
     && hardwood --version
 

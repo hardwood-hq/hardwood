@@ -182,7 +182,7 @@ No job of either workflow restores a cache; the jobs that run Maven retry the wr
 
 The attestations are created by `actions/attest-build-provenance`, kept by GitHub, and checked with `gh attestation verify`. The signing identity is the workflow file that runs the attest step: `release-cli.yml` for a release, and `cli-early-access.yml` for an early-access build. The getting-started guide tells users to check that identity with `--signer-workflow`, so moving the attest step to another workflow file breaks that command. No SBOM is published.
 
-The dev container carries `actionlint`, which checks the workflows' syntax, expressions and `run:` scripts; CI does not run it. Untested: no check enforces that an action is pinned by SHA, that a runner label is versioned, or that a job's grant is minimal.
+The dev container carries `actionlint`, which checks the workflows' syntax, expressions and `run:` scripts, and `zizmor`, which checks them for template injection, cache poisoning, persisted credentials, unpinned actions and excessive permissions; CI runs neither. Untested: no check enforces that an action is pinned by SHA, that a runner label is versioned, or that a job's grant is minimal.
 
 ## Manifest build metadata
 
