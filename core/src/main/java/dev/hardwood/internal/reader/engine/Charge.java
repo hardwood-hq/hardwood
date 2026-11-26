@@ -58,7 +58,12 @@ final class Charge {
     }
 
     /// A reader is done; returns whether it was the last, after which the charge is returned.
+    ///
+    /// @throws IllegalStateException if every reader is done already
     boolean readerDone() {
+        if (readers == 0) {
+            throw new IllegalStateException("A reader is done with a charge every reader is done with");
+        }
         return --readers == 0;
     }
 }
