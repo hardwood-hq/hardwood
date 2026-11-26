@@ -35,9 +35,16 @@ final class RangeFetcher {
     /// Fetches `r` from `file` as a job keyed at `key`, ending its output ([RangeFetch#output]),
     /// which pages, scans and the planner wait on; a fetch that fails returns its charge. A range
     /// already held, such as a slice of a file's tail, needs no fetch.
+    ///
+    /// @throws IllegalStateException if `r`'s fetch is under way or has failed: its output ends
+    ///         once
     void fetch(InputFile file, RangeFetch r, long key) {
         if (r.output().hasValue()) {
             return;
+        }
+        if (r.output().ended() || fetching.containsKey(r)) {
+            throw new IllegalStateException("The range at offset " + r.range().start() + " (length "
+                    + r.range().length() + ") is fetched twice");
         }
         JobScheduler.Job<ByteBuffer> job = new JobScheduler.Job<>(key, r.range().length(), JobScheduler.Kind.FETCH,
                 r.charge(), buffers -> {
