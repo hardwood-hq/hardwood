@@ -65,7 +65,7 @@
 
   <properties>
     <auto-service.version>1.1.1</auto-service.version>
-    <error-prone.version>2.52.0</error-prone.version>
+    <error-prone.version>2.53.0</error-prone.version>
     <hadoop.version>3.5.0</hadoop.version>
     <japicmp.newVersion>${project.version}</japicmp.newVersion>
     <java.version>21</java.version>
@@ -111,7 +111,7 @@
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>license-maven-plugin</artifactId>
-          <version>2.7.1</version>
+          <version>2.9.0</version>
         </plugin>
         <plugin>
           <groupId>net.revelc.code.formatter</groupId>
@@ -304,7 +304,7 @@
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>exec-maven-plugin</artifactId>
-          <version>3.6.4</version>
+          <version>3.7.0</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -314,12 +314,12 @@
         <plugin>
           <groupId>org.graalvm.buildtools</groupId>
           <artifactId>native-maven-plugin</artifactId>
-          <version>1.1.18</version>
+          <version>1.1.19</version>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>flatten-maven-plugin</artifactId>
-          <version>1.8.0</version>
+          <version>1.9.0</version>
         </plugin>
       </plugins>
     </pluginManagement>
