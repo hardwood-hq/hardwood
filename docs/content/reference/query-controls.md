@@ -95,9 +95,10 @@ where [Binary columns](#binary-columns) says so. `BOOLEAN` has no set form, sinc
 A predicate on a `VARIANT` column reaches the group's presence, not the values inside it. The
 `metadata` and `value` leaves below the group, and a shredded variant's `typed_value` leaves, hold
 the encoded variant, which [`getVariant`](accessors.md) reads off the group; they take `isNull` and
-`isNotNull` only, and any other predicate on one throws `IllegalArgumentException` at reader
-creation. Filtering on a shredded variant's sub-paths is in progress, tracked by
-[#309](https://github.com/hardwood-hq/hardwood/issues/309).
+`isNotNull` only, which test the leaf itself, and any other predicate on one throws
+`IllegalArgumentException` at reader creation. So does a null predicate on a group below the
+variant, such as a shredded `typed_value` group. Filtering on a shredded variant's sub-paths is in
+progress, tracked by [#309](https://github.com/hardwood-hq/hardwood/issues/309).
 
 A `FLOAT` column compares by the `Float.compare` total order and a `DOUBLE` column by
 `Double.compare`, so all `NaN` values equal each other and sort above every other value, and
@@ -283,6 +284,8 @@ An `INT96` comparison with an `Instant` therefore skips a row group or page only
 | `ColumnProjection.columns("address.city")` | Select a specific nested field (dot notation) |
 
 A name is a top-level field or the full path to a nested field. A nested field is not selected by its own name alone: over `id, address STRUCT<city>`, `columns("city")` fails with an error naming the column. Names may repeat or overlap.
+
+A row reader reads a `VARIANT` column whole: selecting any field below it, such as `columns("var.value")`, also reads `var.metadata` and any shredded `typed_value` fields, and `getVariant("var")` returns the complete value. Selecting a field below a `MAP`'s values also reads the map's keys. A column reader reads only the leaves it names.
 
 A field name may contain dots: `columns("sepal.length")` selects a top-level column named `sepal.length`, and `columns("acme.info.x.y")` selects the field `x.y` of a struct named `acme.info`. Predicates and `FileSchema.getColumn(String)` resolve names the same way. A name that is the path of two fields, such as a top-level `a.b` beside a struct `a` with a field `b`, fails with an error; `buildColumnReader(int)` and the positions of `ColumnReaders` reach each of those columns by index.
 

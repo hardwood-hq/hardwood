@@ -505,10 +505,6 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
     }
 
     private PqVariant readVariant(TopLevelFieldMap.FieldDesc.Variant variantDesc, String fieldName) {
-        if (variantDesc.metadataCol() < 0) {
-            throw new IllegalStateException(
-                    "Variant column '" + fieldName + "' requires its 'metadata' child in the projection");
-        }
         int metaIdx = resolveValueIndex(variantDesc.metadataCol());
         if (batch.isElementNull(variantDesc.metadataCol(), metaIdx)) {
             return null;
@@ -529,10 +525,6 @@ final class PqStructImpl implements PqStruct, InPlaceBinaryAccessor, FieldSchema
             }
         }
         int valueCol = variantDesc.valueCol();
-        if (!shredded && valueCol < 0) {
-            throw new IllegalStateException(
-                    "Variant column '" + fieldName + "' requires its 'value' child in the projection");
-        }
         try {
             if (shredded) {
                 VariantMetadata meta = new VariantMetadata(metadataBytes);

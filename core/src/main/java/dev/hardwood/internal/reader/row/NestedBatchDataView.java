@@ -139,6 +139,12 @@ public final class NestedBatchDataView {
         return isFieldNull(fieldDescs[projectedIndex]);
     }
 
+    /// Whether the leaf at projected column `projCol` is null in the current row. The leaf must
+    /// not be below a repeated field, so that it holds one entry per row.
+    public boolean isLeafNull(int projCol) {
+        return batchIndex.isElementNull(projCol, cachedValueIndex[projCol]);
+    }
+
     private boolean isFieldNull(TopLevelFieldMap.FieldDesc desc) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
@@ -693,9 +699,9 @@ public final class NestedBatchDataView {
     private final VariantShredReassembler variantReassembler = new VariantShredReassembler();
 
     private PqVariant createVariant(TopLevelFieldMap.FieldDesc.Variant desc) {
-        // A projection the caller got wrong names the file only; a malformed
-        // `metadata` / `value` is the file's fault and also names the column
-        // (createVariantInternal), matching what the read pipeline reports.
+        // A malformed `metadata` / `value` is the file's fault and names the
+        // column as well (createVariantInternal), matching what the read
+        // pipeline reports; any other failure gets the file name here.
         try {
             return createVariantInternal(desc);
         }
@@ -708,20 +714,12 @@ public final class NestedBatchDataView {
         if (isVariantNull(desc)) {
             return null;
         }
-        if (desc.metadataCol() < 0) {
-            throw new IllegalStateException(
-                    "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
-        }
         int metaIdx = cachedValueIndex[desc.metadataCol()];
         byte[] metadataBytes = batchIndex.getBinary(desc.metadataCol(), metaIdx);
 
         // Shredded when the top-level ShredLevel has a typed_value component.
         boolean shredded = desc.root().typed() != null;
         int valueCol = desc.valueCol();
-        if (!shredded && valueCol < 0) {
-            throw new IllegalStateException(
-                    "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
-        }
         try {
             if (shredded) {
                 VariantMetadata meta = new VariantMetadata(metadataBytes);
