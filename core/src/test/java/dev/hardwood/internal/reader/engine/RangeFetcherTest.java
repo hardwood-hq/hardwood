@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 
@@ -17,6 +18,7 @@ import dev.hardwood.internal.reader.fetch.FileRange;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RangeFetcherTest {
 
@@ -62,6 +64,23 @@ class RangeFetcherTest {
 
         assertThat(range.output().hasValue()).isTrue();
         assertThat(scheduler.start(AT_START)).isEmpty();
+    }
+
+    /// A range is fetched once: a second fetch, while the first is under way or after it failed,
+    /// is a defect of the caller, rejected at the call rather than where the second fetch ends.
+    @Test
+    void aRangeFetchedOnceIsNotFetchedAgain() {
+        RangeFetch inFlight = range(1);
+        fetcher.fetch(file, inFlight, 10);
+        RangeFetch failed = range(1);
+        failed.output().failed(new IOException("failed"));
+
+        assertThatThrownBy(() -> fetcher.fetch(file, inFlight, 10))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("The range at offset 0 (length 100) is fetched twice");
+        assertThatThrownBy(() -> fetcher.fetch(file, failed, 10))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("The range at offset 0 (length 100) is fetched twice");
     }
 
     private static RangeFetch range(int readers) {

@@ -294,7 +294,7 @@ final class HeaderScanner {
                 failed(s, r.output().failure());
                 return;
             }
-            if (r.output().value() == null) {
+            if (!r.output().hasValue()) {
                 break;
             }
             arrived.add(r);
