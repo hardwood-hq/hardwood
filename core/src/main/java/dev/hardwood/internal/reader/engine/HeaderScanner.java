@@ -477,9 +477,7 @@ final class HeaderScanner {
                 "rg=" + s.unit().listing().rowGroup() + " col=" + columns.schema(s.column()).name()));
         r.addReader();
         s.add(r);
-        if (!r.output().hasValue()) {
-            fetcher.fetch(s.unit().listing().file(), r, key(s));
-        }
+        fetcher.fetch(s.unit().listing().file(), r, key(s));
         r.output().whenEnded(() -> next(s));
     }
 

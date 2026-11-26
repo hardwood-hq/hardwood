@@ -52,6 +52,18 @@ class RangeFetcherTest {
         assertThat(scheduler.start(AT_START)).isEmpty();
     }
 
+    /// A range the file holds is not fetched.
+    @Test
+    void aHeldRangeIsNotFetched() {
+        RangeFetch range = RangeFetch.of(file, new FileRange(0, 100, "test"));
+        range.addReader();
+
+        fetcher.fetch(file, range, 10);
+
+        assertThat(range.output().hasValue()).isTrue();
+        assertThat(scheduler.start(AT_START)).isEmpty();
+    }
+
     private static RangeFetch range(int readers) {
         RangeFetch range = new RangeFetch(new FileRange(0, 100, "test"));
         for (int i = 0; i < readers; i++) {
