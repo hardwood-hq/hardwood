@@ -92,15 +92,17 @@ public final class ColumnBatch {
         this.validities = new Validity[schema.getColumnCount()];
     }
 
-    /// Sets the per-instance nulls of an `OPTIONAL` `struct` group, addressed by its
-    /// dot-separated path. Omitting the call leaves every instance of the group present.
+    /// Sets the per-instance nulls of an `OPTIONAL` group other than a `LIST` or `MAP`, addressed
+    /// by its dot-separated path: a plain struct, a `FILE` group, or a group whose fields the
+    /// writer writes as a struct's, such as a `VARIANT` group of a schema read from a file.
+    /// Omitting the call leaves every instance of the group present.
     /// The values of leaf columns beneath a null struct instance are ignored.
     ///
     /// @param structPath the group's path (e.g. `"address"`)
     /// @param nulls the group's nulls; `nulls.isNull(i)` marks instance `i` absent
     /// @return this batch, for chaining
-    /// @throws IllegalArgumentException if the path does not name an `OPTIONAL` `struct`
-    ///         group, or the group is already set in this batch
+    /// @throws IllegalArgumentException if the path does not name an `OPTIONAL` group other
+    ///         than a `LIST` or `MAP`, or the group is already set in this batch
     @Experimental
     public ColumnBatch struct(String structPath, Validity nulls) {
         if (consumed) {
@@ -117,7 +119,7 @@ public final class ColumnBatch {
         return this;
     }
 
-    /// Resolves a dot-separated path to the `OPTIONAL` plain-`struct` group it names,
+    /// Resolves a dot-separated path to the `OPTIONAL` non-`LIST`, non-`MAP` group it names,
     /// rejecting a missing path, a leaf, a `REQUIRED` group (no null bit to set), and a
     /// `LIST`/`MAP` group (set through their own verbs).
     private SchemaNode.GroupNode resolveStruct(String structPath) {
@@ -126,7 +128,7 @@ public final class ColumnBatch {
         if (node == null) {
             throw new IllegalArgumentException("No struct at path " + structPath);
         }
-        if (!(node instanceof SchemaNode.GroupNode group) || !group.isStruct()) {
+        if (!(node instanceof SchemaNode.GroupNode group) || group.isList() || group.isMap()) {
             throw new IllegalArgumentException("Path " + structPath + " does not name a struct group");
         }
         if (group.repetitionType() != RepetitionType.OPTIONAL) {

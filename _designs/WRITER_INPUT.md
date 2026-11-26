@@ -106,7 +106,7 @@ The reader takes level streams off disk and reconstructs a per-layer view (`getL
 
 The reader addresses a nested leaf by its **full physical path**, scaffolding included: a `LIST`-annotated `int_list` column is read at `int_list.list.element`. The write contract uses the same physical paths, so a column written at `people.list.element.name` reads back at `people.list.element.name`. A path segment is a schema field name; the `LIST` and `MAP` scaffolding contributes its literal segments. A layer's path is always a prefix of the leaf paths beneath it.
 
-The schema chain collapses into **layers**, one per `OPTIONAL` plain group (`STRUCT`) and one per `LIST`/`MAP`-annotated group (`REPEATED`); `REQUIRED` plain groups and the repeated scaffolding inside a `LIST`/`MAP` contribute no layer, only definition and repetition depth. This is the reader's layer rule ([COLUMN_READER.md](COLUMN_READER.md)), and the write contract addresses exactly that set, plus the leaves:
+The schema chain collapses into **layers**, one per `OPTIONAL` group other than a `LIST` or `MAP` (`STRUCT`) and one per `LIST`/`MAP`-annotated group (`REPEATED`); `REQUIRED` groups other than a `LIST` or `MAP` and the repeated scaffolding inside a `LIST`/`MAP` contribute no layer, only definition and repetition depth. This is the reader's layer rule ([COLUMN_READER.md](COLUMN_READER.md)), and the write contract addresses exactly that set, plus the leaves:
 
 | Facet | Keyed on | Setter | Mandatory | Reader counterpart |
 |---|---|---|---|---|
@@ -115,7 +115,7 @@ The schema chain collapses into **layers**, one per `OPTIONAL` plain group (`STR
 | `LIST` layer | the annotated group's path | `list(path, offsets[, validity])` | offsets yes | `getLayerValidity(k)` + `getLayerOffsets(k)`, kind `REPEATED` |
 | `MAP` layer | the annotated group's path | `map(path, offsets[, validity])` | offsets yes | as `LIST` |
 
-A `LIST` is physically two nodes, an outer group and an inner `repeated` one, which the reader presents as one `REPEATED` layer carrying both the list-itself-null validity and the entry offsets. One `list(...)` call keyed on the outer group's path supplies both facets; the inner node is never addressed. `map` shares the `list` storage and validates that the node is `MAP`-annotated; its `key` and `value` leaves share the one offsets array. `list` on a `MAP`, `map` on a `LIST`, `struct` on anything but an `OPTIONAL` plain group, and a layer `Validity` on a `REQUIRED` list or map are rejected eagerly. The layer setters take `Validity` only, with no `boolean[]` overload.
+A `LIST` is physically two nodes, an outer group and an inner `repeated` one, which the reader presents as one `REPEATED` layer carrying both the list-itself-null validity and the entry offsets. One `list(...)` call keyed on the outer group's path supplies both facets; the inner node is never addressed. `map` shares the `list` storage and validates that the node is `MAP`-annotated; its `key` and `value` leaves share the one offsets array. `list` on a `MAP`, `map` on a `LIST`, `struct` on anything but an `OPTIONAL` group other than a `LIST` or `MAP`, and a layer `Validity` on a `REQUIRED` list or map are rejected eagerly. The layer setters take `Validity` only, with no `boolean[]` overload.
 
 ### Leaf slots
 

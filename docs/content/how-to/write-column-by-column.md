@@ -122,6 +122,8 @@ columns.writeBatch(batch -> batch
         .ints("address.zip", zips, zipNulls));
 ```
 
+A `VARIANT` group in a schema read from an existing file is written the same way: `struct(...)` sets which variants are null, and its `metadata` and `value` children are binary leaves.
+
 **Lists** carry an offsets array of length `rowCount + 1`, where `offsets[i + 1] - offsets[i]` is the number of entries of list `i` and a zero delta is an empty list. The element leaf holds the concatenated entries:
 
 ```java
