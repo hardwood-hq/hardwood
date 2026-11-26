@@ -148,6 +148,9 @@ final class RowGroupPlanner {
     /// @throws IOException if the file's length cannot be read
     void addFile(int fileIndex, InputFile file, FileSchema fileSchema, RowGroupPruning.FilteredRowGroups filtered,
                  FileColumnOrdinals ordinals) throws IOException {
+        if (listed) {
+            throw new IllegalStateException("A file is listed after the read's listing ended");
+        }
         int from = units.size();
         List<UnitListing> listings = new ArrayList<>();
         List<IndexWindow.Member> members = new ArrayList<>();

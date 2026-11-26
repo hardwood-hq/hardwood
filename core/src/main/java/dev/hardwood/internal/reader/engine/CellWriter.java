@@ -149,6 +149,11 @@ final class CellWriter {
     private final ColumnBatchMatcher[] filters;
     /// per column, the last page it placed, which a shortfall at the read's end is placed with
     private final PageTask[] last;
+    /// the placers below it have stopped, which a placer never undoes
+    private int stoppedBelow;
+    /// the columns below it have stopped or have no chunk left to place, which once every unit is
+    /// batched stays so
+    private int endScanned;
 
     CellWriter(JobScheduler scheduler, BatchPublisher publisher, ReadFailure readFailure, ColumnContext columns,
                List<BatchExchange<?>> exchanges, NestedIndexMode indexMode, boolean fixedListFastPathEnabled, int batchCapacity,
@@ -219,15 +224,10 @@ final class CellWriter {
     /// Whether every column's placement has ended, of a read of at least one: the read takes no
     /// further page.
     boolean allPlacementEnded() {
-        if (placers.isEmpty()) {
-            return false;
+        while (stoppedBelow < placers.size() && placementEnded(stoppedBelow)) {
+            stoppedBelow++;
         }
-        for (ColumnPlacer<?> p : placers) {
-            if (!p.stopped()) {
-                return false;
-            }
-        }
-        return true;
+        return !placers.isEmpty() && stoppedBelow == placers.size();
     }
 
     /// The task of a page decoded through levels whose bytes are `page`, on a job.
@@ -248,7 +248,7 @@ final class CellWriter {
         while (!q.isEmpty()) {
             ChunkPlacement placement = q.peekFirst();
             for (TrackedPage tracked = placement.nextReady(); tracked != null; tracked = placement.nextReady()) {
-                if (!placers.get(column).stopped()) {
+                if (!placementEnded(column)) {
                     place(column, tracked);
                 }
                 placed.add(tracked);
@@ -256,10 +256,10 @@ final class CellWriter {
             if (!placement.done()) {
                 break;
             }
-            if (placement.failure() != null && !placers.get(column).stopped()) {
+            if (placement.failure() != null && !placementEnded(column)) {
                 stop(column, placement.failure());
             }
-            if (placement.skipped && !placers.get(column).stopped()) {
+            if (placement.skipped && !placementEnded(column)) {
                 pass(column, placement.unit());
             }
             q.pollFirst();
@@ -312,15 +312,19 @@ final class CellWriter {
     }
 
     /// Ends every column's placement at the read's end, once each has placed every page it was
-    /// given, in column order; a column short of the plan fails ([#failShort]).
+    /// given, in column order; a column short of the plan fails ([#failShort]). Called once every
+    /// unit is batched; each column is looked at once until every one has placed its pages.
     void end() {
-        for (int c = 0; c < columns.count(); c++) {
-            if (!placers.get(c).stopped() && !placements.get(c).isEmpty()) {
+        if (allPlacementEnded()) {
+            return;
+        }
+        for (; endScanned < columns.count(); endScanned++) {
+            if (!placementEnded(endScanned) && !placements.get(endScanned).isEmpty()) {
                 return;
             }
         }
         for (int c = 0; c < columns.count(); c++) {
-            if (!placers.get(c).stopped()) {
+            if (!placementEnded(c)) {
                 try {
                     placers.get(c).end();
                 }
@@ -340,7 +344,7 @@ final class CellWriter {
             long next = placers.get(c).nextRow();
             // a column that placed all it was given before the failure and stops short of it holds
             // fewer rows than the plan
-            if (!placers.get(c).stopped()
+            if (!placementEnded(c)
                     && (next == failedAt || next < failedAt && batchedToIt && nothingBefore(c, failedAt))) {
                 stop(c, failure);
             }
