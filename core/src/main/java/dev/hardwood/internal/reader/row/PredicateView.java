@@ -27,6 +27,7 @@ import dev.hardwood.internal.reader.batch.NestedBatch;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
@@ -53,8 +54,9 @@ import dev.hardwood.schema.SchemaNode;
 /// compiled matcher calls are implemented; the rest throw.
 ///
 /// Indexed access uses the view's own index space, which [#indexOf] maps a file leaf column
-/// into: the flat predicate columns occupy `[0, flatCount)`, and the top-level fields of the
-/// nested projection follow.
+/// into: the flat predicate columns occupy `[0, flatCount)`, the top-level fields of the
+/// nested projection follow, and the nested leaves below a `VARIANT` group come last. No name
+/// walk reaches into a variant, so those leaves answer [#isNull(int)] from their own column.
 public final class PredicateView implements InPlaceBinaryAccessor {
 
     /// Decoded column index of each flat predicate column, by slot.
@@ -76,12 +78,18 @@ public final class PredicateView implements InPlaceBinaryAccessor {
 
     /// View index by file leaf-column index, `-1` for a column indexed access does not reach.
     private final int[] indexByColumn;
+    /// The first view index of a leaf below a `VARIANT` group.
+    private final int variantLeafBase;
+    /// Nested projected column of each leaf below a `VARIANT` group, by view index past
+    /// [#variantLeafBase].
+    private final int[] variantLeafCols;
 
     private int record;
 
     private PredicateView(int[] flatProjected, StringToIntMap flatSlotByName,
                           NestedBatchDataView nestedView, int[] nestedProjected, ColumnSchema[] nestedSchemas,
-                          boolean deriveElementValidity, int[] indexByColumn) {
+                          boolean deriveElementValidity, int[] indexByColumn,
+                          int variantLeafBase, int[] variantLeafCols) {
         this.flatProjected = flatProjected;
         this.flatSlotByName = flatSlotByName;
         this.flatValues = new Object[flatProjected.length];
@@ -92,6 +100,8 @@ public final class PredicateView implements InPlaceBinaryAccessor {
         this.nestedBatches = new NestedBatch[nestedProjected.length];
         this.deriveElementValidity = deriveElementValidity;
         this.indexByColumn = indexByColumn;
+        this.variantLeafBase = variantLeafBase;
+        this.variantLeafCols = variantLeafCols;
     }
 
     /// Builds a view over the columns `resolved` references.
@@ -138,7 +148,8 @@ public final class PredicateView implements InPlaceBinaryAccessor {
 
         if (nestedColumns.isEmpty()) {
             return new PredicateView(flatProjected, flatSlotByName,
-                    null, new int[0], new ColumnSchema[0], deriveElementValidity, indexByColumn);
+                    null, new int[0], new ColumnSchema[0], deriveElementValidity, indexByColumn,
+                    flatCount, new int[0]);
         }
         ProjectedSchema nestedProjection = ProjectedSchema.create(schema,
                 ColumnRequests.ofColumns(nestedColumns.stream().mapToInt(Integer::intValue).toArray()), false);
@@ -151,14 +162,31 @@ public final class PredicateView implements InPlaceBinaryAccessor {
             nestedProjected[j] = decoded.toProjectedIndex(originalIndex);
         }
         int[] topLevel = topLevelFieldIndexLookup(schema, nestedProjection);
+        int variantLeafBase = flatCount + nestedProjection.getProjectedFieldIndices().length;
+        int[] variantLeafCols = new int[nestedColumns.size()];
+        int variantLeafCount = 0;
         for (int columnIndex : nestedColumns) {
             if (topLevel[columnIndex] >= 0) {
                 indexByColumn[columnIndex] = flatCount + topLevel[columnIndex];
             }
+            else if (isBelowVariant(schema, columnIndex)) {
+                indexByColumn[columnIndex] = variantLeafBase + variantLeafCount;
+                variantLeafCols[variantLeafCount++] = nestedProjection.toProjectedIndex(columnIndex);
+            }
         }
         return new PredicateView(flatProjected, flatSlotByName,
                 new NestedBatchDataView(schema, nestedProjection), nestedProjected, nestedSchemas,
-                deriveElementValidity, indexByColumn);
+                deriveElementValidity, indexByColumn,
+                variantLeafBase, Arrays.copyOf(variantLeafCols, variantLeafCount));
+    }
+
+    private static boolean isBelowVariant(FileSchema schema, int columnIndex) {
+        for (SchemaNode node : SchemaPathResolver.nodesOnPath(schema, columnIndex)) {
+            if (node instanceof SchemaNode.GroupNode group && group.isVariant()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// The file leaf columns `resolved` references, in first-seen order.
@@ -383,7 +411,12 @@ public final class PredicateView implements InPlaceBinaryAccessor {
     // ==================== Indexed ====================
 
     @Override public boolean isNull(int index) {
-        return index < flatProjected.length ? flatNull(index) : nestedView.isNull(nestedIndex(index));
+        if (index < flatProjected.length) {
+            return flatNull(index);
+        }
+        return index < variantLeafBase
+                ? nestedView.isNull(nestedIndex(index))
+                : nestedView.isLeafNull(variantLeafCols[index - variantLeafBase]);
     }
 
     @Override public int getInt(int index) {

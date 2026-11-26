@@ -433,10 +433,15 @@ public class FilterPredicateResolver {
     }
 
     private static NullTarget resolveNullTarget(String columnName, FileSchema schema) {
-        SchemaNode node = resolveNode(columnName, schema);
+        SchemaPathResolver.Resolution resolution = resolvePath(columnName, schema);
 
-        if (node instanceof SchemaNode.GroupNode group) {
+        if (resolution.node() instanceof SchemaNode.GroupNode group) {
             rejectRepeatedGroup(columnName, group);
+            if (resolution.variantAncestor() != null) {
+                throw new IllegalArgumentException("Column '" + columnName + "' is a group below the VARIANT "
+                        + "group '" + resolution.variantAncestor() + "', which holds an encoded variant; "
+                        + "isNull and isNotNull take the variant group or one of its leaves");
+            }
 
             SchemaNode.PrimitiveNode leaf = leafToAnswerFrom(group);
 
@@ -468,11 +473,6 @@ public class FilterPredicateResolver {
         }
 
         return resolution;
-    }
-
-    /// The schema node `columnName` denotes, whether leaf or group.
-    private static SchemaNode resolveNode(String columnName, FileSchema schema) {
-        return resolvePath(columnName, schema).node();
     }
 
     /// Rejects a group that occurs more than once per row, which is a group below a repeated path.

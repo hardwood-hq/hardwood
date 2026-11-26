@@ -412,8 +412,9 @@ public final class LogicalTypeConverter {
             case INT32 -> longToDecimal((Integer) value, decimalType.scale());
             case INT64 -> longToDecimal((Long) value, decimalType.scale());
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> bytesToDecimal((byte[]) value, decimalType.scale());
-            default -> throw new IllegalArgumentException(
-                    "DECIMAL requires INT32, INT64, BYTE_ARRAY, or FIXED_LEN_BYTE_ARRAY, got " + physicalType);
+            // FileSchema drops a DECIMAL annotation on any other physical type
+            default -> throw new IllegalStateException(
+                    "DECIMAL annotation on " + physicalType + " reached value conversion");
         };
     }
 

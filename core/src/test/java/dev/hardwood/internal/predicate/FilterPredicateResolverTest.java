@@ -1428,6 +1428,21 @@ class FilterPredicateResolverTest {
                         + " holds an encoded variant; it takes isNull and isNotNull predicates only");
     }
 
+    /// A group inside a shredded variant is part of its encoding, not a field a row holds.
+    @Test
+    void aNullPredicateOnAGroupBelowAVariantGroupThrows() {
+        FileSchema schema = shreddedVariantSchema();
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.isNull("v.typed_value"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'v.typed_value' is a group below the VARIANT group 'v', which"
+                        + " holds an encoded variant; isNull and isNotNull take the variant group or"
+                        + " one of its leaves");
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNotNull("v.typed_value.age"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNotNullPredicate(2, 3, 3));
+    }
+
     /// `optional group v (VARIANT) { required binary metadata; optional binary value; }`
     private static FileSchema variantSchema() {
         return FileSchema.fromSchemaElements(UnreadableAnnotations.drop(List.of(

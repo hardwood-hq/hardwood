@@ -370,19 +370,11 @@ final class PqMapImpl implements PqMap {
             throw new UnsupportedOperationException(
                     "Shredded Variant inside a map value is not yet supported");
         }
-        if (variantDesc.metadataCol() < 0) {
-            throw new IllegalStateException(
-                    "Variant map value requires its 'metadata' child in the projection");
-        }
         if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
             return null;
         }
         byte[] metadataBytes = ((BinaryBatchValues) batch.valueArrays[variantDesc.metadataCol()]).byteArrayAt(valueIdx);
         int valueCol = variantDesc.valueCol();
-        if (valueCol < 0) {
-            throw new IllegalStateException(
-                    "Variant map value requires its 'value' child in the projection");
-        }
         byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
         try {
             return new PqVariantImpl(metadataBytes, value);
