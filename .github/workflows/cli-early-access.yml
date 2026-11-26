@@ -220,10 +220,11 @@ jobs:
           outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
 
       - name: 'Export digest'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          mkdir -p "${{ runner.temp }}/digests"
-          digest='${{ steps.build.outputs.digest }}'
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
 
       - name: 'Upload digest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2 — https://github.com/actions/upload-artifact/releases/tag/v7.0.2
@@ -261,17 +262,21 @@ jobs:
 
       - name: 'Create and push multi-arch manifest'
         working-directory: ${{ runner.temp }}/digests
+        env:
+          REPOSITORY: ${{ github.repository }}
         run: |
           refs=()
-          for digest in *; do refs+=("ghcr.io/${{ github.repository }}@sha256:$digest"); done
+          for digest in *; do refs+=("ghcr.io/${REPOSITORY}@sha256:$digest"); done
           docker buildx imagetools create \
-            --tag ghcr.io/${{ github.repository }}:1.0-early-access \
+            --tag "ghcr.io/${REPOSITORY}:1.0-early-access" \
             "${refs[@]}"
 
       - name: 'Resolve the image digest'
         id: digest
+        env:
+          REPOSITORY: ${{ github.repository }}
         run: |
-          digest=$(docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:1.0-early-access" --format '{{json .Manifest}}' | jq -r .digest)
+          digest=$(docker buildx imagetools inspect "ghcr.io/${REPOSITORY}:1.0-early-access" --format '{{json .Manifest}}' | jq -r .digest)
           if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Not an image digest: $digest" >&2
             exit 1
