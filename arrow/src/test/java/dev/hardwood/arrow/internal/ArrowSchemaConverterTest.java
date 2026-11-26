@@ -9,11 +9,13 @@ package dev.hardwood.arrow.internal;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.junit.jupiter.api.Test;
 
@@ -423,6 +425,39 @@ class ArrowSchemaConverterTest {
         assertThatThrownBy(() -> ArrowSchemaConverter.plan(mapSchema, Map.of(), ColumnProjection.all()))
                 .isInstanceOf(SchemaIncompatibleException.class)
                 .hasMessage("Column 'bad_map' is a MAP group with no key");
+    }
+
+    @Test
+    void explicitDictionaryColumnsAttachDictionaryEncodingsAndValidateTypes() {
+        FileSchema schema = FileSchema.builder("root")
+                .primitive("id", PhysicalType.INT32, REQUIRED)
+                .primitive("label", PhysicalType.BYTE_ARRAY, OPTIONAL, c -> c.logicalType(LogicalType.string()))
+                .primitive("nothing", PhysicalType.BYTE_ARRAY, OPTIONAL, c -> c.logicalType(LogicalType.unknown()))
+                .struct("nested", OPTIONAL, s -> s
+                        .primitive("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, REQUIRED, c -> c.typeLength(4)))
+                .build();
+        ArrowPlan plan = ArrowSchemaConverter.plan(schema, Map.of(),
+                ColumnProjection.all(), false, Set.of("label", "nested.code"), List.of());
+        assertThat(plan.dictionaryNodes()).hasSize(2);
+        Field label = plan.schema().findField("label");
+        assertThat(label.getType()).isEqualTo(ArrowType.Utf8.INSTANCE);
+        assertThat(label.getDictionary()).isEqualTo(new DictionaryEncoding(0L, false, new ArrowType.Int(32, true)));
+        Field code = plan.schema().findField("nested").getChildren().get(0);
+        assertThat(code.getType()).isEqualTo(new ArrowType.FixedSizeBinary(4));
+        assertThat(code.getDictionary()).isEqualTo(new DictionaryEncoding(1L, false, new ArrowType.Int(32, true)));
+
+        assertThatThrownBy(() -> ArrowSchemaConverter.plan(schema, Map.of(),
+                ColumnProjection.all(), false, Set.of("id"), List.of()))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("does not support Arrow dictionary output");
+        assertThatThrownBy(() -> ArrowSchemaConverter.plan(schema, Map.of(),
+                ColumnProjection.all(), false, Set.of("nothing"), List.of()))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("does not support Arrow dictionary output");
+        assertThatThrownBy(() -> ArrowSchemaConverter.plan(schema, Map.of(),
+                ColumnProjection.columns("label"), false, Set.of("nested.code"), List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Dictionary column 'nested.code' is not a projected leaf column");
     }
 
     @Test

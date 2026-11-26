@@ -8,22 +8,27 @@
 package dev.hardwood.arrow;
 
 import java.io.IOException;
+import java.util.List;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.ipc.ArrowReader;
-import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
+import org.apache.arrow.vector.ipc.message.ArrowDictionaryBatch;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 import dev.hardwood.Experimental;
 import dev.hardwood.arrow.internal.ArrowPlan;
 import dev.hardwood.arrow.internal.BatchLoader;
+import dev.hardwood.reader.BinaryDictionary;
 import dev.hardwood.reader.ColumnReaders;
 
 /// Reads Parquet columns as Arrow [org.apache.arrow.vector.VectorSchemaRoot] batches.
 ///
 /// Wraps a Hardwood [ColumnReaders] behind Arrow Java's [ArrowReader] contract, so
 /// `ArrowStreamWriter`, `ArrowFileWriter`, and the C Data Interface (`Data.exportArrayStream`)
-/// consume this reader unchanged.
+/// consume this reader unchanged. When dictionary output is configured on
+/// [ArrowReaders.BatchReaderBuilder], dictionary-encoded columns appear as signed 32-bit index
+/// vectors paired with their value vectors in [#getDictionaryVectors()] / [#lookup(long)], reused
+/// within each row group and replaced across row groups or on plain-page fallback.
 ///
 /// ```java
 /// try (BufferAllocator allocator = new RootAllocator();
@@ -50,17 +55,33 @@ public final class ArrowBatchReader extends ArrowReader {
 
     private final ColumnReaders columns;
     private final ArrowPlan plan;
+    private final BinaryDictionary[] loadedDictionaries;
     private long bytesLoaded;
     private boolean failed;
     private boolean closed;
 
-    ArrowBatchReader(BufferAllocator allocator, ColumnReaders columns, ArrowPlan plan) {
+    ArrowBatchReader(BufferAllocator allocator, ColumnReaders columns, ArrowPlan plan) throws IOException {
         super(allocator);
         this.columns = columns;
         this.plan = plan;
+        this.loadedDictionaries = new BinaryDictionary[plan.dictionaryNodes().size()];
+        // Initialize the root and empty dictionary map upfront (zero bytes) so getDictionaryIds()
+        // and lookup(long) are usable before getVectorSchemaRoot().
+        try {
+            ensureInitialized();
+        }
+        catch (IOException | RuntimeException e) {
+            try {
+                columns.close();
+            }
+            catch (IOException | RuntimeException closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
+        }
     }
 
-    /// Loads the next batch into the root.
+    /// Loads the next batch (and any new or replacement dictionaries) into the root.
     ///
     /// @return `true` when a batch was loaded, `false` at end of stream
     /// @throws IOException if the underlying bytes could not be read
@@ -82,10 +103,24 @@ public final class ArrowBatchReader extends ArrowReader {
             if (!columns.nextBatch()) {
                 return false;
             }
-            ArrowRecordBatch batch = BatchLoader.load(plan, columns, allocator);
-            // loadRecordBatch closes the batch, so compute body length first.
-            long bodyLength = batch.computeBodyLength();
-            loadRecordBatch(batch);
+            BatchLoader.LoadedBatch loaded = BatchLoader.load(plan, columns, allocator, loadedDictionaries);
+            long bodyLength = loaded.computeBodyLength();
+            int nextDict = 0;
+            boolean recordConsumed = false;
+            try {
+                List<ArrowDictionaryBatch> dicts = loaded.dictionaries();
+                while (nextDict < dicts.size()) {
+                    ArrowDictionaryBatch dictBatch = dicts.get(nextDict++);
+                    loadDictionary(dictBatch);
+                }
+                recordConsumed = true;
+                loadRecordBatch(loaded.recordBatch());
+            }
+            catch (RuntimeException e) {
+                loaded.closeFrom(nextDict, recordConsumed);
+                throw e;
+            }
+            loaded.commitDictionaries(loadedDictionaries);
             bytesLoaded += bodyLength;
             return true;
         }
@@ -101,7 +136,7 @@ public final class ArrowBatchReader extends ArrowReader {
         }
     }
 
-    /// Total bytes of Arrow record-batch buffers loaded so far.
+    /// Total bytes of Arrow dictionary and record-batch buffers loaded so far.
     @Override
     public long bytesRead() {
         return bytesLoaded;

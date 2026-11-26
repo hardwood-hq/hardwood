@@ -64,6 +64,31 @@ class ArrowCDataDuckDbTest {
     }
 
     @Test
+    void duckDbQueriesDictionaryEncodedStreams() throws IOException, SQLException {
+        for (String name : List.of("dict_plain_fallback", "dict_cross_chunk")) {
+            Path file = coreFixture(name);
+            try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+                 ArrowArrayStream stream = ArrowArrayStream.allocateNew(allocator)) {
+                ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
+                        .dictionaryEncoding(true)
+                        .batchSize(700)
+                        .build();
+                assertThat(reader.getVectorSchemaRoot().getSchema().findField("label").getDictionary()).isNotNull();
+                Data.exportArrayStream(allocator, reader, stream);
+                try (Connection connection = DriverManager.getConnection("jdbc:duckdb:");
+                     Statement statement = connection.createStatement()) {
+                    ((DuckDBConnection) connection).registerArrowStream("exported", stream);
+                    String aggregates = "count(*), count(label), count(DISTINCT label), min(label), max(label)";
+                    List<Object> overStream = row(statement, "SELECT " + aggregates + " FROM exported");
+                    List<Object> overFile = row(statement,
+                            "SELECT " + aggregates + " FROM read_parquet('" + file + "')");
+                    assertThat(overStream).as("aggregates for %s", name).isEqualTo(overFile);
+                }
+            }
+        }
+    }
+
+    @Test
     void duckDbQueriesNestedStream() throws IOException, SQLException {
         Path file = fixture("nested");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));

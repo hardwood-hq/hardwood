@@ -10,7 +10,8 @@
 /// ones included, as Arrow [org.apache.arrow.vector.VectorSchemaRoot] batches.
 ///
 /// [ArrowReaders] provides standalone schema conversion (`schema`) and factory methods for
-/// building readers with optional column projections, record and row-group filters, and batch
-/// sizes. [ArrowBatchReader] wraps a [dev.hardwood.reader.ColumnReaders] and serves each batch
-/// through Arrow Java's [org.apache.arrow.vector.ipc.ArrowReader] contract.
+/// building readers with optional column projections, record and row-group filters, batch sizes,
+/// and dictionary-encoded output. [ArrowBatchReader] wraps a [dev.hardwood.reader.ColumnReaders]
+/// and serves each batch (and any dictionaries) through Arrow Java's
+/// [org.apache.arrow.vector.ipc.ArrowReader] contract.
 package dev.hardwood.arrow;

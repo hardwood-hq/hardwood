@@ -12,22 +12,22 @@ Related documents:
 
 ## Module surface
 
-`hardwood-arrow` depends on `hardwood-core`, `org.apache.arrow:arrow-vector`, and `arrow-memory-core`. It declares no memory backend (`arrow-memory-unsafe` or `arrow-memory-netty` is chosen by the caller), and `hardwood-core` has no Arrow dependency. Because Arrow Java opens `java.nio` reflectively, JVMs loading the module pass `--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED`.
+`hardwood-arrow` depends on `hardwood-core`, `org.apache.arrow:arrow-vector`, and `arrow-memory-core`. It declares no memory backend (`arrow-memory-unsafe` or `arrow-memory-netty` is chosen by the caller). `hardwood-core` has no Arrow dependency; one internal bridge in `dev.hardwood.internal.reader.batch` (`BinaryDictionaryLayout`) unwraps a `BinaryDictionary`'s backing `ByteArrayDictionary` for first-party bindings without expanding `BinaryDictionary`'s public API. Because Arrow Java opens `java.nio` reflectively, JVMs loading the module pass `--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED`.
 
 Public package `dev.hardwood.arrow` exposes two `@Experimental` types:
 
 | Type | Role |
 |---|---|
-| `ArrowReaders` | Static entry points over `ParquetFileReader`: `schema(...)` for standalone schema conversion; `batchReader(...)` and `buildBatchReader(...)` with `projection`, `filter(FilterPredicate)`, `filter(RowGroupPredicate)`, and `batchSize` |
-| `ArrowBatchReader` | Extends Arrow Java's `ArrowReader`: `loadNextBatch`, reused `VectorSchemaRoot`, `bytesRead`, `close` |
+| `ArrowReaders` | Static entry points over `ParquetFileReader`: `schema(...)` for standalone schema conversion; `batchReader(...)` and `buildBatchReader(...)` with `projection`, `filter(FilterPredicate)`, `filter(RowGroupPredicate)`, `batchSize`, `dictionaryEncoding`, and `dictionaryColumns` |
+| `ArrowBatchReader` | Extends Arrow Java's `ArrowReader` (`DictionaryProvider`): `loadNextBatch`, reused `VectorSchemaRoot`, dictionary vectors, `bytesRead`, `close` |
 
 Internals live in `dev.hardwood.arrow.internal`: `ArrowSchemaConverter`, `ArrowPlan`, `ScalarKind`, and `BatchLoader`.
 
-**Arrow's reader contract.** `ArrowBatchReader` subclasses `org.apache.arrow.vector.ipc.ArrowReader`, so `ArrowStreamWriter`, `ArrowFileWriter`, and `arrow-c-data`'s `Data.exportArrayStream` consume it without adapter code. `bytesRead()` counts Arrow record-batch buffer bytes loaded so far.
+**Arrow's reader contract.** `ArrowBatchReader` subclasses `org.apache.arrow.vector.ipc.ArrowReader`, calling `ensureInitialized()` upfront (zero bytes) so `getDictionaryIds()` and `lookup(long)` are usable before `getVectorSchemaRoot()`. `ArrowStreamWriter`, `ArrowFileWriter`, and `arrow-c-data`'s `Data.exportArrayStream` consume it without adapter code. `bytesRead()` counts Arrow dictionary and record-batch buffer bytes loaded so far.
 
 **Conversion precedes the reader.** `BatchReaderBuilder.build()` runs `ArrowSchemaConverter.plan(...)` before calling `ParquetFileReader.buildColumnReaders(...)` so rejected schemas never start and orphan column worker threads.
 
-Tests: `ArrowBatchReaderTest`, `ArrowIpcRoundTripTest`, `ArrowCDataDuckDbTest` (hardwood-arrow).
+Tests: `ArrowBatchReaderTest`, `ArrowDictionaryTest`, `ArrowIpcRoundTripTest`, `ArrowCDataDuckDbTest` (hardwood-arrow).
 
 ## Scope and schema mapping
 
@@ -71,6 +71,17 @@ Non-negative `SchemaNode.fieldId()` values become `PARQUET:field_id` field metad
 
 Tests: `ArrowSchemaConverterTest`, `ArrowBatchReaderTest` (hardwood-arrow).
 
+## Dictionary encoding interop
+
+`ColumnReader` exposes `getDictionaryIds()` and an identity-stable `BinaryDictionary` per row group for `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, and `INT96` columns. `.dictionaryEncoding(true)` selects projected eligible columns whose footer metadata uses dictionary encoding; `.dictionaryColumns(...)` selects named leaf columns explicitly. Selected fields receive `DictionaryEncoding(id, false, Int(32, true))` in `readSchema()`.
+
+- When `getBinaryDictionary()` matches the loaded instance by identity (`==`), only `int[]` indices are copied (bulk copy when non-null, mapping `-1` to `0` when nullable/parent-null).
+- When the dictionary changes, `BatchLoader` builds a replacement `ArrowDictionaryBatch` (`isDelta = false`) from `BinaryDictionaryLayout` (single-chunk bulk copy or multi-chunk concatenation for `BINARY` / `FIXED_BINARY`, one conversion pass for `DECIMAL_BYTES` / `INT96_TIMESTAMP`).
+- On plain-page fallback (`getDictionaryIds() == null`), `BatchLoader` emits the batch's values as a replacement dictionary with identity indices `0..count-1` and clears the cached dictionary reference.
+- If a non-nullable dictionary child inside an all-null `OPTIONAL` struct has a 0-entry dictionary, a 1-entry placeholder dictionary keeps placeholder index `0` in bounds.
+
+Tests: `ArrowDictionaryTest`, `ArrowCDataDuckDbTest` (hardwood-arrow).
+
 ## Loading a batch
 
 `ArrowBatchReader.loadNextBatch()` calls `prepareLoadNextBatch()`, advances `ColumnReaders`, builds an `ArrowRecordBatch` via `BatchLoader.load(...)`, and hands it to `loadRecordBatch(...)`.
@@ -105,7 +116,7 @@ Tests: `ArrowDatasetOracleTest`, `ArrowCDataDuckDbTest`, `ArrowBatchReaderTest`,
 
 ## Boundaries
 
-- **Dictionary-encoded Arrow output** (passing Parquet binary dictionaries through as Arrow dictionary vectors) is deferred to a follow-up PR so this module requires no changes to `hardwood-core`.
+- **Numeric dictionaries** (`INT32`, `INT64`, `FLOAT`, `DOUBLE`) decode to typed arrays on core's decode thread and emit plain Arrow vectors.
 - **Shredded Variant values** are served as stored (`metadata`, `value`, `typed_value`) without canonical reassembly or Arrow's Variant extension type.
 - **`ARROW:schema`** is neither read nor forwarded.
 - **`Utf8View` / `BinaryView`**, **CLI IPC output**, and **Arrow-to-Parquet writing** are separate follow-ups under #153.

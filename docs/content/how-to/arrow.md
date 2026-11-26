@@ -69,7 +69,7 @@ try (BufferAllocator allocator = new RootAllocator();
 }
 ```
 
-`ArrowReaders.buildBatchReader` supports column projection, record and row-group predicates, and batch size, with the semantics of [`ColumnReaders`](column-reader.md):
+`ArrowReaders.buildBatchReader` supports column projection, record and row-group predicates, batch size, and dictionary-encoded output, with the semantics of [`ColumnReaders`](column-reader.md):
 
 ```java
 ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
@@ -77,10 +77,20 @@ ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
     .filter(FilterPredicate.gt("id", 1000L))
     .filter(RowGroupPredicate.byteRange(splitStart, splitEnd))
     .batchSize(65_536)
+    .dictionaryEncoding(true)
     .build();
 ```
 
 Multi-file `ParquetFileReader` instances read as one stream. Projection orders top-level fields by first mention and preserves enclosing structs around projected children; selecting only the key or only the value of a `MAP` fails at `build()`.
+
+## Dictionary-encoded output
+
+By default, dictionary-encoded Parquet columns expand into plain Arrow vectors. To pass Parquet dictionaries directly into `Int32`-indexed Arrow dictionary vectors backed by `ArrowReader`'s `DictionaryProvider`:
+
+- `.dictionaryEncoding(true)` selects every projected `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, and `INT96` column (other than `UNKNOWN`-annotated columns) whose footer metadata uses Parquet dictionary encoding. On a multi-file reader this checks the first file's footer; use `.dictionaryColumns(...)` when later files introduce dictionary pages that the first lacks.
+- `.dictionaryColumns("label", "address.city")` selects named leaf columns explicitly using dot-separated Parquet field paths.
+
+Each dictionary page is loaded once per row group and reused across all batches from that row group; a new row group or plain-page fallback replaces the dictionary transparently. `ArrowStreamWriter` and `Data.exportArrayStream` handle replacement dictionaries across batches; `ArrowFileWriter` is limited to single-dictionary streams.
 
 ## Type mapping
 
@@ -116,7 +126,7 @@ Because `ArrowBatchReader` extends `ArrowReader`, Arrow's IPC writers and C Data
 
 ```java
 try (ArrowBatchReader reader = ArrowReaders.batchReader(fileReader, allocator);
-     ArrowStreamWriter writer = new ArrowStreamWriter(reader.getVectorSchemaRoot(), null, outputStream)) {
+     ArrowStreamWriter writer = new ArrowStreamWriter(reader.getVectorSchemaRoot(), reader, outputStream)) {
     writer.start();
     while (reader.loadNextBatch()) {
         writer.writeBatch();

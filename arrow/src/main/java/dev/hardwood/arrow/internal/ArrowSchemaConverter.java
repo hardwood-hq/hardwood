@@ -9,14 +9,17 @@ package dev.hardwood.arrow.internal;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -24,8 +27,13 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import dev.hardwood.internal.reader.batch.NestedLevelComputer;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
@@ -44,24 +52,37 @@ public final class ArrowSchemaConverter {
     private static final String ARROW_SCHEMA_KEY = "ARROW:schema";
     private static final int MAX_DECIMAL_PRECISION = 76;
     private static final int DECIMAL_128_PRECISION = 38;
+    private static final ArrowType.Int DICTIONARY_INDEX_TYPE = new ArrowType.Int(32, true);
 
     private record Mapping(ArrowType type, ScalarKind kind) {
     }
 
     private record Context(ProjectedSchema projected, int[] firstPosition,
-            NestedLevelComputer.Layers[] expectedLayers) {
+            NestedLevelComputer.Layers[] expectedLayers, BitSet dictionaryColumns,
+            List<ArrowPlan.Node> dictionaryNodes) {
     }
 
     private ArrowSchemaConverter() {
     }
 
-    /// Resolves `projection` against `schema` and converts every projected node into an
+    /// Resolves `projection` against `schema` and converts every projected node into a plain
     /// [ArrowPlan], ordered by first occurrence in the projection.
     public static ArrowPlan plan(FileSchema schema, Map<String, String> keyValueMetadata,
             ColumnProjection projection) {
+        return plan(schema, keyValueMetadata, projection, false, Set.of(), List.of());
+    }
+
+    /// Resolves `projection` against `schema` and converts every projected node, optionally
+    /// marking eligible binary columns as Arrow dictionary-encoded (`Int32`-indexed).
+    public static ArrowPlan plan(FileSchema schema, Map<String, String> keyValueMetadata,
+            ColumnProjection projection, boolean autoDictionaries, Set<String> explicitDictionaryColumns,
+            List<RowGroup> rowGroups) {
         ProjectedSchema projected = ProjectedSchema.create(schema, projection);
+        BitSet dictionaryColumns = resolveDictionaryColumns(schema, projected, autoDictionaries,
+                explicitDictionaryColumns, rowGroups);
+        List<ArrowPlan.Node> dictionaryNodes = new ArrayList<>();
         Context context = new Context(projected, firstPositions(projected),
-                NestedLevelComputer.computeLayers(schema));
+                NestedLevelComputer.computeLayers(schema), dictionaryColumns, dictionaryNodes);
         List<ArrowPlan.Node> roots = new ArrayList<>();
         List<Field> fields = new ArrayList<>();
         for (SchemaNode child : projected.projectedChildren(schema.getRootNode())) {
@@ -69,7 +90,80 @@ public final class ArrowSchemaConverter {
             roots.add(root);
             fields.add(root.field());
         }
-        return new ArrowPlan(new Schema(fields, schemaMetadata(keyValueMetadata)), List.copyOf(roots));
+        return new ArrowPlan(new Schema(fields, schemaMetadata(keyValueMetadata)), List.copyOf(roots),
+                List.copyOf(dictionaryNodes));
+    }
+
+    private static BitSet resolveDictionaryColumns(FileSchema schema, ProjectedSchema projected,
+            boolean autoDictionaries, Set<String> explicitDictionaryColumns, List<RowGroup> rowGroups) {
+        BitSet selected = new BitSet();
+        if (autoDictionaries && rowGroups != null) {
+            for (RowGroup rg : rowGroups) {
+                List<ColumnChunk> chunks = rg.columns();
+                for (int i = 0; i < chunks.size(); i++) {
+                    ColumnMetaData meta = chunks.get(i).metaData();
+                    if (meta == null || !usesDictionaryEncoding(meta)) {
+                        continue;
+                    }
+                    ColumnSchema column = columnForChunk(schema, i, meta);
+                    if (column != null && projected.toProjectedIndex(column.columnIndex()) >= 0
+                            && isDictionaryEligible(column)) {
+                        selected.set(column.columnIndex());
+                    }
+                }
+            }
+        }
+        if (explicitDictionaryColumns != null && !explicitDictionaryColumns.isEmpty()) {
+            Map<String, ColumnSchema> projectedByPath = new HashMap<>();
+            for (ColumnSchema column : projected.getProjectedColumns()) {
+                projectedByPath.put(column.fieldPath().toString(), column);
+            }
+            for (String path : explicitDictionaryColumns) {
+                ColumnSchema column = projectedByPath.get(path);
+                if (column == null) {
+                    throw new IllegalArgumentException("Dictionary column '" + path
+                            + "' is not a projected leaf column");
+                }
+                if (!isDictionaryEligible(column)) {
+                    throw new UnsupportedOperationException("Column '" + column.fieldPath() + "' ("
+                            + column.type() + (column.logicalType() != null ? ", " + column.logicalType() : "")
+                            + ") does not support Arrow dictionary output; only BYTE_ARRAY, "
+                            + "FIXED_LEN_BYTE_ARRAY and INT96 columns without an UNKNOWN annotation do");
+                }
+                selected.set(column.columnIndex());
+            }
+        }
+        return selected;
+    }
+
+    private static boolean usesDictionaryEncoding(ColumnMetaData meta) {
+        if (meta.dictionaryPageOffset() != null) {
+            return true;
+        }
+        List<Encoding> encodings = meta.encodings();
+        return encodings != null && (encodings.contains(Encoding.RLE_DICTIONARY)
+                || encodings.contains(Encoding.PLAIN_DICTIONARY));
+    }
+
+    private static ColumnSchema columnForChunk(FileSchema schema, int index, ColumnMetaData meta) {
+        if (index < schema.getColumnCount() && schema.getColumn(index).fieldPath().equals(meta.pathInSchema())) {
+            return schema.getColumn(index);
+        }
+        try {
+            return schema.getColumn(meta.pathInSchema());
+        }
+        catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean isDictionaryEligible(ColumnSchema column) {
+        if (column.logicalType() instanceof LogicalType.NullType) {
+            return false;
+        }
+        PhysicalType type = column.type();
+        return type == PhysicalType.BYTE_ARRAY || type == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                || type == PhysicalType.INT96;
     }
 
     private static Map<String, String> schemaMetadata(Map<String, String> keyValueMetadata) {
@@ -124,8 +218,14 @@ public final class ArrowSchemaConverter {
         boolean nullable = primitive.repetitionType() == RepetitionType.OPTIONAL;
         Map<String, String> metadata = carriesId ? metadata(primitive) : null;
         int position = context.firstPosition()[context.projected().toProjectedIndex(primitive.columnIndex())];
-        Field field = new Field(primitive.name(), new FieldType(nullable, mapping.type(), null, metadata), null);
-        return ArrowPlan.Node.leaf(field, mapping.kind(), position);
+        int slot = context.dictionaryColumns().get(primitive.columnIndex()) ? context.dictionaryNodes().size() : -1;
+        DictionaryEncoding encoding = slot >= 0 ? new DictionaryEncoding(slot, false, DICTIONARY_INDEX_TYPE) : null;
+        Field field = new Field(primitive.name(), new FieldType(nullable, mapping.type(), encoding, metadata), null);
+        ArrowPlan.Node node = ArrowPlan.Node.leaf(field, mapping.kind(), position, slot);
+        if (slot >= 0) {
+            context.dictionaryNodes().add(node);
+        }
+        return node;
     }
 
     private static void requireLayers(Context context, ColumnSchema column, List<LayerKind> layers) {

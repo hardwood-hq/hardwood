@@ -8,6 +8,8 @@
 package dev.hardwood.arrow;
 
 import java.io.IOException;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -27,7 +29,7 @@ import dev.hardwood.schema.ColumnProjection;
 /// schema without starting column workers or requiring a [BufferAllocator];
 /// [#batchReader(ParquetFileReader, BufferAllocator)] reads every column;
 /// [#buildBatchReader(ParquetFileReader, BufferAllocator)] returns a builder for projection,
-/// filtering, and batch size.
+/// filtering, batch size, and dictionary output.
 ///
 /// **This API is [Experimental]:** it may change in future releases without prior deprecation.
 @Experimental
@@ -61,7 +63,8 @@ public final class ArrowReaders {
         return buildBatchReader(reader, allocator).build();
     }
 
-    /// Begin configuring an [ArrowBatchReader] with optional projection, filters, and batch size.
+    /// Begin configuring an [ArrowBatchReader] with optional projection, filters, batch size, and
+    /// dictionary encoding.
     public static BatchReaderBuilder buildBatchReader(ParquetFileReader reader, BufferAllocator allocator) {
         return new BatchReaderBuilder(reader, allocator);
     }
@@ -75,6 +78,8 @@ public final class ArrowReaders {
         private FilterPredicate filter;
         private RowGroupPredicate rowGroupFilter;
         private int batchSize;
+        private boolean dictionaryEncoding;
+        private final Set<String> dictionaryColumns = new LinkedHashSet<>();
 
         private BatchReaderBuilder(ParquetFileReader fileReader, BufferAllocator allocator) {
             if (fileReader == null) {
@@ -118,11 +123,38 @@ public final class ArrowReaders {
             return this;
         }
 
+        /// When `true`, emit Arrow dictionary-encoded (`Int32`-indexed) vectors for every
+        /// projected `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column (except `UNKNOWN`)
+        /// whose footer metadata uses Parquet dictionary encoding (on a multi-file reader, the
+        /// first file's footer is consulted; use [#dictionaryColumns(String...)] for heterogeneous
+        /// files). Default: `false`.
+        public BatchReaderBuilder dictionaryEncoding(boolean enabled) {
+            this.dictionaryEncoding = enabled;
+            return this;
+        }
+
+        /// Explicitly emit the named leaf columns (dot-separated Parquet field paths) as Arrow
+        /// dictionary-encoded (`Int32`-indexed) vectors. Combines with
+        /// [#dictionaryEncoding(boolean)].
+        public BatchReaderBuilder dictionaryColumns(String... columns) {
+            if (columns == null) {
+                throw new IllegalArgumentException("columns must not be null");
+            }
+            for (String column : columns) {
+                if (column == null) {
+                    throw new IllegalArgumentException("dictionary column name must not be null");
+                }
+                this.dictionaryColumns.add(column);
+            }
+            return this;
+        }
+
         /// Build the configured [ArrowBatchReader], converting and validating the schema before
         /// starting column workers.
         public ArrowBatchReader build() throws IOException {
             ArrowPlan plan = ArrowSchemaConverter.plan(fileReader.getFileSchema(),
-                    fileReader.getFileMetaData().keyValueMetadata(), projection);
+                    fileReader.getFileMetaData().keyValueMetadata(), projection, dictionaryEncoding,
+                    dictionaryColumns, fileReader.getFileMetaData().rowGroups());
             ParquetFileReader.ColumnReadersBuilder underlying = fileReader.buildColumnReaders(projection);
             if (filter != null) {
                 underlying.filter(filter);
