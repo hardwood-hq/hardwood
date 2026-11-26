@@ -23,8 +23,6 @@ gpg --export <FINGERPRINT> | curl -T - https://keys.openpgp.org
 
 **Tag ruleset** for `v*`: restrict creations, updates and deletions, with those who may release as bypass actors. The environment hands the secrets to any run on a `v*` tag, so this ruleset is what keeps them from anyone else.
 
-Releases up to 1.1.0.CR1 used the repository secrets `JRELEASER_*` instead; they are to be deleted, and the token they hold revoked.
-
 ## Preparing the release notes
 
 Land the version's section of `docs/content/release-notes.md` on the branch to release from, with the milestone link and the contributor line, which `tools/release/contributors.py <since-tag> [<until-tag>]` produces from the commit authors and `Co-authored-by` trailers (it needs an authenticated `gh`).
