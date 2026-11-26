@@ -131,6 +131,9 @@ final class BatchPublisher {
     private final BitSet publishable = new BitSet();
     /// the first batch some column has not published
     private long head;
+    /// the consumer's next batch ([#recountConsumerNext()]), and the open columns whose next batch it is
+    private long consumerNext;
+    private int atConsumerNext;
     private final ReadFailure readFailure;
 
     BatchPublisher(RangeFetcher fetcher, ReadFailure readFailure, List<BatchExchange<?>> exchanges, int batchRows,
@@ -143,6 +146,7 @@ final class BatchPublisher {
         this.columns = exchanges.size();
         this.published = new long[columns];
         this.opened = new long[columns];
+        recountConsumerNext();
     }
 
     /// A unit is batched: its batches are `batches`, its first row at key `base`, and the
@@ -236,6 +240,14 @@ final class BatchPublisher {
         return i - span.firstIndex < span.made.size();
     }
 
+    /// Batch `i`, at or past the head, where it is made; `null` where it is not or every column
+    /// has published it.
+    private Batch madeBatch(long i) {
+        Span span = spans.get(spanOf(i));
+        int k = Math.toIntExact(i - span.firstIndex);
+        return k < span.made.size() ? span.made.get(k) : null;
+    }
+
     /// Whether `column` is not read in the unit of batch `i`, while some column is.
     private boolean skipsUnitOf(long i, int column) {
         BitSet skipped = spans.get(spanOf(i)).skipped;
@@ -294,11 +306,7 @@ final class BatchPublisher {
     /// the column has published it.
     private Batch find(int column, BatchCell<?> cell) {
         long i = cell.batchIndex();
-        if (i < head || !made(i)) {
-            return null;
-        }
-        Span span = spans.get(spanOf(i));
-        Batch b = span.made.get(Math.toIntExact(i - span.firstIndex));
+        Batch b = i < head ? null : madeBatch(i);
         return b != null && b.cell(column) == cell ? b : null;
     }
 
@@ -331,7 +339,7 @@ final class BatchPublisher {
 
     private void publish(int c, long batchedTo, boolean allBatched) {
         BatchExchange<Object> exchange = cast(exchanges.get(c));
-        for (long i = published[c]; ; i = ++published[c]) {
+        for (long i = published[c]; ; i = advance(c)) {
             if (i < planned && !made(i) && skipsUnitOf(i, c) && !readFailure.settled()) {
                 // the columns that read the unit make its batches
                 return;
@@ -341,11 +349,13 @@ final class BatchPublisher {
                     return;
                 }
                 exchange.signalError(readFailure.cause());
+                left(i);
                 return;
             }
             if (i == planned) {
                 if (allBatched) {
                     exchange.finish();
+                    left(i);
                 }
                 return;
             }
@@ -359,6 +369,20 @@ final class BatchPublisher {
             }
             b.cell(c).release();
             passed(c, i, b);
+        }
+    }
+
+    /// Moves `c` to its next batch.
+    private long advance(int c) {
+        long i = ++published[c];
+        left(i - 1);
+        return i;
+    }
+
+    /// An open column whose next batch was `i` has moved past it or ended.
+    private void left(long i) {
+        if (i == consumerNext && --atConsumerNext == 0) {
+            recountConsumerNext();
         }
     }
 
@@ -407,16 +431,14 @@ final class BatchPublisher {
     /// Decodes reach the cap's kept rows past the first row some column has not published. Nothing past the
     /// failure starts.
     JobScheduler.Position position(long batchedTo, LongUnaryOperator pastBatched) {
-        long next = consumerNext();
+        long next = consumerNext;
         long need = batchedTo + batchRows + 1;
         if (next >= 0 && next < planned) {
             // a batch not made is reached by no column yet: it holds at most a batch's rows
             need = keyOf(next) + batchRows + 1;
-            if (made(next)) {
-                Batch b = spans.get(spanOf(next)).made.get(indexInSpan(next));
-                if (b != null) {
-                    need = Math.max(b.endKey() + 1, need);
-                }
+            Batch b = madeBatch(next);
+            if (b != null) {
+                need = Math.max(b.endKey() + 1, need);
             }
             if (next == planned - 1) {
                 need = Math.max(need, batchedTo + 1);
@@ -461,19 +483,30 @@ final class BatchPublisher {
         return low;
     }
 
-    /// The consumer's next batch: the next of the column furthest behind, since a consumer takes
+    /// Counts the consumer's next batch: the next of the column furthest behind, since a consumer takes
     /// a batch of every column it reads in a step before the next step; `-1` where every column
     /// has ended. A column that does not read a unit passes its batches as they are made, ahead
     /// of the consumer, so the column furthest ahead may be a batch of the plan no decode has
-    /// reached.
-    private long consumerNext() {
+    /// reached. Kept as the columns publish: a column's next batch only rises and an ended column
+    /// does not reopen, so the columns are looked at again only once the last one at it leaves it.
+    /// An abandoned read is not kept, as it asks for its position no more.
+    private void recountConsumerNext() {
         long next = -1;
+        int at = 0;
         for (int c = 0; c < published.length; c++) {
-            if (!exchanges.get(c).isFinished() && (next < 0 || published[c] < next)) {
+            if (exchanges.get(c).isFinished()) {
+                continue;
+            }
+            if (next < 0 || published[c] < next) {
                 next = published[c];
+                at = 1;
+            }
+            else if (published[c] == next) {
+                at++;
             }
         }
-        return next;
+        consumerNext = next;
+        atConsumerNext = at;
     }
 
     /// The key of the first row some column has not published.
@@ -484,12 +517,7 @@ final class BatchPublisher {
     /// The key batch `i` starts at, made or not.
     private long keyOf(long i) {
         Span span = spans.get(spanOf(i));
-        return span.key(span.firstSegment + indexInSpan(i));
-    }
-
-    /// The position of batch `i` among the batches its unit starts.
-    private int indexInSpan(long i) {
-        return Math.toIntExact(i - spans.get(spanOf(i)).firstIndex);
+        return span.key(span.firstSegment + Math.toIntExact(i - span.firstIndex));
     }
 
     /// Ends every exchange not ended, as the read closes: a consumer waiting for a batch finds the
@@ -500,5 +528,6 @@ final class BatchPublisher {
                 exchange.finish();
             }
         }
+        recountConsumerNext();
     }
 }
