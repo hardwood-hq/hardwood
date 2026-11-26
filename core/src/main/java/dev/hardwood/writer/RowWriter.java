@@ -56,6 +56,10 @@ public final class RowWriter {
     private final ParquetFileWriter writer;
     private final RowPlan plan;
 
+    /// Stages one record into [#plan], bound once so that writing a record allocates nothing
+    /// of the writer's own.
+    private final Consumer<Consumer<StructBuilder>> stageRecord;
+
     /// Records staged before a batch is submitted: as many as the writer appends in one slice
     /// ([RowGroupBuffer#recordsPerSlice(int)]), so a batch carries enough values per column to
     /// make the parallel append's fixed cost per batch small. Not a [WriterConfig] option: a
@@ -68,11 +72,10 @@ public final class RowWriter {
     /// arbitrarily much.
     private final long payloadLimitBytes;
 
-    private int stagedRecords;
-
     RowWriter(ParquetFileWriter writer, FileSchema schema, WriterConfig config) {
         this.writer = writer;
         this.plan = RowPlan.build(schema, config.precisionLossPolicy());
+        this.stageRecord = plan::writeRecord;
         this.stagedRecordsPerBatch = RowGroupBuffer.recordsPerSlice(schema.getColumnCount());
         this.payloadLimitBytes = config.rowGroupBufferTargetBytes();
     }
@@ -100,7 +103,7 @@ public final class RowWriter {
     public void writeRow(Consumer<StructBuilder> filler) throws IOException {
         writer.ensureWritable();
         try {
-            writer.runFiller(() -> plan.writeRecord(filler));
+            writer.runFiller(stageRecord, filler);
         }
         catch (RejectedRecordException e) {
             writer.markFailed();
@@ -141,7 +144,7 @@ public final class RowWriter {
     public RowWriteResult tryWriteRow(Consumer<StructBuilder> filler) throws IOException {
         writer.ensureWritable();
         try {
-            writer.runFiller(() -> plan.writeRecord(filler));
+            writer.runFiller(stageRecord, filler);
         }
         catch (RejectedRecordException e) {
             return new RowWriteResult.Rejected(e.fieldPath(), e.getMessage());
@@ -155,8 +158,7 @@ public final class RowWriter {
     }
 
     private void commitStagedRecord() throws IOException {
-        stagedRecords++;
-        if (stagedRecords >= stagedRecordsPerBatch || plan.variableWidthBytes() >= payloadLimitBytes
+        if (plan.stagedRecords() >= stagedRecordsPerBatch || plan.variableWidthBytes() >= payloadLimitBytes
                 || plan.perElementStagesFull()) {
             flush();
         }
@@ -169,11 +171,10 @@ public final class RowWriter {
     }
 
     private void flush() throws IOException {
-        if (stagedRecords == 0) {
+        if (plan.stagedRecords() == 0) {
             return;
         }
         writer.writeStagedBatch(plan::fill);
         plan.reset();
-        stagedRecords = 0;
     }
 }

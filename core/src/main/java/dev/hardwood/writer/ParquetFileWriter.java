@@ -604,7 +604,7 @@ public final class ParquetFileWriter implements Closeable {
     void writeStagedBatch(Consumer<ColumnBatch> filler) throws IOException {
         try {
             ColumnBatch batch = new ColumnBatch(schema, ranges);
-            runFiller(() -> filler.accept(batch));
+            runFiller(filler, batch);
             ColumnSource[] sources = batch.completedSources();
             shredder.bind(sources, batch.validities(), batch.structValidities(),
                     batch.listValidities(), batch.listOffsets());
@@ -619,10 +619,10 @@ public final class ParquetFileWriter implements Closeable {
 
     /// Runs a caller's filler, during which [#endRowGroup()] and [#close()] are rejected: a
     /// record or batch half filled when either ran would be cut off from the rows it belongs to.
-    void runFiller(Runnable filler) {
+    <T> void runFiller(Consumer<T> filler, T target) {
         activeFillers++;
         try {
-            filler.run();
+            filler.accept(target);
         }
         finally {
             activeFillers--;

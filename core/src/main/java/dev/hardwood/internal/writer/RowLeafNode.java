@@ -51,7 +51,9 @@ final class RowLeafNode extends RowNode {
     /// The form [#writeValue] takes, decided once from the declared type.
     private final ValueForm valueForm;
 
-    RowLeafNode(String path, ColumnSchema column, PrecisionLossPolicy precisionLossPolicy) {
+    /// @param payload the count of staged variable-width bytes this leaf adds to, if it is one,
+    ///        shared with the plan's other leaves
+    RowLeafNode(String path, ColumnSchema column, PrecisionLossPolicy precisionLossPolicy, StagedPayload payload) {
         super(path);
         this.precisionLossPolicy = precisionLossPolicy;
         this.columnIndex = column.columnIndex();
@@ -59,7 +61,7 @@ final class RowLeafNode extends RowNode {
         this.logicalType = column.logicalType();
         this.typeLength = column.typeLength() == null ? -1 : column.typeLength();
         this.optional = column.repetitionType() == RepetitionType.OPTIONAL;
-        this.stage = LeafStage.forType(physicalType, typeLength, logicalType);
+        this.stage = LeafStage.forType(physicalType, typeLength, logicalType, payload);
         this.range = LogicalTypeValueRange.of(column);
         this.valueForm = ValueForm.of(physicalType, logicalType);
     }

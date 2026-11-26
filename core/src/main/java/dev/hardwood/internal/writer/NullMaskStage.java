@@ -15,8 +15,9 @@ import dev.hardwood.Validity;
 /// absent" bit, or a list's "this list is absent" bit — while the row-oriented layer stages a
 /// batch.
 ///
-/// The mask is reused across batches and cleared in full by [#reset()], so the entries beyond
-/// [#count()] are always `false` and it can be handed to [Validity#ofNulls] untrimmed.
+/// The mask is reused across batches. [#truncate] and [#reset()] clear what they drop, so the
+/// entries beyond [#count()] are always `false` and it can be handed to [Validity#ofNulls]
+/// untrimmed.
 final class NullMaskStage {
 
     private static final int INITIAL_CAPACITY = 16;
@@ -38,6 +39,9 @@ final class NullMaskStage {
     }
 
     void truncate(int mark) {
+        if (mark > count) {
+            throw StagingRollback.shortOf(mark, count);
+        }
         for (int i = mark; i < count; i++) {
             nulls[i] = false;
         }
@@ -47,7 +51,10 @@ final class NullMaskStage {
     }
 
     void reset() {
-        Arrays.fill(nulls, false);
+        // Only an entry below the count can be set, and only while `hasNulls` is.
+        if (hasNulls) {
+            Arrays.fill(nulls, 0, count, false);
+        }
         count = 0;
         hasNulls = false;
     }

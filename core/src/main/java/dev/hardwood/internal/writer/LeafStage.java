@@ -31,9 +31,12 @@ abstract sealed class LeafStage {
     /// Number of entries staged so far.
     int count;
 
-    /// Per-entry null mask, `true` at a null entry. Cleared in full by [#reset()], so the
-    /// entries beyond [#count] are always `false` and the array can be handed to
-    /// [Validity#ofNulls] untrimmed.
+    /// Entries the value and null arrays both hold, which grow together.
+    private int capacity = INITIAL_CAPACITY;
+
+    /// Per-entry null mask, `true` at a null entry. [#truncate] and [#reset()] clear what
+    /// they drop, so the entries beyond [#count] are always `false` and the array can be handed
+    /// to [Validity#ofNulls] untrimmed.
     boolean[] nulls = new boolean[INITIAL_CAPACITY];
 
     /// Whether any entry staged in this batch is null, so an all-present column skips the
@@ -42,16 +45,17 @@ abstract sealed class LeafStage {
 
     /// The stage for a column of `type`, `typeLength` being the declared byte length of a
     /// `FIXED_LEN_BYTE_ARRAY` column and `-1` for any other type. `logicalType` decides what a
-    /// binary column's cleared slot has to look like, which its annotation can narrow.
-    static LeafStage forType(PhysicalType type, int typeLength, LogicalType logicalType) {
+    /// binary column's cleared slot has to look like, which its annotation can narrow. A binary
+    /// stage counts the bytes it stages into `payload`.
+    static LeafStage forType(PhysicalType type, int typeLength, LogicalType logicalType, StagedPayload payload) {
         return switch (type) {
             case BOOLEAN -> new BooleanStage();
             case INT32 -> new IntStage();
             case INT64 -> new LongStage();
             case FLOAT -> new FloatStage();
             case DOUBLE -> new DoubleStage();
-            case BYTE_ARRAY -> new BinaryStage(false, binaryPlaceholder(logicalType));
-            case FIXED_LEN_BYTE_ARRAY -> new BinaryStage(true, new byte[typeLength]);
+            case BYTE_ARRAY -> new BinaryStage(false, binaryPlaceholder(logicalType), payload);
+            case FIXED_LEN_BYTE_ARRAY -> new BinaryStage(true, new byte[typeLength], payload);
             case INT96 -> throw new IllegalArgumentException("INT96 is not supported by the writer");
         };
     }
@@ -72,9 +76,10 @@ abstract sealed class LeafStage {
     /// store through it afterwards — `values[reserve()] = value` would evaluate the array
     /// reference before the growth and write into the array that was just replaced.
     final int reserve() {
-        ensureValueCapacity(count + 1);
-        if (count == nulls.length) {
-            nulls = Arrays.copyOf(nulls, nulls.length * 2);
+        if (count == capacity) {
+            capacity *= 2;
+            nulls = Arrays.copyOf(nulls, capacity);
+            growValues(capacity);
         }
         return count++;
     }
@@ -97,6 +102,9 @@ abstract sealed class LeafStage {
 
     /// Drops every entry staged since `mark`, undoing a row that failed mid-way.
     final void truncate(int mark) {
+        if (mark > count) {
+            throw StagingRollback.shortOf(mark, count);
+        }
         for (int i = mark; i < count; i++) {
             nulls[i] = false;
         }
@@ -107,8 +115,12 @@ abstract sealed class LeafStage {
     }
 
     final void reset() {
-        Arrays.fill(nulls, false);
-        dropValues(0, count);
+        // Only an entry below the count can be set, and only while `hasNulls` is: a column
+        // that staged no null, every REQUIRED one included, has nothing to clear.
+        if (hasNulls) {
+            Arrays.fill(nulls, 0, count, false);
+        }
+        clearValues();
         hasNulls = false;
         count = 0;
     }
@@ -118,10 +130,8 @@ abstract sealed class LeafStage {
     void dropValues(int from, int to) {
     }
 
-    /// The staged payload of a variable-width column, which bounds how much a batch can hold
-    /// beyond its row count. Zero for the fixed-width types, whose size the row count implies.
-    long variableWidthBytes() {
-        return 0;
+    /// Releases every staged entry as part of resetting the whole plan.
+    void clearValues() {
     }
 
     /// Hands the staged values to the batch through the setter for this column's physical
@@ -129,7 +139,8 @@ abstract sealed class LeafStage {
     /// the array length.
     abstract void fill(ColumnBatch batch, int columnIndex);
 
-    abstract void ensureValueCapacity(int required);
+    /// Grows the value array to `length` entries, keeping the staged ones.
+    abstract void growValues(int length);
 
     /// Writes the type's zero into the slot, so a placeholder never carries a stale value
     /// from an earlier batch.
@@ -138,14 +149,6 @@ abstract sealed class LeafStage {
     /// The validity to hand to the batch, or `null` when the column is all-present.
     final Validity validity() {
         return hasNulls ? Validity.ofNulls(nulls) : null;
-    }
-
-    static int grownLength(int current, int required) {
-        int length = Math.max(current, INITIAL_CAPACITY);
-        while (length < required) {
-            length *= 2;
-        }
-        return length;
     }
 
     static final class IntStage extends LeafStage {
@@ -158,10 +161,8 @@ abstract sealed class LeafStage {
         }
 
         @Override
-        void ensureValueCapacity(int required) {
-            if (values.length < required) {
-                values = Arrays.copyOf(values, grownLength(values.length, required));
-            }
+        void growValues(int length) {
+            values = Arrays.copyOf(values, length);
         }
 
         @Override
@@ -192,10 +193,8 @@ abstract sealed class LeafStage {
         }
 
         @Override
-        void ensureValueCapacity(int required) {
-            if (values.length < required) {
-                values = Arrays.copyOf(values, grownLength(values.length, required));
-            }
+        void growValues(int length) {
+            values = Arrays.copyOf(values, length);
         }
 
         @Override
@@ -226,10 +225,8 @@ abstract sealed class LeafStage {
         }
 
         @Override
-        void ensureValueCapacity(int required) {
-            if (values.length < required) {
-                values = Arrays.copyOf(values, grownLength(values.length, required));
-            }
+        void growValues(int length) {
+            values = Arrays.copyOf(values, length);
         }
 
         @Override
@@ -260,10 +257,8 @@ abstract sealed class LeafStage {
         }
 
         @Override
-        void ensureValueCapacity(int required) {
-            if (values.length < required) {
-                values = Arrays.copyOf(values, grownLength(values.length, required));
-            }
+        void growValues(int length) {
+            values = Arrays.copyOf(values, length);
         }
 
         @Override
@@ -294,10 +289,8 @@ abstract sealed class LeafStage {
         }
 
         @Override
-        void ensureValueCapacity(int required) {
-            if (values.length < required) {
-                values = Arrays.copyOf(values, grownLength(values.length, required));
-            }
+        void growValues(int length) {
+            values = Arrays.copyOf(values, length);
         }
 
         @Override
@@ -332,24 +325,26 @@ abstract sealed class LeafStage {
 
         private final boolean fixedWidth;
         private byte[][] values = new byte[INITIAL_CAPACITY][];
-        private long payloadBytes;
 
-        BinaryStage(boolean fixedWidth, byte[] placeholder) {
+        /// The staged bytes of every variable-width stage of the plan, so that the plan reads
+        /// their total rather than summing the stages on every record.
+        private final StagedPayload payload;
+
+        BinaryStage(boolean fixedWidth, byte[] placeholder, StagedPayload payload) {
             this.fixedWidth = fixedWidth;
             this.placeholder = placeholder;
+            this.payload = payload;
         }
 
         void append(byte[] value) {
             int index = reserve();
             values[index] = value;
-            payloadBytes += value.length;
+            payload.bytes += value.length;
         }
 
         @Override
-        void ensureValueCapacity(int required) {
-            if (values.length < required) {
-                values = Arrays.copyOf(values, grownLength(values.length, required));
-            }
+        void growValues(int length) {
+            values = Arrays.copyOf(values, length);
         }
 
         @Override
@@ -357,22 +352,24 @@ abstract sealed class LeafStage {
             values[index] = placeholder;
             // Counted like any other staged value, so [#dropValues] — which cannot tell a
             // placeholder from a value of the same width — stays symmetric with what was added.
-            payloadBytes += placeholder.length;
-        }
-
-        @Override
-        long variableWidthBytes() {
-            return payloadBytes;
+            payload.bytes += placeholder.length;
         }
 
         @Override
         void dropValues(int from, int to) {
             for (int i = from; i < to; i++) {
                 if (values[i] != null) {
-                    payloadBytes -= values[i].length;
+                    payload.bytes -= values[i].length;
                     values[i] = null;
                 }
             }
+        }
+
+        /// Drops the references without subtracting their bytes: every stage is cleared at
+        /// once, and [RowPlan#reset()] zeroes the shared count.
+        @Override
+        void clearValues() {
+            Arrays.fill(values, 0, count, null);
         }
 
         @Override

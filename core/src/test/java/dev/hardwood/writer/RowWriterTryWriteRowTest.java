@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
@@ -532,6 +533,145 @@ class RowWriterTryWriteRowTest {
 
         writer.close();
         assertNothingAt(file);
+    }
+
+    /// A rejected record leaves every staging array as it was: the null mask of an `OPTIONAL`
+    /// struct and the offsets and null mask of an `OPTIONAL` list, which hold an entry per
+    /// record, and the leaves, struct masks and inner list offsets beneath the list, which hold
+    /// an entry per element. One record is rejected deep inside the list, another after the list
+    /// has been closed. The file is the one written without the rejected records.
+    @Test
+    void rejectionDeepInANestedRecordLeavesTheFileAsIfItWereNeverWritten() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .struct("info", RepetitionType.OPTIONAL, info -> info
+                        .primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                col -> col.logicalType(LogicalType.string()))
+                        .primitive("rank", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                                col -> col.logicalType(LogicalType.intType(8, true))))
+                .list("chapters", RepetitionType.OPTIONAL, chapter -> chapter.struct(RepetitionType.OPTIONAL,
+                        element -> element
+                                .primitive("title", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                        col -> col.logicalType(LogicalType.string()))
+                                .list("pages", RepetitionType.OPTIONAL, page -> page.primitive(
+                                        PhysicalType.INT32, RepetitionType.REQUIRED,
+                                        col -> col.logicalType(LogicalType.intType(8, true))))))
+                .build();
+
+        InMemoryOutputFile withRejection = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(withRejection, schema)) {
+            RowWriter rows = writer.rowWriter();
+            writeFirst(rows);
+            assertThat(rows.tryWriteRow(row -> row.setInt("id", 2)
+                    .setStruct("info", info -> info.setString("name", "rejected"))
+                    .setList("chapters", chapters -> chapters
+                            .addStruct(chapter -> chapter.setString("title", "a").setList("pages",
+                                    pages -> pages.addInt(1).addInt(2)))
+                            .addNull()
+                            .addStruct(chapter -> chapter.setString("title", "b").setList("pages",
+                                    pages -> pages.addInt(3).addInt(300))))))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected ->
+                            assertThat(rejected.fieldPath()).isEqualTo("chapters.list.element.pages.list.element"));
+            assertThat(rows.tryWriteRow(row -> row.setInt("id", 2)
+                    .setList("chapters", chapters -> chapters
+                            .addStruct(chapter -> chapter.setString("title", "c").setList("pages",
+                                    pages -> pages.addInt(4))))
+                    .setStruct("info", info -> info.setString("name", "rejected").setInt("rank", 400))))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected ->
+                            assertThat(rejected.fieldPath()).isEqualTo("info.rank"));
+            writeLast(rows);
+        }
+
+        InMemoryOutputFile withoutRejection = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(withoutRejection, schema)) {
+            RowWriter rows = writer.rowWriter();
+            writeFirst(rows);
+            writeLast(rows);
+        }
+
+        assertThat(withRejection.buffer()).isEqualTo(withoutRejection.buffer());
+    }
+
+    /// A null that a rejected record staged is cleared with it: the next record's value in the
+    /// same slot reads back as that value.
+    @Test
+    void aNullOfARejectedRecordDoesNotOutliveIt() throws Exception {
+        Path file = dir.resolve("out.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .primitive("w", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.intType(8, true)))
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            RowWriter rows = writer.rowWriter();
+            rows.writeRow(row -> row.setInt("v", 1).setInt("w", 1));
+            assertThat(rows.tryWriteRow(row -> row.setNull("v").setInt("w", 200)))
+                    .isInstanceOf(RowWriteResult.Rejected.class);
+            rows.writeRow(row -> row.setInt("v", 3).setInt("w", 3));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rows = reader.rowReader()) {
+            rows.next();
+            assertThat(rows.getInt("v")).isEqualTo(1);
+            rows.next();
+            assertThat(rows.isNull("v")).isFalse();
+            assertThat(rows.getInt("v")).isEqualTo(3);
+            assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    /// A filler that catches the rejection of one of its own setters commits a record without
+    /// that field. Rolling back a later record then fails the writer rather than publishing a
+    /// stale slot as the missing value.
+    @Test
+    void aSwallowedRejectionFailsTheNextRollback() throws Exception {
+        Path file = dir.resolve("out.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        col -> col.logicalType(LogicalType.intType(8, true)))
+                .primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            RowWriter rows = writer.rowWriter();
+            rows.writeRow(row -> row.setInt("id", 1).setInt("b", 10));
+            rows.writeRow(row -> {
+                try {
+                    row.setInt("id", 300);
+                }
+                catch (IllegalArgumentException swallowed) {
+                    // the filler carries on without the field
+                }
+                row.setInt("b", 20);
+            });
+            assertThatThrownBy(() -> rows.tryWriteRow(row -> row.setInt("b", 30).setInt("id", 500)))
+                    .isExactlyInstanceOf(IllegalStateException.class)
+                    .hasMessage("Cannot roll back to 2 staged entries, only 1 are staged: a committed record left"
+                            + " a field unstaged, as a filler that catches a rejection of one of its own setters does");
+            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 4).setInt("b", 40)))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage(FAILED);
+        }
+
+        assertNothingAt(file);
+    }
+
+    private static void writeFirst(RowWriter rows) throws IOException {
+        rows.writeRow(row -> row.setInt("id", 1)
+                .setStruct("info", info -> info.setString("name", "first"))
+                .setList("chapters", chapters -> chapters
+                        .addStruct(chapter -> chapter.setString("title", "intro").setList("pages",
+                                pages -> pages.addInt(7)))));
+    }
+
+    private static void writeLast(RowWriter rows) throws IOException {
+        rows.writeRow(row -> row.setInt("id", 3)
+                .setNull("info")
+                .setList("chapters", chapters -> chapters
+                        .addNull()
+                        .addStruct(chapter -> chapter.setList("pages", pages -> pages.addInt(9).addInt(10)))));
     }
 
     @Test
