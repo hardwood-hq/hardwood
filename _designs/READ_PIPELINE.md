@@ -239,12 +239,9 @@ Units are planned in any order and batched in unit order: a unit is batched, its
 #### A unit's states
 
 ```
-listed: may its Bloom filters or dictionaries drop it?
-  │ yes                               │ no
-  ▼                                   │
-LISTED                                │
-  │ its Bloom filters and dictionary  │
-  │ pages arrived                     │
+LISTED: may its Bloom filters or dictionaries drop it?
+  │ yes: its Bloom filters and        │ no: at once
+  │ dictionary pages arrived          │
   ▼                                   │
 BLOOM_AND_DICTIONARY_PRUNING          │
   │ ⟲ lacks bytes read header first:  │
@@ -259,17 +256,20 @@ BLOOM_AND_DICTIONARY_PRUNING          │
                                       │ every unit before it is planned
                                       ▼
                                    BATCHED
+
+any state before PLANNED: a step, or a fetch it waits for, fails → FAILED
 ```
 
 | State | Entered when | The unit gains |
 |---|---|---|
-| `LISTED` | its file is listed, its statistics keep it, and it has a leaf its Bloom filters or dictionaries may decide | its listing (file, row group, key, always-match flag, chunks, and the rows the row limit reaches in it) and what listing decided its planning reads: the columns whose OffsetIndex and ColumnIndex it reads, its window, and the dictionary pages requested with the window's Bloom filters |
+| `LISTED` | its file is listed and its statistics keep it | its listing (file, row group, key, always-match flag, chunks, and the rows the row limit reaches in it) and what listing decided its planning reads: the columns whose OffsetIndex and ColumnIndex it reads, its window, and the dictionary pages requested with the window's Bloom filters |
 | `BLOOM_AND_DICTIONARY_PRUNING` | its Bloom filters and those dictionary pages have arrived: Bloom-filter and dictionary pruning ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#stages)) | its Bloom filters and the dictionary pages it read, then the dictionaries it decoded; a read step that lacks bytes, a filter or page read header first, fetches them and reads again, and one evaluation then decides |
-| `AWAITING_INDEX` | its Bloom filters and dictionaries kept it, or, as its file is listed, neither can drop it, when it starts with what `LISTED` holds | the dictionaries dictionary pruning decoded; its page index is read with its neighbours' ([FETCH_PLANNING.md](FETCH_PLANNING.md#per-row-group)), and its plan is made on a job once the index has arrived |
+| `AWAITING_INDEX` | its Bloom filters and dictionaries kept it, or, at once from `LISTED`, neither can drop it | the dictionaries dictionary pruning decoded; its page index is read with its neighbours' ([FETCH_PLANNING.md](FETCH_PLANNING.md#per-row-group)), and its plan is made on a job once the index has arrived |
 | `PLANNED` | its plan is made, or its Bloom filters or dictionaries dropped it, which plans it with no row | its plan: the rows its filter keeps, each column's pages and dictionary page, and its ranges |
 | `BATCHED` | it and every unit before it are planned | its batches, from the batch plan, made as the read reaches them; its ranges are fetched and its pages handed to its columns from here on |
+| `FAILED` | a step of its pruning or plan, or a fetch one waits for, fails | nothing: it holds no range, and the read fails at its first row |
 
-`BLOOM_AND_DICTIONARY_PRUNING` and `AWAITING_INDEX` keep its record; `PLANNED` and `BATCHED` keep the listing alone, so what the unit's planning read is let go of once it is planned. Each state is a record of `Unit` (`Unit.Listed`, `Unit.BloomAndDictionaryPruning`, `Unit.AwaitingIndex`, `Unit.Planned`, `Unit.Batched`) holding exactly what the unit has in it. `RowGroupPlanner` owns each unit until it is batched and takes each step of the diagram in one place: it runs the step's jobs and fetches, makes the next state's record, and replaces the unit's current state with it. The parts after the planner take the immutable `Unit.Batched`. The planner lets go of a unit once the consumer has passed it and it is batched and its pruning reported, so a read holds the units between the consumer and the planning frontier, not every unit it has read (untested: no test measures how many units a read holds); the pruning state accumulates in place across its read steps and is the planner's alone. A unit whose pruning or plan fails takes no further transition: the read fails at its first row, and no unit from there on is batched.
+`BLOOM_AND_DICTIONARY_PRUNING` and `AWAITING_INDEX` keep its record; `PLANNED` and `BATCHED` keep the listing alone, so what the unit's planning read is let go of once it is planned. Each state is a record of `Unit` (`Unit.Listed`, `Unit.BloomAndDictionaryPruning`, `Unit.AwaitingIndex`, `Unit.Planned`, `Unit.Batched`, `Unit.Failed`) holding exactly what the unit has in it. `RowGroupPlanner` owns each unit until it is batched and takes each step of the diagram in one place: it runs the step's jobs and fetches, makes the next state's record, and replaces the unit's current state with it. The parts after the planner take the immutable `Unit.Batched`. The planner lets go of a unit once the consumer has passed it and it is batched and its pruning reported, so a read holds the units between the consumer and the planning frontier, not every unit it has read (untested: no test measures how many units a read holds); the pruning state accumulates in place across its read steps and is the planner's alone. Each state names the ranges it holds a reader of (`Unit.holds()`): `LISTED` its window's Bloom filters and page index and its dictionary pages, `BLOOM_AND_DICTIONARY_PRUNING` the same with the dictionary bytes fetched for it, `AWAITING_INDEX` its window's page index, the others none. Replacing a unit's state returns the readers of what the new state does not hold, so a range is returned by whichever transition ends its use, and no step returns one itself. A unit that fails takes no further transition: entering `FAILED` returns what its state held, the read fails at its first row, and no unit from there on is batched.
 
 **Invariant: reader structure is never derived from the contents of individual row groups in individual files.** A decision the reader takes once, at construction, from facts about row groups would force every file to be planned before the first row, returning time to first row to O(files). Facts about a row group reach the read on its unit:
 
@@ -289,7 +289,7 @@ One question is asked of the read once it is set up, from metadata: `leadingRows
 
 The user-facing contract (reference schema, when a mismatch surfaces) is in [multi-file.md](../docs/content/how-to/multi-file.md).
 
-Tests: `MultiFilePlanningTest`, `SchemaCompatibilityTest`, `CrossFileColumnOrderTest`, `MultiFileRowReaderTest`, `FilesAheadTest`, `EmptyFilesReadTest`, `FileMetadataCacheTest`.
+Tests: `MultiFilePlanningTest`, `SchemaCompatibilityTest`, `CrossFileColumnOrderTest`, `MultiFileRowReaderTest`, `FilesAheadTest`, `EmptyFilesReadTest`, `FileMetadataCacheTest`, `PruningFailureRetentionTest`.
 
 ### Row-group and file transitions
 

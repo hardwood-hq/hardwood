@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader.engine;
 
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 
@@ -28,8 +29,15 @@ sealed interface Unit {
 
     UnitListing listing();
 
-    /// Listed: its file's footer is parsed, its statistics keep it, and its Bloom filters or
-    /// dictionaries may drop it; it waits for them, which its window and its own requests fetch.
+    /// The ranges it holds a reader of, which it returns as it leaves the state, by whatever
+    /// transition ([RowGroupPlanner]).
+    default List<RangeFetch> holds() {
+        return List.of();
+    }
+
+    /// Listed: its file's footer is parsed and its statistics keep it. Where its Bloom filters or
+    /// dictionaries may drop it, it waits for them, which its window and its own requests fetch;
+    /// otherwise it waits for its page index at once.
     /// It holds what listing decided its planning reads, which `BloomAndDictionaryPruning` and `AwaitingIndex` keep: `offsetIndexes` and
     /// `columnIndexes` are the file ordinals of the columns whose OffsetIndex and ColumnIndex its
     /// plan reads, from `window`, which also holds its Bloom filters; `dictionaries` are the
@@ -37,6 +45,12 @@ sealed interface Unit {
     /// the window's Bloom filters and held by it alone.
     record Listed(UnitListing listing, BitSet offsetIndexes, BitSet columnIndexes,
                   RowGroupPlanner.WindowFetch window, List<RangeFetch> dictionaries) implements Unit {
+
+        /// Its window's Bloom filters and page index, and its dictionary pages.
+        @Override
+        public List<RangeFetch> holds() {
+            return concat(window.bloomFilters(), dictionaries, window.index());
+        }
     }
 
     /// Pruning by its Bloom filters and dictionaries: they are read from `bytes`, a read step at a
@@ -50,6 +64,12 @@ sealed interface Unit {
         public UnitListing listing() {
             return listed.listing();
         }
+
+        /// Its window's Bloom filters and page index, and the dictionary bytes fetched for it.
+        @Override
+        public List<RangeFetch> holds() {
+            return concat(listed.window().bloomFilters(), fetched, listed.window().index());
+        }
     }
 
     /// Awaiting its page index: kept by its Bloom filters and dictionaries, or one neither can
@@ -62,6 +82,17 @@ sealed interface Unit {
         public UnitListing listing() {
             return listed.listing();
         }
+
+        /// Its window's page index.
+        @Override
+        public List<RangeFetch> holds() {
+            return listed.window().index();
+        }
+    }
+
+    /// Failed: its pruning or plan failed, which fails the read at its first row. It takes no
+    /// further transition and holds nothing.
+    record Failed(UnitListing listing) implements Unit {
     }
 
     /// Planned: `plan` gives the rows its filter keeps, each column's pages and dictionary page,
@@ -80,5 +111,13 @@ sealed interface Unit {
             return listing.base() + (matching.isAll() || row == 0 ? row
                     : matching.intersect(RowRanges.range(0, row)).rowCount(row));
         }
+    }
+
+    private static List<RangeFetch> concat(List<RangeFetch> a, List<RangeFetch> b, List<RangeFetch> c) {
+        List<RangeFetch> all = new ArrayList<>(a.size() + b.size() + c.size());
+        all.addAll(a);
+        all.addAll(b);
+        all.addAll(c);
+        return all;
     }
 }
