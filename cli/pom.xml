@@ -93,22 +93,22 @@
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-core</artifactId>
-        <version>0.6.0</version>
+        <version>0.7.0</version>
       </dependency>
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-widgets</artifactId>
-        <version>0.6.0</version>
+        <version>0.7.0</version>
       </dependency>
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-tui</artifactId>
-        <version>0.6.0</version>
+        <version>0.7.0</version>
       </dependency>
       <dependency>
         <groupId>dev.tamboui</groupId>
         <artifactId>tamboui-jline3-backend</artifactId>
-        <version>0.6.0</version>
+        <version>0.7.0</version>
       </dependency>
 
       <!-- JLine — sub-modules (not the fat bundle) so native-image doesn't try to
