@@ -332,6 +332,19 @@ class PageValuesValidationTest {
                 .hasMessage("Invalid BYTE_ARRAY length: -1");
     }
 
+    /// Lengths that sum past what an array holds fail before any value is located by them.
+    @Test
+    void rejectsDeltaLengthsSummingPastAnArray() {
+        byte[] body = DataPages.concat(
+                DeltaBinaryPackedEncoder.encodeInts(new int[]{ Integer.MAX_VALUE, 1 }, 0, 2), utf8("a"));
+
+        assertThatThrownBy(() -> DataPages.readRequired(Encoding.DELTA_LENGTH_BYTE_ARRAY, PhysicalType.BYTE_ARRAY,
+                null, 2, body))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("BYTE_ARRAY values of a page take more than one array holds: "
+                        + "the first 2 take 2147483648 bytes");
+    }
+
     // ==================== DELTA_BYTE_ARRAY ====================
 
     @Test

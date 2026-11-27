@@ -275,6 +275,9 @@ public final class BinaryPageValues {
     }
 
     /// The byte prefix of a page's rows from the lengths of its non-null values, into `scratch`.
+    ///
+    /// @throws ParquetReadException if a length is negative or the lengths sum past what one
+    ///         array holds
     private static int[] prefixOf(int[] definitionLevels, int maxDefinitionLevel, int numValues, int[] lengths,
                                   PageDecoder.LevelScratch scratch) {
         int[] prefix = scratch.bytePrefix(numValues + 1);
@@ -288,8 +291,12 @@ public final class BinaryPageValues {
                     throw new ParquetReadException("Invalid BYTE_ARRAY length: " + length);
                 }
                 sum += length;
+                if (sum > Integer.MAX_VALUE) {
+                    throw new ParquetReadException("BYTE_ARRAY values of a page take more than one array holds: "
+                            + "the first " + value + " take " + sum + " bytes");
+                }
             }
-            prefix[r + 1] = Math.toIntExact(sum);
+            prefix[r + 1] = (int) sum;
         }
         return prefix;
     }
