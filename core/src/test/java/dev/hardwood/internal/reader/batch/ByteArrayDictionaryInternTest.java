@@ -16,6 +16,7 @@ import dev.hardwood.internal.reader.decode.TestDictionaries;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -97,7 +98,7 @@ class ByteArrayDictionaryInternTest {
         // RLE run of 4 values with index 3, beyond the 2-entry dictionary (bit width 2).
         assertThatThrownBy(() -> read(DataPages.required(PhysicalType.BYTE_ARRAY, null), 4,
                 new byte[]{ 2, 8, 0x03 }, dict))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index 3 out of bounds for a dictionary of 2 entries");
     }
 
@@ -108,7 +109,7 @@ class ByteArrayDictionaryInternTest {
         // Definition levels 1, 0, 1, 0, then two present values, both index 3 (bit width 2).
         assertThatThrownBy(() -> read(DataPages.optional(PhysicalType.BYTE_ARRAY, null), 4,
                 new byte[]{ 2, 0, 0, 0, 3, 0b0000_0101, 2, 4, 0x03 }, dict))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index 3 out of bounds for a dictionary of 2 entries");
     }
 
@@ -120,7 +121,7 @@ class ByteArrayDictionaryInternTest {
         // RLE run of 4 values, value 0x80000000 as 4 little-endian bytes (bit width 32).
         assertThatThrownBy(() -> read(DataPages.required(PhysicalType.BYTE_ARRAY, null), 4,
                 new byte[]{ 32, 8, 0x00, 0x00, 0x00, (byte) 0x80 }, dict))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index -2147483648 out of bounds for a dictionary of 2 entries");
     }
 
@@ -130,7 +131,7 @@ class ByteArrayDictionaryInternTest {
 
         // Bit width 0: every id decodes as 0 without reading the stream.
         assertThatThrownBy(() -> read(DataPages.required(PhysicalType.BYTE_ARRAY, null), 4, new byte[]{ 0 }, dict))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index 0 out of bounds for a dictionary of 0 entries");
     }
 

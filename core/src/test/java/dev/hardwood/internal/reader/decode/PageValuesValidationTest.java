@@ -113,7 +113,7 @@ class PageValuesValidationTest {
         // Bit width 2, an RLE run of 4 values with id 3
         assertThatThrownBy(() -> DataPages.readRequired(Encoding.RLE_DICTIONARY, PhysicalType.INT64, null, 4,
                 new byte[]{ 2, 8, 0x03 }, dictionary))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index 3 out of bounds for a dictionary of 2 entries");
     }
 
@@ -124,7 +124,7 @@ class PageValuesValidationTest {
         // Bit width 32, an RLE run of 4 values with id 0x80000000
         assertThatThrownBy(() -> DataPages.readRequired(Encoding.RLE_DICTIONARY, PhysicalType.INT32, null, 4,
                 new byte[]{ 32, 8, 0x00, 0x00, 0x00, (byte) 0x80 }, dictionary))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index -2147483648 out of bounds for a dictionary of 2 entries");
     }
 
@@ -134,7 +134,7 @@ class PageValuesValidationTest {
 
         assertThatThrownBy(() -> DataPages.readRequired(Encoding.RLE_DICTIONARY, PhysicalType.DOUBLE, null, 4,
                 new byte[]{ 0 }, dictionary))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index 0 out of bounds for a dictionary of 0 entries");
     }
 
@@ -146,7 +146,7 @@ class PageValuesValidationTest {
                 section, 0, section.length, dictionary);
 
         assertThatThrownBy(() -> DataPages.values(values, PhysicalType.INT64))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index 5 out of bounds for a dictionary of 2 entries");
     }
 
@@ -174,7 +174,7 @@ class PageValuesValidationTest {
                 section.length, dictionary);
 
         assertThatThrownBy(() -> DataPages.values(values, PhysicalType.DOUBLE))
-                .isInstanceOf(ArrayIndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Dictionary index 3 out of bounds for a dictionary of 3 entries");
     }
 
