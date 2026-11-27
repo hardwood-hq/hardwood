@@ -118,9 +118,18 @@ public final class ParquetMetadataReader {
     /// The schema the reader reads a file with: the footer's schema elements, less the
     /// annotations [BareRepeatedGroups] and [UnreadableAnnotations] drop. Every footer the reader
     /// uses passes through here, whether read by the reader or supplied by a [MetadataSource].
+    ///
+    /// @throws ParquetReadException if the schema model refuses the elements, which for a schema
+    ///         a caller builds is an [IllegalArgumentException] and for one a footer holds a
+    ///         malformed footer
     public static FileSchema schemaOf(FileMetaData metaData) {
-        return FileSchema.fromSchemaElements(
-                UnreadableAnnotations.drop(BareRepeatedGroups.dropAnnotations(metaData.schema())));
+        try {
+            return FileSchema.fromSchemaElements(
+                    UnreadableAnnotations.drop(BareRepeatedGroups.dropAnnotations(metaData.schema())));
+        }
+        catch (IllegalArgumentException e) {
+            throw new ParquetReadException("FileMetaData.schema \u2014 " + e.getMessage(), e);
+        }
     }
 
     /// Opens `inputFile` for a read whose footers come from `source`. For [#FROM_FILE] no reader

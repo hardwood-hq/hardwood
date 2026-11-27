@@ -30,7 +30,7 @@ class ParquetFileReaderFooterFailureTest {
 
     private static final Path VARIANT_FIXTURE = Path.of("src/test/resources/variant_test.parquet");
     private static final String MALFORMED_SCHEMA_MESSAGE =
-            "[<memory>] Variant group 'var' expected child 'metadata', found: invalid_metadata";
+            "[<memory>] FileMetaData.schema \u2014 Variant group 'var' expected child 'metadata', found: invalid_metadata";
 
     private static byte[] malformedVariantSchema() throws IOException {
         byte[] validFile = Files.readAllBytes(VARIANT_FIXTURE);

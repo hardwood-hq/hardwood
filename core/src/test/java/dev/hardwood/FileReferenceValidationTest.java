@@ -272,7 +272,7 @@ class FileReferenceValidationTest {
                 List.of()));
         assertThatThrownBy(() -> open(malformed))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>] " + message);
+                .hasMessage("[<memory>] FileMetaData.schema \u2014 " + message);
     }
 
     private static List<SchemaElement> group(String name, SchemaElement... children) {
