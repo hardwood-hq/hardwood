@@ -23,14 +23,15 @@ import dev.hardwood.internal.reader.plan.RowGroupPruning;
 import dev.hardwood.internal.reader.plan.SchemaCompatibility;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 /// A read of a [dev.hardwood.reader.ParquetFileReader] before its columns exist: checks the first
-/// file against the read's schema, prunes its row groups and finds where a skip lands, then starts
-/// the read's [ReadEngine] once the reader has built its columns ([#start]). Runs no job and holds
-/// nothing to close; only the engine it starts is tracked by the reader.
+/// file against the read's schema, prunes its row groups and finds where its physical skip lands,
+/// then starts the read's [ReadEngine] once the reader has built its columns ([#start]). Runs no
+/// job and holds nothing to close; only the engine it starts is tracked by the reader.
 public final class PreparedRead {
 
     /// How the reader tracks the engine a prepared read starts, until the engine closes.
@@ -54,6 +55,8 @@ public final class PreparedRead {
     /// the read's row limit, `0` for none: under a filter it counts matching rows
     private final long limit;
     private final long skip;
+    /// the exclusive end of the read's physical window, `Long.MAX_VALUE` for none
+    private final long windowEnd;
     private final RowGroupPruning pruning;
     private final SchemaCompatibility compatibility;
     private final FileColumnOrdinals firstOrdinals;
@@ -67,7 +70,7 @@ public final class PreparedRead {
 
     private PreparedRead(FileMetadataCache files, HardwoodContextImpl context, Tracking tracking, FileSchema schema,
                          InputFile file, ReadProjection projection, ResolvedPredicate filter, long limit, long skip,
-                         RowGroupPruning pruning, SchemaCompatibility compatibility, FileColumnOrdinals firstOrdinals,
+                         long windowEnd, RowGroupPruning pruning, SchemaCompatibility compatibility, FileColumnOrdinals firstOrdinals,
                          RowGroupPruning.FilteredRowGroups firstKept, long leading, boolean masked) {
         this.files = files;
         this.context = context;
@@ -78,6 +81,7 @@ public final class PreparedRead {
         this.filter = filter;
         this.limit = limit;
         this.skip = skip;
+        this.windowEnd = windowEnd;
         this.pruning = pruning;
         this.compatibility = compatibility;
         this.firstOrdinals = firstOrdinals;
@@ -94,15 +98,19 @@ public final class PreparedRead {
     /// @param metadataFiltering whether the filter takes metadata-derived shortcuts
     /// @param limit the read's row limit, `0` for none; under a filter it counts matching rows, and
     ///        bounds the listing only over row groups statistics prove to match
-    /// @param skip the read's leading rows it does not return, `0` for none; a read with a filter
-    ///        skips none, its reader skipping matching rows
+    /// @param skip the read's leading rows it does not return, `0` for none: the start of its
+    ///        physical window, counted over the rows of the files' row groups before statistics
+    ///        prune them, which a filter does not shift
+    /// @param windowEnd the exclusive end of the read's physical window, in the same rows as
+    ///        `skip`; `Long.MAX_VALUE` for none
     /// @throws IOException the failure of a footer of a file the skip reaches, read on the caller's
     ///         thread
     /// @throws IllegalStateException on a thread of `context`'s own pool, whose read would wait for
     ///         the jobs it holds up
     public static PreparedRead prepare(FileMetadataCache files, HardwoodContextImpl context, Tracking tracking,
                                        FileSchema schema, List<RowGroup> rowGroups, ReadProjection projection,
-                                       ResolvedPredicate filter, boolean metadataFiltering, long limit, long skip)
+                                       ResolvedPredicate filter, boolean metadataFiltering, long limit, long skip,
+                                       long windowEnd)
             throws IOException {
         context.requireOffPool();
         List<RowGroup> first = rowGroups != null ? rowGroups : files.getFileMetaData(0).rowGroups();
@@ -121,30 +129,32 @@ public final class PreparedRead {
                 if (left < rg.numRows()) {
                     boolean masked = i == 0 && takesMask(schema, projection.decoded(), rg);
                     return new PreparedRead(files, context, tracking, schema, file, projection, filter, limit, skip,
-                            pruning, compatibility, firstOrdinals, firstKept, left, masked);
+                            windowEnd, pruning, compatibility, firstOrdinals, firstKept, left, masked);
                 }
                 left -= rg.numRows();
             }
         }
-        return new PreparedRead(files, context, tracking, schema, file, projection, filter, limit, skip, pruning,
-                compatibility, firstOrdinals, firstKept, 0, false);
+        return new PreparedRead(files, context, tracking, schema, file, projection, filter, limit, skip, windowEnd,
+                pruning, compatibility, firstOrdinals, firstKept, 0, false);
     }
 
     /// Whether the plan of `rg`, a row group of the first file, can mask out the rows before the
     /// skip's end: every nested decoded column has an OffsetIndex, which a page mask needs.
     private static boolean takesMask(FileSchema schema, ProjectedSchema decoded, RowGroup rg) {
-        for (int c = 0; c < decoded.getProjectedColumnCount(); c++) {
-            ColumnSchema column = schema.getColumn(decoded.toOriginalIndex(c));
-            if (column.maxRepetitionLevel() > 0 && rg.columns().get(column.columnIndex()).offsetIndexOffset() == null) {
-                return false;
-            }
+        int n = decoded.getProjectedColumnCount();
+        ColumnSchema[] schemas = new ColumnSchema[n];
+        ColumnChunk[] chunks = new ColumnChunk[n];
+        for (int c = 0; c < n; c++) {
+            schemas[c] = schema.getColumn(decoded.toOriginalIndex(c));
+            chunks[c] = rg.columns().get(schemas[c].columnIndex());
         }
-        return true;
+        return PagePlanner.takesMask(schemas, chunks);
     }
 
     /// The leading rows the reader drops itself before it returns a row: those of the row group the
     /// skip lands in that precede it, where its plan cannot mask them out; `0` otherwise. The read
-    /// returns them, and counts them against its limit.
+    /// returns them, and counts them against its limit. Where a filter prunes that row group, the
+    /// read returns none of them: [ReadEngine#leadingRows()] is what it returned.
     public long leadingRows() {
         return masked ? 0 : leading;
     }
@@ -226,6 +236,10 @@ public final class PreparedRead {
         return skip;
     }
 
+    long windowEnd() {
+        return windowEnd;
+    }
+
     RowGroupPruning pruning() {
         return pruning;
     }
@@ -242,8 +256,8 @@ public final class PreparedRead {
         return firstKept;
     }
 
-    /// The rows before the skip's end the first row group's plan masks out, `0` where it masks none.
-    long maskedRows() {
-        return masked ? leading : 0;
+    /// Whether the plan of the row group the skip lands in masks out the rows before the skip's end.
+    boolean masksSkip() {
+        return masked;
     }
 }

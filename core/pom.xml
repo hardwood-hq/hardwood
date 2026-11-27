@@ -339,6 +339,8 @@
                     <include>**/DifferentialValueTest.java</include>
                     <include>**/DifferentialFixedSizeListTest.java</include>
                     <include>**/DifferentialColumnOrderTest.java</include>
+                    <include>**/DifferentialColumnReadTest.java</include>
+                    <include>**/ColumnReaderRowRangeTest.java</include>
                     <include>**/MisalignedPageBoundariesTest.java</include>
                     <include>**/NestedV1NoIndexFallbackTest.java</include>
                     <include>**/NestedV1MidRecordPagesTest.java</include>
@@ -373,6 +375,8 @@
                     <include>**/DifferentialReadTest.java</include>
                     <include>**/DifferentialNullTest.java</include>
                     <include>**/DifferentialFixedSizeListTest.java</include>
+                    <include>**/DifferentialColumnReadTest.java</include>
+                    <include>**/ColumnReaderRowRangeTest.java</include>
                     <include>**/MisalignedPageBoundariesTest.java</include>
                     <include>**/NestedV1NoIndexFallbackTest.java</include>
                     <include>**/NestedV1MidRecordPagesTest.java</include>

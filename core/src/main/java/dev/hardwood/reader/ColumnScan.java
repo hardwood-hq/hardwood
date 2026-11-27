@@ -10,6 +10,7 @@ package dev.hardwood.reader;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
@@ -43,6 +44,11 @@ import dev.hardwood.schema.FileSchema;
 /// its matcher on the job that completes its batch, as the flat row reader's
 /// columns do, and the engine only merges their bitmaps.
 ///
+/// A scan also trims the records it returns: it drops the rows before its physical
+/// skip that the read publishes ([ReadEngine#leadingRows()]), then, after the
+/// filter, the first `offset` records and every record past `limit`, so that a
+/// column read takes `skip` and `head` as a row read does.
+///
 /// One party advances a scan: its [ColumnReaders] group, or the single
 /// [ColumnReader] that is its only view. The views take up each step after it.
 final class ColumnScan implements Closeable {
@@ -52,9 +58,18 @@ final class ColumnScan implements Closeable {
     /// `null` for an unfiltered read.
     private final SelectionEngine engine;
     /// The read the cursors' columns run on, whose close stops them.
-    private final Closeable read;
-    /// Per-file record-filter counts for JFR. Every batch a filtered read produces
-    /// has passed through the selection, so the counts are complete for the read.
+    private final ReadEngine read;
+    /// The leading decoded records still to drop, `-1` until the first batch, when the read
+    /// knows how many rows before its skip it published.
+    private long leadingLeft = -1;
+    /// The records after the filter still to drop, and still to return.
+    private long offsetLeft;
+    private long limitLeft;
+    /// The indices of a trimmed step where every decoded record is selected, reused across steps.
+    private int[] run = new int[0];
+    /// Per-file record-filter counts for JFR. Every batch the scan takes of a filtered read
+    /// passes through the selection, so the counts cover those batches: all of the read's, but
+    /// where a limit ends the scan before the read's end.
     private final RecordFilterTally tally = new RecordFilterTally();
 
     private boolean hasBatch;
@@ -64,11 +79,13 @@ final class ColumnScan implements Closeable {
     private final CloseClaim closeClaim = new CloseClaim();
 
     private ColumnScan(ColumnCursor[] cursors, int payloadCount, SelectionEngine engine,
-                       Closeable read) {
+                       ReadEngine read, long offset, long limit) {
         this.cursors = cursors;
         this.payloadCount = payloadCount;
         this.engine = engine;
         this.read = read;
+        this.offsetLeft = offset;
+        this.limitLeft = limit;
     }
 
     /// The engine's predicate view rejects what the reader cannot assemble (a shredded
@@ -94,13 +111,21 @@ final class ColumnScan implements Closeable {
     /// payload columns are compacted to the matching records. `layers` holds the layers of every
     /// column of `schema`, indexed by column index.
     ///
+    /// @param offset the records after the filter the scan drops before the first it returns
+    /// @param limit the records after the filter the scan returns at most, `Long.MAX_VALUE` for no
+    ///        limit
     /// @throws IOException if the first file cannot be read as its row groups are listed
     static ColumnScan open(PreparedRead read, boolean fixedListFastPathEnabled, FileSchema schema,
                                  NestedLevelComputer.Layers[] layers, ReadProjection projection,
-                                 ResolvedPredicate filter, int batchSize, long budgetRows) throws IOException {
-        NestedIndexMode indexMode = filter == null
-                ? NestedIndexMode.REAL_VIEW
-                : NestedIndexMode.REAL_VIEW_KEEP_LEVELS;
+                                 ResolvedPredicate filter, int batchSize, long budgetRows, long offset, long limit)
+            throws IOException {
+        // a scan that compacts its batches keeps the raw levels a nested batch is compacted on: one
+        // with a filter; one whose unfiltered read publishes rows before its skip, as many as the
+        // prepared read counts; and one with an offset or a limit
+        boolean compacts = filter != null || read.leadingRows() > 0 || offset > 0 || limit != Long.MAX_VALUE;
+        NestedIndexMode indexMode = compacts
+                ? NestedIndexMode.REAL_VIEW_KEEP_LEVELS
+                : NestedIndexMode.REAL_VIEW;
         ProjectedSchema decoded = projection.decoded();
         List<NestedLevelComputer.Layers> nestedLayers = new ArrayList<>();
         for (int i = 0; i < decoded.getProjectedColumnCount(); i++) {
@@ -122,7 +147,7 @@ final class ColumnScan implements Closeable {
         SelectionEngine selection = filter == null
                 ? null
                 : createSelectionEngine(schema, decoded, filter, compiled, cursors, batchSize, read, engine);
-        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, engine);
+        return new ColumnScan(cursors, projection.payloadColumnCount(), selection, engine, offset, limit);
     }
 
     /// The detaching exchange of each decoded column, in decoded order, for a read whose filter
@@ -173,11 +198,12 @@ final class ColumnScan implements Closeable {
         return recordCount;
     }
 
-    /// Advances every cursor to its next batch, checks that they agree, and, for a filtered
-    /// read, compacts the payload cursors to the matching records. A filter-only cursor is
-    /// advanced only when statistics did not prove the step's batch. A batch the filter keeps
-    /// no record of is passed over and the cursors advance again, so a batch the scan holds is
-    /// never empty.
+    /// Advances every cursor to its next batch, checks that they agree, and compacts the payload
+    /// cursors to the records the step returns: those the filter matches, after the scan drops
+    /// the rows before its skip and those its offset and limit leave out ([#trim]). A filter-only
+    /// cursor is advanced only when statistics did not prove the step's batch. A step that returns
+    /// no record is passed over and the cursors advance again, so a batch the scan holds is never
+    /// empty.
     ///
     /// @return `false` once the input is exhausted
     /// @throws IllegalStateException if the scan is closed, or the cursors did not advance
@@ -187,6 +213,10 @@ final class ColumnScan implements Closeable {
         hasBatch = false;
         recordCount = 0;
         while (recordCount == 0) {
+            if (limitLeft == 0) {
+                // the limit is reached: the read's later batches are not taken, and its close stops it
+                return false;
+            }
             if (cursors.length == 0 || !cursors[0].advance()) {
                 drainAfterEnd();
                 return false;
@@ -213,7 +243,10 @@ final class ColumnScan implements Closeable {
                 checkLockstep(cursors[i], decodedCount);
             }
         }
-        return engine == null ? decodedCount : select(decodedCount);
+        // the selection is computed from the decoded batches before any payload cursor is
+        // compacted: a payload column that is also a predicate column must be read first
+        int selected = engine == null ? -1 : engine.computeSelection(decodedCount);
+        return trim(decodedCount, selected);
     }
 
     /// Drains the remaining cursors so the shared read finalizes cleanly, checking
@@ -248,25 +281,75 @@ final class ColumnScan implements Closeable {
         }
     }
 
-    /// Computes the selection from the decoded (pre-compaction) batches, then
-    /// compacts the payload cursors. Order matters: a payload column that is also
-    /// a predicate column must be read before it is compacted. `kept` is the
-    /// engine's reusable buffer; every payload cursor consumes it here, before the
-    /// next advance overwrites it.
+    /// Trims the step's selection to the records the scan returns, counting the filtered records
+    /// from the skip on for JFR, and compacts the payload cursors to them: drops the decoded
+    /// records the read published before its skip, then the
+    /// first selected records the offset still covers, then every selected record past the
+    /// limit. Each drops a run from the start or the end of the selection, so what remains is one
+    /// run of it.
     ///
-    /// @return the number of matching records
-    private int select(int decodedCount) {
-        int matchCount = engine.computeSelection(decodedCount);
-        int[] kept = engine.selection();
-        if (matchCount >= 0) {
-            for (int i = 0; i < payloadCount; i++) {
-                compact(cursors[i], kept, matchCount);
-            }
+    /// @param selected the matching records, whose indices occupy the start of the engine's
+    ///        selection, or `-1` when every decoded record is selected
+    /// @return the number of records the step returns
+    private int trim(int decodedCount, int selected) {
+        if (leadingLeft < 0) {
+            leadingLeft = read.leadingRows();
         }
-        int selected = matchCount < 0 ? decodedCount : matchCount;
-        tally.switchFile(cursors[0].fileName());
-        tally.recordBatch(decodedCount, selected);
-        return selected;
+        int[] kept = selected < 0 ? null : engine.selection();
+        int count = selected < 0 ? decodedCount : selected;
+        int leading = (int) Math.min(leadingLeft, decodedCount);
+        leadingLeft -= leading;
+        // the first selected record at or past the skip
+        int from = kept == null ? leading : firstAtOrAfter(kept, count, leading);
+        if (engine != null) {
+            // the records before the skip lie outside the read, so the tally leaves them out
+            tally.switchFile(cursors[0].fileName());
+            tally.recordBatch(decodedCount - leading, count - from);
+        }
+        int skipped = (int) Math.min(offsetLeft, count - from);
+        offsetLeft -= skipped;
+        from += skipped;
+        int to = from + (int) Math.min(count - from, limitLeft);
+        limitLeft -= to - from;
+        if (to == from) {
+            // nothing of the step is returned: the scan takes the next one
+            return 0;
+        }
+        if (from == 0 && to == decodedCount) {
+            // every decoded record is returned, in order
+            return decodedCount;
+        }
+        int[] run = runOf(kept, from, to);
+        for (int i = 0; i < payloadCount; i++) {
+            compact(cursors[i], run, to - from);
+        }
+        return to - from;
+    }
+
+    /// The position of the first of `kept[0..count)`, which ascend, that is at least `index`.
+    private static int firstAtOrAfter(int[] kept, int count, int index) {
+        int position = Arrays.binarySearch(kept, 0, count, index);
+        return position >= 0 ? position : -position - 1;
+    }
+
+    /// The indices of the selection's run `[from, to)` at the start of an array: the engine's
+    /// selection, `kept`, shifted down in place; or, where every decoded record is selected,
+    /// `from..to-1` in the scan's run buffer. Every payload cursor consumes it before the next
+    /// step overwrites it.
+    private int[] runOf(int[] kept, int from, int to) {
+        if (kept == null) {
+            if (run.length < to - from) {
+                run = new int[to - from];
+            }
+            for (int i = 0; i < to - from; i++) {
+                run[i] = from + i;
+            }
+            return run;
+        }
+        if (from > 0) {
+            System.arraycopy(kept, from, kept, 0, to - from);
+        }
+        return kept;
     }
 
     /// Compacts `cursor`'s current batch down to the `count` records whose

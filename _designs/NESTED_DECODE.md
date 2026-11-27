@@ -116,8 +116,8 @@ Before a cell's batch is published, the fill derives per-batch structures on the
 | Mode | Reader | Batch carries | Derived before publish |
 |---|---|---|---|
 | `ALL_ITEMS` | `NestedRowReader` | raw definition and repetition levels | `elementValidity` and layer-indexed `multiLevelOffsets` over **all items**: a null or empty container keeps a phantom position in the next layer's index |
-| `REAL_VIEW` | unfiltered `ColumnReader` (`ColumnScan.open` without a filter) | no levels, no record offsets; `realView`, and the real leaf values as both `values` and `realValues` | the real-items view ([Real view](#real-view)); the all-items index is skipped |
-| `REAL_VIEW_KEEP_LEVELS` | filtered `ColumnReader` | raw levels | nothing: the batch is compacted by record selection before any view is built |
+| `REAL_VIEW` | a `ColumnReader` whose scan compacts nothing (`ColumnScan.open`) | no levels, no record offsets; `realView`, and the real leaf values as both `values` and `realValues` | the real-items view ([Real view](#real-view)); the all-items index is skipped |
+| `REAL_VIEW_KEEP_LEVELS` | a `ColumnReader` whose scan compacts its batches: filtered, or with an offset, a limit or rows before its skip to drop ([COLUMN_READER.md](COLUMN_READER.md#row-selection)) | raw levels | nothing: the batch is compacted to the records the scan returns before any view is built |
 
 The two reader families read disjoint batch state: the all-items path reads raw levels through `NestedBatchIndex` and the row views (`PqListImpl`, `PqStructImpl`, `PqMapImpl`, `NestedBatchDataView`, `VariantShredReassembler`); the column path reads only the real-items view and values. `REAL_VIEW` drops the levels and the record offsets because no `ColumnReader` accessor reads them; adding one would require keeping them, or rebuilding them, on that mode.
 

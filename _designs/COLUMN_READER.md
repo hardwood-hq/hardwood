@@ -1,6 +1,6 @@
 # Column reader
 
-Describes what `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed layer offsets, the `Validity` bitmap, fixed-width and variable-length leaf values and dictionary ids, the real-items view that turns the pipeline's raw batches into that shape, and the cursor/scan/view split that advances one or several readers over one decode pipeline.
+Describes what `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed layer offsets, the `Validity` bitmap, fixed-width and variable-length leaf values and dictionary ids, the real-items view that turns the pipeline's raw batches into that shape, the cursor/scan/view split that advances one or several readers over one decode pipeline, and how a column read selects rows by position (`head`, `skip`, `rowRange`).
 
 Related documents:
 
@@ -8,7 +8,8 @@ Related documents:
 - [NESTED_DECODE.md](NESTED_DECODE.md): how definition and repetition levels become nested batches (cells, index modes, the real view built before publish, the fixed-size-list fast path)
 - [VALUE_DECODE.md](VALUE_DECODE.md): value decoders and dictionaries
 - [RECORD_FILTERING.md](RECORD_FILTERING.md): exact filtering on the column readers (selection and compaction)
-- [ROW_READER.md](ROW_READER.md): the row readers
+- [ROW_READER.md](ROW_READER.md): the row readers, whose `head` and `skip` the column readers share
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): how the ends of a physical row window are masked or read
 - [docs/content/how-to/column-reader.md](../docs/content/how-to/column-reader.md), [docs/content/concepts/nested-columns.md](../docs/content/concepts/nested-columns.md) and [docs/content/concepts/reader-models.md](../docs/content/concepts/reader-models.md): user-facing semantics
 
 ## Batch model and layers
@@ -166,6 +167,26 @@ Readers built separately, each from its own `buildColumnReader`, are separate sc
 
 Tests: `ColumnReadersTest`, `EngineTrackingTest`, `PrunedToEmptyReadTest`. The lockstep checks (early exhaustion, diverging record counts, a batch after the first cursor ended) are defensive guards. Untested.
 
+### Row selection
+
+`ColumnReaderBuilder` and `ColumnReadersBuilder` take `head` and `skip` with the row reader's meaning ([ROW_READER.md](ROW_READER.md#positioning-head-tail-skip), [RECORD_FILTERING.md](RECORD_FILTERING.md#row-selection-over-the-filtered-relation)), and `rowRange(start, end)`, a physical row window that a filter narrows rather than shifts. `ParquetFileReader.openRead` turns them into the read's physical skip, window end and row limit (`PreparedRead.prepare`) and the scan's offset and limit:
+
+| Controls | Read | Scan |
+|---|---|---|
+| `head(n)`, `skip(m)`, no filter | row limit `n`, physical skip `m` | drops the rows before the skip that the read publishes |
+| `head(n)`, `skip(m)`, a filter | a cap of `m + n` matching rows, as on the row reader | drops the first `m` matching records and returns at most `n` |
+| `rowRange(a, b)`, with or without a filter | physical skip `a`, window end `b`, no row limit | drops the rows before `a` that the read publishes |
+
+`build()` rejects `rowRange` with `head` or with `skip` (`IllegalArgumentException`): the range fixes the first row and the row count itself. The column readers have no `tail`.
+
+**The window.** A position counts the rows of the row groups the `RowGroupPredicate` keeps, of every input file in order, before statistics prune any (`RowGroupPruning.FilteredRowGroup.firstRow`), the relation a physical `skip` counts over. The planner lists only the row groups that overlap the window; the row group its end lies in is the read's last unit, and no file after it is listed. No column is decoded to locate it. How each end is masked out, or read and dropped, is in [FETCH_PLANNING.md](FETCH_PLANNING.md#page-masking).
+
+**Trimming.** Each step, after the selection, the scan drops the decoded records before the skip that the read published, then the first selected records the offset still covers, then the selected records past the limit. Each removes a run at one end of the selection, so what remains is one run of it, and the scan compacts the payload cursors to it as it does to a filter's selection. A scan that may compact, one with a filter, an offset or a limit, or an unfiltered read that publishes rows before its skip (`PreparedRead.leadingRows()`), runs its nested columns in `REAL_VIEW_KEEP_LEVELS`. Once the limit is reached the scan returns `false` without polling again, and the read's close stops it.
+
+**The rows to drop before the skip.** They are the rows of the row group the skip lands in that its plan placed and could not mask out. A filter may prune that row group, by statistics, Bloom filters or dictionaries, or its page index may find no matching row in it, and the read then publishes none of them, which the prepared read cannot know. So the engine records them as that row group is batched, which precedes every batch it publishes (`ReadEngine.leadingRows()`), and the scan reads them once its first batch has arrived. Unfiltered, they equal `PreparedRead.leadingRows()`, which the row reader uses.
+
+Tests: `DifferentialColumnReadTest`, `ColumnReaderRowRangeTest`, `BuilderCombinationTest`.
+
 ## Lifetime and ownership of batch buffers
 
 Column-reader cursors publish through a **detaching** `BatchExchange`: every published batch is freshly allocated and never recycled, and back-pressure comes from a limit on the rows the ready queue holds ([READ_PIPELINE.md](READ_PIPELINE.md#batchexchange)). Every array and `Validity` a `ColumnReader` accessor returns belongs to the current batch and is never reused or overwritten by a later `nextBatch()`, except `Validity.NO_NULLS`; the `BinaryDictionary` from `getBinaryDictionary()`, and the array `BinaryValues.buffer(i)` returns for a dictionary-encoded value, are shared by the batches of one dictionary, whose entries never change ([Dictionary ids](#dictionary-ids)). A consumer may keep a returned array after advancing and hand it to another thread. The public contract is stated in the `ColumnReader` JavaDoc and the how-to.
@@ -185,5 +206,7 @@ Tests: `ColumnReaderBatchArrayIdentityTest`. Freshness on the filtered path is u
 - **Caller-provided buffers (#737).** Every batch allocates fresh arrays; a fill-into-caller-buffers contract for zero-allocation reads does not exist.
 - **Logical types (#514).** The accessors return physical values only; logical conversion for columnar consumers is not exposed.
 - **API stability (#522).** `ColumnReader`, `LayerKind` and `Validity` are `@Experimental`.
+- **`tail` on the column readers.** The column builders have no `tail`; the row reader's tail plan is single-file and not shared with the column path.
+- **A limit inside a row range.** `rowRange` excludes `head` and `skip`, so the first `n` matching rows of a range are taken by the caller stopping early, which does not narrow fetches.
 - **Per-batch `int` offsets.** Layer offsets and binary views are `int[]`, which bounds one batch to `Integer.MAX_VALUE` leaf values, and one of its binary buffers to as many bytes. They are per batch, so a file larger than that is not affected; a batch beyond it would need a separate API decision.
 - **Compressed leaf shapes.** Leaves are materialised as typed arrays or binary views, with dictionary ids for binary leaves. Primitive dictionary ids and run-end encoded leaves are not part of the public shape.

@@ -7,13 +7,16 @@
  */
 package dev.hardwood;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -107,6 +110,65 @@ class PageFilterEventTest extends AbstractJfrRecorderTest {
         assertThat(events("dev.hardwood.RowGroupScanned").count())
                 .as("no indexed plan is built for a fully pruned column")
                 .isZero();
+    }
+
+    @Test
+    void rangeStartingInLaterFileKeepsThePageFilter(@TempDir Path dir) throws Exception {
+        // the range starts at row 500 of the second file's only row group, a row group whose
+        // leading rows the read does not mask out; id < 1000 lives in its first page, which also
+        // holds those leading rows, so the filter still drops the pages after it
+        Path second = Files.copy(SORTED_FILE, dir.resolve("second.parquet"));
+        long rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.openAll(InputFile.ofPaths(SORTED_FILE, second));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                     .filter(FilterPredicate.lt("id", 1000L))
+                     .rowRange(10_500, 15_000)
+                     .build()) {
+            while (columns.nextBatch()) {
+                rows += columns.getRecordCount();
+            }
+        }
+        awaitEvents();
+        assertThat(rows).isEqualTo(500);
+
+        RecordedEvent event = events(PAGE_FILTER_EVENT).findFirst().orElseThrow();
+        assertThat(event.getString("file")).endsWith("second.parquet");
+        assertThat(event.getInt("totalPages")).isEqualTo(PAGES_PER_COLUMN);
+        assertThat(event.getInt("pagesKept")).isEqualTo(1);
+        assertThat(scannedPages("second.parquet"))
+                .as("the plan reads the one page the filter keeps")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void filteredRangeReportsThePagesTheFilterKeeps() throws Exception {
+        // id < 5000 keeps the first five pages; the range keeps two of them, which the plan reads,
+        // and the event reports what the filter kept, not what the range cut
+        long rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(SORTED_FILE));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                     .filter(FilterPredicate.lt("id", 5000L))
+                     .rowRange(1500, 3000)
+                     .build()) {
+            while (columns.nextBatch()) {
+                rows += columns.getRecordCount();
+            }
+        }
+        awaitEvents();
+        assertThat(rows).isEqualTo(1500);
+
+        RecordedEvent event = events(PAGE_FILTER_EVENT).findFirst().orElseThrow();
+        assertThat(event.getInt("totalPages")).isEqualTo(PAGES_PER_COLUMN);
+        assertThat(event.getInt("pagesKept")).isEqualTo(5);
+        assertThat(scannedPages("column_index_pushdown.parquet")).isEqualTo(2);
+    }
+
+    /// The pages the plans of `file`'s row groups locate, summed over its row-group scan events.
+    private int scannedPages(String file) {
+        return events("dev.hardwood.RowGroupScanned")
+                .filter(e -> e.getString("file").endsWith(file))
+                .mapToInt(e -> e.getInt("pageCount"))
+                .sum();
     }
 
     @Test

@@ -146,6 +146,32 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
     }
 
     @Test
+    void columnReaderRangeReportsNoRecordBeforeItsStart(@TempDir Path tempDir) throws Exception {
+        // the range starts at id 171 of the second file, inside the row group of ids 101..200, whose
+        // leading rows the read decodes and drops; ids 151..170 match but lie before the range
+        Path first = Files.copy(FIXTURE, tempDir.resolve("part-0.parquet"));
+        Path second = Files.copy(FIXTURE, tempDir.resolve("part-1.parquet"));
+
+        try (ParquetFileReader reader = ParquetFileReader.openAll(InputFile.ofPaths(List.of(first, second)));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                     .filter(ID_OVER_150)
+                     .rowRange(470, 600)
+                     .build()) {
+            long rows = 0;
+            while (columns.nextBatch()) {
+                rows += columns.getRecordCount();
+            }
+            assertThat(rows).isEqualTo(130);
+        }
+        awaitEvents();
+
+        RecordedEvent event = singleEvent();
+        assertThat(event.getString("file")).endsWith("part-1.parquet");
+        assertThat(event.getLong("totalRecords")).isEqualTo(130);
+        assertThat(event.getLong("recordsKept")).isEqualTo(130);
+    }
+
+    @Test
     void multiFileReadReportsOneEventPerFile(@TempDir Path tempDir) throws Exception {
         Path first = Files.copy(FIXTURE, tempDir.resolve("part-0.parquet"));
         Path second = Files.copy(FIXTURE, tempDir.resolve("part-1.parquet"));

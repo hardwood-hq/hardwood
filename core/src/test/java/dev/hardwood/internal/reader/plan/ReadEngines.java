@@ -40,7 +40,7 @@ public final class ReadEngines {
                                        boolean metadataFiltering, long limit, long skip) throws IOException {
         try {
             return PreparedRead.prepare(metadata, context, closing(metadata), schema, rowGroups, projection, filter,
-                    metadataFiltering, limit, skip);
+                    metadataFiltering, limit, skip, Long.MAX_VALUE);
         }
         catch (IOException | RuntimeException | Error e) {
             close(metadata);
@@ -69,7 +69,7 @@ public final class ReadEngines {
             FileSchema schema = first.schema();
             return PreparedRead.prepare(metadata, context, closing(metadata), schema, first.rowGroups(),
                     projection.apply(schema), filter == null ? null : FilterPredicateResolver.resolve(filter, schema),
-                    true, maxRows, 0);
+                    true, maxRows, 0, Long.MAX_VALUE);
         }
         catch (IOException | RuntimeException | Error e) {
             close(metadata);

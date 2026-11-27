@@ -39,6 +39,15 @@ class BatchPlanTest {
                         + "2147483647 batches of 4 rows");
     }
 
+    /// Raising a cap keeps "no cap" and stops at the largest cap rather than wrapping.
+    @Test
+    void raisingACapSaturates() {
+        assertThat(BatchPlan.raiseCap(0, 10)).isZero();
+        assertThat(BatchPlan.raiseCap(5, 10)).isEqualTo(15);
+        assertThat(BatchPlan.raiseCap(Long.MAX_VALUE - 10, 10)).isEqualTo(Long.MAX_VALUE);
+        assertThat(BatchPlan.raiseCap(Long.MAX_VALUE, 1)).isEqualTo(Long.MAX_VALUE);
+    }
+
     @Test
     void batchesCloseAtCapacityAcrossRowGroupsOfOneFile() {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
@@ -142,6 +151,43 @@ class BatchPlanTest {
         assertThat(second.keptRows()).isEqualTo(5);
         assertThat(third.workItemIndex()).as("no column reaches a row group past the cap").isEqualTo(-1);
         assertThat(replay(first, second)).containsExactly("a:4", "a:3");
+    }
+
+    /// The end of a physical window ends the read after the kept rows before it, in the row group
+    /// it lies in, whether or not that is all the row group keeps.
+    @Test
+    void theWindowsEndEndsTheRead() {
+        BatchPlan plan = new BatchPlan(4, false, true, 0);
+
+        RowGroupBatches first = plan.plan(0, 0, "a", false, 5);
+        RowGroupBatches last = plan.plan(1, 0, "a", false, 5, 2);
+        RowGroupBatches after = plan.plan(2, 0, "a", false, 5);
+
+        assertThat(first.endsRead()).isFalse();
+        assertThat(last.endsRead()).isTrue();
+        assertThat(last.plannedRows()).isEqualTo(2);
+        assertThat(after.workItemIndex()).as("no column reaches a row group past the end").isEqualTo(-1);
+        assertThat(replay(first, last)).containsExactly("a:4", "a:3");
+    }
+
+    @Test
+    void aWindowEndingWithTheKeptRowsEndsTheReadThere() {
+        BatchPlan plan = new BatchPlan(4, false, false, 0);
+
+        RowGroupBatches only = plan.plan(0, 0, "a", false, 3, 3);
+
+        assertThat(only.endsRead()).isTrue();
+        assertThat(only.plannedRows()).isEqualTo(3);
+        assertThat(replay(only)).containsExactly("a:3");
+    }
+
+    @Test
+    void aRowGroupThatKeepsRowsEndsTheReadAfterAtLeastOne() {
+        BatchPlan plan = new BatchPlan(4, false, false, 0);
+
+        assertThatThrownBy(() -> plan.plan(0, 0, "a", false, 3, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A row group that keeps rows ends the read after at least one, got 0");
     }
 
     /// Under a filter the cap counts matching rows, so it holds only while every row group with
