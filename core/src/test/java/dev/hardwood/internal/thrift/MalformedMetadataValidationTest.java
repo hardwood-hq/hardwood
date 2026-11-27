@@ -100,11 +100,11 @@ class MalformedMetadataValidationTest {
         assertThat(header.uncompressedPageSize()).isEqualTo(Integer.MAX_VALUE - 8);
     }
 
-    /// A `DATA_PAGE` header declaring `uncompressedPageSize`, with a compressed size of 10 and no
-    /// sub-header.
+    /// An `INDEX_PAGE` header, which needs no sub-header, declaring `uncompressedPageSize`, with
+    /// a compressed size of 10.
     private static byte[] pageHeader(int uncompressedPageSize) {
         return new ThriftStructBuilder()
-                .field(1, FieldType.I32).i32(0)
+                .field(1, FieldType.I32).i32(1)
                 .field(2, FieldType.I32).i32(uncompressedPageSize)
                 .field(3, FieldType.I32).i32(10)
                 .stop().build();
@@ -554,10 +554,20 @@ class MalformedMetadataValidationTest {
 
     @Test
     void validPageHeaderStillParses() {
-        // PageHeader: field1 type=DATA_PAGE(0), field2 uncompressed=10, field3 compressed=8
-        PageHeader header = assertDoesNotThrow(() -> PageHeaderReader.read(
-                reader(NEXT_I32, 0x00, NEXT_I32, 0x14,
-                        NEXT_I32, 0x10, STOP)));
+        // PageHeader: type DATA_PAGE, uncompressed 10, compressed 8, a data_page_header of 1 PLAIN value
+        byte[] dataPageHeader = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(1)
+                .field(2, FieldType.I32).i32(0)
+                .field(3, FieldType.I32).i32(3)
+                .field(4, FieldType.I32).i32(3)
+                .stop().build();
+        byte[] bytes = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(0)
+                .field(2, FieldType.I32).i32(10)
+                .field(3, FieldType.I32).i32(8)
+                .field(5, FieldType.STRUCT).nested(dataPageHeader)
+                .stop().build();
+        PageHeader header = assertDoesNotThrow(() -> PageHeaderReader.read(reader(bytes)));
         assertThat(header.type()).isEqualTo(PageType.DATA_PAGE);
         assertThat(header.uncompressedPageSize()).isEqualTo(10);
         assertThat(header.compressedPageSize()).isEqualTo(8);

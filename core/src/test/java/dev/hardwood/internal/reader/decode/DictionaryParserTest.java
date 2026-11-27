@@ -135,6 +135,7 @@ class DictionaryParserTest {
         writer.writeI32(0);
         writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
         writer.writeI32(0);
+        writeDictionaryPageHeader(writer);
         writer.writeFieldBegin(99, ThriftCompactConstants.FieldType.BINARY);
         writer.writeBinary(new byte[padding]);
         writer.writeFieldStop();
@@ -275,5 +276,17 @@ class DictionaryParserTest {
 
         ByteBuffer body = region.slice(headerReader.getBytesRead(), header.compressedPageSize());
         return new DictionaryPage(region, header, body, columnSchema, metaData);
+    }
+
+    /// Writes a `dictionary_page_header` of no values, `PLAIN`-encoded, as field 7 of a page header.
+    private static void writeDictionaryPageHeader(ThriftCompactWriter writer) {
+        writer.writeFieldBegin(7, ThriftCompactConstants.FieldType.STRUCT);
+        short saved = writer.pushFieldIdContext();
+        writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(0);
+        writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(0);
+        writer.writeFieldStop();
+        writer.popFieldIdContext(saved);
     }
 }
