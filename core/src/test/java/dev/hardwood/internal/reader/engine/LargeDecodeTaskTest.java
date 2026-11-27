@@ -17,6 +17,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.forked.ForkedJvm;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.HeldBytes;
 import dev.hardwood.internal.reader.memory.ReadAheadBuffer;
@@ -30,22 +31,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// A read's decodes, and the dictionary parses its dictionary pruning runs, whose buffers
 /// exceed the retention size run beside the one its consumer's next batch needs only within the
 /// read-ahead buffer.
+///
+/// The tests run in a JVM of 256 MiB, whatever heap the JVM running the class has, so that the
+/// buffers that exceed it stay a few tens of MiB.
+@ForkedJvm(jvmArgs = "-Xmx256m")
 class LargeDecodeTaskTest {
 
     private static final int COLUMNS = 8;
     private static final int PAGE_VALUES = 1024;
     /// what each page's decode decompresses: the heap holds a few of them, not all at once
-    private static final int PAGE_BYTES = 160 * 1024 * 1024;
+    private static final int PAGE_BYTES = 40 * 1024 * 1024;
     private static final int ROW_GROUPS = 16;
     /// what each row group's dictionary decompresses to; its parse holds as much again in entries
-    private static final int DICTIONARY_BYTES = 128 * 1024 * 1024;
+    private static final int DICTIONARY_BYTES = 32 * 1024 * 1024;
 
     @AfterEach
     void clearBuffer() {
         System.clearProperty(ReadAheadBuffer.READ_AHEAD_BYTES_PROPERTY);
     }
 
-    /// Eight columns whose one data page each decompresses to 160 MiB, a few KiB on disk, read
+    /// Eight columns whose one data page each decompresses to 40 MiB, a few KiB on disk, read
     /// with no read-ahead buffer on a pool of eight threads and on none, their pages found by a
     /// scan or listed by an offset index: the read returns every row in a heap that cannot hold
     /// the eight pages' buffers at once.
@@ -95,7 +100,7 @@ class LargeDecodeTaskTest {
         }
     }
 
-    /// Sixteen row groups whose one column's dictionary decompresses to 128 MiB of zeros, a few
+    /// Sixteen row groups whose one column's dictionary decompresses to 32 MiB of zeros, a few
     /// KiB on disk, read under a filter for a value none holds, with no read-ahead buffer on a
     /// pool of eight threads and on none: each row group's dictionary pruning parses its
     /// dictionary and drops it, and the read returns no row in a heap that cannot hold eight
@@ -114,7 +119,7 @@ class LargeDecodeTaskTest {
         }
     }
 
-    /// Six columns whose dictionary decompresses to 128 MiB of zeros, a few KiB on disk, listed by
+    /// Six columns whose dictionary decompresses to 32 MiB of zeros, a few KiB on disk, listed by
     /// an offset index and read without a filter from a file that holds every byte but slices none,
     /// as a file mapped by region does, with no read-ahead buffer on a pool of eight threads: each
     /// dictionary page's parse is charged from its header once its range has arrived, and the read
