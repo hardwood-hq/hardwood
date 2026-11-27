@@ -186,7 +186,7 @@ final class DictionaryIndices {
         /// unsigned, through their largest, so that the loop vectorizes; only an id out of range is
         /// looked for.
         ///
-        /// @throws ArrayIndexOutOfBoundsException naming the first id out of range
+        /// @throws ParquetReadException naming the first id out of range
         private void check(int[] ids, int start, int stop) {
             int max = Integer.MIN_VALUE;
             for (int i = start; i < stop; i++) {
@@ -202,10 +202,10 @@ final class DictionaryIndices {
 
         /// Checks that `value` lies in `[0, entries)`, compared unsigned.
         ///
-        /// @throws ArrayIndexOutOfBoundsException if it does not
+        /// @throws ParquetReadException if it does not
         private void check(int value) {
             if (Integer.compareUnsigned(value, entries) >= 0) {
-                throw new ArrayIndexOutOfBoundsException("Dictionary index " + value
+                throw new ParquetReadException("Dictionary index " + value
                         + " out of bounds for a dictionary of " + entries + " entries");
             }
         }

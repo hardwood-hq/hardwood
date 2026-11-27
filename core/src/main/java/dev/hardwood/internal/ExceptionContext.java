@@ -144,10 +144,10 @@ public final class ExceptionContext {
 
     /// What a runtime failure raised while interpreting file bytes means.
     ///
-    /// A corrupt dictionary index reaches a decoder as an
-    /// [ArrayIndexOutOfBoundsException], an impossible RLE run header as an
-    /// [IllegalStateException], a length that will not fit as an
-    /// [ArithmeticException]; a malformed footer value or Variant buffer reaches
+    /// The decoders raise a [ParquetReadException] where they find the bytes wrong; a
+    /// check one of them lacks lets the bytes surface as whatever the JDK raises, an index past
+    /// an array as an [ArrayIndexOutOfBoundsException], an absent field as a
+    /// [NullPointerException]; a malformed footer value or Variant buffer reaches
     /// the boundaries that call this as whatever its guard raised. Every one of
     /// them is the file being wrong, and every one of them reads to a user as a
     /// defect in this library. They become a [ParquetReadException] keeping the
