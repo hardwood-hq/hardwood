@@ -35,11 +35,13 @@ public final class VariantValueDecoder {
     static final int MAX_NESTING_DEPTH = 500;
 
     /// Returns `parentDepth + 1`, rejecting it if it would exceed [#MAX_NESTING_DEPTH].
+    ///
+    /// @throws ParquetReadException if the value nests deeper, which a well-formed file's does not
     /// Called wherever navigation descends into an object field or array element.
     static int descend(int parentDepth) {
         int childDepth = parentDepth + 1;
         if (childDepth > MAX_NESTING_DEPTH) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "Variant value nesting exceeds the maximum depth of " + MAX_NESTING_DEPTH);
         }
         return childDepth;
