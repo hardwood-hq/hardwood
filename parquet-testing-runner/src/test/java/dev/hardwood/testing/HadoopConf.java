@@ -8,6 +8,8 @@
 package dev.hardwood.testing;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.parquet.HadoopReadOptions;
+import org.apache.parquet.ParquetReadOptions;
 
 /// The Hadoop [Configuration] instances the parquet-java reference paths read through.
 ///
@@ -28,6 +30,13 @@ final class HadoopConf {
     /// The defaults, plus the setting that makes parquet-java's Avro reader surface an INT96
     /// column as a fixed-length byte array rather than refusing the type it cannot model.
     static final Configuration AVRO_INT96_AS_FIXED = avroInt96AsFixed();
+
+    /// Read options over [#DEFAULTS], for `ParquetFileReader.open`, which without options builds a
+    /// `Configuration` of its own for them. Built per reader, since the options carry the codec
+    /// factory that a reader releases when it closes.
+    static ParquetReadOptions readOptions() {
+        return HadoopReadOptions.builder(DEFAULTS).build();
+    }
 
     private static Configuration avroInt96AsFixed() {
         Configuration conf = new Configuration();
