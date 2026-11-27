@@ -105,7 +105,7 @@ final class ColumnScan implements Closeable {
         List<NestedLevelComputer.Layers> nestedLayers = new ArrayList<>();
         for (int i = 0; i < decoded.getProjectedColumnCount(); i++) {
             ColumnSchema column = schema.getColumn(decoded.toOriginalIndex(i));
-            NestedLevelComputer.Layers columnLayers = layers[column.columnIndex()];
+            NestedLevelComputer.Layers columnLayers = NestedLevelComputer.layersOf(layers, column, read.referenceFileName());
             nestedLayers.add(ColumnCursor.isNested(columnLayers, column) ? columnLayers : null);
         }
         CompiledBatchFilter compiled = filter == null ? null : SelectionEngine.compile(schema, decoded, filter);

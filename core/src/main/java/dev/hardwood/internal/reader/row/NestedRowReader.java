@@ -207,7 +207,8 @@ public final class NestedRowReader implements FileAwareRowReader {
             int originalIndex = decoded.toOriginalIndex(i);
             // A batch's arrays are allocated for it when it is filled, so a holder comes without any.
             buffers[i] = BatchExchange.recycling(schema.getColumn(originalIndex).name(), NestedBatch::new);
-            columnLayers.add(layers[originalIndex]);
+            columnLayers.add(NestedLevelComputer.layersOf(layers, schema.getColumn(originalIndex),
+                    read.referenceFileName()));
         }
         ReadEngine engine = read.start(decoded, columnLayers, NestedIndexMode.ALL_ITEMS, fixedListFastPathEnabled,
                 batchSize, budgetRows, new ArrayList<>(Arrays.asList(buffers)), null);
