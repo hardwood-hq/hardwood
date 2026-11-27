@@ -10,11 +10,18 @@ package dev.hardwood.internal.reader.footer;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.io.CountingInputFile;
+import dev.hardwood.internal.metadata.SchemaElements;
+import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
@@ -77,5 +84,23 @@ class ParquetMetadataReaderTest {
             }
         }
         return rows;
+    }
+
+    /// A schema the schema model refuses is a malformed footer when read from a file: the
+    /// refusal a caller building a schema gets as an [IllegalArgumentException] is a
+    /// [ParquetReadException] here.
+    @Test
+    void aSchemaTheModelRefusesIsAMalformedFooter() {
+        FileMetaData metaData = new FileMetaData(2, List.of(
+                SchemaElements.root("root", 1),
+                SchemaElements.group("v", RepetitionType.OPTIONAL, 2, LogicalType.variant(1)),
+                SchemaElements.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                SchemaElements.primitive("payload", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)),
+                0, List.of(), Map.of(), null, List.of());
+
+        assertThatThrownBy(() -> ParquetMetadataReader.schemaOf(metaData))
+                .isExactlyInstanceOf(ParquetReadException.class)
+                .hasMessage("FileMetaData.schema \u2014 Variant group 'v' expected child 'value', found: payload")
+                .hasCauseInstanceOf(IllegalArgumentException.class);
     }
 }
