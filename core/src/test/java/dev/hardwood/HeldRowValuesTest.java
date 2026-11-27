@@ -13,6 +13,8 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -46,8 +48,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// pages, binary and fixed-width leaves, nulls at each level, and fixed-size lists.
 class HeldRowValuesTest {
 
-    private static final int ROWS = 300_000;
-    private static final int ROW_GROUP_ROWS = 25_000;
+    private static final int ROWS = 12_000;
+    private static final int ROW_GROUP_ROWS = 1_000;
+    /// Batches of seven rows: a read starts with fresh holders until its first ones come back, so
+    /// only many batches per row group make every case refill a holder whose values are held.
+    private static final String BATCH_SIZE = "7";
+    private static final String BATCH_SIZE_PROPERTY = "hardwood.internal.batchSize";
+
+    private String previousBatchSize;
+
+    @BeforeEach
+    void smallBatches() {
+        previousBatchSize = System.setProperty(BATCH_SIZE_PROPERTY, BATCH_SIZE);
+    }
+
+    @AfterEach
+    void restoreBatchSize() {
+        if (previousBatchSize == null) {
+            System.clearProperty(BATCH_SIZE_PROPERTY);
+        }
+        else {
+            System.setProperty(BATCH_SIZE_PROPERTY, previousBatchSize);
+        }
+    }
 
     private static final FileSchema SCHEMA = FileSchema.builder("schema")
             .struct("person", RepetitionType.OPTIONAL, person -> person
