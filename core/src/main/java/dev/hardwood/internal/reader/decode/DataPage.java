@@ -14,6 +14,7 @@ import java.nio.ByteBuffer;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.memory.WorkingSet;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// A page's bytes, header and body as stored, with its header parsed, so that whoever parsed it to
@@ -26,10 +27,20 @@ import dev.hardwood.schema.ColumnSchema;
 /// @param bytes the page, header first
 public record DataPage(PageHeader header, int headerSize, ByteBuffer bytes) {
 
+    /// @throws ParquetReadException if the body the header declares runs past `bytes`, which
+    ///         whoever located the page sized, the header scan or the chunk's offset index
+    public DataPage {
+        long room = (long) bytes.remaining() - headerSize;
+        if (header.compressedPageSize() > room) {
+            throw new ParquetReadException("Page header declares a body of " + header.compressedPageSize()
+                    + " bytes, but its page holds " + room + " bytes after its " + headerSize + "-byte header");
+        }
+    }
+
     /// The page whose bytes, header first, are `bytes`, the page at `offset` of its file, which is
     /// the header's extent ([PageFormatProbe#readHeader]).
     ///
-    /// @throws dev.hardwood.reader.ParquetReadException if the header does not parse within the page
+    /// @throws ParquetReadException if the header does not parse within the page
     public static DataPage parse(ByteBuffer bytes, long offset) {
         try {
             PageFormatProbe.HeaderAt header = PageFormatProbe.readHeader(

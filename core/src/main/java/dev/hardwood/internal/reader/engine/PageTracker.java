@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader.engine;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -403,8 +402,15 @@ final class PageTracker {
     /// Decodes and measures a page decoded through levels, which can then be placed.
     private void addMeasure(TrackedPage tracked) {
         scheduler.add(decodeJob(tracked, 0, (page, buffers) -> {
-            NestedPageTask task = cells.nestedTask(tracked,
-                    tracked.placeholder() > 0 ? null : page.get(),
+            DataPage dataPage;
+            try {
+                dataPage = tracked.placeholder() > 0 ? null : page.get();
+            }
+            catch (RuntimeException e) {
+                throw columns.withContext(tracked.column(), e, tracked.unit().listing().file().name(),
+                        tracked.unit().listing().rowGroup(), tracked.page().pageIndex());
+            }
+            NestedPageTask task = cells.nestedTask(tracked, dataPage,
                     tracked.dictionary() == null ? null : tracked.dictionary().output().value());
             try {
                 task.decodeAndMeasure(buffers);
@@ -550,14 +556,9 @@ final class PageTracker {
     }
 
     private Dictionary parseDictionary(TrackedPage tracked, DataPage page, DecodeBuffers buffers) {
-        ByteBuffer region = page.bytes();
-        int pageLength = page.headerSize() + page.header().compressedPageSize();
+        // a body past the region before the first data page failed the page's construction
         if (page.header().type() != PageType.DICTIONARY_PAGE) {
             return null;
-        }
-        if (pageLength > region.remaining()) {
-            throw new ParquetReadException("Malformed Parquet metadata: the dictionary page header declares "
-                    + pageLength + " bytes but only " + region.remaining() + " bytes lie before the first data page");
         }
         return columns.chargeDictionary(tracked.column(), tracked.unit(), () -> DictionaryParser.parsePage(page.header(), page.body(),
                 columns.schema(tracked.column()), tracked.unit().listing().chunks()[tracked.column()].metaData(), context,
