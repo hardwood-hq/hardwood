@@ -55,6 +55,15 @@ abstract class BinaryStatistics extends StatisticsCollector<BinaryStatistics> {
     /// group reuses.
     abstract void accept(byte[] array, int offset, int length);
 
+    /// Extends the bounds with every present value in `array[offsets[from], offsets[to])`. A
+    /// collector that can settle a run without the per-value call may override this; otherwise
+    /// it is the same as accepting each value.
+    void acceptAll(byte[] array, int[] offsets, int from, int to) {
+        for (int i = from; i < to; i++) {
+            accept(array, offsets[i], offsets[i + 1] - offsets[i]);
+        }
+    }
+
     /// Extends the bounds with a present value occurring `times` times. Only a count of values
     /// depends on the repetition, so by default the value is taken once.
     void accept(byte[] array, int offset, int length, int times) {

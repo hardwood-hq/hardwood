@@ -9,6 +9,8 @@ package dev.hardwood.benchmarks;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,14 +68,28 @@ import dev.hardwood.writer.WriterConfig;
 /// |---|---|---|---|
 /// | `AUTO` | — | nothing | today's behaviour, the baseline the others are read against |
 /// | `PLAIN_ON_DISTINCT` | `PLAIN` | `id`, `pickup_ts`, `fare` | what interning a column that discards its dictionary costs |
+/// | `PLAIN_STRINGS` | `PLAIN` | `payment_type`, `vendor` | what collecting binary bounds costs per value without a dictionary |
+/// | `DELTA_LENGTH_STRINGS` | `DELTA_LENGTH_BYTE_ARRAY` | `payment_type`, `vendor` | whether a string policy's page encoding hides or exposes that cost |
 /// | `DELTA_INTEGERS` | `DELTA_BINARY_PACKED` | `id`, `pickup_ts`, `passenger_count` | what delta buys on ascending integers, and what producing it costs |
 /// | `SPLIT_NUMERIC` | `BYTE_STREAM_SPLIT` | `fare`, `id`, `pickup_ts` | whether reordering bytes pays for itself once the codec runs |
+///
+/// The `data` axis changes the string columns themselves, independently of the encoding: `FLAT`
+/// is the low-cardinality fixture, `SHARED_PREFIX` replaces both string columns with unique URLs
+/// of the form `https://example.com/objects/0000000000`, and `INCREASING_KEYS` replaces them with
+/// unique ten-digit keys that increase with the row. The last two are the shapes per-value bounds
+/// are most expensive on - one ties the eight-byte prefix on every comparison, the other extends
+/// a bound on nearly every value.
 ///
 /// `PLAIN_ON_DISTINCT` is not an encoding recommendation, it is a measurement. A column under
 /// a named policy builds no dictionary at all, so applying `PLAIN` to exactly the columns the
 /// flush-time comparison rejects anyway writes the same pages as `AUTO` while skipping the
 /// interning that produced them. **The gap between the two cases is what the writer's most
 /// expensive per-value decision costs.**
+///
+/// The two string cases put the same named-policy treatment on the columns a dictionary usually
+/// keeps. Read them against each other for the cost of the page encoding, which every
+/// non-dictionary chunk pays whatever its statistics do; read either across the `data` axis for
+/// the cost of the bounds.
 ///
 /// ## The codecs
 ///
@@ -109,7 +125,7 @@ import dev.hardwood.writer.WriterConfig;
 ///
 /// ```
 /// java -jar .../benchmarks.jar WriteEncodingBenchmark -f 1 -wi 2 -i 3 -r 5 -w 5 \
-///     -p encoding=AUTO -p codec=UNCOMPRESSED -prof perfnorm
+///     -p encoding=AUTO -p data=FLAT -p codec=UNCOMPRESSED -prof perfnorm
 /// ```
 ///
 /// Keep `-Dperf.rows` at its default for a probe. At fewer rows the fixture stops filling a row
@@ -141,11 +157,31 @@ public class WriteEncodingBenchmark {
     /// are the low-cardinality ones a dictionary wins on.
     private static final List<String> ALL_DISTINCT = List.of("id", "pickup_ts", "fare");
 
+    /// The low-cardinality string columns a dictionary usually keeps, written under a named
+    /// policy so their statistics collect a bound per value rather than per dictionary entry.
+    private static final List<String> STRINGS = List.of("payment_type", "vendor");
+
+    private static final byte[] URL_PREFIX = "https://example.com/objects/".getBytes(StandardCharsets.UTF_8);
+    private static final int URL_ID_DIGITS = 10;
+    private static final byte[] FIRST_SHARED_PREFIX_URL =
+            "https://example.com/objects/0000000000".getBytes(StandardCharsets.UTF_8);
+    private static final int KEY_DIGITS = 10;
+    private static final byte[] FIRST_INCREASING_KEY = "0000000000".getBytes(StandardCharsets.UTF_8);
+
+    /// The values the string columns carry, independently of the encoding under test.
+    enum Data {
+        FLAT,
+        SHARED_PREFIX,
+        INCREASING_KEYS
+    }
+
     /// One encoding case: the policy each named column is written under.
     enum Case {
 
         AUTO(Map.of()),
         PLAIN_ON_DISTINCT(policy(ColumnEncoding.PLAIN, ALL_DISTINCT)),
+        PLAIN_STRINGS(policy(ColumnEncoding.PLAIN, STRINGS)),
+        DELTA_LENGTH_STRINGS(policy(ColumnEncoding.DELTA_LENGTH_BYTE_ARRAY, STRINGS)),
         DELTA_INTEGERS(policy(ColumnEncoding.DELTA_BINARY_PACKED,
                 List.of("id", "pickup_ts", "passenger_count"))),
         SPLIT_NUMERIC(policy(ColumnEncoding.BYTE_STREAM_SPLIT, List.of("fare", "id", "pickup_ts")));
@@ -170,8 +206,12 @@ public class WriteEncodingBenchmark {
         }
     }
 
-    @Param({ "AUTO", "PLAIN_ON_DISTINCT", "DELTA_INTEGERS", "SPLIT_NUMERIC" })
+    @Param({ "AUTO", "PLAIN_ON_DISTINCT", "PLAIN_STRINGS", "DELTA_LENGTH_STRINGS",
+            "DELTA_INTEGERS", "SPLIT_NUMERIC" })
     private String encoding;
+
+    @Param({ "FLAT", "SHARED_PREFIX", "INCREASING_KEYS" })
+    private String data;
 
     @Param({ "ZSTD", "UNCOMPRESSED" })
     private String codec;
@@ -179,15 +219,69 @@ public class WriteEncodingBenchmark {
     private FlatWriteFixture fixture;
     private FileSchema schema;
     private WriterConfig config;
+    private Case encodingCase;
+    private byte[][][] shapedStrings;
 
     @Setup
     public void setUp() throws IOException {
         fixture = FlatWriteFixture.generate(FlatWriteFixture.configuredRows(), BATCH_ROWS);
         schema = FlatWriteFixture.schema();
-        Case encodingCase = Case.valueOf(encoding);
+        encodingCase = Case.valueOf(encoding);
         config = configFor(encodingCase);
+        shapedStrings = switch (Data.valueOf(data)) {
+            case FLAT -> null;
+            case SHARED_PREFIX -> sharedPrefixUrls(fixture);
+            case INCREASING_KEYS -> increasingKeys(fixture);
+        };
 
         reportProducedFile(encodingCase);
+    }
+
+    private static byte[][][] sharedPrefixUrls(FlatWriteFixture fixture) {
+        byte[][][] values = new byte[fixture.batchCount()][][];
+        int row = 0;
+        for (int b = 0; b < values.length; b++) {
+            values[b] = new byte[fixture.paymentTypeBytes[b].length][];
+            for (int i = 0; i < values[b].length; i++) {
+                byte[] url = new byte[URL_PREFIX.length + URL_ID_DIGITS];
+                System.arraycopy(URL_PREFIX, 0, url, 0, URL_PREFIX.length);
+                int id = row++;
+                for (int digit = url.length - 1; digit >= URL_PREFIX.length; digit--) {
+                    url[digit] = (byte) ('0' + id % 10);
+                    id /= 10;
+                }
+                values[b][i] = url;
+            }
+        }
+        if (!Arrays.equals(values[0][0], FIRST_SHARED_PREFIX_URL)
+                || fixture.rows() > 1 && Arrays.equals(values[0][0], values[0][1])) {
+            throw new IllegalStateException("shared-prefix URL fixture is not unique or correctly prefixed");
+        }
+        return values;
+    }
+
+    /// Unique ten-digit keys in row order, so a bound extends on nearly every value and the
+    /// statistics cannot copy only when a page's first value happens to be an extreme.
+    private static byte[][][] increasingKeys(FlatWriteFixture fixture) {
+        byte[][][] values = new byte[fixture.batchCount()][][];
+        int row = 0;
+        for (int b = 0; b < values.length; b++) {
+            values[b] = new byte[fixture.paymentTypeBytes[b].length][];
+            for (int i = 0; i < values[b].length; i++) {
+                byte[] key = new byte[KEY_DIGITS];
+                int id = row++;
+                for (int digit = key.length - 1; digit >= 0; digit--) {
+                    key[digit] = (byte) ('0' + id % 10);
+                    id /= 10;
+                }
+                values[b][i] = key;
+            }
+        }
+        if (!Arrays.equals(values[0][0], FIRST_INCREASING_KEY)
+                || fixture.rows() > 1 && Arrays.equals(values[0][0], values[0][1])) {
+            throw new IllegalStateException("increasing-key fixture is not unique or correctly ordered");
+        }
+        return values;
     }
 
     private WriterConfig configFor(Case encodingCase) {
@@ -214,13 +308,21 @@ public class WriteEncodingBenchmark {
             ColumnWriter columns = writer.columnWriter();
             for (int b = 0; b < fixture.batchCount(); b++) {
                 int index = b;
-                columns.writeBatch(batch -> batch
-                        .longs("id", fixture.id[index])
-                        .longs("pickup_ts", fixture.pickupMicros[index])
-                        .ints("passenger_count", fixture.passengerCount[index], fixture.passengerCountNulls[index])
-                        .doubles("fare", fixture.fare[index])
-                        .bytes("payment_type", fixture.paymentTypeBytes[index])
-                        .bytes("vendor", fixture.vendorBytes[index], fixture.vendorNulls[index]));
+                columns.writeBatch(batch -> {
+                    batch.longs("id", fixture.id[index])
+                            .longs("pickup_ts", fixture.pickupMicros[index])
+                            .ints("passenger_count", fixture.passengerCount[index],
+                                    fixture.passengerCountNulls[index])
+                            .doubles("fare", fixture.fare[index]);
+                    if (shapedStrings != null) {
+                        batch.bytes("payment_type", shapedStrings[index])
+                                .bytes("vendor", shapedStrings[index]);
+                    }
+                    else {
+                        batch.bytes("payment_type", fixture.paymentTypeBytes[index])
+                                .bytes("vendor", fixture.vendorBytes[index], fixture.vendorNulls[index]);
+                    }
+                });
             }
         }
     }
@@ -241,8 +343,8 @@ public class WriteEncodingBenchmark {
             }
             checkEncodings(reader, encodingCase);
             int rowGroups = reader.getFileMetaData().rowGroups().size();
-            System.out.printf("%nWriteEncodingBenchmark: %,d rows, encoding %s, codec %s%n",
-                    fixture.rows(), encoding, codec);
+            System.out.printf("%nWriteEncodingBenchmark: %,d rows, encoding %s, data %s, codec %s%n",
+                    fixture.rows(), encoding, data, codec);
             System.out.printf("  %,15d bytes, %d row groups%n", file.remaining(), rowGroups);
             if (encodingCase == Case.PLAIN_ON_DISTINCT) {
                 checkMatchesAuto(file.remaining(), rowGroups);

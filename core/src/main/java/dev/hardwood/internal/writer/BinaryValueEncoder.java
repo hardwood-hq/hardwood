@@ -269,9 +269,7 @@ final class BinaryValueEncoder extends ValueEncoder {
         }
         else {
             byte[] data = plainData.array();
-            for (int i = valueFrom; i < end; i++) {
-                page.accept(data, plainOffsets[i], plainOffsets[i + 1] - plainOffsets[i]);
-            }
+            page.acceptAll(data, plainOffsets, valueFrom, end);
         }
         return PageBounds.finish(statistics, page, valueCount, nullCount);
     }

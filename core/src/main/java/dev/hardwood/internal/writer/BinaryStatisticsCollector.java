@@ -15,7 +15,9 @@ import dev.hardwood.internal.schema.ByteColumnOrder;
 import dev.hardwood.metadata.Statistics;
 
 /// Accumulates a binary column page's or chunk's `min` / `max` / `null_count` in the column's
-/// [ByteColumnOrder], compared through `BinaryComparator`. The writer uses three:
+/// [ByteColumnOrder]. [BinaryComparator] defines the ordering and carries the cached-prefix fast
+/// path: unsigned lexicographic values compare their first eight bytes first, while the other
+/// orders delegate each comparison to it. The writer uses three orders:
 /// unsigned lexicographic — the type-defined order for an
 /// unannotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` and for the string-like annotations —,
 /// signed big-endian two's complement, the order of a `DECIMAL`'s represented value, or signed
@@ -41,6 +43,9 @@ final class BinaryStatisticsCollector extends BinaryStatistics {
     private final boolean text;
     private byte[] min;
     private byte[] max;
+    /// The first eight bytes of [#min] and [#max], zero-padded where shorter.
+    private long minPrefix;
+    private long maxPrefix;
     private boolean hasValues;
 
     BinaryStatisticsCollector(ByteColumnOrder order, int truncationLength, boolean text) {
@@ -54,14 +59,87 @@ final class BinaryStatisticsCollector extends BinaryStatistics {
         if (!hasValues) {
             min = Arrays.copyOfRange(array, offset, offset + length);
             max = min.clone();
+            if (order == ByteColumnOrder.BYTES) {
+                minPrefix = BinaryComparator.prefix(array, offset, length);
+                maxPrefix = minPrefix;
+            }
             hasValues = true;
+            return;
+        }
+        if (order == ByteColumnOrder.BYTES) {
+            acceptUnsigned(array, offset, length);
             return;
         }
         if (BinaryComparator.compare(array, offset, offset + length, min, order) < 0) {
             min = Arrays.copyOfRange(array, offset, offset + length);
         }
-        if (BinaryComparator.compare(array, offset, offset + length, max, order) > 0) {
+        else if (BinaryComparator.compare(array, offset, offset + length, max, order) > 0) {
             max = Arrays.copyOfRange(array, offset, offset + length);
+        }
+    }
+
+    /// Collects a page's unsigned lexicographic bounds in one pass over the value store, keeping
+    /// the offsets of the current bounds rather than copying a value whenever one extends them. A
+    /// page's collector is fresh, so a run normally copies just the final `min` and `max`; a
+    /// collector that already holds bounds, and every other order, falls back to [#accept].
+    @Override
+    void acceptAll(byte[] array, int[] offsets, int from, int to) {
+        if (order != ByteColumnOrder.BYTES || hasValues) {
+            super.acceptAll(array, offsets, from, to);
+            return;
+        }
+        if (from >= to) {
+            return;
+        }
+        int minOffset = offsets[from];
+        int minEnd = offsets[from + 1];
+        long minPrefix = BinaryComparator.prefix(array, minOffset, minEnd - minOffset);
+        int maxOffset = minOffset;
+        int maxEnd = minEnd;
+        long maxPrefix = minPrefix;
+        for (int i = from + 1; i < to; i++) {
+            int offset = offsets[i];
+            int end = offsets[i + 1];
+            int length = end - offset;
+            long prefix = BinaryComparator.prefix(array, offset, length);
+            int toMin = Long.compareUnsigned(prefix, minPrefix);
+            if (toMin < 0 || toMin == 0 && BinaryComparator.compareUnsignedAfterPrefix(
+                    array, offset, length, array, minOffset, minEnd - minOffset) < 0) {
+                minOffset = offset;
+                minEnd = end;
+                minPrefix = prefix;
+            }
+            else if (Long.compareUnsigned(prefix, maxPrefix) > 0
+                    || prefix == maxPrefix && BinaryComparator.compareUnsignedAfterPrefix(
+                            array, offset, length, array, maxOffset, maxEnd - maxOffset) > 0) {
+                maxOffset = offset;
+                maxEnd = end;
+                maxPrefix = prefix;
+            }
+        }
+        min = Arrays.copyOfRange(array, minOffset, minEnd);
+        max = Arrays.copyOfRange(array, maxOffset, maxEnd);
+        this.minPrefix = minPrefix;
+        this.maxPrefix = maxPrefix;
+        hasValues = true;
+    }
+
+    /// Compares an unsigned lexicographic value with the current bounds. The first eight bytes
+    /// decide unless their prefixes tie, in which case the remainder or the lengths decide. A new
+    /// minimum cannot also exceed the maximum, so this path skips the second comparison.
+    private void acceptUnsigned(byte[] array, int offset, int length) {
+        long prefix = BinaryComparator.prefix(array, offset, length);
+        int toMin = Long.compareUnsigned(prefix, minPrefix);
+        if (toMin < 0 || toMin == 0 && BinaryComparator.compareUnsignedAfterPrefix(
+                array, offset, length, min, 0, min.length) < 0) {
+            min = Arrays.copyOfRange(array, offset, offset + length);
+            minPrefix = prefix;
+        }
+        else if (Long.compareUnsigned(prefix, maxPrefix) > 0
+                || prefix == maxPrefix && BinaryComparator.compareUnsignedAfterPrefix(
+                        array, offset, length, max, 0, max.length) > 0) {
+            max = Arrays.copyOfRange(array, offset, offset + length);
+            maxPrefix = prefix;
         }
     }
 
@@ -76,14 +154,18 @@ final class BinaryStatisticsCollector extends BinaryStatistics {
         if (!hasValues) {
             min = other.min;
             max = other.max;
+            minPrefix = other.minPrefix;
+            maxPrefix = other.maxPrefix;
             hasValues = true;
             return;
         }
         if (compareBounds(other.min, min) < 0) {
             min = other.min;
+            minPrefix = other.minPrefix;
         }
         if (compareBounds(other.max, max) > 0) {
             max = other.max;
+            maxPrefix = other.maxPrefix;
         }
     }
 
