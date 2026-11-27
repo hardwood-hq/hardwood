@@ -8,17 +8,14 @@
 package dev.hardwood.reader;
 
 import java.nio.ByteBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.Arrays;
 
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.forked.ForkedJvm;
 import dev.hardwood.internal.thrift.RleExpansionFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,87 +23,63 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// A read whose decodes exhaust the heap fails with the `OutOfMemoryError` rather than leaving its
 /// consumer waiting, also where reporting a decode's failure, which allocates, throws in turn.
 ///
-/// The reads run in a child JVM of 64 MiB with the working-set limit lifted, over 40 `INT64`
-/// columns whose one data page each holds 400,000 values (3.2 MB of batches per column, 128 MB
-/// in all). Each JVM reads the file three times on one context, so that a read that leaves the
-/// context's pool threads broken fails the reads after it. The child reports through its exit
-/// status, the number of reads that failed with `OutOfMemoryError`, since printing allocates and
-/// the heap may still be exhausted when the reads are done.
+/// The reads run in a JVM of 64 MiB ([ForkedJvm]) with the working-set limit lifted, over 40
+/// `INT64` columns whose one data page each holds 400,000 values (3.2 MB of batches per column,
+/// 128 MB in all). Each test reads the file three times on one context, so that a read that leaves
+/// the context's pool threads broken fails the reads after it.
+@ForkedJvm(jvmArgs = { "-Xmx64m", "-Dhardwood.internal.maxWorkingSetBytes=" + Long.MAX_VALUE }, timeoutSeconds = 60)
 class HeapExhaustionTest {
 
+    private static final int READS = 3;
+    /// what the test allocates to learn that the heap has room again
+    private static final int HEAP_PROBE_BYTES = 8 * 1024 * 1024;
+
+    private static byte[] heapProbe;
+
+    /// Nothing the test runs once the heap is exhausted may run for the first time, as linking code
+    /// allocates: the outcome of each read goes to an array allocated up front, and the test waits
+    /// for the heap to have room again, once the pool has dropped the failed reads' remaining
+    /// work, before it asserts. Closing the context can fail for the same reason and is not part of
+    /// what is checked.
     @ParameterizedTest
     @ValueSource(ints = { 4, 0 })
-    void readThatExhaustsTheHeapFailsWithOutOfMemoryError(int threads, @TempDir Path workDir) throws Exception {
-        Path stdout = workDir.resolve("stdout.txt");
-        Path stderr = workDir.resolve("stderr.txt");
-        Process process = new ProcessBuilder(List.of(
-                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-Xmx64m",
-                "-Dhardwood.internal.maxWorkingSetBytes=" + Long.MAX_VALUE,
-                "-cp", System.getProperty("java.class.path"),
-                Reads.class.getName(), Integer.toString(threads)))
-                .redirectOutput(stdout.toFile())
-                .redirectError(stderr.toFile())
-                .start();
-        boolean exited = process.waitFor(1, TimeUnit.MINUTES);
-        if (!exited) {
-            process.destroyForcibly().waitFor();
-        }
-        String output = Files.readString(stdout) + Files.readString(stderr);
-
-        assertThat(exited).as("the child JVM exited within a minute; its output:%n%s", output).isTrue();
-        assertThat(process.exitValue()).as("reads failing with OutOfMemoryError; output:%n%s", output)
-                .isEqualTo(Reads.READS);
-    }
-
-    /// Reads the file [#READS] times on a context of the given threads and halts with the number
-    /// of reads that failed with `OutOfMemoryError`, plus [#OTHER] for each that ended otherwise.
-    ///
-    /// Nothing the child runs once the heap is exhausted may be run for the first time, as linking
-    /// code allocates: [#outcome] runs once up front, and the halt is retried until the pool has
-    /// dropped the failed reads' remaining work and the heap has room again. Closing the context can fail for the same reason and is not part of what is
-    /// checked.
-    public static final class Reads {
-
-        static final int READS = 3;
-        static final int OTHER = 10;
-
-        public static void main(String[] args) {
-            int threads = Integer.parseInt(args[0]);
-            byte[] file = RleExpansionFile.buildWide(40, 1, 64, 400_000);
-            Runtime runtime = Runtime.getRuntime();
-            int status = outcome(new OutOfMemoryError()) - 1;
-            HardwoodContext context = HardwoodContext.create(threads);
-            for (int i = 0; i < READS; i++) {
-                try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
-                        RowReader rows = reader.buildRowReader().build()) {
-                    while (rows.hasNext()) {
-                        rows.next();
-                    }
-                    status += OTHER;
+    void readThatExhaustsTheHeapFailsWithOutOfMemoryError(int threads) {
+        byte[] file = RleExpansionFile.buildWide(40, 1, 64, 400_000);
+        Throwable[] outcomes = new Throwable[READS];
+        HardwoodContext context = HardwoodContext.create(threads);
+        for (int i = 0; i < READS; i++) {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
+                    RowReader rows = reader.buildRowReader().build()) {
+                while (rows.hasNext()) {
+                    rows.next();
                 }
-                catch (Throwable t) {
-                    status += outcome(t);
-                }
-            }
-            try {
-                context.close();
             }
             catch (Throwable t) {
-                // the heap may still be exhausted
-            }
-            while (true) {
-                try {
-                    runtime.halt(status);
-                }
-                catch (Throwable t) {
-                    Thread.onSpinWait();
-                }
+                outcomes[i] = t;
             }
         }
+        try {
+            context.close();
+        }
+        catch (Throwable t) {
+            // the heap may still be exhausted
+        }
+        awaitHeapRoom();
 
-        private static int outcome(Throwable t) {
-            return t instanceof OutOfMemoryError ? 1 : OTHER;
+        assertThat(outcomes).as("what each read threw: %s", Arrays.toString(outcomes))
+                .allMatch(OutOfMemoryError.class::isInstance);
+    }
+
+    private static void awaitHeapRoom() {
+        while (true) {
+            try {
+                heapProbe = new byte[HEAP_PROBE_BYTES];
+                heapProbe = null;
+                return;
+            }
+            catch (OutOfMemoryError e) {
+                Thread.onSpinWait();
+            }
         }
     }
 }
