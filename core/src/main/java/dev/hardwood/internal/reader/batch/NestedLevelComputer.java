@@ -11,8 +11,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.LayerKind;
+import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -278,6 +281,25 @@ public final class NestedLevelComputer {
         Layers[] result = new Layers[schema.getColumnCount()];
         walkLayers(schema.getRootNode(), new ArrayList<>(), new ArrayList<>(), false, result);
         return result;
+    }
+
+    /// The layers of `column` among `layers`, as [#computeLayers] derived them, for a read of the
+    /// column. A leaf lies in one `REPEATED` layer per repetition level of its column; a schema in
+    /// which the two disagree, a `LIST` or `MAP` group whose field is not repeated among them,
+    /// would have its levels read by layers they do not describe.
+    ///
+    /// @param fileName the file whose schema it is, named in the failure; may be `null`
+    /// @throws ParquetReadException if the column's `REPEATED` layers do not match its maximum
+    ///         repetition level
+    public static Layers layersOf(Layers[] layers, ColumnSchema column, String fileName) {
+        Layers columnLayers = layers[column.columnIndex()];
+        int repeated = columnLayers.itemRepThresholds()[columnLayers.count()];
+        if (repeated != column.maxRepetitionLevel()) {
+            throw ExceptionContext.addFileContext(fileName, new ParquetReadException("Column '" + column.fieldPath()
+                    + "' lies within LIST, MAP and repeated fields to a depth of " + repeated
+                    + ", but has a maximum repetition level of " + column.maxRepetitionLevel()));
+        }
+        return columnLayers;
     }
 
     private static void walkLayers(SchemaNode node, List<LayerKind> kinds, List<Integer> thresholds,

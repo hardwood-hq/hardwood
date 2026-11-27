@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.batch;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -18,13 +19,19 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.metadata.SchemaElements;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// [NestedLevelComputer#computeLayers], one walk for every leaf, against a reference that walks
 /// the schema from the root to each leaf separately, over the schema of every fixture in the
@@ -58,6 +65,9 @@ class ComputeLayersTest {
                             .containsExactly(expected.itemDefThresholds());
                     assertThat(layers[c].itemRepThresholds()).as(file + " column " + c)
                             .containsExactly(expected.itemRepThresholds());
+                    // a well-formed schema's layers agree with its columns' repetition levels
+                    assertThat(NestedLevelComputer.layersOf(layers, schema.getColumn(c), file.toString()))
+                            .isSameAs(layers[c]);
                 }
                 compared++;
             }
@@ -125,5 +135,36 @@ class ComputeLayersTest {
                 yield false;
             }
         };
+    }
+
+    /// A `LIST` group whose only field is not repeated gives its leaf a `REPEATED` layer and no
+    /// repetition level; a read of the leaf is refused rather than reading its levels by the layers.
+    @Test
+    void aListWithoutARepeatedFieldIsRefused() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElements.root("root", 1),
+                SchemaElements.group("tags", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElements.group("list", RepetitionType.OPTIONAL, 1),
+                SchemaElements.primitive("element", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)));
+        NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
+
+        assertThatThrownBy(() -> NestedLevelComputer.layersOf(layers, schema.getColumn(0), "f.parquet"))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[f.parquet] Column 'tags.list.element' lies within LIST, MAP and repeated fields to a "
+                        + "depth of 1, but has a maximum repetition level of 0");
+    }
+
+    /// A read of such a column through the public API fails naming the file and the column, before
+    /// any of its levels is read.
+    @Test
+    void aColumnReadOfAListWithoutARepeatedFieldFailsNamingTheFile() throws IOException {
+        byte[] file = Files.readAllBytes(Path.of(
+                "src/test/resources/dev/hardwood/fuzz/FileFuzzTestInputs/read/list_whose_field_is_not_repeated"));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+            assertThatThrownBy(() -> reader.columnReaders(ColumnProjection.columns("tags.list.element")).close())
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("[<memory>] Column 'tags.list.element' lies within LIST, MAP and repeated fields to "
+                            + "a depth of 1, but has a maximum repetition level of 0");
+        }
     }
 }

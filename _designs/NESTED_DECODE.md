@@ -37,7 +37,7 @@ All other columns are flat columns (see [READ_PIPELINE.md](READ_PIPELINE.md#deco
 
 The annotation is checked before the parent: a `LIST` group whose parent is a `LIST` is a nested list and contributes its own layer, which is how `group A (LIST) { repeated group B (LIST) { … } }` yields two layers.
 
-**Invariant.** The number of `REPEATED` layers equals the leaf's `maxRepetitionLevel`. Offsets are computed per repetition level and remapped onto layer positions, so a descriptor that miscounts repetition misaligns every offset array. Nothing checks this at runtime.
+**Invariant.** The number of `REPEATED` layers equals the leaf's `maxRepetitionLevel`. Offsets are computed per repetition level and remapped onto layer positions, so a descriptor that miscounts repetition misaligns every offset array. A footer can break it: a `LIST` or `MAP` group whose field is not repeated contributes a `REPEATED` layer and no repetition level. A read takes each projected column's descriptor through `NestedLevelComputer.layersOf`, which refuses one that breaks the invariant with `ParquetReadException` naming the file, the column and both counts; columns the read does not project are not checked.
 
 From the thresholds `Layers.of` derives, per layer, the minimum definition level at which an *item slot* exists (`itemDefThresholds`) and the number of `REPEATED` layers above it (`itemRepThresholds`), with one extra entry for the leaf. A `STRUCT` layer passes its parent's item threshold through (a struct does not expand the item stream); a `REPEATED` layer's items exist at its threshold + 1. A chain without `REPEATED` layers has a leaf item threshold of `0`: every position is a real leaf, one per record.
 
