@@ -323,8 +323,7 @@ public class PageDecoder {
     public InPlaceNestedPage nullsInPlace(int numValues, LevelScratch scratch, boolean kept) {
         int maxDefLevel = column.maxDefinitionLevel();
         if (maxDefLevel == 0) {
-            throw new IllegalStateException("Cannot create null placeholder page for required column '"
-                    + column.name() + "' — maxDefinitionLevel is 0");
+            throw new IllegalStateException("Cannot create a null placeholder page for a required column");
         }
         workingSet.page(numValues, 0, 0, Encoding.PLAIN, kept);
         int[] definitionLevels = scratch.definitionLevels(numValues);
@@ -349,8 +348,8 @@ public class PageDecoder {
     /// Fails an entry point called for a column it does not read, which is the caller's error.
     private void requireColumn(boolean served, String entryPoint) {
         if (!served) {
-            throw new IllegalStateException(entryPoint + " does not read column '" + column.name() + "' of type "
-                    + column.type() + " with maximum repetition level " + column.maxRepetitionLevel());
+            throw new IllegalStateException(entryPoint + " does not read a column of type " + column.type()
+                    + " with maximum repetition level " + column.maxRepetitionLevel());
         }
     }
 
