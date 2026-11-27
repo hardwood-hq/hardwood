@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader.engine;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import dev.hardwood.InputFile;
@@ -98,14 +100,12 @@ final class RangeFetch {
     }
 
     /// `[offset, offset + length)` from those of `ranges` that hold part of it: a slice where one
-    /// holds it, a copy where it straddles two; `null` where a range holding part of it has not
-    /// arrived, or `ranges` do not reach its end.
+    /// holds it, a copy where it straddles several; `null` where a range holding part of it has
+    /// not arrived, or the ranges leave part of it uncovered. The ranges may come in any order
+    /// and overlap, as the ranges of structures a footer lays over each other do.
     static ByteBuffer read(List<RangeFetch> ranges, long offset, int length) {
         long end = offset + length;
-        if (ranges.isEmpty() || ranges.getLast().range.end() < end) {
-            return null;
-        }
-        ByteBuffer copy = null;
+        List<RangeFetch> parts = null;
         for (RangeFetch r : ranges) {
             long start = r.range.start();
             if (start >= end || r.range.end() <= offset) {
@@ -117,12 +117,39 @@ final class RangeFetch {
             if (start <= offset && r.range.end() >= end) {
                 return r.bytes.value().slice(Math.toIntExact(offset - start), length);
             }
-            if (copy == null) {
-                copy = ByteBuffer.allocate(length);
+            if (parts == null) {
+                parts = new ArrayList<>(2);
             }
-            long s = Math.max(offset, start);
+            parts.add(r);
+        }
+        return parts == null ? null : copy(parts, offset, length);
+    }
+
+    /// `[offset, offset + length)` copied from `parts`, each of which holds part of it; `null`
+    /// where they leave part of it uncovered, found before anything is allocated.
+    private static ByteBuffer copy(List<RangeFetch> parts, long offset, int length) {
+        parts.sort(Comparator.comparingLong(r -> r.range.start()));
+        long end = offset + length;
+        long covered = offset;
+        for (RangeFetch r : parts) {
+            if (r.range.start() > covered) {
+                return null;
+            }
+            covered = Math.max(covered, Math.min(end, r.range.end()));
+        }
+        if (covered < end) {
+            return null;
+        }
+        ByteBuffer copy = ByteBuffer.allocate(length);
+        covered = offset;
+        for (RangeFetch r : parts) {
             long e = Math.min(end, r.range.end());
-            copy.put(Math.toIntExact(s - offset), r.bytes.value(), Math.toIntExact(s - start), Math.toIntExact(e - s));
+            if (e > covered) {
+                long start = r.range.start();
+                copy.put(Math.toIntExact(covered - offset), r.bytes.value(), Math.toIntExact(covered - start),
+                        Math.toIntExact(e - covered));
+                covered = e;
+            }
         }
         return copy;
     }

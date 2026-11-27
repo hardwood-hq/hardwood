@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -69,6 +70,46 @@ class RangeFetchTest {
     }
 
     /// A sparse file larger than 2 GB, so mapped range by range, with [#MARKER] at [#OFFSET].
+    /// A read is answered from a range that holds it whatever the ranges' order, including one a
+    /// later range lies inside, as a footer laying one page-index structure over another makes.
+    @Test
+    void aReadHeldByARangeAnotherLiesInsideIsSliced() {
+        List<RangeFetch> ranges = List.of(arrived(237, 470), arrived(342, 357));
+
+        assertThat(RangeFetch.read(ranges, 237, 233)).isEqualTo(region(237, 470));
+    }
+
+    @Test
+    void aReadStraddlingTwoRangesIsCopied() {
+        List<RangeFetch> ranges = List.of(arrived(10, 20), arrived(0, 10));
+
+        assertThat(RangeFetch.read(ranges, 5, 10)).isEqualTo(region(5, 15));
+    }
+
+    /// A read across a gap between the ranges is not held by them, rather than copied with the
+    /// gap's bytes left as zeros.
+    @Test
+    void aReadAcrossAGapIsNotHeld() {
+        List<RangeFetch> ranges = List.of(arrived(0, 10), arrived(12, 20));
+
+        assertThat(RangeFetch.read(ranges, 5, 10)).isNull();
+    }
+
+    /// The bytes `[start, end)` of a file whose byte at `i` is `i`, as a range that has arrived.
+    private static RangeFetch arrived(long start, long end) {
+        RangeFetch range = new RangeFetch(new FileRange(start, Math.toIntExact(end - start), "test"));
+        range.output().arrived(region(start, end));
+        return range;
+    }
+
+    private static ByteBuffer region(long start, long end) {
+        byte[] bytes = new byte[Math.toIntExact(end - start)];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = (byte) (start + i);
+        }
+        return ByteBuffer.wrap(bytes);
+    }
+
     private static Path largeFile(Path tmpDir) throws IOException {
         Path path = tmpDir.resolve("large.bin");
         try (RandomAccessFile raf = new RandomAccessFile(path.toFile(), "rw")) {
