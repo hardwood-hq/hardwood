@@ -261,7 +261,7 @@ class PqVariantInvalidInputTest {
         // than being descended into unbounded recursion.
         PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 100));
         assertThatThrownBy(() -> descendArrayToLeaf(root))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant value nesting exceeds the maximum depth of 500")
                 ;
     }
@@ -278,7 +278,7 @@ class PqVariantInvalidInputTest {
         // One level beyond the limit is the boundary that must be rejected.
         PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 1));
         assertThatThrownBy(() -> descendArrayToLeaf(root))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant value nesting exceeds the maximum depth of 500");
     }
 
@@ -288,7 +288,7 @@ class PqVariantInvalidInputTest {
         int levels = VariantValueDecoder.MAX_NESTING_DEPTH + 100;
         PqVariant root = new PqVariantImpl(SINGLE_FIELD_METADATA, nestInObjects(levels));
         assertThatThrownBy(() -> descendObject(root.asObject(), levels))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant value nesting exceeds the maximum depth of 500")
                 ;
     }
@@ -311,7 +311,7 @@ class PqVariantInvalidInputTest {
         // is rejected on the iteration path too.
         PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 100));
         assertThatThrownBy(() -> descendArrayByIteration(root))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant value nesting exceeds the maximum depth of 500");
     }
 
