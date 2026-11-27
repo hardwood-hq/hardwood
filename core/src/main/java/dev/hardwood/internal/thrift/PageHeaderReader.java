@@ -103,8 +103,25 @@ public class PageHeaderReader {
         }
 
         ThriftCompactReader.requireFields(ThriftStruct.PAGE_HEADER, seen, REQUIRED_FIELDS);
+        requireSubHeader(type, dataPageHeader, dataPageHeaderV2, dictionaryPageHeader);
 
         return new PageHeader(type, uncompressedPageSize, compressedPageSize,
                 dataPageHeader, dataPageHeaderV2, dictionaryPageHeader, crc);
+    }
+
+    /// Refuses a data or dictionary page without the sub-header of its type, which holds the
+    /// page's value count and encoding; every reader of such a page takes it as present.
+    private static void requireSubHeader(PageType type, DataPageHeader dataPageHeader,
+                                         DataPageHeaderV2 dataPageHeaderV2,
+                                         DictionaryPageHeader dictionaryPageHeader) {
+        String missing = switch (type) {
+            case DATA_PAGE -> dataPageHeader == null ? "data_page_header" : null;
+            case DATA_PAGE_V2 -> dataPageHeaderV2 == null ? "data_page_header_v2" : null;
+            case DICTIONARY_PAGE -> dictionaryPageHeader == null ? "dictionary_page_header" : null;
+            default -> null;
+        };
+        if (missing != null) {
+            throw new ParquetReadException("PageHeader of type " + type + " is missing its " + missing);
+        }
     }
 }

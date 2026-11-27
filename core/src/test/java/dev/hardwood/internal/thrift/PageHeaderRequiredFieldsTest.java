@@ -11,6 +11,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.reader.ParquetReadException;
@@ -20,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// The required fields of the page header structs (`PageHeader`, `DataPageHeader`,
 /// `DataPageHeaderV2`, `DictionaryPageHeader`) fail where they arrive carrying the wrong wire
 /// type, and are named at the struct's STOP when they never arrive, rather than taking a
-/// default.
+/// default. A page header without the sub-header its type requires fails at its STOP too.
 class PageHeaderRequiredFieldsTest {
 
     private static ThriftCompactReader reader(byte[] bytes) {
@@ -49,6 +51,24 @@ class PageHeaderRequiredFieldsTest {
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("PageHeader is missing required fields: uncompressed_page_size, "
                         + "compressed_page_size");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "0, DATA_PAGE, data_page_header",
+            "2, DICTIONARY_PAGE, dictionary_page_header",
+            "3, DATA_PAGE_V2, data_page_header_v2"
+    })
+    void pageHeaderWithoutTheSubHeaderOfItsTypeRejected(int type, String typeName, String subHeader) {
+        // Without it the page has no value count or encoding
+        byte[] header = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(type)
+                .field(2, FieldType.I32).i32(10)
+                .field(3, FieldType.I32).i32(10)
+                .stop().build();
+        assertThatThrownBy(() -> PageHeaderReader.read(reader(header)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("PageHeader of type " + typeName + " is missing its " + subHeader);
     }
 
     @Test

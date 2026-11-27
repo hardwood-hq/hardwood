@@ -142,6 +142,19 @@ class PageHeaderWalkTest {
         writer.writeI32(compressedSize);
         writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
         writer.writeI32(compressedSize);
+        // data_page_header: no values, PLAIN, RLE levels
+        writer.writeFieldBegin(5, ThriftCompactConstants.FieldType.STRUCT);
+        short saved = writer.pushFieldIdContext();
+        writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(0);
+        writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(0);
+        writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(3);
+        writer.writeFieldBegin(4, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(3);
+        writer.writeFieldStop();
+        writer.popFieldIdContext(saved);
         writer.writeFieldBegin(99, ThriftCompactConstants.FieldType.BINARY);
         writer.writeBinary(new byte[padding]);
         writer.writeFieldStop();

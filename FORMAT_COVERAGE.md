@@ -167,10 +167,10 @@ All fields (xmin..mmax, ids 1–8) ✅.
 | 2 | uncompressed_page_size | ✅ | |
 | 3 | compressed_page_size | ✅ | |
 | 4 | crc | ✅ | CRC32 validation |
-| 5 | data_page_header | ✅ | |
+| 5 | data_page_header | ✅ | required on a `DATA_PAGE` |
 | 6 | index_page_header | ❌ | INDEX_PAGE unused in practice |
-| 7 | dictionary_page_header | ✅ | |
-| 8 | data_page_header_v2 | ✅ | written when `WriterConfig.dataPageVersion` is `V2` (#1820) |
+| 7 | dictionary_page_header | ✅ | required on a `DICTIONARY_PAGE` |
+| 8 | data_page_header_v2 | ✅ | required on a `DATA_PAGE_V2`; written when `WriterConfig.dataPageVersion` is `V2` (#1820) |
 
 ### DataPageHeader
 All fields (ids 1–5: num_values, encoding, definition_level_encoding,

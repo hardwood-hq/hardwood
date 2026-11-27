@@ -207,8 +207,8 @@ class ThriftFieldNamingTest {
     /// "missing" is never said of a field that arrived.
     @Test
     void saysNothingAboutAnOptionalFieldItSkipped() {
-        // A valid PageHeader whose optional crc declares binary, not i32.
-        byte[] bytes = { 0x15, 0x00, 0x15, 0x14, 0x15, 0x10, 0x18, 0x00, 0x00 };
+        // A valid INDEX_PAGE header, which needs no sub-header, whose optional crc declares binary, not i32.
+        byte[] bytes = { 0x15, 0x02, 0x15, 0x14, 0x15, 0x10, 0x18, 0x00, 0x00 };
 
         PageHeader header = PageHeaderReader.read(new ThriftCompactReader(ByteBuffer.wrap(bytes)));
         assertThat(header.crc()).isNull();
