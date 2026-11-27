@@ -142,6 +142,13 @@
         <artifactId>duckdb_jdbc</artifactId>
         <version>2.0.1.0</version>
       </dependency>
+
+      <!-- Arrow C++ Parquet oracle (JNI) used by hardwood-arrow tests -->
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-dataset</artifactId>
+        <version>20.0.0</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 </project>

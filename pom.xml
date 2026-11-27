@@ -57,6 +57,7 @@
     <module>s3</module>
     <module>aws-auth</module>
     <module>avro</module>
+    <module>arrow</module>
     <module>cli</module>
     <module>parquet-java-compat</module>
     <module>integration-test</module>
