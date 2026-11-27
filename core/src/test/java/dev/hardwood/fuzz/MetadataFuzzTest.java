@@ -20,14 +20,11 @@ import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetReadException;
-import dev.hardwood.schema.FileSchema;
 
 /// Parses arbitrary bytes as each Thrift struct a file holds. A parse returns, or fails with
 /// [ParquetReadException] or, for a union variant this version does not implement,
 /// [UnsupportedOperationException]; any other throwable is a finding. The footer target also
-/// accepts the two exceptions a footer's parse raises by design: the internal one an encrypted
-/// footer raises, and the [IllegalArgumentException] of a schema the footer parsed that
-/// [FileSchema] does not accept, whose checks it shares with the schema builder. A read restates
+/// accepts the internal exception an encrypted footer raises by design. A read restates
 /// any runtime exception of the parse as a [ParquetReadException]; these targets call the parse
 /// directly, so an exception that restatement would hide is a finding here.
 class MetadataFuzzTest {
@@ -45,7 +42,7 @@ class MetadataFuzzTest {
         try {
             ParquetMetadataReader.schemaOf(metaData);
         }
-        catch (ParquetReadException | IllegalArgumentException e) {
+        catch (ParquetReadException e) {
             // a schema the reader does not accept
         }
     }

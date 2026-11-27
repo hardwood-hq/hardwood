@@ -144,13 +144,11 @@ public final class ExceptionContext {
 
     /// What a runtime failure raised while interpreting file bytes means.
     ///
-    /// The decoders raise a [ParquetReadException] where they find the bytes wrong; a
-    /// check one of them lacks lets the bytes surface as whatever the JDK raises, an index past
+    /// The reader raises a [ParquetReadException] where it finds the bytes wrong; a
+    /// check it lacks lets the bytes surface as whatever the JDK raises, an index past
     /// an array as an [ArrayIndexOutOfBoundsException], an absent field as a
-    /// [NullPointerException]; a malformed footer value or Variant buffer reaches
-    /// the boundaries that call this as whatever its guard raised. Every one of
-    /// them is the file being wrong, and every one of them reads to a user as a
-    /// defect in this library. They become a [ParquetReadException] keeping the
+    /// [NullPointerException]. Every one of them is the file being wrong, and every one of
+    /// them reads to a user as a defect in this library. They become a [ParquetReadException] keeping the
     /// original as their cause.
     ///
     /// A [ParquetReadException] subclass under `dev.hardwood.internal` — a truncated Thrift

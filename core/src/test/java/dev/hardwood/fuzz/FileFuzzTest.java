@@ -18,6 +18,7 @@ import com.code_intelligence.jazzer.junit.FuzzTest;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
@@ -42,7 +43,9 @@ import dev.hardwood.schema.FileSchema;
 /// dictionaries and bloom filters. A read completes, or fails with [ParquetReadException] or, for
 /// a file Hardwood does not read, [UnsupportedOperationException]; a value conversion may also
 /// fail with [DateTimeException], for a stored value outside the range of its Java type. Any
-/// other throwable is a finding.
+/// other throwable is a finding, and so is a [ParquetReadException] a read made of a JDK runtime
+/// exception ([ExceptionContext#asReadFailure]): it is a check the reader lacks, or a defect of
+/// its own.
 class FileFuzzTest {
 
     /// Columns a filtered read is made on, from the first
@@ -66,9 +69,39 @@ class FileFuzzTest {
                 }
             }
         }
-        catch (ParquetReadException | UnsupportedOperationException e) {
-            // malformed, or a file Hardwood does not read
+        catch (ParquetReadException e) {
+            RuntimeException restated = restatedJdkException(e);
+            if (restated != null) {
+                // thrown as raised, so that the fuzzer tells findings apart by where they arose
+                throw restated;
+            }
+            // malformed
         }
+        catch (UnsupportedOperationException e) {
+            // a file Hardwood does not read
+        }
+    }
+
+    /// The runtime exception a read restated as a [ParquetReadException] in `e`'s causes, `e`
+    /// included: one [ExceptionContext#asReadFailure] made of an exception that no check of the
+    /// reader raised as a [ParquetReadException]; `null` where there is none. A reader that wraps a
+    /// library's exception in a [ParquetReadException] of its own on purpose, as a decompressor
+    /// does, raises it elsewhere.
+    private static RuntimeException restatedJdkException(ParquetReadException e) {
+        for (Throwable failure = e; failure.getCause() != null; failure = failure.getCause()) {
+            if (failure instanceof ParquetReadException && madeByAsReadFailure(failure)
+                    && failure.getCause() instanceof RuntimeException cause
+                    && !(cause instanceof ParquetReadException)) {
+                return cause;
+            }
+        }
+        return null;
+    }
+
+    private static boolean madeByAsReadFailure(Throwable failure) {
+        StackTraceElement[] trace = failure.getStackTrace();
+        return trace.length > 0 && trace[0].getClassName().equals(ExceptionContext.class.getName())
+                && trace[0].getMethodName().equals("asReadFailure");
     }
 
     private static void readColumns(ParquetFileReader reader) throws IOException {
