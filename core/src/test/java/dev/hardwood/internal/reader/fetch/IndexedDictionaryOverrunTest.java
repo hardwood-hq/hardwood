@@ -49,15 +49,16 @@ class IndexedDictionaryOverrunTest {
         assertThat(chunk.offsetIndexOffset()).isNotNull();
         int dictionaryStart = Math.toIntExact(chunk.metaData().dictionaryPageOffset());
         int region = Math.toIntExact(chunk.metaData().dataPageOffset() - dictionaryStart);
-        claimOneMoreBodyByte(file, dictionaryStart);
+        int headerLength = claimOneMoreBodyByte(file, dictionaryStart);
+        int body = region - headerLength;
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
                 ColumnReader column = reader.columnReader("s")) {
             assertThatThrownBy(column::nextBatch)
                     .isExactlyInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>: row group 0, column 's', dictionary page] Malformed Parquet"
-                            + " metadata: the dictionary page header declares " + (region + 1)
-                            + " bytes but only " + region + " bytes lie before the first data page");
+                    .hasMessage("[<memory>: row group 0, column 's', dictionary page] Page header declares a body of "
+                            + (body + 1) + " bytes, but its page holds " + body + " bytes after its " + headerLength
+                            + "-byte header");
         }
     }
 
@@ -78,8 +79,8 @@ class IndexedDictionaryOverrunTest {
     }
 
     /// Rewrites the dictionary page header at `offset` in place to claim one more body byte than
-    /// the page has.
-    private static void claimOneMoreBodyByte(byte[] file, int offset) {
+    /// the page has; returns the header's length.
+    private static int claimOneMoreBodyByte(byte[] file, int offset) {
         ThriftCompactReader reader = new ThriftCompactReader(ByteBuffer.wrap(file, offset, file.length - offset).slice());
         PageHeader header = PageHeaderReader.read(reader);
         int headerLength = reader.getBytesRead();
@@ -89,5 +90,6 @@ class IndexedDictionaryOverrunTest {
         byte[] rewritten = writer.toByteArray();
         assertThat(rewritten).hasSize(headerLength);
         System.arraycopy(rewritten, 0, file, offset, headerLength);
+        return headerLength;
     }
 }
