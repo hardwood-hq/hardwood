@@ -218,7 +218,8 @@ public class Utils {
     private static final List<String> TEST_DIRECTORIES = List.of(
             "data",
             "bad_data",
-            "shredded_variant");
+            "shredded_variant",
+            "data/geospatial");
 
     /// Generates `data/good_c.parquet` under the given cloned repo if not already present.
     /// The file is a valid single-column (`required int32 c`) file sharing its schema with

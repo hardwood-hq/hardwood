@@ -125,6 +125,17 @@ print("  - Encoding: PLAIN (use_dictionary=False)")
 print("  - Compression: SNAPPY (compression='snappy')")
 print("  - Data: id=[1,2,3], value=[100,200,300] - NO NULLS")
 
+# BROTLI compressed file with the same data: a Brotli stream another writer produced
+pq.write_table(simple_table, 'core/src/test/resources/plain_brotli.parquet',
+               use_dictionary=False,
+               compression='brotli',
+               data_page_version='1.0')
+
+print("\nGenerated plain_brotli.parquet:")
+print("  - Encoding: PLAIN (use_dictionary=False)")
+print("  - Compression: BROTLI (compression='brotli')")
+print("  - Data: id=[1,2,3], value=[100,200,300] - NO NULLS")
+
 # hardwood-hq/hardwood#594: pins the ColumnReader batch-array non-aliasing
 # contract. Four rows of one flat column per accessor family plus a list<int32>
 # column. The null pattern (present / null / null / present) is chosen so that

@@ -58,6 +58,17 @@ The `hardwood-parquet-java-compat` module is an API-compatibility shim, not a be
 filters routed through it evaluate under Hardwood's semantics. See
 [parquet-java Compatibility](../how-to/compat.md).
 
+## Format version
+
+Hardwood tracks the latest release of the [Parquet format specification](https://github.com/apache/parquet-format).
+Each specification release adds features that implementations adopt one at a time, so Hardwood states its
+support per feature rather than as a single format version. The Parquet project's
+[implementation status matrix](https://parquet.apache.org/docs/file-format/implementationstatus/) records, for
+each feature, whether Hardwood reads and writes it, next to the other Parquet implementations; its
+[Features and Versions](https://parquet.apache.org/docs/file-format/versions/) page names the release that
+introduced each feature. [Format Support](../reference/format-support.md) lists the same support in Hardwood's
+terms, with the issue tracking each gap.
+
 ## Further reading
 
 - [parquet-java Compatibility](../how-to/compat.md) — the drop-in API surface and its constraints.

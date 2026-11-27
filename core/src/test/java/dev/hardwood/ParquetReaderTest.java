@@ -11,6 +11,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FieldPath;
@@ -156,9 +158,11 @@ class ParquetReaderTest {
         }
     }
 
-    @Test
-    void testReadSnappyCompressedParquet() throws Exception {
-        Path parquetFile = Paths.get("src/test/resources/plain_snappy.parquet");
+    /// Files PyArrow wrote with the codec, so each is decompressed as another writer compressed it.
+    @ParameterizedTest
+    @CsvSource({ "plain_snappy.parquet, SNAPPY", "plain_brotli.parquet, BROTLI" })
+    void testReadCompressedParquet(String fileName, CompressionCodec codec) throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/" + fileName);
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Verify file metadata
@@ -173,9 +177,9 @@ class ParquetReaderTest {
             assertThat(schema).isNotNull();
             assertThat(schema.getColumnCount()).isEqualTo(2);
 
-            // Read and verify 'id' column - should be SNAPPY compressed
+            // Read and verify 'id' column
             assertThat(metadata.rowGroups().get(0).columns().get(0).metaData().codec())
-                    .isEqualTo(CompressionCodec.SNAPPY);
+                    .isEqualTo(codec);
 
             try (ColumnReader idReader = reader.columnReader("id")) {
                 assertThat(idReader.nextBatch()).isTrue();
@@ -189,9 +193,9 @@ class ParquetReaderTest {
                 assertThat(idReader.nextBatch()).isFalse();
             }
 
-            // Read and verify 'value' column - should be SNAPPY compressed
+            // Read and verify 'value' column
             assertThat(metadata.rowGroups().get(0).columns().get(1).metaData().codec())
-                    .isEqualTo(CompressionCodec.SNAPPY);
+                    .isEqualTo(codec);
 
             try (ColumnReader valueReader = reader.columnReader("value")) {
                 assertThat(valueReader.nextBatch()).isTrue();

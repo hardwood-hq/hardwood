@@ -485,16 +485,40 @@ class WriterLayoutTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
             ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
-            int offset = Math.toIntExact(meta.dataPageOffset());
-            ThriftCompactReader thrift = new ThriftCompactReader(ByteBuffer.wrap(bytes), offset);
-            PageHeader header = PageHeaderReader.read(thrift);
-            int bodyStart = offset + thrift.getBytesRead();
-
-            assertThat(header.crc()).as("page crc must be written").isNotNull();
-            CRC32 crc = new CRC32();
-            crc.update(bytes, bodyStart, header.compressedPageSize());
-            assertThat(header.crc().intValue()).isEqualTo((int) crc.getValue());
+            assertPageCrcMatchesBody(bytes, meta.dataPageOffset(), PageType.DATA_PAGE);
         }
+    }
+
+    @Test
+    void writesCorrectDictionaryPageCrc() throws Exception {
+        int[] values = new int[1_000];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i % 3;
+        }
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
+        }
+        byte[] bytes = InMemoryFiles.toByteArray(out);
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
+            assertThat(meta.dictionaryPageOffset()).as("the chunk must be dictionary-encoded").isNotNull();
+            assertPageCrcMatchesBody(bytes, meta.dictionaryPageOffset(), PageType.DICTIONARY_PAGE);
+        }
+    }
+
+    private static void assertPageCrcMatchesBody(byte[] bytes, long pageOffset, PageType expectedType) {
+        int offset = Math.toIntExact(pageOffset);
+        ThriftCompactReader thrift = new ThriftCompactReader(ByteBuffer.wrap(bytes), offset);
+        PageHeader header = PageHeaderReader.read(thrift);
+        int bodyStart = offset + thrift.getBytesRead();
+
+        assertThat(header.type()).isEqualTo(expectedType);
+        assertThat(header.crc()).as("page crc must be written").isNotNull();
+        CRC32 crc = new CRC32();
+        crc.update(bytes, bodyStart, header.compressedPageSize());
+        assertThat(header.crc().intValue()).isEqualTo((int) crc.getValue());
     }
 
     @Test
