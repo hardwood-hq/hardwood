@@ -319,10 +319,10 @@ public final class DictionaryParser {
         // being wrong — so it must not be caught and re-typed as one.
         Decompressor decompressor = context.decompressorFactory().getDecompressor(codec);
         int compressedSize = compressedData.remaining();
+        byte[] data;
         try {
-            byte[] data = decompressor.decompress(compressedData, uncompressedSize,
+            data = decompressor.decompress(compressedData, uncompressedSize,
                     PageDecoder.transientBytes(buffers, uncompressedSize), buffers);
-            return Dictionary.parse(data, uncompressedSize, numValues, column.type(), column.typeLength());
         }
         catch (UnsupportedOperationException e) {
             // A decompressor that exists but will not run here — libdeflate below Java 22 —
@@ -330,11 +330,26 @@ public final class DictionaryParser {
             throw e;
         }
         catch (RuntimeException e) {
-            throw new ParquetReadException("Failed to parse dictionary (type=" + column.type()
-                    + ", numValues=" + numValues
-                    + ", uncompressedSize=" + uncompressedSize
-                    + ", compressedSize=" + compressedSize
-                    + ", codec=" + codec + ")", e);
+            // a codec library's failure, which says the stored bytes are not of the codec
+            throw parseFailure(column, numValues, uncompressedSize, compressedSize, codec, e);
         }
+        try {
+            return Dictionary.parse(data, uncompressedSize, numValues, column.type(), column.typeLength());
+        }
+        catch (ParquetReadException e) {
+            // the parse's own refusal; any other exception of it is a check it lacks, and is not
+            // restated here as the file being wrong
+            throw parseFailure(column, numValues, uncompressedSize, compressedSize, codec, e);
+        }
+    }
+
+    private static ParquetReadException parseFailure(ColumnSchema column, int numValues, int uncompressedSize,
+                                                     int compressedSize, CompressionCodec codec,
+                                                     RuntimeException cause) {
+        return new ParquetReadException("Failed to parse dictionary (type=" + column.type()
+                + ", numValues=" + numValues
+                + ", uncompressedSize=" + uncompressedSize
+                + ", compressedSize=" + compressedSize
+                + ", codec=" + codec + ")", cause);
     }
 }
