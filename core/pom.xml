@@ -270,6 +270,9 @@
       The fuzz targets replay their seeds and checked-in findings in every build. Activated on
       the absence of `test`, like the profiles below: a `-Dtest` selection runs in the default
       execution, which a second execution would repeat.
+
+      The targets share one JVM: Jazzer scans the class path and instruments the classes it loads
+      once per JVM, which costs seconds, while the replay itself takes a fraction of one.
     -->
     <profile>
       <id>fuzz-regression</id>
@@ -295,6 +298,7 @@
                     <include>**/*FuzzTest.java</include>
                   </includes>
                   <excludes combine.self="override" />
+                  <forkCount>1</forkCount>
                   <reportsDirectory>${project.build.directory}/surefire-reports-fuzz</reportsDirectory>
                 </configuration>
               </execution>
