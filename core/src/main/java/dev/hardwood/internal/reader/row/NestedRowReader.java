@@ -145,6 +145,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     ///
     /// @param read the prepared read, which this starts
     /// @param schema the file schema
+    /// @param layers the layers of each of `schema`'s columns ([NestedLevelComputer#computeLayers])
     /// @param projection the exposed and decoded columns
     /// @param context the hardwood context
     /// @param fixedListFastPathEnabled whether the fixed-size-list read fast path may engage
@@ -160,6 +161,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// @return a [NestedRowReader]
     public static RowReader create(PreparedRead read,
                             FileSchema schema,
+                            NestedLevelComputer.Layers[] layers,
                             ReadProjection projection,
                             HardwoodContextImpl context,
                             boolean fixedListFastPathEnabled,
@@ -203,7 +205,6 @@ public final class NestedRowReader implements FileAwareRowReader {
         // NestedBatch.filterAlwaysMatches (see #1107).
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
-        NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
         List<NestedLevelComputer.Layers> columnLayers = new ArrayList<>(projectedColumnCount);
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = decoded.toOriginalIndex(i);

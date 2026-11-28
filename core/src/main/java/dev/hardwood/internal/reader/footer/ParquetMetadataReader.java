@@ -25,6 +25,7 @@ import dev.hardwood.internal.io.ReadRanges;
 import dev.hardwood.internal.reader.fetch.TailedInputFile;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.UnreadableAnnotations;
+import dev.hardwood.internal.schema.UnreadableGroups;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -108,24 +109,34 @@ public final class ParquetMetadataReader {
     private static FileFooter parse(InputFile inputFile, FooterBytes bytes) {
         try {
             ReadFooter footer = parseBody(inputFile, bytes.body());
-            return new FileFooter(footer, schemaOf(footer.metaData()), bytes.footerLength(), bytes.fileSize());
+            UnreadableGroups.Collector unreadable = new UnreadableGroups.Collector();
+            FileSchema schema = schemaOf(footer.metaData(), unreadable);
+            return new FileFooter(footer, schema, unreadable.build(), bytes.footerLength(), bytes.fileSize());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(inputFile.name(), ExceptionContext.asReadFailure(e));
         }
     }
 
+    /// As [#schemaOf(FileMetaData, UnreadableGroups.Collector)], for a caller that does not read
+    /// the file and so has no use for its unreadable groups.
+    public static FileSchema schemaOf(FileMetaData metaData) {
+        return schemaOf(metaData, new UnreadableGroups.Collector());
+    }
+
     /// The schema the reader reads a file with: the footer's schema elements, less the
     /// annotations [BareRepeatedGroups] and [UnreadableAnnotations] drop. Every footer the reader
     /// uses passes through here, whether read by the reader or supplied by a [MetadataSource].
     ///
+    /// @param unreadable receives the groups of the schema no read may touch, found in the same walk
+    ///
     /// @throws ParquetReadException if the schema model refuses the elements, which for a schema
     ///         a caller builds is an [IllegalArgumentException] and for one a footer holds a
     ///         malformed footer
-    public static FileSchema schemaOf(FileMetaData metaData) {
+    public static FileSchema schemaOf(FileMetaData metaData, UnreadableGroups.Collector unreadable) {
         try {
             return FileSchema.fromSchemaElements(
-                    UnreadableAnnotations.drop(BareRepeatedGroups.dropAnnotations(metaData.schema())));
+                    UnreadableAnnotations.drop(BareRepeatedGroups.dropAnnotations(metaData.schema(), unreadable)));
         }
         catch (IllegalArgumentException e) {
             throw new ParquetReadException("FileMetaData.schema \u2014 " + e.getMessage(), e);

@@ -9,18 +9,15 @@ package dev.hardwood.internal.schema;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.Deque;
 import java.util.List;
 
-import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.SchemaNode;
 
 /// Drops the annotation of a repeated group that stands outside a `LIST` or `MAP` group, before
 /// a footer's schema elements become a [FileSchema].
@@ -37,7 +34,7 @@ import dev.hardwood.schema.SchemaNode;
 ///
 /// `VARIANT` is the exception. The rule covers it, making the field a list of variants, which
 /// the reader does not serve. The annotation stays in the schema, so the file opens and reports
-/// the group as the footer states it, and [#refuseTouchedVariants] refuses a read that touches
+/// the group as the footer states it, and [UnreadableGroups] refuses a read that touches
 /// one of the group's columns rather than reading it as something else.
 ///
 /// Whether a group is inside a `LIST` or `MAP` group follows [FileSchema#fromSchemaElements]:
@@ -60,13 +57,26 @@ public final class BareRepeatedGroups {
     ///
     /// @param elements a footer's schema elements, root first
     public static List<SchemaElement> dropAnnotations(List<SchemaElement> elements) {
+        return dropAnnotations(elements, new UnreadableGroups.Collector());
+    }
+
+    /// As [#dropAnnotations(List)], reporting to `unreadable`, in the same walk, each group whose
+    /// columns the reader cannot serve: a repeated `VARIANT` group outside a `LIST` or `MAP`
+    /// group, and a `VARIANT` group of a specification version other than
+    /// [VariantSpecVersions#SUPPORTED].
+    ///
+    /// @param elements a footer's schema elements, root first
+    /// @param unreadable receives the unreadable groups, with the leaf ordinals below each
+    public static List<SchemaElement> dropAnnotations(List<SchemaElement> elements,
+                                                      UnreadableGroups.Collector unreadable) {
         if (elements.isEmpty() || elements.get(0).numChildren() == null) {
             return elements;
         }
         List<SchemaElement> result = new ArrayList<>(elements);
         List<String> dropped = new ArrayList<>();
         int[] cursor = { 1 };
-        walkChildren(result, cursor, elements.get(0).numChildren(), false, new ArrayDeque<>(), dropped);
+        walkChildren(result, cursor, elements.get(0).numChildren(), false, new ArrayDeque<>(), dropped,
+                unreadable);
         if (dropped.isEmpty()) {
             return elements;
         }
@@ -78,21 +88,26 @@ public final class BareRepeatedGroups {
     }
 
     private static void walkChildren(List<SchemaElement> elements, int[] cursor, int numChildren,
-                                      boolean parentIsListOrMap, Deque<String> path, List<String> dropped) {
+                                      boolean parentIsListOrMap, Deque<String> path, List<String> dropped,
+                                      UnreadableGroups.Collector unreadable) {
         for (int i = 0; i < numChildren; i++) {
             int index = cursor[0]++;
             SchemaElement element = elements.get(index);
             if (element.isPrimitive()) {
+                unreadable.leaf();
                 continue;
             }
             path.addLast(element.name());
-            if (!parentIsListOrMap && element.repetitionType() == RepetitionType.REPEATED
-                    && isAnnotated(element) && !(element.logicalType() instanceof LogicalType.VariantType)) {
+            boolean bare = !parentIsListOrMap && element.repetitionType() == RepetitionType.REPEATED;
+            if (bare && isAnnotated(element) && !(element.logicalType() instanceof LogicalType.VariantType)) {
                 element = dropAnnotation(element, String.join(".", path), dropped);
                 elements.set(index, element);
             }
+            UnreadableGroups.Collector.Opened opened = unreadable.open(path, bare,
+                    element.logicalType());
             int groupChildren = element.numChildren() != null ? element.numChildren() : 0;
-            walkChildren(elements, cursor, groupChildren, isListOrMap(elements, index), path, dropped);
+            walkChildren(elements, cursor, groupChildren, isListOrMap(elements, index), path, dropped, unreadable);
+            unreadable.close(opened);
             path.removeLast();
         }
     }
@@ -102,55 +117,6 @@ public final class BareRepeatedGroups {
         dropped.add(path + " (" + annotation + ")");
         return new SchemaElement(group.name(), group.type(), group.typeLength(), group.repetitionType(),
                 group.numChildren(), null, group.scale(), group.precision(), group.fieldId(), null);
-    }
-
-    /// Refuses a read that touches a column below a repeated `VARIANT` group outside a `LIST` or
-    /// `MAP` group, a list of variants the reader does not serve.
-    ///
-    /// @param fileName the file `schema` was read from, for the message; may be `null`
-    /// @param schema the file's schema
-    /// @param touchedColumns the leaf ordinals, in `schema`, the read projects or filters on
-    /// @throws UnsupportedOperationException if a touched column lies below such a group
-    public static void refuseTouchedVariants(String fileName, FileSchema schema, BitSet touchedColumns) {
-        refuseTouchedVariants(fileName, schema.getRootNode().children(), false, new ArrayDeque<>(),
-                touchedColumns);
-    }
-
-    private static void refuseTouchedVariants(String fileName, List<SchemaNode> children, boolean parentIsListOrMap,
-                                              Deque<String> path, BitSet touchedColumns) {
-        for (SchemaNode child : children) {
-            if (!(child instanceof SchemaNode.GroupNode group)) {
-                continue;
-            }
-            path.addLast(group.name());
-            if (!parentIsListOrMap && group.repetitionType() == RepetitionType.REPEATED && group.isVariant()) {
-                if (touchesLeaf(group, touchedColumns)) {
-                    throw new UnsupportedOperationException(ExceptionContext.filePrefix(fileName)
-                            + "Repeated group '" + String.join(".", path) + "' is annotated " + group.logicalType()
-                            + " outside a LIST or MAP group; a list of variants in this form is not supported");
-                }
-            }
-            else {
-                refuseTouchedVariants(fileName, group.children(), group.isList() || group.isMap(), path,
-                        touchedColumns);
-            }
-            path.removeLast();
-        }
-    }
-
-    /// Whether a leaf at or below `node` is among `touchedColumns`.
-    static boolean touchesLeaf(SchemaNode node, BitSet touchedColumns) {
-        return switch (node) {
-            case SchemaNode.PrimitiveNode leaf -> touchedColumns.get(leaf.columnIndex());
-            case SchemaNode.GroupNode group -> {
-                for (SchemaNode child : group.children()) {
-                    if (touchesLeaf(child, touchedColumns)) {
-                        yield true;
-                    }
-                }
-                yield false;
-            }
-        };
     }
 
     private static boolean isAnnotated(SchemaElement element) {

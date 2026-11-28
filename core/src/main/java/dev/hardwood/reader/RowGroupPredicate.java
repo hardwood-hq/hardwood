@@ -48,6 +48,9 @@ public sealed interface RowGroupPredicate
     ///
     /// `endExclusive < startInclusive` is treated as an empty range. This matches callers
     /// that pass `splitStart + splitLength` and tolerate long overflow on tail splits.
+    ///
+    /// A row group with a column chunk stored in another file has no midpoint in this file, so a
+    /// read filtered by a byte range fails on it with `UnsupportedOperationException`.
     static RowGroupPredicate byteRange(long startInclusive, long endExclusive) {
         return new ByteRange(startInclusive, endExclusive);
     }

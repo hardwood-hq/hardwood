@@ -21,6 +21,8 @@ public final class StringToIntMap {
     private final String[] keys;
     private final int[] values;
     private final int mask;
+    /// `32 - log2(capacity)`: [#slot] keeps the top bits of the mixed hash.
+    private final int shift;
 
     /// Create a map with the given capacity (will be rounded up to next power of 2).
     public StringToIntMap(int expectedSize) {
@@ -29,6 +31,7 @@ public final class StringToIntMap {
         this.keys = new String[capacity];
         this.values = new int[capacity];
         this.mask = capacity - 1;
+        this.shift = Integer.numberOfLeadingZeros(capacity) + 1;
 
         // Initialize values to EMPTY
         for (int i = 0; i < capacity; i++) {
@@ -38,7 +41,7 @@ public final class StringToIntMap {
 
     /// Put a key-value pair into the map.
     public void put(String key, int value) {
-        int index = key.hashCode() & mask;
+        int index = slot(key);
 
         while (keys[index] != null) {
             if (keys[index].equals(key)) {
@@ -54,7 +57,7 @@ public final class StringToIntMap {
 
     /// Get the value for a key, or EMPTY (-1) if not found.
     public int get(String key) {
-        int index = key.hashCode() & mask;
+        int index = slot(key);
 
         while (keys[index] != null) {
             if (keys[index].equals(key)) {
@@ -80,6 +83,13 @@ public final class StringToIntMap {
     /// Check if the map contains the given key.
     public boolean containsKey(String key) {
         return get(key) != EMPTY;
+    }
+
+    /// The first slot probed for `key`. Names that differ in a trailing counter (`c1`, `c2`, …)
+    /// have `String` hashes a small multiple apart, which masking the low bits packs into long
+    /// runs of occupied slots; a Fibonacci multiply spreads them over the whole table.
+    private int slot(String key) {
+        return (key.hashCode() * 0x9E3779B9) >>> shift;
     }
 
     /// Round up to the next power of 2.

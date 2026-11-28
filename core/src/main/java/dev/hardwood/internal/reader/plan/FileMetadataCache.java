@@ -25,6 +25,7 @@ import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.reader.footer.FileFooter;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader;
 import dev.hardwood.internal.reader.footer.ParquetMetadataReader.FooterRead;
+import dev.hardwood.internal.schema.UnreadableGroups;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -431,12 +432,14 @@ public final class FileMetadataCache {
     ///
     /// @param boundsReadability which of the file's columns have `min` / `max` bounds
     ///        in an order this reader can read
+    /// @param unreadableGroups the groups of the file's schema whose columns no read may touch
     public record PreparedFile(
             InputFile inputFile,
             FileMetaData metaData,
             FileSchema schema,
             List<RowGroup> rowGroups,
-            BoundsReadability boundsReadability
+            BoundsReadability boundsReadability,
+            UnreadableGroups unreadableGroups
     ) {
         public PreparedFile {
             Objects.requireNonNull(inputFile, "inputFile");
@@ -444,12 +447,13 @@ public final class FileMetadataCache {
             Objects.requireNonNull(schema, "schema");
             Objects.requireNonNull(rowGroups, "rowGroups");
             Objects.requireNonNull(boundsReadability, "boundsReadability");
+            Objects.requireNonNull(unreadableGroups, "unreadableGroups");
         }
 
         static PreparedFile of(InputFile inputFile, FileFooter footer) {
             FileMetaData metaData = footer.metaData();
             return new PreparedFile(inputFile, metaData, footer.schema(), metaData.rowGroups(),
-                    BoundsReadability.of(footer.schema(), footer.readFooter()));
+                    BoundsReadability.of(footer.schema(), footer.readFooter()), footer.unreadableGroups());
         }
     }
 }

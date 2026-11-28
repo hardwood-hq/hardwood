@@ -8,7 +8,6 @@
 package dev.hardwood.avro.internal;
 
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.List;
 
 import org.apache.avro.LogicalTypes;
@@ -17,7 +16,6 @@ import org.apache.avro.Schema;
 import dev.hardwood.avro.internal.AvroPlanNode.Kind;
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.AnnotationKind;
-import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
@@ -91,24 +89,7 @@ public final class AvroSchemaConverter {
 
     private AvroPlanNode convertRoot() {
         rejectCanonicalRootConflict();
-        refuseProjectedRepeatedVariants();
         return convertGroup(fileSchema.getRootNode(), "");
-    }
-
-    /// Refuse a projection reaching into a bare repeated `VARIANT` group, a list of
-    /// variants the row reader does not serve, with the refusal the row reader raises.
-    /// Conversion runs before the row reader is built, so it meets the group first.
-    private void refuseProjectedRepeatedVariants() {
-        BitSet projectedColumns = new BitSet(fileSchema.getColumnCount());
-        if (projected == null) {
-            projectedColumns.set(0, fileSchema.getColumnCount());
-        }
-        else {
-            for (int i = 0; i < projected.getProjectedColumnCount(); i++) {
-                projectedColumns.set(projected.toOriginalIndex(i));
-            }
-        }
-        BareRepeatedGroups.refuseTouchedVariants(null, fileSchema, projectedColumns);
     }
 
     /// Convert a struct group, the schema root or a bare repeated group's element to
@@ -140,8 +121,9 @@ public final class AvroSchemaConverter {
     /// primitive becomes an array of its type. A repeated group that reads as a
     /// legacy `MAP` (its only child a repeated `MAP_KEY_VALUE` group) becomes an array
     /// of that map, and any other repeated group an array of its record: the reader
-    /// drops any other annotation such a group carries when the file is opened, and
-    /// [#refuseProjectedRepeatedVariants] has refused a `VARIANT` one. The element is
+    /// drops any other annotation such a group carries when the file is opened, and a
+    /// `VARIANT` one, a list of variants, is refused by the core row reader a projection
+    /// reaching it builds. The element is
     /// never unwrapped the way a `LIST` group's single-field repeated child can be.
     private AvroPlanNode convertBareRepeated(SchemaNode node, String path) {
         AvroPlanNode element = switch (node) {

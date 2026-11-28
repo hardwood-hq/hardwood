@@ -321,7 +321,7 @@ final class FooterReader {
     /// filter in them.
     static FileColumnOrdinals ordinals(SchemaCompatibility compatibility, ResolvedPredicate filter,
                                        FileMetadataCache.PreparedFile file) {
-        return FileColumnOrdinals.of(compatibility.validateSchemaCompatibility(file.inputFile(), file.schema()), filter,
+        return FileColumnOrdinals.of(compatibility.validateSchemaCompatibility(file), filter,
                 file.boundsReadability());
     }
 

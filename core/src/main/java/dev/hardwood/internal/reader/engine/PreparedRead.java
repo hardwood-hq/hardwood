@@ -107,11 +107,12 @@ public final class PreparedRead {
         context.requireOffPool();
         List<RowGroup> first = rowGroups != null ? rowGroups : files.getFileMetaData(0).rowGroups();
         InputFile file = files.preparedInputFile(0);
-        SchemaCompatibility.validateFirstFile(file, schema, projection.decoded(), first);
+        FileMetadataCache.PreparedFile firstFile = files.getFile(0);
+        SchemaCompatibility.validateFirstFile(file, schema, firstFile.unreadableGroups(), projection.decoded(), first);
         RowGroupPruning pruning = new RowGroupPruning(context, filter, metadataFiltering);
         SchemaCompatibility compatibility = new SchemaCompatibility(schema, projection.decoded(), filter);
         FileColumnOrdinals firstOrdinals = FileColumnOrdinals.identity(schema.getColumnCount(), filter,
-                files.getFile(0).boundsReadability());
+                firstFile.boundsReadability());
         RowGroupPruning.FilteredRowGroups firstKept = pruning.filterRowGroups(first, file, firstOrdinals);
         // the row group the skip lands in, past the row groups it drops whole, and the rows of it
         // before the skip's end, reading the footers of the files it reaches on the caller's thread

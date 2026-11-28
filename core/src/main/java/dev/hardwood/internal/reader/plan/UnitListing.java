@@ -38,31 +38,42 @@ public record UnitListing(InputFile file, int fileIndex, FileSchema fileSchema, 
                    RowGroupFilterEvaluator.LeafDecisions leafDecisions, BitSet bloomFilterColumns,
                    ColumnChunk[] chunks, long limit) {
 
-    /// Fails unless every chunk of the row group stores its data in the file being read. It
-    /// precedes every read the row group drives, whose offsets would address the other file for
-    /// such a chunk.
+    /// Fails unless each of [#chunks] stores its data in the file being read. It precedes every
+    /// read the row group drives, whose offsets would address the other file for such a chunk; a
+    /// chunk of a column the read does not decode is never read and may lie anywhere.
     ///
-    /// @throws UnsupportedOperationException if any chunk names another file
+    /// @throws UnsupportedOperationException if a decoded column's chunk names another file
     public void requireSameFile() {
-        List<ColumnChunk> columns = metaData.columns();
-        for (int i = 0; i < columns.size(); i++) {
+        for (ColumnChunk chunk : chunks) {
             try {
-                columns.get(i).requireSameFile();
+                chunk.requireSameFile();
             }
             catch (UnsupportedOperationException e) {
                 throw new UnsupportedOperationException(ExceptionContext.filePrefix(file.name())
-                        + "Cannot read column " + i + " in row group " + rowGroup + ": " + e.getMessage(), e);
+                        + "Cannot read column " + fileOrdinal(chunk) + " in row group " + rowGroup + ": "
+                        + e.getMessage(), e);
             }
         }
     }
 
-    /// Whether every chunk of the row group stores its data in the file being read.
+    /// Whether each of [#chunks] stores its data in the file being read.
     public boolean storedInThisFile() {
-        for (ColumnChunk chunk : metaData.columns()) {
+        for (ColumnChunk chunk : chunks) {
             if (!chunk.filePath().isEmpty()) {
                 return false;
             }
         }
         return true;
+    }
+
+    /// The position of `chunk` among the row group's chunks, its column's leaf ordinal in the file.
+    private int fileOrdinal(ColumnChunk chunk) {
+        List<ColumnChunk> columns = metaData.columns();
+        for (int i = 0; i < columns.size(); i++) {
+            if (columns.get(i) == chunk) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("Chunk not listed in row group " + rowGroup);
     }
 }
