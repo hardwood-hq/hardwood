@@ -19,6 +19,7 @@ import dev.hardwood.Validity;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ListBuilder;
 import dev.hardwood.writer.MapBuilder;
@@ -154,7 +155,7 @@ final class RowListNode extends RowRepeatedNode implements ListBuilder {
     @Override
     public ListBuilder addStruct(Consumer<StructBuilder> filler) {
         ensureActive();
-        if (!(element instanceof RowStructNode struct) || struct.isFile()) {
+        if (!(element instanceof RowStructNode struct) || struct.isFile() || struct.isVariant()) {
             throw wrongVerb("addStruct", "a struct element");
         }
         struct.beginScope();
@@ -174,6 +175,21 @@ final class RowListNode extends RowRepeatedNode implements ListBuilder {
         }
         else {
             group.writeFile(value);
+        }
+        return counted();
+    }
+
+    @Override
+    public ListBuilder addVariant(PqVariant value) {
+        ensureActive();
+        if (!(element instanceof RowStructNode group) || !group.isVariant()) {
+            throw wrongVerb("addVariant", "a VARIANT element");
+        }
+        if (value == null) {
+            group.appendNullInstance();
+        }
+        else {
+            group.writeVariant(value);
         }
         return counted();
     }

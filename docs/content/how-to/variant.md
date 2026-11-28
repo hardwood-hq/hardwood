@@ -55,6 +55,29 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 
 A missing value inside a present array reads as a Variant `NULL` element.
 
+## Write a Variant
+
+Declare the column with `variant`, and set a value with `setVariant`:
+
+```java
+FileSchema schema = FileSchema.builder("schema")
+        .primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+        .variant("payload", RepetitionType.OPTIONAL)
+        .list("events", RepetitionType.OPTIONAL, element -> element.variant(RepetitionType.OPTIONAL))
+        .build();
+
+try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), schema)) {
+    writer.rowWriter().writeRow(row -> row
+            .setLong("id", 1)
+            .setVariant("payload", variant)
+            .setList("events", list -> list
+                    .addVariant(first)
+                    .addVariant(second)));
+}
+```
+
+A `PqVariant` is written as it is: its `metadata()` and `value()` bytes go into the two children unchanged, so a Variant read from a file can be written back losslessly. The output is unshredded; the writer never writes a `typed_value` column. A `VARIANT` group is set only through `setVariant` / `addVariant`, and `setStruct` / `addStruct` on one throws. See [Logical Types and Row Setters](../reference/writer.md#logical-types-and-row-setters).
+
 ## Current limitations
 
 - **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) are not understood by the pushdown pipeline. The leaves below the group — `metadata`, `value` and a shredded variant's `typed_value` leaves — hold the encoded variant rather than values of their own, so a comparison or set predicate on one throws `IllegalArgumentException` at reader creation; they take `isNull` and `isNotNull` only. Filter on the Variant column itself for presence, and apply the value test per row against the `PqVariant` you read. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).

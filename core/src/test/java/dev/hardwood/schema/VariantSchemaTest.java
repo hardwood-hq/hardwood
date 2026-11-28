@@ -111,4 +111,63 @@ class VariantSchemaTest {
         assertThat(addrNode.isVariant()).isFalse();
         assertThat(addrNode.logicalType()).isNull();
     }
+
+    @Test
+    void builderExpandsVariantIntoMetadataAndValueChildren() {
+        FileSchema schema = FileSchema.builder("schema")
+                .variant("payload", RepetitionType.OPTIONAL)
+                .build();
+
+        SchemaNode.GroupNode payload = (SchemaNode.GroupNode) schema.getRootNode().children().get(0);
+        assertThat(payload.name()).isEqualTo("payload");
+        assertThat(payload.isVariant()).isTrue();
+        assertThat(payload.repetitionType()).isEqualTo(RepetitionType.OPTIONAL);
+        assertThat(payload.children()).hasSize(2);
+        assertThat(payload.children().get(0).name()).isEqualTo("metadata");
+        assertThat(payload.children().get(1).name()).isEqualTo("value");
+    }
+
+    @Test
+    void builderDeclaresAVariantInsideAStruct() {
+        FileSchema schema = FileSchema.builder("schema")
+                .struct("meta", RepetitionType.OPTIONAL, meta -> meta
+                        .variant("extra", RepetitionType.OPTIONAL))
+                .build();
+
+        SchemaNode.GroupNode meta = (SchemaNode.GroupNode) schema.getRootNode().children().get(0);
+        SchemaNode.GroupNode extra = (SchemaNode.GroupNode) meta.children().get(0);
+        assertThat(extra.name()).isEqualTo("extra");
+        assertThat(extra.isVariant()).isTrue();
+        assertThat(extra.children()).hasSize(2);
+        assertThat(extra.children().get(0).name()).isEqualTo("metadata");
+        assertThat(extra.children().get(1).name()).isEqualTo("value");
+    }
+
+    @Test
+    void builderDeclaresAVariantAsAListElement() {
+        FileSchema schema = FileSchema.builder("schema")
+                .list("events", RepetitionType.OPTIONAL, element -> element
+                        .variant(RepetitionType.OPTIONAL))
+                .build();
+
+        SchemaNode.GroupNode list = (SchemaNode.GroupNode) schema.getRootNode().children().get(0);
+        SchemaNode.GroupNode repeated = (SchemaNode.GroupNode) list.children().get(0);
+        SchemaNode.GroupNode element = (SchemaNode.GroupNode) repeated.children().get(0);
+        assertThat(element.isVariant()).isTrue();
+        assertThat(element.children()).hasSize(2);
+        assertThat(element.children().get(0).name()).isEqualTo("metadata");
+        assertThat(element.children().get(1).name()).isEqualTo("value");
+    }
+
+    @Test
+    void repeatedVariantIsRejectedWhereItIsDeclared() {
+        assertThatThrownBy(() -> FileSchema.builder("schema").variant("v", RepetitionType.REPEATED))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field v is REPEATED; the builder declares a repeated field with list(...) or map(...)");
+        assertThatThrownBy(() -> FileSchema.builder("schema").list("l", RepetitionType.OPTIONAL,
+                element -> element.variant(RepetitionType.REPEATED)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field l.list.element is REPEATED; the builder declares a repeated field with list(...) "
+                        + "or map(...)");
+    }
 }

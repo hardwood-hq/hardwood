@@ -18,6 +18,7 @@ import java.util.function.Consumer;
 import dev.hardwood.Experimental;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
+import dev.hardwood.row.PqVariant;
 
 /// Sets the fields of one struct — a record being written, or a struct nested inside one.
 ///
@@ -207,6 +208,18 @@ public interface StructBuilder {
     /// @throws IllegalStateException if this builder's scope has ended
     StructBuilder setFile(String name, PqFile value);
 
+    /// Sets a `VARIANT` field to `value`, writing its `metadata()` and `value()` bytes as they
+    /// are. A `null` value sets the field null. The output is unshredded.
+    ///
+    /// @param name the field name
+    /// @param value the Variant
+    /// @return this builder, for chaining
+    /// @throws IllegalArgumentException if the schema has no such field, the field is not a
+    ///         group annotated `VARIANT`, the group has no `metadata` or `value` child, or the
+    ///         field is already set in this scope
+    /// @throws IllegalStateException if this builder's scope has ended
+    StructBuilder setVariant(String name, PqVariant value);
+
     /// Sets a `LIST` field, appending its entries through `filler`. An absent list — the
     /// field left unset, or [#setNull] — and an empty list, whose filler appends nothing,
     /// are distinct and both writable.
@@ -250,6 +263,7 @@ public interface StructBuilder {
     /// | `FLOAT16` | `Float` |
     /// | Other `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` | `byte[]` |
     /// | `FILE` group | [PqFile] |
+    /// | `VARIANT` group | [PqVariant] |
     /// | Struct group | [dev.hardwood.row.PqStruct] |
     /// | `LIST` group | [dev.hardwood.row.PqList] |
     /// | `MAP` group | [dev.hardwood.row.PqMap] |
@@ -268,9 +282,8 @@ public interface StructBuilder {
     /// @param value the value, or `null`
     /// @return this builder, for chaining
     /// @throws IllegalArgumentException if the schema has no such field, the value is not the
-    ///         form the field's type takes (a `PqVariant` among them, `VARIANT` values not being
-    ///         writable), a nested value is rejected as its typed setter rejects it, or the field
-    ///         is already set in this scope
+    ///         form the field's type takes, a nested value is rejected as its typed setter
+    ///         rejects it, or the field is already set in this scope
     /// @throws IllegalStateException if this builder's scope has ended
     StructBuilder setValue(String name, Object value);
 
@@ -407,6 +420,11 @@ public interface StructBuilder {
     ///
     /// @see #setFile(String, PqFile)
     StructBuilder setFile(int fieldIndex, PqFile value);
+
+    /// Sets a `VARIANT` field to the Variant `value`, by position.
+    ///
+    /// @see #setVariant(String, PqVariant)
+    StructBuilder setVariant(int fieldIndex, PqVariant value);
 
     /// Sets a `LIST` field by index. See [#setList(String, Consumer)].
     ///
