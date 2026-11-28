@@ -49,6 +49,19 @@ class InputFileCloserTest {
         assertThat(earlier.getSuppressed()).containsExactly(error);
     }
 
+    /// With the heap exhausted the JVM throws one preallocated `OutOfMemoryError` for separate
+    /// allocations, so a close can throw the very failure the read already raised: it stays the
+    /// failure, rather than turning into the `IllegalArgumentException` of a self-suppression.
+    @Test
+    void closeFailureThatIsTheEarlierFailureIsNotSuppressedBeneathItself() {
+        OutOfMemoryError preallocated = new OutOfMemoryError("Java heap space");
+
+        Throwable failure = InputFileCloser.closeAll(List.of(failing(new AtomicInteger(), preallocated)), preallocated);
+
+        assertThat(failure).isSameAs(preallocated);
+        assertThat(preallocated.getSuppressed()).isEmpty();
+    }
+
     @Test
     void rethrowThrowsAnErrorAsItIs() {
         SpeculativeError error = new SpeculativeError("prefetch failed");

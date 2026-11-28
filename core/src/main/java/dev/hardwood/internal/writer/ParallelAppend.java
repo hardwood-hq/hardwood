@@ -15,6 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.locks.LockSupport;
 
+import dev.hardwood.internal.Failures;
+
 /// Appends one slice of records to every column chunk of a row group, on worker threads and the
 /// caller's alike, and returns once every column has taken it.
 ///
@@ -147,7 +149,7 @@ public final class ParallelAppend {
         }
         catch (Throwable t) {
             if (startFailure != null) {
-                t.addSuppressed(startFailure);
+                Failures.addSuppressed(t, startFailure);
             }
             throw t;
         }

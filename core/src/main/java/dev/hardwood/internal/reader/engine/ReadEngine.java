@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.Failures;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.DictionaryBinaryBatchMatcher;
@@ -235,7 +236,7 @@ public final class ReadEngine implements Closeable {
             close();
         }
         catch (RuntimeException | Error closeFailure) {
-            failure.addSuppressed(closeFailure);
+            Failures.addSuppressed(failure, closeFailure);
         }
     }
 
