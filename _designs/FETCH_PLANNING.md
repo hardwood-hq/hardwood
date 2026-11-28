@@ -60,7 +60,7 @@ A row group's Bloom-filter and dictionary pruning (steps 1 and 2) prove a filter
 
 Tests: `PruningReadsTest`, `BloomFilterWindowIoTest`, `DictionaryPushDownIoTest`, `LargeDecodeTaskTest`.
 
-Before the first step that reads anything the row group's footer entries address, planning checks once that its chunks are stored in this file ([FILE_METADATA.md](FILE_METADATA.md)), and then takes the extents of the decoded columns' chunks from the footer and checks them against the file and against each other (`PagePlanner.checkedExtents`): a chunk outside the file, or two that overlap, fail the unit with a `ParquetReadException` naming the column. The same-file check comes first, since another file's chunk would otherwise fail as lying outside this one.
+Before the first step that reads anything the row group's footer entries address, planning checks that the chunks of its decoded columns are stored in this file ([FILE_METADATA.md](FILE_METADATA.md)), and then takes the extents of the decoded columns' chunks from the footer and checks them against the file and against each other (`PagePlanner.checkedExtents`): a chunk outside the file, or two that overlap, fail the unit with a `ParquetReadException` naming the column. The same-file check comes first, since another file's chunk would otherwise fail as lying outside this one.
 
 Page filtering applies when the read has a filter and metadata filtering is on, in a row group statistics left undecided. In a row group they proved to match in full every value of every page matches, so no page bound can rule a page out; its ColumnIndex is neither fetched nor evaluated, and its skipped filter-only columns need no index at all.
 

@@ -407,7 +407,7 @@ public class FileSchema {
                         element.fieldId());
                 if (groupNode.logicalType() instanceof LogicalType.VariantType variant) {
                     // Only the shape of the version the reader implements is known; a read of a
-                    // group of another version is refused by VariantSpecVersions.
+                    // group of another version is refused by UnreadableGroups.
                     if (variant.specVersion() == VariantSpecVersions.SUPPORTED) {
                         validateVariantGroup(groupNode);
                     }

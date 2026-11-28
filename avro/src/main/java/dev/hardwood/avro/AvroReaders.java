@@ -9,10 +9,10 @@ package dev.hardwood.avro;
 
 import java.io.IOException;
 
-import dev.hardwood.avro.internal.AvroPlanNode;
 import dev.hardwood.avro.internal.AvroSchemaConverter;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 
 /// Factory for creating [AvroRowReader] instances from a
@@ -110,12 +110,23 @@ public final class AvroReaders {
             if (tailRows > 0) {
                 underlying.tail(tailRows);
             }
-            // Convert before building the underlying reader: conversion rejects schemas
-            // Avro cannot represent, and building the underlying reader already starts a
-            // column worker per projected column — workers that a rejection here would
-            // orphan, with no AvroRowReader to close them.
-            AvroPlanNode plan = AvroSchemaConverter.plan(fileReader.getFileSchema(), projection);
-            return new AvroRowReader(underlying.build(), plan);
+            // The underlying reader is built first, so that what core refuses to read (such as a
+            // list of variants) is refused by core before conversion meets it. Conversion
+            // rejects schemas Avro cannot represent; the underlying reader has then started a
+            // column worker per projected column, which closing it stops.
+            RowReader rows = underlying.build();
+            try {
+                return new AvroRowReader(rows, AvroSchemaConverter.plan(fileReader.getFileSchema(), projection));
+            }
+            catch (RuntimeException | Error e) {
+                try {
+                    rows.close();
+                }
+                catch (IOException | RuntimeException | Error closeFailure) {
+                    e.addSuppressed(closeFailure);
+                }
+                throw e;
+            }
         }
     }
 }

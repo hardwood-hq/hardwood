@@ -759,23 +759,25 @@ class AvroRowReaderTest {
     }
 
     /// A bare repeated group annotated `VARIANT` is a list of variants, which is not
-    /// supported: projecting it is refused as the row reader refuses it, and a
-    /// projection that leaves it out reads.
+    /// supported: projecting it is refused by the row reader, and a projection that
+    /// leaves it out reads.
     @Test
     void refuseBareRepeatedVariantGroupUnlessProjectedAway() throws Exception {
         // repeated_variant_group_test.parquet: required int32 id; repeated group foo (VARIANT)
         // { required binary metadata; required binary value }; one row id=1
-        try (ParquetFileReader fileReader = ParquetFileReader.open(
-                InputFile.of(TEST_RESOURCES.resolve("repeated_variant_group_test.parquet")))) {
+        Path fixture = TEST_RESOURCES.resolve("repeated_variant_group_test.parquet");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture))) {
 
             assertThatThrownBy(() -> AvroReaders.rowReader(fileReader))
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessage("Repeated group 'foo' is annotated VARIANT(1) outside a LIST or MAP group;"
+                    .hasMessage("[" + fixture.getFileName() + "] Repeated group 'foo' is annotated VARIANT(1) outside a LIST"
+                            + " or MAP group;"
                             + " a list of variants in this form is not supported");
             assertThatThrownBy(() -> AvroReaders.buildRowReader(fileReader)
                     .projection(ColumnProjection.columns("foo.value")).build())
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessage("Repeated group 'foo' is annotated VARIANT(1) outside a LIST or MAP group;"
+                    .hasMessage("[" + fixture.getFileName() + "] Repeated group 'foo' is annotated VARIANT(1) outside a LIST"
+                            + " or MAP group;"
                             + " a list of variants in this form is not supported");
 
             try (AvroRowReader reader = AvroReaders.buildRowReader(fileReader)

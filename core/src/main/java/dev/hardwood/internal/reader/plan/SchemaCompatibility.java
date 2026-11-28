@@ -17,11 +17,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.footer.FileColumnOrdinals;
-import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.schema.VariantSpecVersions;
-import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.internal.schema.UnreadableGroups;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
@@ -44,28 +42,23 @@ public final class SchemaCompatibility {
     /// pruning still indexes into each file's metadata for it. Exactly the set that
     /// is validated per file and that [FileColumnOrdinals] resolves an ordinal for.
     private final BitSet touchedColumns;
-    /// Reference schema leaf ordinals whose path another leaf shares, which sibling fields of one
-    /// name give rise to; such a column is matched in each file by its position among the path's.
-    private final BitSet sharedPaths;
 
     public SchemaCompatibility(FileSchema referenceSchema, ProjectedSchema projected, ResolvedPredicate filter) {
         this.referenceSchema = referenceSchema;
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
-        this.sharedPaths = sharedPaths(referenceSchema);
     }
 
-    private static BitSet sharedPaths(FileSchema schema) {
-        StringToIntMap byPath = new StringToIntMap(schema.getColumnCount());
-        for (ColumnSchema column : schema.getColumns()) {
-            byPath.putOrMarkAmbiguous(column.fieldPath().toString(), column.columnIndex());
+    /// Whether another leaf of the reference schema has `refColumn`'s path, which sibling fields of
+    /// one name give rise to; such a column is matched in each file by its position among the
+    /// path's ([#counterpartOfShared]).
+    private boolean sharedInReference(ColumnSchema refColumn) {
+        try {
+            referenceSchema.getColumn(refColumn.fieldPath());
+            return false;
         }
-        BitSet shared = new BitSet(schema.getColumnCount());
-        for (ColumnSchema column : schema.getColumns()) {
-            if (byPath.get(column.fieldPath().toString()) == StringToIntMap.AMBIGUOUS) {
-                shared.set(column.columnIndex());
-            }
+        catch (IllegalArgumentException e) {
+            return true;
         }
-        return shared;
     }
 
     /// Validates the reference schema's own statement of the columns this read touches,
@@ -80,33 +73,24 @@ public final class SchemaCompatibility {
     ///
     /// @throws SchemaIncompatibleException if a touched column cannot be decoded under
     ///         the schema the file declares for it
-    /// @throws UnsupportedOperationException if a touched column lies below a list of
-    ///         variants in the bare repeated form ([BareRepeatedGroups#refuseTouchedVariants]) or
-    ///         below a `VARIANT` group of an unsupported specification version
-    ///         ([VariantSpecVersions#refuseTouchedUnsupported])
-    void validateReferenceColumns(String fileName) {
+    /// @throws UnsupportedOperationException if a touched column lies below one of
+    ///         `unreadableGroups`, a list of variants in the bare repeated form or a `VARIANT`
+    ///         group of an unsupported specification version ([UnreadableGroups])
+    void validateReferenceColumns(String fileName, UnreadableGroups unreadableGroups) {
         for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
                 originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
             FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
         }
-        refuseUnreadableGroups(fileName, referenceSchema, touchedColumns);
-    }
-
-    /// Refuses a read touching a group whose columns the reader cannot serve under the schema the
-    /// file declares: a list of variants in the bare repeated form, or a `VARIANT` group of a
-    /// specification version the reader does not implement.
-    private static void refuseUnreadableGroups(String fileName, FileSchema schema, BitSet touched) {
-        BareRepeatedGroups.refuseTouchedVariants(fileName, schema, touched);
-        VariantSpecVersions.refuseTouchedUnsupported(fileName, schema, touched);
+        unreadableGroups.refuseTouched(fileName, touchedColumns);
     }
 
     /// Validates a read of `file`, the first, without a filter as its planning does before any row
     /// group is read: the touched columns' declarations ([#validateReferenceColumns]), then the
     /// chunk paths of each of `rowGroups` ([ChunkPathCheck#verify]).
-    public static void validateFirstFile(InputFile file, FileSchema schema, ProjectedSchema projected,
-                                         List<RowGroup> rowGroups) {
+    public static void validateFirstFile(InputFile file, FileSchema schema, UnreadableGroups unreadableGroups,
+                                         ProjectedSchema projected, List<RowGroup> rowGroups) {
         SchemaCompatibility compatibility = new SchemaCompatibility(schema, projected, null);
-        compatibility.validateReferenceColumns(file.name());
+        compatibility.validateReferenceColumns(file.name(), unreadableGroups);
         ChunkPathCheck paths = compatibility.chunkPathCheck(schema,
                 FileColumnOrdinals.identity(schema.getColumnCount(), null, null));
         for (int i = 0; i < rowGroups.size(); i++) {
@@ -137,8 +121,10 @@ public final class SchemaCompatibility {
     /// @throws SchemaIncompatibleException if a touched column is missing or its leaf
     ///         differs in a way that changes how its pages decode
     /// @throws UnsupportedOperationException if a touched column lies below a group the reader
-    ///         cannot serve ([#refuseUnreadableGroups])
-    public int[] validateSchemaCompatibility(InputFile inputFile, FileSchema fileSchema) {
+    ///         cannot serve ([UnreadableGroups])
+    public int[] validateSchemaCompatibility(FileMetadataCache.PreparedFile file) {
+        InputFile inputFile = file.inputFile();
+        FileSchema fileSchema = file.schema();
         int referenceColumnCount = referenceSchema.getColumnCount();
         int[] fileOrdinals = new int[referenceColumnCount];
         Arrays.fill(fileOrdinals, -1);
@@ -149,7 +135,7 @@ public final class SchemaCompatibility {
             fileOrdinals[originalIndex] = validateColumn(inputFile, fileSchema, originalIndex);
             touchedInFile.set(fileOrdinals[originalIndex]);
         }
-        refuseUnreadableGroups(inputFile.name(), fileSchema, touchedInFile);
+        file.unreadableGroups().refuseTouched(inputFile.name(), touchedInFile);
         return fileOrdinals;
     }
 
@@ -198,7 +184,7 @@ public final class SchemaCompatibility {
         // through getColumn throwing for it
         ColumnSchema fileColumn;
         try {
-            fileColumn = sharedPaths.get(originalIndex)
+            fileColumn = sharedInReference(refColumn)
                     ? counterpartOfShared(inputFile, fileSchema, refColumn)
                     : fileSchema.getColumn(refColumn.fieldPath());
         }

@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader.footer;
 
 import java.util.Objects;
 
+import dev.hardwood.internal.schema.UnreadableGroups;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.schema.FileSchema;
@@ -18,13 +19,16 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// @param readFooter the parsed footer, with the leaves whose logical type was not read
 /// @param schema the schema derived from `readFooter` by [ParquetMetadataReader#schemaOf]
+/// @param unreadableGroups the groups of `schema` no read may touch, found as it was derived
 /// @param footerLength the length of the serialized footer, as the file's trailer records it
 /// @param fileLength the length of the file the footer was read from
-public record FileFooter(ReadFooter readFooter, FileSchema schema, int footerLength, long fileLength) {
+public record FileFooter(ReadFooter readFooter, FileSchema schema, UnreadableGroups unreadableGroups,
+                         int footerLength, long fileLength) {
 
     public FileFooter {
         Objects.requireNonNull(readFooter, "readFooter");
         Objects.requireNonNull(schema, "schema");
+        Objects.requireNonNull(unreadableGroups, "unreadableGroups");
     }
 
     public FileMetaData metaData() {

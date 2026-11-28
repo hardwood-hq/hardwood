@@ -24,7 +24,7 @@ All other columns are flat columns (see [READ_PIPELINE.md](READ_PIPELINE.md#deco
 
 ## Schema to layers
 
-`NestedLevelComputer.computeLayers(schema)` walks the schema once per read and emits a `Layers` descriptor for every leaf, which the read's cursors and readers share: one entry per layer, outermost first, each a `LayerKind` and a definition-level **threshold** at or above which the node of that layer is present.
+`NestedLevelComputer.computeLayers(schema)` walks the schema once per `ParquetFileReader` and emits a `Layers` descriptor for every leaf, which the read's cursors and readers share: one entry per layer, outermost first, each a `LayerKind` and a definition-level **threshold** at or above which the node of that layer is present.
 
 | Node on the path | Contributes |
 |---|---|

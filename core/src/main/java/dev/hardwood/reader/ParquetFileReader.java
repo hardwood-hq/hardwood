@@ -9,6 +9,7 @@ package dev.hardwood.reader;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,6 +43,7 @@ import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupByteRangeFilterEvent;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
@@ -108,6 +110,9 @@ public class ParquetFileReader implements Closeable {
     private final FileMetaData firstFileMetaData;
     private final FileMetadataCache fileMetadataCache;
     private final FileSchema schema;
+    /// The layers of each of [#schema]'s columns, which every read of the reader shares; computed
+    /// by the first read, so that an open for the metadata alone does not.
+    private final Lazy<NestedLevelComputer.Layers[]> layers;
     private final HardwoodContextImpl context;
     private final boolean fixedListFastPathEnabled;
     private final boolean metadataFilteringEnabled;
@@ -149,6 +154,7 @@ public class ParquetFileReader implements Closeable {
         this.firstFileMetaData = firstFileFooter.metaData();
         this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFile, firstFileFooter, context);
         this.schema = firstFileFooter.schema();
+        this.layers = Lazy.of(() -> NestedLevelComputer.computeLayers(schema));
         this.context = context;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
         this.metadataFilteringEnabled = metadataFilteringEnabled;
@@ -599,8 +605,8 @@ public class ParquetFileReader implements Closeable {
         long budgetRows = readAheadBudgetRows(projection.decoded(), rowGroups);
         RowReader reader = isFlatProjection(schema, projection.decoded(), filter)
                 ? FlatRowReader.create(read, schema, projection, context, filter, maxRows, batchSize, budgetRows)
-                : NestedRowReader.create(read, schema, projection, context, fixedListFastPathEnabled, filter,
-                        maxRows, batchSize, budgetRows);
+                : NestedRowReader.create(read, schema, layers.get(), projection, context, fixedListFastPathEnabled,
+                        filter, maxRows, batchSize, budgetRows);
         return trackedChild(read, reader);
     }
 
@@ -720,11 +726,10 @@ public class ParquetFileReader implements Closeable {
             int batchSize) throws IOException {
         ResolvedPredicate resolved = resolveFilter(filter);
         List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
-        NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
 
         if (resolved == null) {
             return openRead(ReadProjection.of(ProjectedSchema.create(schema, requests, false)), null,
-                    rowGroups, layers, batchSize);
+                    rowGroups, batchSize);
         }
 
         // Exact filtering (#624): decode the payload columns *and* the predicate
@@ -734,7 +739,7 @@ public class ParquetFileReader implements Closeable {
         // `false`: the columnar paths read individual leaves, so the projection stays literal.
         ReadProjection readProjection = ReadProjection.withPredicateColumns(schema, requests,
                 SelectionEngine.predicateColumns(resolved), false);
-        return openRead(readProjection, resolved, rowGroups, layers, batchSize);
+        return openRead(readProjection, resolved, rowGroups, batchSize);
     }
 
     /// A column read of `projection` driven by the [ReadEngine], filtered by `resolved` unless it
@@ -742,10 +747,11 @@ public class ParquetFileReader implements Closeable {
     /// allocate per-batch arrays too, so they count toward the byte budget. Where pruning drops
     /// every row group, the columns publish their end and the scan's first batch finds it.
     private ColumnRead openRead(ReadProjection projection, ResolvedPredicate resolved,
-                                      List<RowGroup> rowGroups, NestedLevelComputer.Layers[] layers, int batchSize)
+                                      List<RowGroup> rowGroups, int batchSize)
             throws IOException {
         PreparedRead read = prepare(rowGroups, projection, resolved, resolved == null || metadataFilteringEnabled, 0, 0);
         ProjectedSchema decoded = projection.decoded();
+        NestedLevelComputer.Layers[] layers = this.layers.get();
         ColumnScan scan = trackedChild(read, ColumnScan.open(read, fixedListFastPathEnabled, schema, layers,
                 projection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
                 readAheadBudgetRows(decoded, rowGroups)));
@@ -912,12 +918,16 @@ public class ParquetFileReader implements Closeable {
             throw new UnsupportedOperationException("filter(RowGroupPredicate) is single-file only: "
                     + "a byte range names positions in one file");
         }
-        List<RowGroup> kept = all.stream()
-                .filter(rg -> matches(rg, rowGroupFilter))
-                .toList();
+        String fileName = inputFiles.get(0).name();
+        List<RowGroup> kept = new ArrayList<>(all.size());
+        for (int i = 0; i < all.size(); i++) {
+            if (matches(all.get(i), i, fileName, rowGroupFilter)) {
+                kept.add(all.get(i));
+            }
+        }
 
         RowGroupByteRangeFilterEvent event = new RowGroupByteRangeFilterEvent();
-        event.file = inputFiles.get(0).name();
+        event.file = fileName;
         event.totalRowGroups = all.size();
         event.rowGroupsKept = kept.size();
         event.rowGroupsSkipped = all.size() - kept.size();
@@ -926,16 +936,16 @@ public class ParquetFileReader implements Closeable {
         return kept;
     }
 
-    /// Evaluate a [RowGroupPredicate] against one row group.
-    private static boolean matches(RowGroup rg, RowGroupPredicate p) {
+    /// Evaluate a [RowGroupPredicate] against row group `index` of `fileName`.
+    private static boolean matches(RowGroup rg, int index, String fileName, RowGroupPredicate p) {
         return switch (p) {
             case RowGroupPredicate.ByteRange b -> {
-                long mid = rowGroupMidpoint(rg);
+                long mid = rowGroupMidpoint(rg, index, fileName);
                 yield mid >= b.startInclusive() && mid < b.endExclusive();
             }
             case RowGroupPredicate.And a -> {
                 for (RowGroupPredicate child : a.children()) {
-                    if (!matches(rg, child)) {
+                    if (!matches(rg, index, fileName, child)) {
                         yield false;
                     }
                 }
@@ -944,11 +954,23 @@ public class ParquetFileReader implements Closeable {
         };
     }
 
-    private static long rowGroupMidpoint(RowGroup rg) {
-        List<dev.hardwood.metadata.ColumnChunk> columns = rg.columns();
+    /// The midpoint of the row group's chunks in the file, by which a byte range places it. Every
+    /// chunk's extent counts, so a chunk stored in another file, whose offsets address that file,
+    /// leaves the row group without a position in this one.
+    ///
+    /// @throws UnsupportedOperationException if a chunk of the row group names another file
+    private static long rowGroupMidpoint(RowGroup rg, int index, String fileName) {
+        List<ColumnChunk> columns = rg.columns();
         long start = columns.get(0).chunkStartOffset();
         long compressed = 0;
-        for (dev.hardwood.metadata.ColumnChunk chunk : columns) {
+        for (ColumnChunk chunk : columns) {
+            try {
+                chunk.requireSameFile();
+            }
+            catch (UnsupportedOperationException e) {
+                throw new UnsupportedOperationException(ExceptionContext.filePrefix(fileName)
+                        + "Cannot place row group " + index + " in a byte range: " + e.getMessage(), e);
+            }
             compressed += chunk.metaData().totalCompressedSize();
         }
         return start + compressed / 2;
