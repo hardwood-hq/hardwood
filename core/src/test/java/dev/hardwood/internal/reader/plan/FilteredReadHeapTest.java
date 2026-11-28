@@ -5,19 +5,24 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.reader;
+package dev.hardwood.internal.reader.plan;
 
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.forked.ForkedJvm;
+import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.ObservedPool;
+import dev.hardwood.internal.reader.plan.GatedReads.ReadGate;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.ColumnReaders;
+import dev.hardwood.reader.FilterPredicate;
+import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -32,9 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The read runs in a JVM of 192 MiB ([ForkedJvm]), which exits on an `OutOfMemoryError`, over 60
 /// row groups of 100,000 rows: a key and eight `INT64` columns. The filter drops the first row
 /// group and statistics prove it for every other, whose eight columns are 378 MB once decoded. The
-/// consumer holds after its first batch, as one slower than the decodes would. A read whose
-/// look-ahead is bounded passes however long the consumer holds; the hold only gives a read whose
-/// look-ahead runs away the time to decode the rest of the file.
+/// consumer holds after its first batch, as one slower than the decodes would, until the read can
+/// make no progress: a read whose look-ahead is bounded settles at it, and one whose look-ahead
+/// runs away decodes the rest of the file and exhausts the heap first.
 @ForkedJvm(jvmArgs = { "-Xmx192m", "-XX:+ExitOnOutOfMemoryError" }, timeoutSeconds = 60)
 class FilteredReadHeapTest {
 
@@ -45,11 +50,9 @@ class FilteredReadHeapTest {
     /// group and prove every later one
     private static final long FROM_KEY = ROWS_PER_GROUP;
     private static final long ROWS = (long) ROW_GROUPS * ROWS_PER_GROUP - FROM_KEY;
-    /// how long the consumer holds after its first batch
-    private static final long HOLD_MILLIS = 2_000;
 
     /// Reads the file's eight `INT64` columns where the key is at least [#FROM_KEY], holding after
-    /// the first batch, and reads every matching row.
+    /// the first batch until the read settles, and reads every matching row.
     @Test
     void consumerBehindTheDecodesHoldsNoMoreThanTheLookAhead(@TempDir Path workDir) throws Exception {
         Path file = workDir.resolve("filtered.parquet");
@@ -59,14 +62,16 @@ class FilteredReadHeapTest {
             columns[c] = "c" + c;
         }
         long rows = 0;
-        try (HardwoodContext context = HardwoodContext.create();
+        ObservedPool pool = new ObservedPool(Runtime.getRuntime().availableProcessors(), "filtered-read-heap-test");
+        QuiescentExecutor io = new QuiescentExecutor();
+        try (HardwoodContextImpl context = pool.context(io);
                 ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file), context);
                 ColumnReaders readers = reader.buildColumnReaders(ColumnProjection.columns(columns))
                         .filter(FilterPredicate.gtEq("key", FROM_KEY))
                         .build()) {
             while (readers.nextBatch()) {
                 if (rows == 0) {
-                    Thread.sleep(HOLD_MILLIS);
+                    GatedReads.awaitSettled(io, new ReadGate(reason -> false), pool);
                 }
                 rows += readers.getRecordCount();
             }
