@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
+import dev.hardwood.internal.Failures;
+
 /// A base for implementing [OutputFile] that enforces its lifecycle.
 ///
 /// The public methods are final: each checks the state the lifecycle table in [OutputFile]
@@ -111,7 +113,7 @@ public abstract class AbstractOutputFile implements OutputFile {
                 doDiscard();
             }
             catch (Throwable discardFailure) {
-                t.addSuppressed(discardFailure);
+                Failures.addSuppressed(t, discardFailure);
             }
             throw t;
         }

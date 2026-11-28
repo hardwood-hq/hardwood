@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
+import dev.hardwood.internal.Failures;
+
 /// The memory a context's reads hold by choice rather than because a file forces it, R: the
 /// requests a read ([dev.hardwood.internal.reader.engine.ReadEngine]) starts ahead of its
 /// consumer, the footers a multi-file read reads ahead, each charged the tail it reads until
@@ -110,7 +112,7 @@ public final class ReadAheadBuffer {
                     failure = e;
                 }
                 else {
-                    failure.addSuppressed(e);
+                    Failures.addSuppressed(failure, e);
                 }
             }
         }

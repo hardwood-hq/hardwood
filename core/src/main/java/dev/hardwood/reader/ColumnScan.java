@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.Failures;
+import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -406,8 +408,23 @@ final class ColumnScan implements Closeable {
         // Released even when the tally's close fails: this scan will not run its close body
         // again, so skipping the release would leave the work list reachable for the parent
         // reader's whole lifetime.
-        try (read) {
-            tally.close();
+        // Not try-with-resources: with the heap exhausted, both closes can throw the one
+        // preallocated OutOfMemoryError, which that would suppress beneath itself.
+        Throwable failure = null;
+        try {
+            try {
+                tally.close();
+            }
+            catch (Throwable t) {
+                failure = t;
+            }
+            try {
+                read.close();
+            }
+            catch (Throwable t) {
+                failure = Failures.combine(failure, t);
+            }
+            InputFileCloser.rethrow(failure);
         }
         finally {
             closeClaim.completed();

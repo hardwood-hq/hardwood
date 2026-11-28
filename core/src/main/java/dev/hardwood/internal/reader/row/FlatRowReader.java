@@ -21,7 +21,9 @@ import java.util.NoSuchElementException;
 import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.Failures;
 import dev.hardwood.internal.HardwoodContextImpl;
+import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.CompiledBatchFilter;
@@ -1213,19 +1215,34 @@ public final class FlatRowReader implements FileAwareRowReader {
         // run its close body again, so skipping the release would leave the work list
         // reachable for the parent reader's whole lifetime. A failure to release is
         // suppressed beneath the original.
-        try (engine) {
-            if (tally != null) {
-                tally.close();
-            }
-            // Stops the read's columns and waits for its jobs before their holders are recycled
-            engine.close();
-            for (int i = 0; i < columnCount; i++) {
-                if (previousBatches[i] != null) {
-                    exchanges[i].recycle(previousBatches[i]);
-                    previousBatches[i] = null;
+        // Not try-with-resources: with the heap exhausted, both closes can throw the one
+        // preallocated OutOfMemoryError, which that would suppress beneath itself.
+        Throwable failure = null;
+        try {
+            try {
+                if (tally != null) {
+                    tally.close();
                 }
-                exchanges[i].drainReady();
+                // Stops the read's columns and waits for its jobs before their holders are recycled
+                engine.close();
+                for (int i = 0; i < columnCount; i++) {
+                    if (previousBatches[i] != null) {
+                        exchanges[i].recycle(previousBatches[i]);
+                        previousBatches[i] = null;
+                    }
+                    exchanges[i].drainReady();
+                }
             }
+            catch (Throwable t) {
+                failure = t;
+            }
+            try {
+                engine.close();
+            }
+            catch (Throwable t) {
+                failure = Failures.combine(failure, t);
+            }
+            InputFileCloser.rethrow(failure);
         }
         finally {
             closeClaim.completed();

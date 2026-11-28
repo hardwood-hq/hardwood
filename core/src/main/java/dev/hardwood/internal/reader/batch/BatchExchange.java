@@ -17,6 +17,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
+import dev.hardwood.internal.Failures;
 import dev.hardwood.internal.reader.step.ReadQueue;
 import dev.hardwood.internal.reader.step.ReadTasks;
 import dev.hardwood.jfr.BatchWaitEvent;
@@ -375,8 +376,8 @@ public class BatchExchange<B> {
     /// the caller.
     public void signalError(Throwable t) {
         Throwable first = toFailed(t);
-        if (first != null && first != t) {
-            first.addSuppressed(t);
+        if (first != null) {
+            Failures.addSuppressed(first, t);
         }
         finish();
     }

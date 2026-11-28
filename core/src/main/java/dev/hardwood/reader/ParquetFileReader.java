@@ -21,6 +21,7 @@ import java.util.function.UnaryOperator;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.Failures;
 import dev.hardwood.internal.HardwoodContextImpl;
 import dev.hardwood.internal.io.InputFileCloser;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
@@ -496,7 +497,7 @@ public class ParquetFileReader implements Closeable {
                 reader.close();
             }
             catch (RuntimeException | IOException | Error closeException) {
-                e.addSuppressed(closeException);
+                Failures.addSuppressed(e, closeException);
             }
             throw e;
         }
@@ -1309,10 +1310,6 @@ public class ParquetFileReader implements Closeable {
 
     /// Returns `first` with `next` suppressed beneath it, or `next` when there is no `first`.
     private static Throwable withSuppressed(Throwable first, Throwable next) {
-        if (first == null) {
-            return next;
-        }
-        first.addSuppressed(next);
-        return first;
+        return Failures.combine(first, next);
     }
 }

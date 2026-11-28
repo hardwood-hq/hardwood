@@ -21,7 +21,8 @@ import dev.hardwood.internal.thrift.RleExpansionFile;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// A read whose decodes exhaust the heap fails with the `OutOfMemoryError` rather than leaving its
-/// consumer waiting, also where reporting a decode's failure, which allocates, throws in turn.
+/// consumer waiting. Where reporting the failure, which allocates, throws in turn, the read is
+/// abandoned; `ReadDriverTest` covers that, since a real exhausted heap reaches it only by chance.
 ///
 /// The reads run in a JVM of 64 MiB ([ForkedJvm]) with the working-set limit lifted, over 40
 /// `INT64` columns whose one data page each holds 400,000 values (3.2 MB of batches per column,
@@ -39,8 +40,8 @@ class HeapExhaustionTest {
     /// Nothing the test runs once the heap is exhausted may run for the first time, as linking code
     /// allocates: the outcome of each read goes to an array allocated up front, and the test waits
     /// for the heap to have room again, once the pool has dropped the failed reads' remaining
-    /// work, before it asserts. Closing the context can fail for the same reason and is not part of
-    /// what is checked.
+    /// work, before it asserts. Closing the readers and the context can fail for the same reason and
+    /// is not part of what is checked.
     @ParameterizedTest
     @ValueSource(ints = { 4, 0 })
     void readThatExhaustsTheHeapFailsWithOutOfMemoryError(int threads) {
@@ -48,14 +49,37 @@ class HeapExhaustionTest {
         Throwable[] outcomes = new Throwable[READS];
         HardwoodContext context = HardwoodContext.create(threads);
         for (int i = 0; i < READS; i++) {
-            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
-                    RowReader rows = reader.buildRowReader().build()) {
+            ParquetFileReader reader = null;
+            RowReader rows = null;
+            try {
+                reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
+                rows = reader.buildRowReader().build();
                 while (rows.hasNext()) {
                     rows.next();
                 }
             }
             catch (Throwable t) {
                 outcomes[i] = t;
+            }
+            finally {
+                // a close can throw the read's own preallocated OutOfMemoryError again, which
+                // try-with-resources would suppress beneath itself
+                try {
+                    if (rows != null) {
+                        rows.close();
+                    }
+                }
+                catch (Throwable t) {
+                    // the heap may still be exhausted
+                }
+                try {
+                    if (reader != null) {
+                        reader.close();
+                    }
+                }
+                catch (Throwable t) {
+                    // the heap may still be exhausted
+                }
             }
         }
         try {

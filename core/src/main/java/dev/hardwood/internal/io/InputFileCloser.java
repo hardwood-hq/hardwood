@@ -11,6 +11,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
 
+import dev.hardwood.internal.Failures;
+
 /// Closes the input files a reader or read engine owns, or the child readers a reader closes with
 /// it, attempting every one even when an earlier one fails to close.
 public final class InputFileCloser {
@@ -49,7 +51,7 @@ public final class InputFileCloser {
                     first = closeException;
                 }
                 else {
-                    first.addSuppressed(closeException);
+                    Failures.addSuppressed(first, closeException);
                 }
             }
         }
