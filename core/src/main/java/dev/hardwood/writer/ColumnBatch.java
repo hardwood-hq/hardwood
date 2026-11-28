@@ -94,7 +94,7 @@ public final class ColumnBatch {
 
     /// Sets the per-instance nulls of an `OPTIONAL` group other than a `LIST` or `MAP`, addressed
     /// by its dot-separated path: a plain struct, a `FILE` group, or a group whose fields the
-    /// writer writes as a struct's, such as a `VARIANT` group of a schema read from a file.
+    /// writer writes as a struct's, such as a `VARIANT` group.
     /// Omitting the call leaves every instance of the group present.
     /// The values of leaf columns beneath a null struct instance are ignored.
     ///

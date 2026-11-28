@@ -347,6 +347,36 @@ public class VariantWriteTest {
         }
     }
 
+    @Test
+    void columnWriterWritesARequiredVariantColumn() throws IOException {
+        byte[][] metadata = { EMPTY_METADATA, EMPTY_METADATA };
+        byte[][] values = { TRUE_VALUE, new byte[] { 0x0c, 0x2a } };
+
+        FileSchema schema = FileSchema.builder("schema")
+                .variant("payload", RepetitionType.REQUIRED)
+                .build();
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.columnWriter().writeBatch(batch -> batch
+                    .bytes("payload.metadata", metadata)
+                    .bytes("payload.value", values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
+             RowReader rows = reader.rowReader()) {
+            rows.next();
+            PqVariant first = rows.getVariant("payload");
+            assertThat(first.metadata()).isEqualTo(EMPTY_METADATA);
+            assertThat(first.value()).isEqualTo(TRUE_VALUE);
+
+            rows.next();
+            PqVariant second = rows.getVariant("payload");
+            assertThat(second.metadata()).isEqualTo(EMPTY_METADATA);
+            assertThat(second.value()).isEqualTo(new byte[] { 0x0c, 0x2a });
+        }
+    }
+
     private static void assertWriteFails(Consumer<StructBuilder> row, String message) throws IOException {
         FileSchema schema = FileSchema.builder("schema")
                 .primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED)
