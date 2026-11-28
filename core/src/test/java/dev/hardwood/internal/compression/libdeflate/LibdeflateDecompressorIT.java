@@ -8,11 +8,14 @@
 package dev.hardwood.internal.compression.libdeflate;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.zip.GZIPOutputStream;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -41,7 +44,7 @@ class LibdeflateDecompressorIT {
         pool = new LibdeflatePool();
     }
 
-    @org.junit.jupiter.api.AfterAll
+    @AfterAll
     static void cleanup() {
         if (pool != null) {
             pool.clear();
@@ -81,12 +84,8 @@ class LibdeflateDecompressorIT {
     @ParameterizedTest
     @EnumSource(PageBuffer.class)
     void decompressesAPageAboveTheRetainedSize(PageBuffer kind) throws Exception {
-        byte[] original = new byte[DecodeBuffers.RETAINED_BYTES + 1];
-        Random random = new Random(13);
-        for (int i = 0; i < original.length; i++) {
-            original[i] = (byte) (random.nextInt(16) + 'a');
-        }
-        ByteBuffer buffer = kind.wrap(gzipCompress(original));
+        byte[] original = LargePage.ORIGINAL;
+        ByteBuffer buffer = kind.wrap(LargePage.COMPRESSED);
         DecodeBuffers buffers = TestDecodeBuffers.create();
 
         byte[] result = new LibdeflateDecompressor(pool).decompress(buffer, original.length,
@@ -224,12 +223,33 @@ class LibdeflateDecompressorIT {
         assertThat(decompressor).isInstanceOf(LibdeflateDecompressor.class);
     }
 
-    private static byte[] gzipCompress(byte[] data) throws Exception {
+    private static byte[] gzipCompress(byte[] data) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (GZIPOutputStream gzip = new GZIPOutputStream(baos)) {
             gzip.write(data);
         }
         return baos.toByteArray();
+    }
+
+    /// A page one byte above what a set of buffers keeps, and its GZIP stream, built once for every
+    /// kind of page buffer: generating and compressing it takes far longer than inflating it.
+    private static final class LargePage {
+
+        static final byte[] ORIGINAL = new byte[DecodeBuffers.RETAINED_BYTES + 1];
+        static final byte[] COMPRESSED;
+
+        static {
+            Random random = new Random(13);
+            for (int i = 0; i < ORIGINAL.length; i++) {
+                ORIGINAL[i] = (byte) (random.nextInt(16) + 'a');
+            }
+            try {
+                COMPRESSED = gzipCompress(ORIGINAL);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
     }
 
     private static ByteBuffer createDirectBuffer(byte[] data) {
