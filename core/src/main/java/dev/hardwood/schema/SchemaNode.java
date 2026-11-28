@@ -132,9 +132,11 @@ public sealed interface SchemaNode {
         }
 
     /// Returns true if this group is read and written field by field as a struct: it carries no
-    /// annotation, or the [LogicalType.FileType] annotation, whose children are ordinary fields.
+    /// annotation, or the [LogicalType.FileType] or [LogicalType.VariantType] annotation, whose
+    /// children are ordinary fields.
         public boolean isStruct() {
-            return convertedType == null && (logicalType == null || logicalType instanceof LogicalType.FileType);
+            return convertedType == null && (logicalType == null || logicalType instanceof LogicalType.FileType
+                    || logicalType instanceof LogicalType.VariantType);
         }
 
     /// Returns true if this group carries the [LogicalType.VariantType] annotation.

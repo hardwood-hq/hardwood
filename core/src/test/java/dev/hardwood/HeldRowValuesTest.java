@@ -18,6 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import dev.hardwood.internal.metadata.SchemaElements;
+import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.LogicalType;
@@ -257,10 +258,10 @@ class HeldRowValuesTest {
             for (int i = 0; i < ROWS; i++) {
                 int row = i;
                 writer.rowWriter().writeRow(r -> r
-                        .setStruct("v", v -> setVariant(v, row * 3))
-                        .setList("vs", l -> l.addStruct(v -> setVariant(v, row * 3 + 1)))
+                        .setVariant("v", variantOf(row * 3))
+                        .setList("vs", l -> l.addVariant(variantOf(row * 3 + 1)))
                         .setMap("vm", m -> m.addEntry(e -> e.setString("key", "k")
-                                .setStruct("value", v -> setVariant(v, row * 3 + 2)))));
+                                .setVariant("value", variantOf(row * 3 + 2)))));
             }
         }
 
@@ -282,10 +283,10 @@ class HeldRowValuesTest {
         }
     }
 
-    /// Writes `value` as an `INT32` Variant with an empty metadata dictionary.
-    private static void setVariant(StructBuilder variant, int value) {
+    /// An `INT32` Variant holding `value`, with an empty metadata dictionary.
+    private static PqVariant variantOf(int value) {
         byte[] encoded = ByteBuffer.allocate(5).order(ByteOrder.LITTLE_ENDIAN)
                 .put((byte) (5 << 2)).putInt(value).array();
-        variant.setBinary("metadata", new byte[]{ 0x01, 0x00, 0x00 }).setBinary("value", encoded);
+        return new PqVariantImpl(new byte[]{ 0x01, 0x00, 0x00 }, encoded);
     }
 }

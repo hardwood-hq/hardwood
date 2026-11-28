@@ -337,6 +337,8 @@ The row-oriented layer takes physical values through the setter named for the ty
 
 A `FILE` group is set only through `setFile` / `addFile`; `setStruct` / `addStruct` on one throws. A group read from an existing file may declare fewer children, and a value setting a field the group has no child for is rejected. The columnar API writes a `FILE` group's children as ordinary columns, addressed as `photo.uri`, `photo.offset` and so on, and rejects a batch holding a present value that is not valid under the rules in [FILE groups](accessors.md#file-groups).
 
+A `VARIANT` group is set only through `setVariant` / `addVariant`; `setStruct` / `addStruct` on one throws. The writer writes a Variant's `metadata` and `value` bytes as they are, so the output is unshredded: it never writes a `typed_value` column.
+
 Timestamp columns split by `isAdjustedToUTC`, mirroring the reader's split between `getTimestamp` and `getLocalTimestamp`: using the wrong setter throws. Both APIs also accept every setter by field index; see [Addressing fields by index](../how-to/write-row-by-row.md#addressing-fields-by-index).
 
 `setValue(String, Object)` and `setValue(int, Object)` take the value in the form `getValue` returns for the field's type and write it through that type's setter, with its checks. A `null` sets the field null; a value of any other Java type fails with `IllegalArgumentException`, and nothing is converted.
@@ -351,9 +353,10 @@ Timestamp columns split by `isAdjustedToUTC`, mirroring the reader's split betwe
 | `FLOAT16` | `Float`; a value without an exact half-precision representation is rejected |
 | other `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `byte[]` |
 | `FILE` group | `PqFile` |
+| `VARIANT` group | `PqVariant` |
 | struct group, `LIST`, `MAP` | `PqStruct`, `PqList`, `PqMap` |
 
-A `PqStruct` is copied by name: each field the target struct declares takes the source's field of that name, a field the source lacks stays unset, and a source field the target does not declare is not written. A `PqList`'s elements and a `PqMap`'s entries are copied in order the same way. A `PqVariant` is rejected.
+A `PqStruct` is copied by name: each field the target struct declares takes the source's field of that name, a field the source lacks stays unset, and a source field the target does not declare is not written. A `PqList`'s elements and a `PqMap`'s entries are copied in order the same way. A `PqVariant` is accepted for a `VARIANT` group and written as it is.
 
 A timestamp column's physical type sets the range of values it holds; its unit sets the precision on either:
 

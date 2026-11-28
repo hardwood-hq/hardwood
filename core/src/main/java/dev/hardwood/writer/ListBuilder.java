@@ -18,6 +18,7 @@ import java.util.function.Consumer;
 import dev.hardwood.Experimental;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
+import dev.hardwood.row.PqVariant;
 
 /// Appends the entries of one `LIST` instance.
 ///
@@ -154,6 +155,16 @@ public interface ListBuilder {
     ///         or its `checksum` is not a well-formed token (see [PqFile#withChecksum(String)])
     /// @throws IllegalStateException if this builder's scope has ended
     ListBuilder addFile(PqFile value);
+
+    /// Appends a `VARIANT` element, the Variant `value`, writing its `metadata()` and `value()`
+    /// bytes as they are. A `null` value appends a null element. The output is unshredded.
+    ///
+    /// @param value the Variant
+    /// @return this builder, for chaining
+    /// @throws IllegalArgumentException if the list's element is not a group annotated `VARIANT`,
+    ///         or the group has no `metadata` or `value` child
+    /// @throws IllegalStateException if this builder's scope has ended
+    ListBuilder addVariant(PqVariant value);
 
     /// Appends a nested list entry, populating it through `filler`.
     ///

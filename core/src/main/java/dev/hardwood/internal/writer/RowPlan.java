@@ -261,7 +261,7 @@ public final class RowPlan {
         }
         // The node builds its own name-to-index map from these, and rejects a duplicate name
         // as it does so.
-        return new RowStructNode(path, nodes, fieldNames, nullable, group.isFile());
+        return new RowStructNode(path, nodes, fieldNames, nullable, group.isFile(), group.isVariant());
     }
 
     private static RowNode buildNode(SchemaNode node, String path, FileSchema schema,

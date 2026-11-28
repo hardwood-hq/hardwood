@@ -639,7 +639,7 @@ public class ParquetFileReader implements Closeable {
         return switch (node) {
             case SchemaNode.PrimitiveNode ignored -> true;
             case SchemaNode.GroupNode group -> {
-                if (!group.isStruct() || group.isFile()) {
+                if (!group.isStruct() || group.isFile() || group.isVariant()) {
                     yield false;
                 }
                 for (SchemaNode child : decoded.projectedChildren(group)) {

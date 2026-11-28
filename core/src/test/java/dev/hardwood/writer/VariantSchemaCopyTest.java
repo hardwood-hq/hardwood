@@ -47,9 +47,7 @@ class VariantSchemaCopyTest {
                     PqVariant variant = rows.getVariant("var");
                     rowWriter.writeRow(row -> row
                             .setInt("id", rows.getInt("id"))
-                            .setStruct("var", var -> var
-                                    .setBinary("metadata", variant.metadata())
-                                    .setBinary("value", variant.value())));
+                            .setVariant("var", variant));
                 }
                 rowWriter.writeRow(row -> row.setInt("id", 5).setNull("var"));
             }

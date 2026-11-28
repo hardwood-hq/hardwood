@@ -25,6 +25,7 @@ import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ListBuilder;
 import dev.hardwood.writer.MapBuilder;
@@ -60,12 +61,16 @@ final class RowStructNode extends RowNode implements StructBuilder {
     /// Whether this is a `FILE` group, which only [#setFile] fills.
     private final boolean file;
 
+    /// Whether this is a `VARIANT` group, which only [#setVariant] fills.
+    private final boolean variant;
+
     private boolean active;
 
-    RowStructNode(String path, RowNode[] children, String[] fieldNames, boolean nullable, boolean file) {
+    RowStructNode(String path, RowNode[] children, String[] fieldNames, boolean nullable, boolean file, boolean variant) {
         super(path);
         this.children = children;
         this.file = file;
+        this.variant = variant;
         this.fieldNames = fieldNames;
         this.byName = new StringToIntMap(fieldNames.length);
         for (int i = 0; i < fieldNames.length; i++) {
@@ -160,11 +165,15 @@ final class RowStructNode extends RowNode implements StructBuilder {
 
     @Override
     String kind() {
-        return file ? "FILE group" : "struct group";
+        return file ? "FILE group" : variant ? "VARIANT group" : "struct group";
     }
 
     boolean isFile() {
         return file;
+    }
+
+    boolean isVariant() {
+        return variant;
     }
 
     /// Writes one present instance of this `FILE` group: each field `value` sets to its child,
@@ -216,6 +225,26 @@ final class RowStructNode extends RowNode implements StructBuilder {
         if (inline >= 0) {
             fileLeaf(inline).setBinary(inlineBytes);
         }
+        endScope();
+    }
+
+    /// Writes one present instance of this `VARIANT` group: the Variant's `metadata()` bytes
+    /// into the `metadata` child and its `value()` bytes into the `value` child, as they are.
+    /// Both children are resolved before the scope opens, so a group missing either leaves
+    /// nothing appended.
+    void writeVariant(PqVariant val) {
+        int metadataIdx = byName.get("metadata");
+        if (metadataIdx < 0) {
+            throw new RejectedRecordException(path, "VARIANT group " + path + " has no 'metadata' child");
+        }
+        int valueIdx = byName.get("value");
+        if (valueIdx < 0) {
+            throw new RejectedRecordException(path, "VARIANT group " + path + " has no 'value' child");
+        }
+
+        beginScope();
+        fileLeaf(metadataIdx).setBinary(val.metadata());
+        fileLeaf(valueIdx).setBinary(val.value());
         endScope();
     }
 
@@ -350,6 +379,11 @@ final class RowStructNode extends RowNode implements StructBuilder {
     }
 
     @Override
+    public StructBuilder setVariant(String name, PqVariant value) {
+        return fillVariant(claim(name), value);
+    }
+
+    @Override
     public StructBuilder setList(String name, Consumer<ListBuilder> filler) {
         return fillList(claim(name), filler);
     }
@@ -480,6 +514,11 @@ final class RowStructNode extends RowNode implements StructBuilder {
     }
 
     @Override
+    public StructBuilder setVariant(int fieldIndex, PqVariant value) {
+        return fillVariant(claim(fieldIndex), value);
+    }
+
+    @Override
     public StructBuilder setList(int fieldIndex, Consumer<ListBuilder> filler) {
         return fillList(claim(fieldIndex), filler);
     }
@@ -491,12 +530,18 @@ final class RowStructNode extends RowNode implements StructBuilder {
 
     // ==================== Runtime-typed values ====================
 
-    /// A FILE group takes a [PqFile]; any other struct a [PqStruct], whose fields are copied
-    /// into this struct's by name.
+    /// A FILE group takes a [PqFile], a VARIANT group a [PqVariant]; any other struct a
+    /// [PqStruct], whose fields are copied into this struct's by name.
     @Override
     void writeValue(Object value) {
         if (value == null) {
             appendNullInstance();
+        }
+        else if (variant) {
+            if (!(value instanceof PqVariant pqVariant)) {
+                throw wrongValue(value, "a PqVariant");
+            }
+            writeVariant(pqVariant);
         }
         else if (file) {
             if (!(value instanceof PqFile pqFile)) {
@@ -565,7 +610,7 @@ final class RowStructNode extends RowNode implements StructBuilder {
 
     private StructBuilder fillStruct(int childIndex, Consumer<StructBuilder> filler) {
         RowNode child = children[childIndex];
-        if (!(child instanceof RowStructNode struct) || struct.file) {
+        if (!(child instanceof RowStructNode struct) || struct.file || struct.variant) {
             throw wrongVerb(child, "setStruct", "a struct group");
         }
         struct.beginScope();
@@ -584,6 +629,21 @@ final class RowStructNode extends RowNode implements StructBuilder {
         }
         else {
             group.writeFile(value);
+        }
+        return this;
+    }
+
+    private StructBuilder fillVariant(int childIndex, PqVariant value) {
+        RowNode child = children[childIndex];
+        if (!(child instanceof RowStructNode group) || !group.variant) {
+            throw wrongVerb(child, "setVariant", "a VARIANT group");
+        }
+
+        if (value == null) {
+            group.appendNullInstance();
+        }
+        else {
+            group.writeVariant(value);
         }
         return this;
     }
